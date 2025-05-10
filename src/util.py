@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
 '''
- Autor Luiz Anísio 20/11/2022
- Utilitários simples para simplificação de alguns códigos comuns
+ Autor Luiz Anísio 10/05/2025
+ Utilitários simples para facilitar alguns códigos comuns
  '''
 
 import os
@@ -16,6 +16,10 @@ import regex as re
 
 HASH_BUF_SIZE = 65536  # lets read stuff in 64kb chunks!
 class Util():
+    @classmethod
+    def verifica_versao(cls):
+        print(f'Util carregado corretamente em {cls.data_hora_str()}!')
+  
     @classmethod
     def hash_file(clss, arquivo, complemento=''):
         # BUF_SIZE is totally arbitrary, change for your app!
