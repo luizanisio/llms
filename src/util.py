@@ -119,16 +119,18 @@ class Util():
         tamanho = random.randint(10,15)
         return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(tamanho))
 
-    @staticmethod
-    def flatten_listas(lista):
-        # se não for lista, devolve como está
+    @classmethod
+    def flatten_listas(cls,lista):
+        '''Recebe uma lista com listas dentro e retorna uma lista flat
+           - se o valor recebido não for lista, devolve como está
+        ''' 
         if not isinstance(lista, list):
             return lista
         # se algum elemento for lista, achata para o primeiro nível
         nova = []
         for item in lista:
             if isinstance(item, list):
-                nova.extend(flatten_listas(item))
+                nova.extend(cls.flatten_listas(item))
             else:
                 nova.append(item)
         return nova
