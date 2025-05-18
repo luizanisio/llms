@@ -1,76 +1,70 @@
-''' Utilitrio criado por Luiz Ansio 05/2025
-    Versao 0.1.0
-    Crie uma pasta util na pasta do jupyter notebook ou colab
-    em uma celula do notebook rode:
+"""
+ Utilitário criado por Luiz Anísio 05/2025 – v0.1.1
+ --------------------------------------------------
+ Exemplo de uso no Jupyter/Colab (estando em qualquer subpasta):
+ >>> from util.get_git import sync_git_util
+ >>> Util = sync_git_util(dest_root="../")        # copia repo para ../src
+ >>> Util.flatten_listas([1, 2, [3, 4]])
+"""
 
-    from util.get_git import sync_git_util
-    Util = sync_git_util()
+# ─── 1) CONFIGURAÇÕES GERAIS ─────────────────────────────────────────
+REPO_URL   = "https://github.com/luizanisio/llms.git"   # repositório público
+SUBDIR     = "src"          # subpasta que nos interessa dentro do repo
+DEFAULT_DIR_NAME = "src"    # nome da pasta para onde o SUBDIR será copiado
 
-    Para testar:
-    lista = [1,2,3,[4,5,6],7,[8,9,[10,11]]]
-    Util.flatten_listas(lista)
-    
-'''
-
-# ███ 1) CONFIGURAÇÕES ────────────────────────────────────────────────
-REPO_URL = "https://github.com/luizanisio/llms.git"   # meu repositório público
-SUBDIR    = "src"          # subpasta do repositório
-LOCAL_DIR = "./src"        # pasta local
-
-# ███ 2) FUNÇÃO DE SINCRONIZAÇÃO ─────────────────────────────────────
+# ─── 2) IMPORTS ──────────────────────────────────────────────────────
 import subprocess, shutil, sys, importlib
 from pathlib import Path
 
-def sync_git_subdir(repo_url: str, subdir: str, local_dir: str):
+# ─── 3) FUNÇÃO DE SINCRONIZAÇÃO ─────────────────────────────────────
+def _sync_git_subdir(repo_url: str, subdir: str, local_path: Path):
     """
-    Baixa (ou dá pull) no repo e mantém em cache em ~/.cache/git_repos.
-    Depois copia apenas o subdir desejado para o notebook,
-    substituindo a versão antiga se houver.
+    Garante que `local_path` receba o conteúdo de `subdir` do repositório.
+    Faz clone ou pull em ~/.cache/git_repos e copia apenas o trecho desejado.
     """
     cache_root = Path.home() / ".cache" / "git_repos"
-    repo_name  = Path(repo_url).stem           # ex.: llms
+    repo_name  = Path(repo_url).stem
     repo_path  = cache_root / repo_name
-
     cache_root.mkdir(parents=True, exist_ok=True)
 
     if repo_path.exists():
-        # repositório já clonado → apenas atualiza
         subprocess.run(["git", "-C", str(repo_path), "pull", "--quiet"], check=True)
     else:
-        # clone raso (depth 1) para economizar tempo/banda
-        subprocess.run(
-            ["git", "clone", "--depth", "1", repo_url, str(repo_path)],
-            check=True
-        )
+        subprocess.run(["git", "clone", "--depth", "1", repo_url, str(repo_path)], check=True)
 
-    # Remove versão antiga do subdiretório local (se houver) e copia a nova
-    local_path = Path(local_dir)
     if local_path.exists():
         shutil.rmtree(local_path)
     shutil.copytree(repo_path / subdir, local_path)
 
-    # Garante que o Python encontre o pacote
-    if str(local_path.resolve()) not in sys.path:
-        sys.path.insert(0, str(local_path.resolve()))
+    # Coloca a pasta no sys.path para que o import funcione
+    abs_local = str(local_path.resolve())
+    if abs_local not in sys.path:
+        sys.path.insert(0, abs_local)
 
-# ███ 3) IMPORTAÇÃO / RELOAD ─────────────────────────────────────────
-def import_or_reload(module_name: str):
-    """
-    Importa o módulo se for a primeira vez;
-    caso já exista em sys.modules, faz reload para pegar alterações.
-    """
+# ─── 4) IMPORTAÇÃO / RELOAD ─────────────────────────────────────────
+def _import_or_reload(module_name: str):
+    """Importa ou faz reload do módulo indicado."""
     if module_name in sys.modules:
         return importlib.reload(sys.modules[module_name])
     return importlib.import_module(module_name)
 
-def sync_git_util():
-    # ███ 4) EXECUÇÃO ────────────────────────────────────────────────────
-    sync_git_subdir(REPO_URL, SUBDIR, LOCAL_DIR)
-    
-    util = import_or_reload("src.util")   # exemplo de uso
-    print("src.util carregado ↺")
-    
-    Util = util.Util
-    # Se quiser checar versão/função:
-    Util.verifica_versao()
-    return Util
+# ─── 5) FUNÇÃO-FACILITADORA ─────────────────────────────────────────
+def sync_git_util(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Util":
+    """
+    ↓↓↓ Principais parâmetros ↓↓↓
+    dest_root (str) – Onde a pasta `src` será criada.  
+                      "."   → ./src (padrão, no diretório atual)  
+                      "../" → ../src  
+                      "/tmp"→ /tmp/src  etc.
+    repo_url  (str) – Caso deseje apontar para outro fork / URL.
+    """
+    dest_root_path = Path(dest_root).expanduser().resolve()
+    local_dir      = dest_root_path / DEFAULT_DIR_NAME
+
+    _sync_git_subdir(repo_url, SUBDIR, local_dir)
+
+    # importa o modulo src.util
+    util_module = _import_or_reload("src.util")
+    print(f"[OK] src.util carregado de {local_dir}")
+    util_module.Util.verifica_versao()
+    return util_module.Util
