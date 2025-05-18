@@ -15,6 +15,16 @@ from util.get_git import sync_git_util
 Util = sync_git_util()
 ```
 
+Caso esteja em uma subpasta, ajustar o path do util:
+```python
+#@title Importando classes do git em subpasta
+import sys, os
+sys.path.append(os.path.abspath(".."))  # sobe um nível na árvore
+
+from util.get_git import sync_git_util
+Util = sync_git_util(dest_root='../')
+```
+
 Para testar a classe Util:
 ```python
 lista = [1,2,3,[4,5,6],7,[8,9,[10,11]]]
