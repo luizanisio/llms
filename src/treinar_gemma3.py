@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Autor: Luiz Anisio 05/2025 v001
+Autor: Luiz Anisio 05/2025 v002
 
 Treinar Gemma‑3 usando Unsloth + TRL‑SFTTrainer de forma configurável.
 
@@ -32,11 +32,12 @@ import argparse
 import os
 import sys
 from typing import Any, Dict
-
+import json
 import yaml
 import torch
 import pandas as pd
 from datasets import Dataset
+from dataclasses import asdict
 from unsloth import FastModel
 from unsloth.chat_templates import get_chat_template, train_on_responses_only
 from trl import SFTTrainer, SFTConfig
@@ -46,7 +47,7 @@ import numpy as np
 # utilidades
 # ---------------------------------------------------------------------------
 
-def _print_mem(tag: str, device_idx: int) -> None:
+def _print_mem(tag: str, device_idx: int) -> dict:
     """Exibe estatísticas de memória GPU para depuração rápida."""
     if not torch.cuda.is_available():
         print(f"[{tag}] CUDA não disponível.")
@@ -56,6 +57,7 @@ def _print_mem(tag: str, device_idx: int) -> None:
     total = round(stats.total_memory / 1024 / 1024 / 1024, 3)
     reserved = round(torch.cuda.max_memory_reserved(device_idx) / 1024 / 1024 / 1024, 3)
     print(f"[{tag}] GPU[{device_idx}] {stats.name} | reservada: {reserved} GB / total: {total} GB")
+    return {'mem_total_gb': total, 'mem_reserved_gm': reserved, 'gpu_idx': device_idx, 'name': stats.name}
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +148,7 @@ class Gemma3Trainer:
                 raise ValueError(f"Esperado lista de 2 mensagens user/assistant >> {type(messages)}")
             if messages[0].get("role") != "user" or messages[1].get("role") != "assistant":
                 raise ValueError("Ordem user/assistant inválida")
-            return {"text": self.tokenizer.apply_chat_template(list(messages))}
+            return {"text": self.tokenizer.apply_chat_template(list(messages), tokenize=False)}
 
         return Dataset.from_list(list(df.apply(build_text, axis=1)))
 
@@ -174,7 +176,9 @@ class Gemma3Trainer:
             )
         if self.eval_ds:
            print(f' - avaliando a cada {eval_steps} steps (1 step = {cfg["grad_batch_size"]} * {cfg["batch_size"]} * {n_gpus} = {cfg["grad_batch_size"] * cfg["batch_size"]*n_gpus}) ...')
-
+        if isinstance(eval_steps, int) and eval_steps == 0:
+            eval_steps = 1
+        log_steps = eval_steps if isinstance(eval_steps, int) else 50
         trainer = SFTTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
@@ -189,7 +193,7 @@ class Gemma3Trainer:
                 eval_strategy="steps" if self.eval_ds else "no",
                 eval_steps=eval_steps if self.eval_ds else None,
                 learning_rate=2e-4,
-                logging_steps=50,
+                logging_steps=log_steps,
                 optim="adamw_8bit",
                 weight_decay=0.01,
                 lr_scheduler_type="linear",
@@ -207,20 +211,37 @@ class Gemma3Trainer:
 
     # ------------------------- execução ----------------------------------
     def train(self):
-        _print_mem("ANTES", self.device_idx)
+        antes = _print_mem("ANTES", self.device_idx)
         print("[4/6] Iniciando treinamento…")
         train_stats = self.trainer.train()
-        _print_mem("DEPOIS", self.device_idx)
+        depois = _print_mem("DEPOIS", self.device_idx)
         print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
-        self._save_model()
-
+        
+        # 2) dicionário de tudo que interessa
+        stats = {
+            **train_stats.metrics,                  # train_loss, train_runtime, etc.
+            "global_step":       train_stats.global_step,
+            "training_loss":     train_stats.training_loss,
+            "mem_gpu_before":    antes,
+            "mem_gpu_after":     depois,
+        }
+    
+        # 3) garante um eval FINAL mesmo que já tenha havido evals em steps
+        if self.eval_ds:
+            final_eval = self.trainer.evaluate()     # roda avaliação no eval_dataset
+            stats.update(final_eval)                 # adiciona eval_loss, eval_runtime …        self._save_model(stats = stats)
+        self._save_model(stats=stats)
+        
     # ------------------------- salvamento --------------------------------
-    def _save_model(self):
+    def _save_model(self, stats = None):
         out_dir = self.cfg["output_dir"]
         os.makedirs(out_dir, exist_ok=True)
         print(f"[6/6] Salvando modelo em {out_dir}…")
         self.model.save_pretrained(out_dir)
         self.tokenizer.save_pretrained(out_dir)
+        if stats is not None:
+            with open(os.path.join(self.cfg["output_dir"], "metrics_summary.json"), "w") as fp:
+                 json.dump(stats, fp, indent=2)
         print("Modelo salvo com sucesso \o/")
 
 
