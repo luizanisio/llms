@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Autor: Luiz Anisio 05/2025 v002
+Autor: Luiz Anisio 05/2025 v003
 
 Treinar Gemma‑3 usando Unsloth + TRL‑SFTTrainer de forma configurável.
 
@@ -29,18 +29,17 @@ dataset_eval_path: ""     # opcional
 """
 
 import argparse
-import os
+import os, time, json
 import sys
 from typing import Any, Dict
-import json
 import yaml
 import torch
 import pandas as pd
 from datasets import Dataset
-from dataclasses import asdict
 from unsloth import FastModel
 from unsloth.chat_templates import get_chat_template, train_on_responses_only
 from trl import SFTTrainer, SFTConfig
+from transformers import TrainerCallback
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -59,6 +58,25 @@ def _print_mem(tag: str, device_idx: int) -> dict:
     print(f"[{tag}] GPU[{device_idx}] {stats.name} | reservada: {reserved} GB / total: {total} GB")
     return {'mem_total_gb': total, 'mem_reserved_gm': reserved, 'gpu_idx': device_idx, 'name': stats.name}
 
+class JsonLoggerCallback(TrainerCallback):
+    def __init__(self, path):
+        self.path = path
+        # zera o arquivo no início
+        open(self.path, "w").close()
+
+    # logs = {'loss': …}  ou  {'eval_loss': …}
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs:
+            logs["step"]  = state.global_step
+            logs["epoch"] = state.epoch
+            logs["time"]  = time.time()
+            with open(self.path, "a") as fp:
+                fp.write(json.dumps(logs, ensure_ascii=False) + "\n")
+
+    # garante que também pegamos o dicionário completo emitido
+    # pelo método evaluate() externo, se você chamá-lo no fim
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        self.on_log(args, state, control, metrics)
 
 # ---------------------------------------------------------------------------
 # classe principal
@@ -94,6 +112,7 @@ class Gemma3Trainer:
                 self.cfg.get("eval_prompt_col", self.cfg["train_prompt_col"]),
                 split="teste",
             )
+        self.save_checkpoints = self.cfg.get('save_checkpoints','') in {1,'1','True',True,'true','sim','Sim','SIM'}
         self.trainer = self._build_trainer()
 
     # ------------------------- configuração ------------------------------
@@ -179,6 +198,8 @@ class Gemma3Trainer:
         if isinstance(eval_steps, int) and eval_steps == 0:
             eval_steps = 1
         log_steps = eval_steps if isinstance(eval_steps, int) else 50
+        if self.save_checkpoints:
+            print(f' - gravando checkpoints a cada {log_steps} steps')
         trainer = SFTTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
@@ -192,15 +213,27 @@ class Gemma3Trainer:
                 num_train_epochs=cfg["num_train_epochs"],
                 eval_strategy="steps" if self.eval_ds else "no",
                 eval_steps=eval_steps if self.eval_ds else None,
+                save_strategy="steps" if self.save_checkpoints else 'no',
+                save_steps=log_steps,
+                output_dir=os.path.join(cfg["output_dir"], "chkpt") if self.save_checkpoints else None,
+                save_total_limit=1000,                
                 learning_rate=2e-4,
+                logging_dir=os.path.join(cfg["output_dir"], "tb_logs"),
+                logging_strategy="steps",
+                logging_first_step=True,
                 logging_steps=log_steps,
+                report_to=["tensorboard"],
                 optim="adamw_8bit",
                 weight_decay=0.01,
                 lr_scheduler_type="linear",
                 seed=3407,
-                report_to="none",
             ),
         )
+        os.makedirs(self.cfg["output_dir"], exist_ok=True)
+        jsonl = os.path.join(self.cfg["output_dir"], "metrics_stream.jsonl")
+        if os.path.isfile(jsonl):
+            os.remove(jsonl)
+        trainer.add_callback(JsonLoggerCallback(jsonl))
         trainer.model.config.use_cache = False
         trainer = train_on_responses_only(
             trainer,
@@ -224,6 +257,9 @@ class Gemma3Trainer:
             "training_loss":     train_stats.training_loss,
             "mem_gpu_before":    antes,
             "mem_gpu_after":     depois,
+            "config": dict(self.cfg),
+            "ds_train_len" : len(self.train_ds),
+            "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
         }
     
         # 3) garante um eval FINAL mesmo que já tenha havido evals em steps
@@ -263,6 +299,7 @@ def _create_default_cfg(path: str) -> None:
         "dataset_eval_path": "",
         "eval_prompt_col": "",
         "eval_steps": "15%",
+        "save_checkpoints": True
     }
     with open(path, "w", encoding="utf-8") as fp:
         yaml.safe_dump(template, fp, sort_keys=False, allow_unicode=True)
