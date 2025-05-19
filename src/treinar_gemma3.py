@@ -156,12 +156,13 @@ class Gemma3Trainer:
         total_examples = len(self.train_ds)
         cfg = self.cfg
         eval_steps = cfg.get("eval_steps")
+        n_gpus = max(torch.cuda.device_count(),1)
         # percentual do dataset
         if self.eval_ds and isinstance(eval_steps,str) and eval_steps.endswith('%'):
             try:
                 eval_steps = int(eval_steps.replace('%','').strip())
                 if eval_steps >= 1:
-                   _st =  cfg["grad_batch_size"] * cfg["batch_size"]
+                   _st =  cfg["grad_batch_size"] * cfg["batch_size"] * n_gpus
                    eval_steps = int((eval_steps/100) * (total_examples / _st))
                 else:
                    eval_steps = None
@@ -169,10 +170,10 @@ class Gemma3Trainer:
                 eval_steps = None
         if eval_steps is None:
            eval_steps = max(
-                1, int((total_examples / 100) / (cfg["grad_batch_size"] * cfg["batch_size"]))
+                1, int((total_examples / 100) / (cfg["grad_batch_size"] * cfg["batch_size"])*n_gpus)
             )
         if self.eval_ds:
-           print(f' - avaliando a cada {eval_steps} steps (1 step = {cfg["grad_batch_size"]} * {cfg["batch_size"]} = {cfg["grad_batch_size"] * cfg["batch_size"]}) ...')
+           print(f' - avaliando a cada {eval_steps} steps (1 step = {cfg["grad_batch_size"]} * {cfg["batch_size"]} * {n_gpus} = {cfg["grad_batch_size"] * cfg["batch_size"]*n_gpus}) ...')
 
         trainer = SFTTrainer(
             model=self.model,
