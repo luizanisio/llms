@@ -6,6 +6,7 @@ Pacotes em desenvolvimento para estudos com LLMs
 
 ## Treino do GEMMA 3
 - src/treinar_gemma3.py \<arquivo yaml\> \[--gpu n\]
+- exemplo de arquivo yaml para o treino
 ```yaml
 dataset_train_path: ../dataset/df_treino.parquet
 train_prompt_col: messages
