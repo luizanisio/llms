@@ -17,7 +17,7 @@ grad_batch_size: 5
 num_train_epochs: 1
 max_seq_length: 4096
 lora_r: 8
-xdataset_eval_path: ../dataset/df_teste.parquet
+dataset_eval_path: ../dataset/df_teste.parquet
 eval_prompt_col: messages
 eval_steps: 10%
 save_checkpoints: true
