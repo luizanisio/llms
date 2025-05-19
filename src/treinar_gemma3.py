@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""
+Autor: Luiz Anisio 05/2025 v001
+
+Treinar Gemma‑3 usando Unsloth + TRL‑SFTTrainer de forma configurável.
+
+Uso:
+    python treinar_gemma3.py CONFIG.yaml [--gpu 1]
+
+* Se o YAML indicado não existir, um template é criado e o script
+  termina — você revisa os valores e executa novamente.
+* O parâmetro opcional **--gpu IDX** permite escolher a GPU CUDA a ser
+  utilizada (padrão: 0).  O índice é aplicado via `torch.cuda.set_device()`
+  logo no início do programa.
+
+Exemplo de YAML gerado automaticamente:
+```yaml
+dataset_train_path: "../dataset/data/dados_unificados_sm_treino.parquet"
+train_prompt_col: "messages"
+base_model_name: "unsloth/gemma-3-12b-it-unsloth-bnb-4bit"
+output_dir: "../modelos/gemma-3-12b-refleg20k-v01"
+batch_size: 2
+grad_batch_size: 5
+num_train_epochs: 1
+max_seq_length: 4096
+lora_r: 8
+dataset_eval_path: ""     # opcional
+```
+"""
+
+import argparse
+import os
+import sys
+from typing import Any, Dict
+
+import yaml
+import torch
+import pandas as pd
+from datasets import Dataset
+from unsloth import FastModel
+from unsloth.chat_templates import get_chat_template, train_on_responses_only
+from trl import SFTTrainer, SFTConfig
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# utilidades
+# ---------------------------------------------------------------------------
+
+def _print_mem(tag: str, device_idx: int) -> None:
+    """Exibe estatísticas de memória GPU para depuração rápida."""
+    if not torch.cuda.is_available():
+        print(f"[{tag}] CUDA não disponível.")
+        return
+    torch.cuda.synchronize(device_idx)
+    stats = torch.cuda.get_device_properties(device_idx)
+    total = round(stats.total_memory / 1024 / 1024 / 1024, 3)
+    reserved = round(torch.cuda.max_memory_reserved(device_idx) / 1024 / 1024 / 1024, 3)
+    print(f"[{tag}] GPU[{device_idx}] {stats.name} | reservada: {reserved} GB / total: {total} GB")
+
+
+# ---------------------------------------------------------------------------
+# classe principal
+# ---------------------------------------------------------------------------
+
+class Gemma3Trainer:
+    """Encapsula o fluxo de fine‑tuning de Gemma‑3 com LoRA e Unsloth."""
+
+    REQUIRED_KEYS = {
+        "dataset_train_path",
+        "train_prompt_col",
+        "base_model_name",
+        "output_dir",
+        "batch_size",
+        "grad_batch_size",
+        "num_train_epochs",
+        "max_seq_length",
+        "lora_r",
+    }
+
+    def __init__(self, cfg_path: str, device_idx: int):
+        self.device_idx = device_idx
+        self.cfg: Dict[str, Any] = self._load_cfg(cfg_path)
+        self._validate_cfg()
+        self.model, self.tokenizer = self._load_model()
+        self.train_ds = self._load_split(
+            self.cfg["dataset_train_path"], self.cfg["train_prompt_col"], split="treino"
+        )
+        self.eval_ds = None
+        if self.cfg.get("dataset_eval_path"):
+            self.eval_ds = self._load_split(
+                self.cfg["dataset_eval_path"],
+                self.cfg.get("eval_prompt_col", self.cfg["train_prompt_col"]),
+                split="teste",
+            )
+        self.trainer = self._build_trainer()
+
+    # ------------------------- configuração ------------------------------
+    def _load_cfg(self, path: str) -> Dict[str, Any]:
+        with open(path, "r", encoding="utf-8") as fp:
+            return yaml.safe_load(fp) or {}
+
+    def _validate_cfg(self) -> None:
+        missing = self.REQUIRED_KEYS - self.cfg.keys()
+        if missing:
+            raise ValueError(f"Parâmetros obrigatórios ausentes no YAML: {sorted(missing)}")
+        if self.cfg.get("dataset_eval_path") and not self.cfg.get("eval_prompt_col"):
+            raise ValueError("Se 'dataset_eval_path' for definido, informe 'eval_prompt_col'.")
+
+    # ------------------------- modelo ------------------------------------
+    def _load_model(self):
+        print("[1/6] Carregando modelo base… (GPU {} )".format(self.device_idx))
+        model, tokenizer = FastModel.from_pretrained(
+            model_name=self.cfg["base_model_name"],
+            max_seq_length=self.cfg["max_seq_length"],
+            load_in_4bit=True,
+            load_in_8bit=False,
+            full_finetuning=False,
+        )
+        model = FastModel.get_peft_model(
+            model,
+            finetune_vision_layers=False,
+            finetune_language_layers=True,
+            finetune_attention_modules=True,
+            finetune_mlp_modules=True,
+            r=self.cfg["lora_r"],
+            lora_alpha=self.cfg["lora_r"],
+            lora_dropout=0.0,
+            bias="none",
+            random_state=3407,
+        )
+        tokenizer = get_chat_template(tokenizer, chat_template="gemma-3")
+        model.print_trainable_parameters()
+        return model, tokenizer
+
+    # ------------------------- dados -------------------------------------
+    def _load_split(self, parquet_path: str, prompt_col: str, *, split: str) -> Dataset:
+        print(f"[2/6] Lendo {split} de {parquet_path}…")
+        df = pd.read_parquet(parquet_path)
+        if prompt_col not in df.columns:
+            raise KeyError(f"Coluna '{prompt_col}' não encontrada em {parquet_path}")
+        print(f" - {split} carregado com {len(df)} registros")
+
+        def build_text(row):
+            messages = row[prompt_col]
+            if not (isinstance(messages, (list, np.ndarray, np.array, tuple)) and len(messages) == 2):
+                raise ValueError(f"Esperado lista de 2 mensagens user/assistant >> {type(messages)}")
+            if messages[0].get("role") != "user" or messages[1].get("role") != "assistant":
+                raise ValueError("Ordem user/assistant inválida")
+            return {"text": self.tokenizer.apply_chat_template(list(messages))}
+
+        return Dataset.from_list(list(df.apply(build_text, axis=1)))
+
+    # ------------------------- trainer -----------------------------------
+    def _build_trainer(self) -> SFTTrainer:
+        print("[3/6] Configurando trainer…")
+        total_examples = len(self.train_ds)
+        cfg = self.cfg
+        eval_steps = cfg.get("eval_steps")
+        # percentual do dataset
+        if self.eval_ds and isinstance(eval_steps,str) and eval_steps.endswith('%'):
+            try:
+                eval_steps = int(eval_steps.replace('%','').strip())
+                if eval_steps >= 1:
+                   _st =  cfg["grad_batch_size"] * cfg["batch_size"]
+                   eval_steps = int((eval_steps/100) * (total_examples / _st))
+                else:
+                   eval_steps = None
+            except:
+                eval_steps = None
+        if eval_steps is None:
+           eval_steps = max(
+                1, int((total_examples / 100) / (cfg["grad_batch_size"] * cfg["batch_size"]))
+            )
+        if self.eval_ds:
+           print(f' - avaliando a cada {eval_steps} steps (1 step = {cfg["grad_batch_size"]} * {cfg["batch_size"]} = {cfg["grad_batch_size"] * cfg["batch_size"]}) ...')
+
+        trainer = SFTTrainer(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            train_dataset=self.train_ds,
+            eval_dataset=self.eval_ds,
+            args=SFTConfig(
+                dataset_text_field="text",
+                per_device_train_batch_size=cfg["batch_size"],
+                gradient_accumulation_steps=cfg["grad_batch_size"],
+                warmup_steps=cfg.get("warmup_steps", 5),
+                num_train_epochs=cfg["num_train_epochs"],
+                eval_strategy="steps" if self.eval_ds else "no",
+                eval_steps=eval_steps if self.eval_ds else None,
+                learning_rate=2e-4,
+                logging_steps=50,
+                optim="adamw_8bit",
+                weight_decay=0.01,
+                lr_scheduler_type="linear",
+                seed=3407,
+                report_to="none",
+            ),
+        )
+        trainer.model.config.use_cache = False
+        trainer = train_on_responses_only(
+            trainer,
+            instruction_part="<start_of_turn>user\n",
+            response_part="<start_of_turn>model\n",
+        )
+        return trainer
+
+    # ------------------------- execução ----------------------------------
+    def train(self):
+        _print_mem("ANTES", self.device_idx)
+        print("[4/6] Iniciando treinamento…")
+        train_stats = self.trainer.train()
+        _print_mem("DEPOIS", self.device_idx)
+        print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
+        self._save_model()
+
+    # ------------------------- salvamento --------------------------------
+    def _save_model(self):
+        out_dir = self.cfg["output_dir"]
+        os.makedirs(out_dir, exist_ok=True)
+        print(f"[6/6] Salvando modelo em {out_dir}…")
+        self.model.save_pretrained(out_dir)
+        self.tokenizer.save_pretrained(out_dir)
+        print("Modelo salvo com sucesso \o/")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _create_default_cfg(path: str) -> None:
+    template = {
+        "dataset_train_path": "../dataset/data/dados_unificados_sm_treino.parquet",
+        "train_prompt_col": "messages",
+        "base_model_name": "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
+        "output_dir": "../modelos/gemma-3-12b-refleg20k-v01",
+        "batch_size": 2,
+        "grad_batch_size": 5,
+        "num_train_epochs": 1,
+        "max_seq_length": 4096,
+        "lora_r": 8,
+        "dataset_eval_path": "",
+        "eval_prompt_col": "",
+        "eval_steps": "15%",
+    }
+    with open(path, "w", encoding="utf-8") as fp:
+        yaml.safe_dump(template, fp, sort_keys=False, allow_unicode=True)
+
+
+def _cli() -> None:
+    parser = argparse.ArgumentParser(
+        description="Fine‑tune Gemma‑3 com opções de GPU e YAML. Se o YAML não existir, um template será criado."
+    )
+    parser.add_argument("config", help="Arquivo YAML com as configurações.")
+    parser.add_argument("--gpu", type=int, default=0, help="Índice da GPU CUDA a usar (default=0)")
+    args = parser.parse_args()
+
+    # seleciona GPU antes de carregar quaisquer tensors
+    if torch.cuda.is_available():
+        torch.cuda.set_device(args.gpu)
+        print(f"CUDA disponível — usando GPU {args.gpu}")
+    else:
+        print("CUDA não disponível — treinamento será na CPU (muito mais lento)")
+
+    cfg_path = args.config
+    if not os.path.exists(cfg_path):
+        _create_default_cfg(cfg_path)
+        print(
+            f"Arquivo de configuração criado em '{cfg_path}'.\n"
+            "Revise os parâmetros e execute novamente para iniciar o treinamento."
+        )
+        sys.exit(0)
+
+    trainer = Gemma3Trainer(cfg_path, device_idx=args.gpu)
+    trainer.train()
+
+
+if __name__ == "__main__":
+    _cli()
