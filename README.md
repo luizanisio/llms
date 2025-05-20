@@ -22,6 +22,10 @@ eval_prompt_col: messages
 eval_steps: 10%
 save_checkpoints: true
 ```
+O dataframe tem que ter uma coluna com as mensagens no formato:
+```json
+[{"role": "user", "content": "prompt qualquer"},{"role": "assistant","content":"resposta qualquer"}]
+```
 
 ## Notebook
 - Alguns utilitários que estão sendo desenvolvidos e podem ser aproveitados nos colabs de estudo de forma simples, mantendo os códigos centralizados.
