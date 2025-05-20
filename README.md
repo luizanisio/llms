@@ -26,6 +26,7 @@ O dataframe tem que ter uma coluna com as mensagens no formato:
 ```json
 [{"role": "user", "content": "prompt qualquer"},{"role": "assistant","content":"resposta qualquer"}]
 ```
+- o nome da coluna é informado no yaml no parâmetro: train_prompt_col e 
 
 ## Notebook
 - Alguns utilitários que estão sendo desenvolvidos e podem ser aproveitados nos colabs de estudo de forma simples, mantendo os códigos centralizados.
