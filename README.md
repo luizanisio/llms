@@ -26,7 +26,9 @@ O dataframe tem que ter uma coluna com as mensagens no formato:
 ```json
 [{"role": "user", "content": "prompt qualquer"},{"role": "assistant","content":"resposta qualquer"}]
 ```
-- o nome da coluna é informado no yaml no parâmetro: train_prompt_col e 
+- o nome da coluna é informado no yaml no parâmetro: train_prompt_col
+- ao final do treino, será gerado um arquivo metrics_summary.json (train/eval loss final do treino) e metrics_summary.json (train/eval loss por steps)
+- se configurado save_checkpoints = true, os checkpoints serão gravados na pasta chkpt do modelo
 
 ## Notebook
 - Alguns utilitários que estão sendo desenvolvidos e podem ser aproveitados nos colabs de estudo de forma simples, mantendo os códigos centralizados.
