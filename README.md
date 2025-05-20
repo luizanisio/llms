@@ -24,8 +24,9 @@ save_checkpoints: true
 ```
 
 ## Notebook
-- Para carregar as classes no colab ou jupyter
-- copiar a pasta util com o arquivo get_git.py para a pasta do notebook do jupyter ou colab
+- Alguns utilitários que estão sendo desenvolvidos e podem ser aproveitados nos colabs de estudo de forma simples, mantendo os códigos centralizados.
+- Para carregar as classes no colab ou jupyter:
+  - copiar a pasta util com o arquivo get_git.py para a pasta do notebook do jupyter ou colab
 
 Para importar a classe Util:
 ```python
