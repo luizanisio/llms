@@ -1,4 +1,4 @@
-# LLMs
+# LLMs 2025
 Pacotes em desenvolvimento para estudos com LLMs
 
 ## Em construção 
