@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Autor: Luiz Anisio 05/2025 v003
+Autor: Luiz Anisio 05/2025 v004
 
 Treinar Gemma‑3 usando Unsloth + TRL‑SFTTrainer de forma configurável.
 
@@ -261,12 +261,12 @@ class Gemma3Trainer:
             "ds_train_len" : len(self.train_ds),
             "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
         }
-    
+        # grava o modelo antes do ultimo eval, pode dar erro de memória no eval    
+        self._save_model(stats=stats)
         # 3) garante um eval FINAL mesmo que já tenha havido evals em steps
-        if self.eval_ds:
+        if self.eval_ds
             final_eval = self.trainer.evaluate()     # roda avaliação no eval_dataset
             stats.update(final_eval)                 # adiciona eval_loss, eval_runtime …        self._save_model(stats = stats)
-        self._save_model(stats=stats)
         
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
