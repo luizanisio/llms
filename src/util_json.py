@@ -17,6 +17,7 @@ from typing import Any, List, Union
 from enum import Enum
 import hashlib
 from copy import deepcopy
+from datetime import datetime
 
 class JsonAnalise:
     RE_UNE_ESPACO = re.compile(r"\s+")
@@ -24,7 +25,8 @@ class JsonAnalise:
 
     @classmethod
     def verifica_versao(cls):
-        print(f'Util carregado corretamente em {cls.data_hora_str()}!')
+        dthr = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f'Util carregado corretamente em {dthr}!')
      
     @classmethod
     def padronizar_simbolos(cls, texto: Union[str, dict]) -> str:
