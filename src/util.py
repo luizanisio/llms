@@ -117,13 +117,13 @@ class Util():
         return res
 
     # --- NÚMERO DE CPUS -----
-    @staticmethod
-    def cpus(uma_livre=True):
+    @classmethod
+    def cpus(cls, uma_livre=True):
         num_livres = 1 if uma_livre else 0
         return cpu_count() if cpu_count() < 3 else cpu_count() - num_livres
 
-    @staticmethod
-    def get_token():
+    @classmethod
+    def get_token(cls):
         tamanho = random.randint(10,15)
         return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(tamanho))
 
@@ -176,8 +176,8 @@ class Util():
                 
         return padrao
 
-    @staticmethod
-    def hash_string_sha1(texto):
+    @classmethod
+    def hash_string_sha1(cls, texto):
         ''' retorna o sha1 do texto ou json recebido '''
         if isinstance(texto, dict):
            _txt = json.dumps(texto, sort_keys = True).encode("utf-8")
@@ -185,8 +185,8 @@ class Util():
            _txt = '|'.join(texto) if type(texto) is list else str(texto)
         return hashlib.sha1(_txt.encode('utf-8')).hexdigest()    
 
-    @staticmethod
-    def hash_string_md5(texto):
+    @classmethod
+    def hash_string_md5(cls, texto):
         ''' retorna o md5 do texto ou json recebido '''
         if isinstance(texto, dict):
            _txt = json.dumps(texto, sort_keys = True).encode("utf-8")
@@ -195,8 +195,8 @@ class Util():
         hash_object = hashlib.md5(_txt.encode())
         return str(hash_object.hexdigest())        
 
-    @staticmethod
-    def map_thread(func, lista, n_threads=None):
+    @classmethod
+    def map_thread(cls, func, lista, n_threads=None):
         if (not n_threads) or (n_threads<2):
             n_threads = Util.cpus()
         #print('Iniciando {} threads'.format(n_threads))
@@ -205,8 +205,8 @@ class Util():
         pool.close()
         pool.join()
 
-    @staticmethod
-    def map_thread_transform(func, lista, n_threads=None, msg_progresso=None):
+    @classmethod
+    def map_thread_transform(cls, func, lista, n_threads=None, msg_progresso=None):
         ''' recebe uma lista e transforma os dados da própria lista usando a função
             a função vai receber o valor de cada item e o retorno dela vai substituir o valor do item na lista
         '''
@@ -220,23 +220,23 @@ class Util():
         if msg_progresso is not None:
             Util.progress_bar(1,1) #finaliza a barra
 
-    @staticmethod
-    def progress_bar(current_value, total, msg=''):
+    @classmethod
+    def progress_bar(cls, current_value, total, msg=''):
         increments = 50
         percentual = int((current_value / total) * 100)
         i = int(percentual // (100 / increments))
         text = "\r[{0: <{1}}] {2:.2f}%".format('=' * i, increments, percentual)
         print('{} {}                     '.format(text, msg), end="\n" if percentual == 100 else "")
 
-    @staticmethod
-    def mensagem_inline(msg=''):
+    @classmethod
+    def mensagem_inline(cls, msg=''):
         i = random.randint(0,1)
         comp = "  . . ." if i==0 else ' . . .'
         comp=comp.ljust(100)
         print(f'\r{msg}{comp}'.ljust(80), end="\n" if not msg else "" )
 
-    @staticmethod
-    def pausa(segundos, progresso = True):
+    @classmethod
+    def pausa(cls, segundos, progresso = True):
         if segundos ==0:
             return
         if segundos<1:
@@ -293,7 +293,7 @@ class Util():
                 'cpu_uso_processo_%': uso_cpu_percentual_pid}
 
     @classmethod
-    def escape_json_string_literals(s: str) -> str:
+    def escape_json_string_literals(cls, s: str) -> str:
         ''' Percorre a string 's' e escapa apenas as aspas duplas internas
             não-escapadas dentro de literais JSON.
             Exemplo: texto_json = Util.escape_json_string_literals('{"chave":" valor com "aspas" dentro do texto do campo "chave" "}')
