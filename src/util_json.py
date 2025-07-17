@@ -23,6 +23,10 @@ class JsonAnalise:
     RE_UNE_ENTER = re.compile(r"\n+")
 
     @classmethod
+    def verifica_versao(cls):
+        print(f'Util carregado corretamente em {cls.data_hora_str()}!')
+     
+    @classmethod
     def padronizar_simbolos(cls, texto: Union[str, dict]) -> str:
         """ Padroniza alguns símbolos para comparação mais precisa """
         # Une quebras de linha em espaço
