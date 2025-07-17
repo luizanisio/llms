@@ -26,7 +26,7 @@ class JsonAnalise:
     @classmethod
     def verifica_versao(cls):
         dthr = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f'Util carregado corretamente em {dthr}!')
+        print(f'JsonAnalise carregado corretamente em {dthr}!')
      
     @classmethod
     def padronizar_simbolos(cls, texto: Union[str, dict]) -> str:
