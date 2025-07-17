@@ -145,7 +145,9 @@ class Util():
 
     @classmethod
     def mensagem_to_json(cls, mensagem:str, padrao = dict({}) ):
-        ''' Foco em receber uma mensagem via IA generativa e identificar o json dentro dela '''
+        ''' Foco em receber uma mensagem via IA generativa e identificar o json dentro dela 
+            Exemplo: dicionario = Util.mensagem_to_json('```json\n{"chave":"valor qualquer", "numero":1}')
+        '''
         if isinstance(mensagem, dict):
             return mensagem
         if not isinstance(mensagem, str):
@@ -170,7 +172,7 @@ class Util():
                 if 'delimiter' not in str(e):
                     raise e
                 # corrige aspas internas dentro do json
-                return Util.mensagem_to_json(Util.escape_json_string_literals(mensagem = mensagem, padrao = padrao))
+                return Util.mensagem_to_json(mensagem = Util.escape_json_string_literals(mensagem), padrao = padrao)
                 
         return padrao
 
