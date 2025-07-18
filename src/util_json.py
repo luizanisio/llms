@@ -6,23 +6,20 @@
 '''
 
 try:
-   import Levenshtein
+    deps = []
+    try:
+       import Levenshtein
+    except:
+       deps.append(' - Levenshtein >> pip install python-Levenshtein')
+    try:
+       from rouge_score import rouge_scorer
+    except:
+       deps.append(' - Rouge Score >> pip install rouge-score')
+    if any(deps):
+       deps = 'ATENÇÃO:\nDependências não resolvidas:\n' + '\n'.join(deps)
+       raise ImportError('')
 except ImportError:
-   try:
-      !pip install python-Levenshtein
-      import Levenshtein
-   except ImportError:
-      raise ImportError('Considere instalar: pip install python-Levenshtein')
-
-try:
-   from rouge_score import rouge_scorer
-except:
-   try:
-      !pip install rouge-score
-      from rouge_score import rouge_scorer
-   except ImportError:
-      raise ImportError('Considere instalar: pip install rouge-score')
-
+    raise ImportError(str(deps)) from None
 
 import json
 from statistics import harmonic_mean, mean
