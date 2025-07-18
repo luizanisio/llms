@@ -5,13 +5,15 @@
  Utilitários simples para facilitar alguns códigos comuns
  '''
 
-import os
+import os, sys
 import hashlib
 from datetime import datetime
 import json
 import random
 import string
 from multiprocessing import cpu_count
+from multiprocessing.dummy import Pool as ThreadPool
+
 try:
     import psutil 
     PSUTIL_OK = True
@@ -255,13 +257,13 @@ class Util():
         env_name = None
         if virtual_env:
             # Extraíndo o nome do ambiente a partir do caminho completo
-            env_name = os_path.basename(virtual_env)
+            env_name = os.path.basename(virtual_env)
         if not env_name:
             python_executable_path = sys.executable
-            possible_env_path = os_path.dirname(os_path.dirname(python_executable_path))
-            if os_path.exists(os_path.join(possible_env_path, 'pyvenv.cfg')) or \
-            os_path.exists(os_path.join(possible_env_path, 'conda-meta')):
-                env_name = os_path.basename(possible_env_path)
+            possible_env_path = os.path.dirname(os.path.dirname(python_executable_path))
+            if os.path.exists(os.path.join(possible_env_path, 'pyvenv.cfg')) or \
+            os.path.exists(os.path.join(possible_env_path, 'conda-meta')):
+                env_name = os.path.basename(possible_env_path)
         if not env_name:
             env_name = 'nenhum'
         res['env'] = env_name
