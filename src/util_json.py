@@ -29,6 +29,7 @@ from typing import Any, List, Tuple, Union
 from enum import Enum
 import hashlib
 from copy import deepcopy
+from datetime import datetime
 
 class JsonAnalise:
     ''' CONFIG para as chamadas que possuem o parâmetro "config" avaliados de acordo com cada função: 
@@ -63,6 +64,10 @@ class JsonAnalise:
         saida = saida.replace("“", '"').replace("”", '"').replace("'", '"')
         return saida
 
+    @classmethod
+    def verifica_versao(cls):
+        print(f'JsonAnalise carregado corretamente em {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}!')
+ 
     @classmethod
     def json_to_flat(
         cls,
