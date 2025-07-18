@@ -253,7 +253,7 @@ class Util():
         res = {}
         python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         res['version'] = python_version
-        virtual_env = os_environ.get('VIRTUAL_ENV')
+        virtual_env = os.environ.get('VIRTUAL_ENV')
         env_name = None
         if virtual_env:
             # Extraíndo o nome do ambiente a partir do caminho completo
