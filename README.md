@@ -29,31 +29,37 @@ O dataframe tem que ter uma coluna com as mensagens no formato:
 - o nome da coluna é informado no yaml no parâmetro: train_prompt_col
 - ao final do treino, será gerado um arquivo metrics_summary.json (train/eval loss final do treino) e metrics_summary.json (train/eval loss por steps)
 - se configurado save_checkpoints = true, os checkpoints serão gravados na pasta chkpt do modelo
-
+ 
 ## Notebook
 - Alguns utilitários que estão sendo desenvolvidos e podem ser aproveitados nos colabs de estudo de forma simples, mantendo os códigos centralizados.
 - Para carregar as classes no colab ou jupyter:
-  - copiar a pasta util com o arquivo get_git.py para a pasta do notebook do jupyter ou colab
-
+```
+!curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/util/get_git.py -o ./get_git.py
+```
+ 
 Para importar a classe Util:
 ```python
 #@title Importando classes do git
-from util.get_git import sync_git_util
-Util = sync_git_util()
+import get_git
+Util = get_git.sync_git_util()
+JsonAnalise = get_git.sync_git_json_analise()
 ```
-
-Caso esteja em uma subpasta, ajustar o path do util:
+ 
+Caso esteja em uma subpasta ou pasta específica, defina o path de destino:
 ```python
-#@title Importando classes do git em subpasta
-import sys, os
-sys.path.append(os.path.abspath(".."))  # sobe um nível na árvore
-
-from util.get_git import sync_git_util
-Util = sync_git_util(dest_root='../')
+#@title Importando classes do git em pasta definida
+import get_git
+Util = get_git.sync_git_util('/teste')
+JsonAnalise = get_git.sync_git_json_analise('/teste')
 ```
-
+ 
 Para testar a classe Util:
 ```python
 lista = [1,2,3,[4,5,6],7,[8,9,[10,11]]]
 Util.flatten_listas(lista)
+```
+ 
+Para testar a classe JsonAnalise:
+```python
+JsonAnalise.teste_compara(exemplo=3)
 ```
