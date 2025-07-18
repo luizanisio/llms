@@ -281,7 +281,7 @@ class Util():
         memoria_disponivel_gb = mem.available / (1024 ** 3)  # Convertendo bytes para GB
         memoria_total_gb = mem.total / (1024 ** 3)
         uso_cpu_percentual = psutil.cpu_percent(interval=1) # pausa 1s para calcular o uso da CPU
-        uso_cpu_percentual_pid = psutil.Process(os_getpid()).cpu_percent(interval=1) # pausa 1s para calcular o uso da CPU do processo
+        uso_cpu_percentual_pid = psutil.Process(os.getpid()).cpu_percent(interval=1) # pausa 1s para calcular o uso da CPU do processo
         cpus_fisicas = psutil.cpu_count(logical=False)
         cpus_logicas = psutil.cpu_count(logical=True)
         disco = psutil.disk_usage('/')
