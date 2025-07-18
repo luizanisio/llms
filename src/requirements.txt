@@ -1,3 +1,4 @@
+# llms
 tqdm
 regex
 transformers==4.51.3
@@ -11,3 +12,9 @@ deepdiff
 fuzzywuzzy
 tensorboardX==2.6.2.2
 tiktoken==0.9.0
+
+# JsonAnalise
+rouge-score
+python-Levenshtein
+
+# Util
