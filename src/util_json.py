@@ -32,7 +32,7 @@ from copy import deepcopy
 from datetime import datetime
 
 class JsonAnalise:
-    ''' CONFIG para as chamadas que possuem o parâmetro "config" avaliados de acordo com cada função: 
+    ''' CONFIG para as chamadas que possuem o parâmetro "config" avaliados de acordo com cada função:
         - campos_alinhar = campos que serão comparados com um threshold para igualar valores antes de calcular o F1
         - campos_embedding = campos que possuem uma lista de floats do embedding e serão comparados pela similaridade no alinhamento
                              - só funciona em conjunto com o alinhamento e se não estiver na lista de alinhamento, é incluído com threshold padrão
@@ -50,7 +50,7 @@ class JsonAnalise:
                  'campos_rouge2': [... nomes dos campos cuja string será comparada com ROUGE-2] - bigramas
                  'rouge_stemmer': quando calcular o rouge, usar stemmer True/False padrão True
                 }
-    '''  
+    '''
     RE_UNE_ESPACO = re.compile(r"\s+")
     RE_UNE_ENTER = re.compile(r"\n+")
     THRESHOLD_PADRAO = 0.95
@@ -69,7 +69,7 @@ class JsonAnalise:
     @classmethod
     def verifica_versao(cls):
         print(f'JsonAnalise carregado corretamente em {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}!')
- 
+
     @classmethod
     def json_to_flat(
         cls,
@@ -82,17 +82,17 @@ class JsonAnalise:
         Recebe um dict ou lista e retorna uma lista de strings "chave:valor",
         achatando todos os níveis de dicionários e listas aninhadas.
         Não leva em consideração a ordem dos itens
-        - campos_lista: não faz o flat da lista, mantém os valores como estão. 
+        - campos_lista: não faz o flat da lista, mantém os valores como estão.
                         Se as_dict = False, transforma em string após concatenar com o campo.
                         Se for uma lista de listas e cada lista deve ser flat, colocar campo* (cada item de campo será um flat)
         - as_dict: retorna um dicionário {campo:valor, ...}
                         Se for uma lista, inclui a posição do item no path da chave
         - ignorar_alinhados = True - ignora os campos que foram alinhados pois serão analisados de outra forma no loss
-        
+
         Exemplos de saída:
           >>> JsonAnalise.json_to_flat({"a": 1, "b": [2,3]})
           ["a:1", "b:2", "b:3"]
-          
+
           >>> JsonAnalise.json_to_flat({"x": {"y": [4, {"z": 5}]}})
           ["x.y:4", "x.y.z:5"]
 
@@ -176,7 +176,7 @@ class JsonAnalise:
     ) -> float:
         """
         Calcula a distância de Jaccard entre list1 e list2
-          - usa o conjunto outras_distancias para ponderar uma distância de acordo 
+          - usa o conjunto outras_distancias para ponderar uma distância de acordo
             com o número de itens da uniao de a com b e o número de itens de outras_listas
         Args:
           lista_a, lista_b: listas a comparar via Jaccard
@@ -206,7 +206,7 @@ class JsonAnalise:
         soma_ponderada = d_jaccard * union_size
         # 3) acumula outras distâncias
         for dist in outras_distancias:
-            soma_ponderada += dist 
+            soma_ponderada += dist
             total_peso     += 1
         # 4) retorna média ponderada
         log['distancias'].extend([d for d in outras_distancias])
@@ -241,7 +241,7 @@ class JsonAnalise:
         config['campos_rouge2'] = config['campos_rouge2'] if isinstance(config.get('campos_rouge2'), (set, tuple, list)) else []
         # campos de alinhamento, se for lista, usa threshold padrão
         if isinstance(config.get('campos_alinhar'), dict):
-           pass 
+           pass
         elif isinstance(config.get('campos_alinhar'), (list, tuple, set)):
              config['campos_alinhar'] = {c: config['threshold'] for c in config['campos_alinhar']}
         else:
@@ -254,7 +254,7 @@ class JsonAnalise:
         # embedding ou embeddings?
         if ('campos_embeddings' in config) and ('campos_embedding' not in config):
            config['campos_embedding'] = config.pop('campos_embeddings')
-        config['campos_embedding'] = list(config['campos_embedding']) if isinstance(config.get('campos_embedding'), (set, tuple, list)) else []   
+        config['campos_embedding'] = list(config['campos_embedding']) if isinstance(config.get('campos_embedding'), (set, tuple, list)) else []
         config['~cópia-validada~'] = True
         # os campos de embedding devem estar nos campos de alinhamento
         for campo in config['campos_embedding']:
@@ -274,7 +274,7 @@ class JsonAnalise:
 
     @classmethod
     def comparar(cls, pred_json: dict, true_json: dict, retornar_dados: bool = False, id_origem = None, config: dict|None = None) -> dict:
-        ''' retornar_dados = True >> retorna a lista true/pred ("key:value") usada para calcular o F1, 
+        ''' retornar_dados = True >> retorna a lista true/pred ("key:value") usada para calcular o F1,
                                      uma chave "alinhamento" para análise dos campos comparados pela similaridade,
                                      dados de comparação entre as chaves e valores.
             id_origem = qualquer valor para armazenar no dicionário - útil em threads para permitir rastreabilidade do dado original
@@ -286,7 +286,7 @@ class JsonAnalise:
            alinhamento = cls.alinhar_similares(pred_json, true_json, config= config)
 
         # 1) Flatten para listas de strings
-        # os alinhados serão considerados igruais 
+        # os alinhados serão considerados igruais
         # os não alinhados serão considerados diferentes, ignorando a similaridade
         pred_strs = cls.json_to_flat(pred_json, config= config, ignorar_alinhados = False)
         true_strs = cls.json_to_flat(true_json, config= config, ignorar_alinhados = False)
@@ -306,7 +306,7 @@ class JsonAnalise:
         res = {"precision": precision,
                "recall": recall,
                "f1": f1  }
-        
+
         # loss - considera sempre a similaridade
         # desconsiderando o alinhamento que tornou os dados iguais para o cálculo do F1, Precision e Recall
         outras = []
@@ -339,11 +339,14 @@ class JsonAnalise:
     @classmethod
     def hash_string_sha1(cls, texto):
         ''' retorna o sha1 do texto ou json recebido '''
-        if isinstance(texto, dict):
+        if isinstance(texto, bytes):
+          _txt = texto
+        elif isinstance(texto, dict):
            _txt = json.dumps(texto, sort_keys = True).encode("utf-8")
         else:
-           _txt = '|'.join(str(texto)) if type(texto) is list else str(texto)
-        return hashlib.sha1(_txt.encode('utf-8')).hexdigest()       
+           _txt = '|'.join([str(_) for _ in texto]) if type(texto) is list else str(texto)
+           _txt = _txt.encode('utf-8')
+        return hashlib.sha1(_txt).hexdigest()
 
     @classmethod
     def alinhar_similares(
@@ -385,7 +388,7 @@ class JsonAnalise:
                return 'Rouge-1', cls.rouge_scorer(texto1, texto2, config)
             return 'Levenshtein', 1-cls.distancia_levenshtein(texto1, texto2, padronizar_simbolos=config['padronizar_simbolos'])
 
-        def _corrige_pred(pred_node: Any, true_node: Any):  
+        def _corrige_pred(pred_node: Any, true_node: Any):
             ''' cria chaves faltantes em pred '''
             if isinstance(pred_node, dict) and isinstance(true_node, dict):
                for key in true_node:
@@ -414,7 +417,7 @@ class JsonAnalise:
                     if (key not in true_node):
                         #continue
                         true_node[key] = f'Não existe em true'
-                    
+
                     # inicia a análise do par de chaves
                     v_pred = pred_node[key]
                     v_true = true_node[key]
@@ -433,8 +436,8 @@ class JsonAnalise:
                                   if isinstance(e,(ValueError, TypeError)):
                                     erro = str(e)
                                     pass # considera diferente
-                          entry = {
-                              'chave': full_path, 'pred': 'vet:'+cls.hash_string_sha1(v_pred),
+                          entry = {'chave':key,
+                              'path': full_path, 'pred': 'vet:'+cls.hash_string_sha1(v_pred),
                               'true': 'vet:'+cls.hash_string_sha1(v_true), 'sim': sim, 'tipo': 'embedding'
                           }
                           if sim >= th:
@@ -476,8 +479,8 @@ class JsonAnalise:
                             if best_j is not None:
                                 used_true.add(best_j)
                             true_emb = ls_true[best_j] if best_j is not None else []
-                            entry = {
-                                'chave': f"{full_path}[{i}]", 'pred': 'vet:'+cls.hash_string_sha1(emb_pred),
+                            entry = {'chave':key,
+                                'path': f"{full_path}[{i}]", 'pred': 'vet:'+cls.hash_string_sha1(emb_pred),
                                 'true': 'vet:'+cls.hash_string_sha1(true_emb), 'sim': max(0, best_sim), 'tipo': 'embedding'
                             }
                             if best_sim >= th:
@@ -493,24 +496,12 @@ class JsonAnalise:
                         pred_node[key] = ['vet:'+cls.hash_string_sha1(_) for _ in v_pred]
                         true_node[key] = ['vet:'+cls.hash_string_sha1(_) for _ in true_node[key]]
                         #pred_node[key] = v_pred
-                    elif  key in campos_embedding:
-                          entry = {
-                              'chave': full_path, 
-                              'pred': 'erro_pred:'+str(v_pred)[:30]+'...',
-                              'true': 'erro_true:'+str(v_true)[:30]+'...',
-                              'tipo': 'embedding', 'alinhado': False,
-                              'erro': f'tipos não comparáveis true:{type(v_true)} vs pred:{type(v_pred)}'
-                          }
-                          # hash do embedding
-                          pred_node[key] = entry['pred']
-                          true_node[key] = entry['true']
-                          log.append(entry)
 
                     # STRING vs STRING
                     elif isinstance(v_pred, str) and isinstance(v_true, str):
                         tipo, sim = _sim_texto(v_pred, v_true, key)
-                        entry = {
-                            'chave': full_path, 'pred': v_pred,
+                        entry = {'chave':key,
+                            'path': full_path, 'pred': v_pred,
                             'true': v_true, 'sim': sim, 'tipo': tipo
                         }
                         if sim >= th:
@@ -536,8 +527,8 @@ class JsonAnalise:
                             if best_j is not None:
                                 used_true.add(best_j)
                             true_val = v_true[best_j] if best_j is not None else ''
-                            entry = {
-                                'chave': f"{full_path}[{i}]", 'pred': item_pred,
+                            entry = {'chave':key,
+                                'path': f"{full_path}[{i}]", 'pred': item_pred,
                                 'true': true_val, 'sim': best_sim, 'tipo': tipo
                             }
                             if best_sim >= th:
@@ -603,7 +594,7 @@ class JsonAnalise:
             config['campos_embedding'] = ['vetor','vetores']
             config['campos_lista'] = ['vetor','vetores']
             config['campos_rouge'] = ['frase']
-            
+
         elif exemplo == 4:
             true_json = {"frase": "Essa é uma frase qualquer", "valor": 1}
             pred_json = {"frase": "Essa é uma outra frase qualquer", "valor": 1}
@@ -613,16 +604,15 @@ class JsonAnalise:
             true_json = {"dados": ["C", "B", "A"], "nome": "Luiz Anísio", 'interno': {'outra_chave': [4,2]}, 'vetor': [0.93,0.34,0.853,0.234], 'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]]}
             pred_json = {"dados": ["C", "B", "A"], "nome": "Luiz Anisio", 'interno': {'outra_chave': [2,4]}, 'vetor': [0.95,0.34,0.853,0.234], 'vetores': [[0.94,0.74,0.853,0.7], [0.15,0.33,0.853,0.234]]}
 
-            config={'campos_lista': [], 
-                    'campos_embedding': ['vetor','vetores'],
-                    'campos_alinhar' : {'vetor': 0.9,'vetores': 0.9, 'nome': 0.9, 'outra': 0.9}}
+            config={'campos_lista': [],
+                    'campos_embedding': ['vetor','vetores']}
         else:
             # exemplo com chaves faltantes
             true_json = {'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]], 'numero': 1, 'string': 'a', 'vetor_true': [0.14,0.34,0.853,0.234] }
             pred_json = {'vetor_pred': [0.14,0.34,0.853,0.234], 'float': 0.57, 'dados': [2,5,8]}
             config={'campos_embedding': ['vetor_pred','vetor_true','vetores']}
 
-            
+
         print(f'ALINHANDO DICIONÁRIOS PELA SIMILARIDADE EXEMPLO {exemplo}:')
         r = cls.comparar(pred_json=pred_json, true_json=true_json, config=config, retornar_dados=True)
         print(json.dumps(r, indent=2, ensure_ascii=False))
