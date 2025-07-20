@@ -413,7 +413,7 @@ class JsonAnalise:
                     # corrige chaves faltantes
                     if (key not in true_node):
                         #continue
-                        true_node[key] = f'Não existe em true [{full_path}]'
+                        true_node[key] = f'Não existe em true'
                     
                     # inicia a análise do par de chaves
                     v_pred = pred_node[key]
@@ -618,9 +618,9 @@ class JsonAnalise:
                     'campos_alinhar' : {'vetor': 0.9,'vetores': 0.9, 'nome': 0.9, 'outra': 0.9}}
         else:
             # exemplo com chaves faltantes
-            true_json = {'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]], 'numero': 1, 'string': 'a'}  
-            pred_json = {'vetor': [0.14,0.34,0.853,0.234], 'float': 0.57, 'dados': [2,5,8]}
-            config={'campos_embedding': ['vetor','vetores']}
+            true_json = {'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]], 'numero': 1, 'string': 'a', 'vetor_true': [0.14,0.34,0.853,0.234] }
+            pred_json = {'vetor_pred': [0.14,0.34,0.853,0.234], 'float': 0.57, 'dados': [2,5,8]}
+            config={'campos_embedding': ['vetor_pred','vetor_true','vetores']}
 
             
         print(f'ALINHANDO DICIONÁRIOS PELA SIMILARIDADE EXEMPLO {exemplo}:')
