@@ -35,11 +35,12 @@ class JsonAnalise:
     ''' CONFIG para as chamadas que possuem o parâmetro "config" avaliados de acordo com cada função: 
         - campos_alinhar = campos que serão comparados com um threshold para igualar valores antes de calcular o F1
         - campos_embedding = campos que possuem uma lista de floats do embedding e serão comparados pela similaridade no alinhamento
-                             - só funciona em conjunto com o alinhamento
+                             - só funciona em conjunto com o alinhamento e se não estiver na lista de alinhamento, é incluído com threshold padrão
         - campos_lista = campos que serão tratados como lista, ou seja, seu conteúdo não será analisado recursivamente
                          - listas de listas são flats das listas internas (máximo lista de lista - 2 níveis)
                          - muda a forma como os itens serão criados para cálculo do f1 e do loss pois a lista inteira será comparada como um único item
-        - padronizar_simbolos = True/False - padrão True - símbolos como aspas especiais, simples ou duplas
+                         - se o campo for embeddig, já vira um hash depois da análise da similaridade e não é mais considerado lista
+        - padronizar_simbolos = True/False - padrão True - símbolos como aspas especiais, simples ou duplas e lowercase
         config = dicionário de configuração da comparação
                 {'campos_embedding': [... nomes dos campos que devem ser comparados como embedding - lista de floats/ints ],
                  'campos_alinhar': {'campo1': threshold1, 'campo2': threshold2, ...},
@@ -52,6 +53,7 @@ class JsonAnalise:
     '''  
     RE_UNE_ESPACO = re.compile(r"\s+")
     RE_UNE_ENTER = re.compile(r"\n+")
+    THRESHOLD_PADRAO = 0.95
 
     @classmethod
     def padronizar_simbolos(cls, texto: Union[str, dict]) -> str:
@@ -62,7 +64,7 @@ class JsonAnalise:
         saida = cls.RE_UNE_ESPACO.sub(' ', saida)
         # Corrige aspas especiais
         saida = saida.replace("“", '"').replace("”", '"').replace("'", '"')
-        return saida
+        return saida.lower()
 
     @classmethod
     def verifica_versao(cls):
@@ -165,7 +167,7 @@ class JsonAnalise:
             texto1 = cls.padronizar_simbolos(texto1)
             texto2 = cls.padronizar_simbolos(texto2)
         # usa Levenshtein.distance do pacote python-Levenshtein
-        return Levenshtein.distance(texto1, texto2)
+        return 1-Levenshtein.ratio(texto1, texto2)
 
     @classmethod
     def distancia_jaccard(cls, lista_a: list, lista_b: list,
@@ -213,17 +215,38 @@ class JsonAnalise:
 
 
     @classmethod
+    def print_analise_config(cls, config):
+        ''' Print do config ajustado para debug'''
+        print(f'CONFIG: {json.dumps(cls.__ajustar_config(config), indent=2, ensure_ascii=False)}')
+
+    @classmethod
     def __ajustar_config(cls,config:dict):
         if config.get('~cópia-validada~'):
            # evita validar várias vezes ao passar de uma função para outra
            return config
         config = {} if config is None else deepcopy(config)
-        config['campos_alinhar'] = config['campos_alinhar'] if isinstance(config.get('campos_alinhar'), dict) else {}
+        # threshold padrão
+        if (not isinstance(config.get('threshold'), float)):
+           config['threshold'] = cls.THRESHOLD_PADRAO
+        # padronização do texto
         config['padronizar_simbolos'] = config['padronizar_simbolos'] if isinstance(config.get('padronizar_simbolos'), bool) else True
+        # configurações rouge
         config['rouge_stemmer'] = config['rouge_stemmer'] if isinstance(config.get('rouge_stemmer'), bool) else True
         config['campos_rouge'] = config['campos_rouge'] if isinstance(config.get('campos_rouge'), (set, tuple, list)) else []
+        if 'campos_rouge_1' in config:
+            config['campos_rouge1'] = config.pop('campos_rouge_1')
+        if 'campos_rouge_2' in config:
+            config['campos_rouge2'] = config.pop('campos_rouge_2')
         config['campos_rouge1'] = config['campos_rouge1'] if isinstance(config.get('campos_rouge1'), (set, tuple, list)) else []
         config['campos_rouge2'] = config['campos_rouge2'] if isinstance(config.get('campos_rouge2'), (set, tuple, list)) else []
+        # campos de alinhamento, se for lista, usa threshold padrão
+        if isinstance(config.get('campos_alinhar'), dict):
+           pass 
+        elif isinstance(config.get('campos_alinhar'), (list, tuple, set)):
+             config['campos_alinhar'] = {c: config['threshold'] for c in config['campos_alinhar']}
+        else:
+           config['campos_alinhar'] = dict()
+
         # lista ou listas?
         if ('campos_listas' in config) and ('campo_lista' not in config):
            config['campos_lista'] = config.pop('campos_listas')
@@ -233,6 +256,10 @@ class JsonAnalise:
            config['campos_embedding'] = config.pop('campos_embeddings')
         config['campos_embedding'] = list(config['campos_embedding']) if isinstance(config.get('campos_embedding'), (set, tuple, list)) else []   
         config['~cópia-validada~'] = True
+        # os campos de embedding devem estar nos campos de alinhamento
+        for campo in config['campos_embedding']:
+           if campo not in config['campos_alinhar']:
+              config['campos_alinhar'][campo] = config['threshold']
         return config
 
     @classmethod
@@ -246,7 +273,7 @@ class JsonAnalise:
         return scores[tipo][2] # precision, recall e  >> 2 = F1
 
     @classmethod
-    def comparar(cls, pred_json: dict, true_json: dict, retornar_dados: bool = False, id_origem = None, config: dict = None) -> dict:
+    def comparar(cls, pred_json: dict, true_json: dict, retornar_dados: bool = False, id_origem = None, config: dict|None = None) -> dict:
         ''' retornar_dados = True >> retorna a lista true/pred ("key:value") usada para calcular o F1, 
                                      uma chave "alinhamento" para análise dos campos comparados pela similaridade,
                                      dados de comparação entre as chaves e valores.
@@ -259,6 +286,8 @@ class JsonAnalise:
            alinhamento = cls.alinhar_similares(pred_json, true_json, config= config)
 
         # 1) Flatten para listas de strings
+        # os alinhados serão considerados igruais 
+        # os não alinhados serão considerados diferentes, ignorando a similaridade
         pred_strs = cls.json_to_flat(pred_json, config= config, ignorar_alinhados = False)
         true_strs = cls.json_to_flat(true_json, config= config, ignorar_alinhados = False)
 
@@ -277,15 +306,24 @@ class JsonAnalise:
         res = {"precision": precision,
                "recall": recall,
                "f1": f1  }
-        # loss
+        
+        # loss - considera sempre a similaridade
+        # desconsiderando o alinhamento que tornou os dados iguais para o cálculo do F1, Precision e Recall
         outras = []
         if any(alinhamento):
+           # campos com alinhamento, usa as similaridades
+           # campos sem alinhamento, ou é igual ou é diferente
            pred_loss = cls.json_to_flat(pred_json, config= config, ignorar_alinhados = True)
            true_loss = cls.json_to_flat(true_json, config= config, ignorar_alinhados = True)
            outras = [1-al['sim'] for al in alinhamento]
-        loss = cls.distancia_jaccard(pred_loss, true_loss, outras, as_dict = True)
-        res['loss'] = loss['distancia']
-        res['loss_args'] = {'pred': pred_loss, 'true': true_loss, 'distancias': loss['distancias']}
+           loss = cls.distancia_jaccard(pred_loss, true_loss, outras, as_dict = True)
+           res['loss'] = loss['distancia']
+           res['loss_args'] = {'pred': pred_loss, 'true': true_loss, 'distancias': loss['distancias']}
+        else:
+           # somente campos sem alinhamento, ou é igual ou é diferente
+           loss = cls.distancia_jaccard(pred_strs, true_strs, as_dict = True)
+           res['loss'] = loss['distancia']
+           res['loss_args'] = {'pred': pred_strs, 'true': true_strs, 'distancias': loss['distancias']}
 
         # finalizando
         if not (id_origem is None):
@@ -317,7 +355,7 @@ class JsonAnalise:
         """
         ATENÇÃO: altera os dicionários enviados
         Alinha valores de pred_json aos de true_json quando similaridade ≥ thresholds[chave].
-        - config['campos_embedding'] = [campo1, campo2, ...] converte a lista de floats/int para um hash para permitir a comparação e calcular f1, precision e recall.
+        - config['campos_embedding'] = [campo1, campo2, ...] calcula a similaridade e converte a lista de floats/int para um hash para permitir a comparação ao calcular f1, precision e recall.
         - config['campos_alinhar'] = {'nome_da_chave': float_threshold, ...}
         Retorna um log de todas as comparações feitas e se houve alinhamento.
         """
@@ -331,6 +369,13 @@ class JsonAnalise:
            return []
         log: List[dict] = []
 
+        def _eh_lista_emb(lista1:list, lista2:list):
+            # verifica se a comparação deve ser lista de emb com lista de emb
+            # a lista 1 é quem define a verdade
+            if not isinstance(lista1, list):
+                return False # é emb emb mesmo que seja zero a sim
+            return all(isinstance(_, list) for _ in lista1)
+
         def _sim_texto(texto1, texto2, campo):
             if campo in campos_rouge:
                return 'Rouge-L', cls.rouge_scorer(texto1, texto2, config)
@@ -338,123 +383,171 @@ class JsonAnalise:
                return 'Rouge-1', cls.rouge_scorer(texto1, texto2, config)
             if campo in campos_rouge2:
                return 'Rouge-1', cls.rouge_scorer(texto1, texto2, config)
-            return 'Levenshtein', cls.distancia_levenshtein(texto1, texto2, padronizar_simbolos=config['padronizar_simbolos'])
+            return 'Levenshtein', 1-cls.distancia_levenshtein(texto1, texto2, padronizar_simbolos=config['padronizar_simbolos'])
+
+        def _corrige_pred(pred_node: Any, true_node: Any):  
+            ''' cria chaves faltantes em pred '''
+            if isinstance(pred_node, dict) and isinstance(true_node, dict):
+               for key in true_node:
+                   # compara os campos para alinhamento
+                   th = thresholds.get(key, None)
+                   if th is None: # não é para alinhar
+                      continue
+                   if (key not in pred_node):
+                      if isinstance(true_node[key], dict):
+                         pred_node[key] = dict()
+                      if isinstance(true_node[key], (list, tuple)):
+                         pred_node[key] = [f'Não existe em pred' for _ in true_node[key]]
+                      else:
+                         pred_node[key] = f'Não existe em pred'
+                   _corrige_pred(true_node[key], pred_node[key])
 
         def _recurse(pred_node: Any, true_node: Any, path: str):
             if isinstance(pred_node, dict) and isinstance(true_node, dict):
                 for key in pred_node:
-                    if key not in true_node:
-                        continue
-                    full_path = f"{path}.{key}" if path else key
+                    # compara os campos para alinhamento
                     th = thresholds.get(key, None)
+                    if th is None:
+                       continue
+                    full_path = f"{path}.{key}" if path else key
+                    # corrige chaves faltantes
+                    if (key not in true_node):
+                        #continue
+                        true_node[key] = f'Não existe em true [{full_path}]'
+                    
+                    # inicia a análise do par de chaves
+                    v_pred = pred_node[key]
+                    v_true = true_node[key]
 
-                    if th is not None:
-                        v_pred = pred_node[key]
-                        v_true = true_node[key]
+                    # VETOR ÚNICO DE FLOATS vs FLOATS (embedding único)
+                    if key in campos_embedding and\
+                       not _eh_lista_emb(v_true, v_pred):
+                          sim = 0.0 # se não forem embeddings
+                          erro = None
+                          try:
+                              a = np.array(v_pred, dtype=float)
+                              b = np.array(v_true, dtype=float)
+                              denom = np.linalg.norm(a) * np.linalg.norm(b)
+                              sim = float(a.dot(b) / denom) if denom > 0 else 0.0
+                          except Exception as e:
+                                  if isinstance(e,(ValueError, TypeError)):
+                                    erro = str(e)
+                                    pass # considera diferente
+                          entry = {
+                              'chave': full_path, 'pred': 'vet:'+cls.hash_string_sha1(v_pred),
+                              'true': 'vet:'+cls.hash_string_sha1(v_true), 'sim': sim, 'tipo': 'embedding'
+                          }
+                          if sim >= th:
+                              pred_node[key] = v_true.copy()
+                              entry['pred'] = entry['true']
+                              entry['alinhado'] = True
+                          else:
+                              entry['alinhado'] = False
+                          if erro:
+                              entry['erro'] = erro
+                          # hash do embedding
+                          pred_node[key] = 'vet:'+cls.hash_string_sha1(pred_node[key])
+                          true_node[key] = 'vet:'+cls.hash_string_sha1(true_node[key])
+                          log.append(entry)
 
-                        # 1) STRING vs STRING
-                        if isinstance(v_pred, str) and isinstance(v_true, str):
-                            tipo, sim = _sim_texto(v_pred, v_true, key)
+                    # LISTA DE EMBEDDINGS (listas de listas de floats)
+                    elif key in campos_embedding:
+                        used_true = set()
+                        ls_pred = v_pred if isinstance(v_pred, (list, tuple)) else []
+                        ls_true = v_true if isinstance(v_true, (list, tuple)) else []
+                        for i, emb_pred in enumerate(ls_pred):
+                            best_j, best_sim = None, -1.0
+                            erro = None
+                            try:
+                              a = np.array(emb_pred, dtype=float)
+                              for j, emb_true in enumerate(ls_true):
+                                  if j in used_true:
+                                      continue
+                                  b = np.array(emb_true, dtype=float)
+                                  denom = np.linalg.norm(a) * np.linalg.norm(b)
+                                  sim = float(a.dot(b) / denom) if denom > 0 else 0.0
+                                  if sim > best_sim:
+                                      best_sim, best_j = sim, j
+                            except Exception as e:
+                                  if isinstance(e,(ValueError, TypeError)):
+                                    erro = str(e)
+                                    pass # considera diferente
+
+                            if best_j is not None:
+                                used_true.add(best_j)
+                            true_emb = ls_true[best_j] if best_j is not None else []
                             entry = {
-                                'chave': full_path, 'pred': v_pred,
-                                'true': v_true, 'sim': sim, 'tipo': tipo
+                                'chave': f"{full_path}[{i}]", 'pred': 'vet:'+cls.hash_string_sha1(emb_pred),
+                                'true': 'vet:'+cls.hash_string_sha1(true_emb), 'sim': max(0, best_sim), 'tipo': 'embedding'
                             }
-                            if sim >= th:
-                                pred_node[key] = v_true
-                                entry['alinhado'] = True
-                            else:
-                                entry['alinhado'] = False
-                            log.append(entry)
-
-                        # 2) VETOR ÚNICO DE FLOATS vs FLOATS (embedding único)
-                        elif  key in campos_embedding and \
-                              (isinstance(v_pred, list) and isinstance(v_true, list)
-                              and all(isinstance(x, (int, float)) for x in v_pred)
-                              and all(isinstance(x, (int, float)) for x in v_true)):
-                            a = np.array(v_pred, dtype=float)
-                            b = np.array(v_true, dtype=float)
-                            denom = np.linalg.norm(a) * np.linalg.norm(b)
-                            sim = float(a.dot(b) / denom) if denom > 0 else 0.0
-                            entry = {
-                                'chave': full_path, 'pred': 'vet:'+cls.hash_string_sha1(v_pred),
-                                'true': 'vet:'+cls.hash_string_sha1(v_true), 'sim': sim, 'tipo': 'embedding'
-                            }
-                            if sim >= th:
-                                pred_node[key] = v_true.copy()
+                            if best_sim >= th:
+                                ls_pred[i] = true_emb.copy()
                                 entry['pred'] = entry['true']
                                 entry['alinhado'] = True
                             else:
                                 entry['alinhado'] = False
-                            # hash do embedding
-                            pred_node[key] = 'vet:'+cls.hash_string_sha1(pred_node[key])
-                            true_node[key] = 'vet:'+cls.hash_string_sha1(true_node[key])
+                            if erro:
+                                entry['erro'] = erro
                             log.append(entry)
+                        # hash dos embeddings
+                        pred_node[key] = ['vet:'+cls.hash_string_sha1(_) for _ in v_pred]
+                        true_node[key] = ['vet:'+cls.hash_string_sha1(_) for _ in true_node[key]]
+                        #pred_node[key] = v_pred
+                    elif  key in campos_embedding:
+                          entry = {
+                              'chave': full_path, 
+                              'pred': 'erro_pred:'+str(v_pred)[:30]+'...',
+                              'true': 'erro_true:'+str(v_true)[:30]+'...',
+                              'tipo': 'embedding', 'alinhado': False,
+                              'erro': f'tipos não comparáveis true:{type(v_true)} vs pred:{type(v_pred)}'
+                          }
+                          # hash do embedding
+                          pred_node[key] = entry['pred']
+                          true_node[key] = entry['true']
+                          log.append(entry)
 
-                        # 3) LISTA DE STRINGS
-                        elif (isinstance(v_pred, list) and isinstance(v_true, list)
-                              and all(isinstance(x, str) for x in v_pred)
-                              and all(isinstance(x, str) for x in v_true)):
-                            used_true = set()
-                            for i, item_pred in enumerate(v_pred):
-                                best_j, best_sim = None, -1.0
-                                for j, item_true in enumerate(v_true):
-                                    if j in used_true:
-                                        continue
-                                    tipo, r = _sim_texto(item_pred, item_true, key)
-                                    if r > best_sim:
-                                        best_sim, best_j = r, j
-                                if best_j is not None:
-                                    used_true.add(best_j)
-                                true_val = v_true[best_j] if best_j is not None else ''
-                                entry = {
-                                    'chave': f"{full_path}[{i}]", 'pred': item_pred,
-                                    'true': true_val, 'sim': best_sim, 'tipo': tipo
-                                }
-                                if best_sim >= th:
-                                    v_pred[i] = true_val
-                                    entry['alinhado'] = True
-                                else:
-                                    entry['alinhado'] = False
-                                log.append(entry)
-                            pred_node[key] = v_pred
+                    # STRING vs STRING
+                    elif isinstance(v_pred, str) and isinstance(v_true, str):
+                        tipo, sim = _sim_texto(v_pred, v_true, key)
+                        entry = {
+                            'chave': full_path, 'pred': v_pred,
+                            'true': v_true, 'sim': sim, 'tipo': tipo
+                        }
+                        if sim >= th:
+                            pred_node[key] = v_true
+                            entry['alinhado'] = True
+                        else:
+                            entry['alinhado'] = False
+                        log.append(entry)
 
-                        # 4) LISTA DE EMBEDDINGS (listas de listas de floats)
-                        elif key in campos_embedding and \
-                              (isinstance(v_pred, list) and isinstance(v_true, list)
-                              and all(isinstance(item, list) and all(isinstance(x, (int, float)) for x in item)
-                                      for item in v_pred)
-                              and all(isinstance(item, list) and all(isinstance(x, (int, float)) for x in item)
-                                      for item in v_true)):
-                            used_true = set()
-                            for i, emb_pred in enumerate(v_pred):
-                                a = np.array(emb_pred, dtype=float)
-                                best_j, best_sim = None, -1.0
-                                for j, emb_true in enumerate(v_true):
-                                    if j in used_true:
-                                        continue
-                                    b = np.array(emb_true, dtype=float)
-                                    denom = np.linalg.norm(a) * np.linalg.norm(b)
-                                    sim = float(a.dot(b) / denom) if denom > 0 else 0.0
-                                    if sim > best_sim:
-                                        best_sim, best_j = sim, j
-                                if best_j is not None:
-                                    used_true.add(best_j)
-                                true_emb = v_true[best_j] if best_j is not None else []
-                                entry = {
-                                    'chave': f"{full_path}[{i}]", 'pred': 'vet:'+cls.hash_string_sha1(emb_pred),
-                                    'true': 'vet:'+cls.hash_string_sha1(true_emb), 'sim': best_sim, 'tipo': 'embedding'
-                                }
-                                if best_sim >= th:
-                                    v_pred[i] = true_emb.copy()
-                                    entry['pred'] = entry['true']
-                                    entry['alinhado'] = True
-                                else:
-                                    entry['alinhado'] = False
-                                log.append(entry)
-                            # hash dos embeddings
-                            pred_node[key] = ['vet:'+cls.hash_string_sha1(_) for _ in v_pred]
-                            true_node[key] = ['vet:'+cls.hash_string_sha1(_) for _ in true_node[key]]
-                            #pred_node[key] = v_pred
+                    # LISTA DE STRINGS
+                    elif (isinstance(v_pred, list) and isinstance(v_true, list)
+                          and all(isinstance(x, str) for x in v_pred)
+                          and all(isinstance(x, str) for x in v_true)):
+                        used_true = set()
+                        for i, item_pred in enumerate(v_pred):
+                            best_j, best_sim = None, -1.0
+                            for j, item_true in enumerate(v_true):
+                                if j in used_true:
+                                    continue
+                                tipo, r = _sim_texto(item_pred, item_true, key)
+                                if r > best_sim:
+                                    best_sim, best_j = r, j
+                            if best_j is not None:
+                                used_true.add(best_j)
+                            true_val = v_true[best_j] if best_j is not None else ''
+                            entry = {
+                                'chave': f"{full_path}[{i}]", 'pred': item_pred,
+                                'true': true_val, 'sim': best_sim, 'tipo': tipo
+                            }
+                            if best_sim >= th:
+                                v_pred[i] = true_val
+                                entry['alinhado'] = True
+                            else:
+                                entry['alinhado'] = False
+                            log.append(entry)
+                        pred_node[key] = v_pred
+
 
                     # Continua recursão dentro de estruturas aninhadas
                     _recurse(pred_node[key], true_node[key], full_path)
@@ -472,7 +565,11 @@ class JsonAnalise:
             else:
                 return
 
+        # cria chaves em pred se não existirem
+        _corrige_pred(pred_json, true_json)
+        # analisa as chaves para alinhamento
         _recurse(pred_json, true_json, "")
+        # retorna
         return log
 
     @classmethod
@@ -511,13 +608,19 @@ class JsonAnalise:
             true_json = {"frase": "Essa é uma frase qualquer", "valor": 1}
             pred_json = {"frase": "Essa é uma outra frase qualquer", "valor": 1}
             config['campos_alinhar'] = {'frase':0.91}
-        else:
+
+        elif exemplo == 5:
             true_json = {"dados": ["C", "B", "A"], "nome": "Luiz Anísio", 'interno': {'outra_chave': [4,2]}, 'vetor': [0.93,0.34,0.853,0.234], 'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]]}
             pred_json = {"dados": ["C", "B", "A"], "nome": "Luiz Anisio", 'interno': {'outra_chave': [2,4]}, 'vetor': [0.95,0.34,0.853,0.234], 'vetores': [[0.94,0.74,0.853,0.7], [0.15,0.33,0.853,0.234]]}
 
             config={'campos_lista': [], 
                     'campos_embedding': ['vetor','vetores'],
-                    'campos_alinhar' : {'vetor': 0.9,'vetores': 0.9, 'nome': 0.9}}
+                    'campos_alinhar' : {'vetor': 0.9,'vetores': 0.9, 'nome': 0.9, 'outra': 0.9}}
+        else:
+            # exemplo com chaves faltantes
+            true_json = {'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]], 'numero': 1, 'string': 'a'}  
+            pred_json = {'vetor': [0.14,0.34,0.853,0.234], 'float': 0.57, 'dados': [2,5,8]}
+            config={'campos_embedding': ['vetor','vetores']}
 
             
         print(f'ALINHANDO DICIONÁRIOS PELA SIMILARIDADE EXEMPLO {exemplo}:')
