@@ -547,10 +547,12 @@ class JsonAnalise:
                 max_len = max(len(lst_pred), len(true_node))
                 #print(f'Avaliando lista: {path} {type(true_node)} {type(pred_node)}')
                 for i in range(max_len):
-                    ip = lst_pred[i] if i < len(lst_pred) else {} 
+                    ip = lst_pred[i] if i < len(lst_pred) else {}
                     it = true_node[i] if i < len(true_node) else {}
                     sub_path = f"{path}[{i}]"
                     #print(f'Avaliando lista: {sub_path} {type(ip)} {type(it)}')
+                    ip = ip if isinstance(ip, dict) else {'~vl~': ip}
+                    it = it if isinstance(it, dict) else {'~vl~': it}
                     _recurse(ip, it, sub_path)
 
             # caso contrário (primitivos), nada a fazer
