@@ -221,7 +221,7 @@ class JsonAnalise:
 
     @classmethod
     def __ajustar_config(cls,config:dict):
-        if config.get('~cópia-validada~'):
+        if (config is not None) and config.get('~cópia-validada~'):
            # evita validar várias vezes ao passar de uma função para outra
            return config
         config = {} if config is None else deepcopy(config)
@@ -376,8 +376,8 @@ class JsonAnalise:
             # verifica se a comparação deve ser lista de emb com lista de emb
             # a lista 1 é quem define a verdade
             if not isinstance(lista1, list):
-                return False # é emb emb mesmo que seja zero a sim
-            return all(isinstance(_, list) for _ in lista1)
+                return False # não é lista - já sai
+            return all(isinstance(_, list) for _ in lista1) # é lista de listas
 
         def _sim_texto(texto1, texto2, campo):
             if campo in campos_rouge:
@@ -388,42 +388,41 @@ class JsonAnalise:
                return 'Rouge-1', cls.rouge_scorer(texto1, texto2, config)
             return 'Levenshtein', 1-cls.distancia_levenshtein(texto1, texto2, padronizar_simbolos=config['padronizar_simbolos'])
 
-        def _corrige_pred(pred_node: Any, true_node: Any):
-            ''' cria chaves faltantes em pred '''
-            if isinstance(pred_node, dict) and isinstance(true_node, dict):
-               for key in true_node:
-                   # compara os campos para alinhamento
-                   th = thresholds.get(key, None)
-                   if th is None: # não é para alinhar
-                      continue
-                   if (key not in pred_node):
-                      if isinstance(true_node[key], dict):
-                         pred_node[key] = dict()
-                      if isinstance(true_node[key], (list, tuple)):
-                         pred_node[key] = [f'Não existe em pred' for _ in true_node[key]]
-                      else:
-                         pred_node[key] = f'Não existe em pred'
-                   _corrige_pred(true_node[key], pred_node[key])
-
         def _recurse(pred_node: Any, true_node: Any, path: str):
-            if isinstance(pred_node, dict) and isinstance(true_node, dict):
-                for key in pred_node:
+            if isinstance(true_node, dict):
+                for key in true_node:
                     # compara os campos para alinhamento
                     th = thresholds.get(key, None)
                     if th is None:
+                       # se for lista, tenta recursivo pois pode conter
+                       # um dicionário com uma chave para alinhar
+                       if isinstance(true_node[key], (list, tuple)):
+                          _pn = pred_node.get(key) if isinstance(pred_node, dict) else None
+                          _recurse(true_node[key], _pn, f"{path}.{key}")
                        continue
+                    _sim_zero = False
                     full_path = f"{path}.{key}" if path else key
                     # corrige chaves faltantes
-                    if (key not in true_node):
-                        #continue
-                        true_node[key] = f'Não existe em true'
-
+                    if (not isinstance(pred_node, dict)) or (key not in pred_node):
+                        #print('Não existe em pred', key, list(pred_node.keys()))
+                        pred_node[key] = f'~Não existe em pred~'
+                        _sim_zero = True
+                    #print('analisando par', key, type(true_node[key]), type(pred_node[key]))
                     # inicia a análise do par de chaves
                     v_pred = pred_node[key]
                     v_true = true_node[key]
 
+                    if _sim_zero:
+                        entry = {'chave':key,
+                            'path': full_path, 'pred': pred_node[key],
+                            'true': '~não comparado~', 'sim': 0, 'tipo': 'órfão'
+                        }
+                        # hash do embedding
+                        pred_node[key] = 'órfão:'+cls.hash_string_sha1(pred_node[key])
+                        true_node[key] = 'órfão:'+cls.hash_string_sha1(true_node[key])
+                        log.append(entry)
                     # VETOR ÚNICO DE FLOATS vs FLOATS (embedding único)
-                    if key in campos_embedding and\
+                    elif key in campos_embedding and\
                        not _eh_lista_emb(v_true, v_pred):
                           sim = 0.0 # se não forem embeddings
                           erro = None
@@ -538,18 +537,19 @@ class JsonAnalise:
                                 entry['alinhado'] = False
                             log.append(entry)
                         pred_node[key] = v_pred
-
-
                     # Continua recursão dentro de estruturas aninhadas
                     _recurse(pred_node[key], true_node[key], full_path)
 
-            # Se ambos forem listas, percorre índice a índice para achar estruturas aninhadas
-            elif isinstance(pred_node, list) and isinstance(true_node, list):
-                max_len = max(len(pred_node), len(true_node))
+            # Se true for lista de dicts, percorre índice a índice para achar estruturas aninhadas
+            elif isinstance(true_node, list) and len(true_node)>0 and isinstance(true_node[0], dict):
+                lst_pred = list(pred_node) if isinstance(pred_node, (list, tuple)) else []
+                max_len = max(len(lst_pred), len(true_node))
+                #print(f'Avaliando lista: {path} {type(true_node)} {type(pred_node)}')
                 for i in range(max_len):
-                    ip = pred_node[i] if i < len(pred_node) else None
+                    ip = lst_pred[i] if i < len(lst_pred) else None
                     it = true_node[i] if i < len(true_node) else None
                     sub_path = f"{path}[{i}]"
+                    #print(f'Avaliando lista: {sub_path} {type(ip)} {type(it)}')
                     _recurse(ip, it, sub_path)
 
             # caso contrário (primitivos), nada a fazer
@@ -557,14 +557,34 @@ class JsonAnalise:
                 return
 
         # cria chaves em pred se não existirem
-        _corrige_pred(pred_json, true_json)
+        #_corrige_pred(pred_json, true_json)
         # analisa as chaves para alinhamento
         _recurse(pred_json, true_json, "")
         # retorna
         return log
 
     @classmethod
-    def teste_compara(cls, exemplo = 1):
+    def paths(cls, dicionario: dict, finais: list):
+        ''' retorna uma lista flat com as chaves e tipos dos valores
+            finais é uma lista de chaves que não devem ser avaliadas recursivamente
+        '''
+        res = []
+        _finais = set(finais) if isinstance(finais, (set, tuple, list)) else {}
+        def _get_path(valor: Any, path:str, chave_final = False):
+            if isinstance(valor, dict) and not chave_final:
+               for key in sorted(list(valor)):
+                   full_path = f"{path}.{key}" if path else key
+                   _get_path(valor[key], full_path, chave_final=key in _finais)
+            elif isinstance(valor, (set, list, tuple)) and not chave_final:
+                 [_get_path(_v, f'{path}[{_i}]') for _i, _v in enumerate(valor)]
+            else:
+                 _tp = str(type(valor)).replace("<class '", "").replace("'>", "")
+                 res.append(f"{path}:{_tp}")
+        _get_path(dicionario, "")
+        return res
+
+    @classmethod
+    def teste_compara(cls, exemplo = 1, retornar = False):
         #teste
         config = {}
         if exemplo in (1,2):
@@ -603,16 +623,27 @@ class JsonAnalise:
         elif exemplo == 5:
             true_json = {"dados": ["C", "B", "A"], "nome": "Luiz Anísio", 'interno': {'outra_chave': [4,2]}, 'vetor': [0.93,0.34,0.853,0.234], 'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]]}
             pred_json = {"dados": ["C", "B", "A"], "nome": "Luiz Anisio", 'interno': {'outra_chave': [2,4]}, 'vetor': [0.95,0.34,0.853,0.234], 'vetores': [[0.94,0.74,0.853,0.7], [0.15,0.33,0.853,0.234]]}
-
-            config={'campos_lista': [],
-                    'campos_embedding': ['vetor','vetores']}
+            _interno = {'Pontos': [{'Ponto': 'alinhado será', 'lista': [1,2,3]}]}
+            true_json.update(_interno)
+            pred_json.update(_interno)
+            config={'campos_lista': ['lista'],
+                    'campos_embedding': ['vetor','vetores'],
+                    'campos_alinhar': ['Ponto']}
+        elif exemplo == 6:
+            true_json = {'Pontos': [{'Ponto': 'alinhado será', 'lista': [1,2,3]}]}
+            pred_json = {'Pontos': [{'Ponto': 'alinhado foi', 'lista': [1,2,3]}]}
+            config={'campos_lista': ['lista'],
+                    'campos_embedding': ['vetor','vetores'],
+                    'campos_alinhar': ['Ponto']}
         else:
             # exemplo com chaves faltantes
             true_json = {'vetores': [[0.14,0.34,0.853,0.234], [0.94,0.74,0.853,0.7]], 'numero': 1, 'string': 'a', 'vetor_true': [0.14,0.34,0.853,0.234] }
             pred_json = {'vetor_pred': [0.14,0.34,0.853,0.234], 'float': 0.57, 'dados': [2,5,8]}
             config={'campos_embedding': ['vetor_pred','vetor_true','vetores']}
 
-
-        print(f'ALINHANDO DICIONÁRIOS PELA SIMILARIDADE EXEMPLO {exemplo}:')
+        if not retornar:
+           print(f'ALINHANDO DICIONÁRIOS PELA SIMILARIDADE EXEMPLO {exemplo}:')
         r = cls.comparar(pred_json=pred_json, true_json=true_json, config=config, retornar_dados=True)
+        if retornar:
+           return r
         print(json.dumps(r, indent=2, ensure_ascii=False))
