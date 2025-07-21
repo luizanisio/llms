@@ -397,7 +397,7 @@ class JsonAnalise:
                        # se for lista, tenta recursivo pois pode conter
                        # um dicionário com uma chave para alinhar
                        if isinstance(true_node[key], (list, tuple)):
-                          _pn = pred_node.get(key) if isinstance(pred_node, dict) else None
+                          _pn = pred_node.get(key) if isinstance(pred_node, dict) else dict()
                           _recurse(true_node[key], _pn, f"{path}.{key}")
                        continue
                     _sim_zero = False
@@ -517,6 +517,7 @@ class JsonAnalise:
                         used_true = set()
                         for i, item_pred in enumerate(v_pred):
                             best_j, best_sim = None, -1.0
+                            tipo = '-'
                             for j, item_true in enumerate(v_true):
                                 if j in used_true:
                                     continue
@@ -546,8 +547,8 @@ class JsonAnalise:
                 max_len = max(len(lst_pred), len(true_node))
                 #print(f'Avaliando lista: {path} {type(true_node)} {type(pred_node)}')
                 for i in range(max_len):
-                    ip = lst_pred[i] if i < len(lst_pred) else None
-                    it = true_node[i] if i < len(true_node) else None
+                    ip = lst_pred[i] if i < len(lst_pred) else {} 
+                    it = true_node[i] if i < len(true_node) else {}
                     sub_path = f"{path}[{i}]"
                     #print(f'Avaliando lista: {sub_path} {type(ip)} {type(it)}')
                     _recurse(ip, it, sub_path)
