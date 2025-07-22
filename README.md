@@ -65,12 +65,12 @@ JsonAnalise.teste_compara(exemplo=3)
 ```
 
 ## Classe PromptGemma3
-Para importar as classes Util e UtilAnalise:
+Para importar as classes PromptGemma3:
 ```python
 #@title Importando classes do git
 import get_git
 Util = get_git.sync_git_prompt()
-PromptGemma3 = get_git.sync_git_json_analise()
+PromptGemma3 = get_git.sync_git_prompt()
 ```
 
 ```python
