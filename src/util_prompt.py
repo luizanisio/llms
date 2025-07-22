@@ -122,10 +122,10 @@ class PromptGemma3:
       r = self.prompt_to_json(_prompt_teste)
       print(json.dumps(r, indent=2, ensure_ascii=False))
 
-  def verifica_versao(self):
+  @classmethod
+  def verifica_versao(cls):
       print('============================================')
-      print('Modelo:', self.modelo)
-      print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.52.4
+      print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.53.x
       print('Tourch:', torch.__version__)
       print('============================================')
 
