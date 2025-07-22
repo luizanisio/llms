@@ -5,9 +5,10 @@ try:
   import torch
   import transformers
 except ImportError as e:
-  print(f''' OCORREU UM ERRO DE IMPORT: {e}
+  print(f'''\n\nOCORREU UM ERRO DE IMPORT: {e}
 ###########################################  
 # DICA DE PREPARAÇÃO DO AMBIENTE NO COLAB
+# * copie e rode no início do notebook
 ###########################################  
 arq1 = '/content/pip_unsloth_ok.txt'
 arq2 = '/content/pip_transformers_ok.txt'
@@ -45,7 +46,7 @@ MODELO_GEMMA3_4b = 'google/gemma-3-4b-it'   # 9Gb disco
 MODELO_GEMMA3_12b = 'google/gemma-3-12b-it' # 25Gb disco
 MODELO_GEMMA3_27b = 'google/gemma-3-27b-it' # 
 
-class PromptGemma:
+class PromptGemma3:
   START_T = '<start_of_turn>model'
   END_T = '<end_of_turn>'
 
