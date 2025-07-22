@@ -117,7 +117,7 @@ class PromptGemma3:
       return res
 
   def exemplo(self):
-      _prompt_teste = '''Retorne um json válido com a estrutrua {"mensagem": com a mensagem do usuário, "itens": com uma lista de itens quando ele enumerar algo }\n'
+      _prompt_teste = '''Retorne um json válido com a estrutrua {"mensagem": com a mensagem do usuário, "itens": com uma lista de itens quando ele enumerar algo }
                          Mensagem do usuário: Eu preciso comprar abacaxi, pera e 2L de leite.'''
       r = self.prompt_to_json(_prompt_teste)
       print(json.dumps(r, indent=2, ensure_ascii=False))
