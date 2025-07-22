@@ -3,13 +3,16 @@
 """
  Utilitário criado por Luiz Anísio 05/2025 – v0.1.1
     - 07/2025 – v0.2.0 - JsonAnalise
+    - 07/2025 – v0.3.0 - PromptGemma3
  --------------------------------------------------
  Exemplo de uso no Jupyter/Colab (estando em qualquer subpasta):
  >>> import get_git
  >>> Util = get_git.sync_git_util()
  >>> JsonAnalise = get_git.sync_git_json_analise()
+ >>> PromptGemma3 = get_git.sync_git_prompt()
  >>> Util.flatten_listas([1, 2, [3, 4]])
  >>> JsonAnalise.teste_compara(3)
+ >>> PromptGemma3.versao()  # pr = PromptGemma3() \n pr.prompt('Quanto é 2x5?')
 
  Para escolher a pasta:
  >>> Util = get_git.sync_git_util(dest_root="../")  # copia repo para ../src
@@ -106,5 +109,15 @@ def sync_git_json_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> 
     util_module.JsonAnalise.verifica_versao()
     return util_module.JsonAnalise
 
+def sync_git_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "PromptGemma3":
+    """ PromptGemma3 = get_git.sync_git_prompt()
+    """
+    local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
+
+    # importa o modulo src.util_prompt
+    util_module = _import_or_reload("src.util_prompt")
+    print(f"[OK] PromptGemma3 carregado de {local_dir}")
+    util_module.PromptGemma3.verifica_versao()
+    return util_module.PromptGemma3
         
         
