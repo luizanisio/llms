@@ -36,6 +36,8 @@ class JsonAnalise:
         - campos_alinhar = campos que serão comparados com um threshold para igualar valores antes de calcular o F1
         - campos_embedding = campos que possuem uma lista de floats do embedding e serão comparados pela similaridade no alinhamento
                              - só funciona em conjunto com o alinhamento e se não estiver na lista de alinhamento, é incluído com threshold padrão
+        - campos_rouge? = campos que serão comparados com ROUGE-L, ROUGE-1 ou ROUGE-2 no alinhamento
+                             - só funciona em conjunto com o alinhamento e se não estiver na lista de alinhamento, é incluído com threshold padrão
         - campos_lista = campos que serão tratados como lista, ou seja, seu conteúdo não será analisado recursivamente
                          - listas de listas são flats das listas internas (máximo lista de lista - 2 níveis)
                          - muda a forma como os itens serão criados para cálculo do f1 e do loss pois a lista inteira será comparada como um único item
@@ -256,8 +258,9 @@ class JsonAnalise:
            config['campos_embedding'] = config.pop('campos_embeddings')
         config['campos_embedding'] = list(config['campos_embedding']) if isinstance(config.get('campos_embedding'), (set, tuple, list)) else []
         config['~cópia-validada~'] = True
-        # os campos de embedding devem estar nos campos de alinhamento
-        for campo in config['campos_embedding']:
+        # os campos de embedding e rouge devem estar nos campos de alinhamento
+        campos_alinhamento_auto = config['campos_embedding'] + config['campos_rouge'] + config['campos_rouge1'] + config['campos_rouge2']
+        for campo in campos_alinhamento_auto:
            if campo not in config['campos_alinhar']:
               config['campos_alinhar'][campo] = config['threshold']
         return config
@@ -529,7 +532,7 @@ class JsonAnalise:
                             true_val = v_true[best_j] if best_j is not None else ''
                             entry = {'chave':key,
                                 'path': f"{full_path}[{i}]", 'pred': item_pred,
-                                'true': true_val, 'sim': best_sim, 'tipo': tipo
+                                'true': true_val, 'sim': max(0,best_sim), 'tipo': tipo
                             }
                             if best_sim >= th:
                                 v_pred[i] = true_val
