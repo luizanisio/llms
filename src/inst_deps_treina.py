@@ -104,7 +104,7 @@ def testar_dependencias_analise()           :
     try:
         print("Verificando dependências ....")
         import Levenshtein
-        from rouge_score import rouge_scorer   !pip install python-Levenshtein
+        from rouge_score import rouge_scorer
         print("imports Levenshtein e rouge_score ok ___o/")
     except ImportError as e:
         print(f"\n\nOCORREU UM ERRO DE IMPORT: {e}")
