@@ -62,8 +62,8 @@ def inst_dependencias():
         print("Transformers já ok _o/")
 
 def testar_dependencias():
-    arq1 = "/content/pip_unsloth_ok.txt"
-    arq2 = "/content/pip_transformers_ok.txt"
+    arq1 = "pip_unsloth_ok.txt"
+    arq2 = "pip_transformers_ok.txt"
     _unsloth = "unsloth[colab-new]==2025.7.1"
     _transformers = "transformers>=4.53.0,<4.54.0"
 
@@ -100,7 +100,7 @@ def testar_dependencias():
 
 
 def testar_dependencias_analise()           :
-    arq1 = "/content/pip_analise_ok.txt"
+    arq1 = "pip_analise_ok.txt"
     _analise = "python-Levenshtein rouge-score"
     if os.path.isfile(arq1):
        print('✅ Instalação já realizada nesse ambiente _o/')
