@@ -270,7 +270,7 @@ class Gemma3Trainer:
         # grava o modelo antes do ultimo eval, pode dar erro de memória no eval    
         self._save_model(stats=stats)
         # 3) garante um eval FINAL mesmo que já tenha havido evals em steps
-        if self.eval_ds
+        if self.eval_ds:
             final_eval = self.trainer.evaluate()     # roda avaliação no eval_dataset
             stats.update(final_eval)                 # adiciona eval_loss, eval_runtime …        self._save_model(stats = stats)
         
