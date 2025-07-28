@@ -37,10 +37,6 @@ def _pip(cmd: str, msg_ok: str = "✅ Instalação concluída"):
     print('\n', msg_ok)
 
 def inst_dependencias():
-    # roda apenas no Colab
-    if not _is_colab():
-        return
-
     arq1 = "/content/pip_unsloth_ok.txt"
     arq2 = "/content/pip_transformers_ok.txt"
 
@@ -66,7 +62,32 @@ def inst_dependencias():
     else:
         print("Transformers já ok _o/")
 
-def testar_dependencias(forcar = False):
+def inst_analise():
+    arq1 = "/content/pip_analise_ok.txt"
+    if not os.path.isfile(arq1):
+        _analise = "python-Levenshtein rouge-score"
+        print(f"Instalando {_analise} ...")
+        _pip(f"install {_analise}", '✅ Levenshtein e Rouge instalados _o/')
+        import Levenshtein
+        from rouge_score import rouge_scorer
+        print(f"{_analise} OK _o/")
+        with open(arq1, "w") as f:
+            f.write(f"{_analise} instalados _o/")
+    else:
+        print(f"{_analise} já ok _o/")
+
+    if not os.path.isfile(arq2):
+        _transformers = "transformers>=4.53.0,<4.54.0"
+        print(f"Instalando {_transformers} ...")
+        _pip(f"install --upgrade --force-reinstall --no-cache-dir {_transformers}", '✅ Transformers instalado _o/')
+        import transformers
+        print("Transformers OK _o/")
+        with open(arq2, "w") as f:
+            f.write("Transformers instalado _o/")
+    else:
+        print("Transformers já ok _o/")
+
+def testar_dependencias():
     try:
         print("Verificando dependências ....")
         import unsloth
@@ -77,5 +98,15 @@ def testar_dependencias(forcar = False):
     except ImportError as e:
         print(f"\n\nOCORREU UM ERRO DE IMPORT: {e}")
         print("Tentando instalar transformers e unsloth")
-        if forcar or _is_colab():
-           inst_dependencias()
+        inst_dependencias()
+
+def testar_dependencias_analise()           :
+    try:
+        print("Verificando dependências ....")
+        import Levenshtein
+        from rouge_score import rouge_scorer   !pip install python-Levenshtein
+        print("imports Levenshtein e rouge_score ok ___o/")
+    except ImportError as e:
+        print(f"\n\nOCORREU UM ERRO DE IMPORT: {e}")
+        print("Tentando instalar Levenshtein e rouge_score")
+        inst_analise()
