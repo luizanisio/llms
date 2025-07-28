@@ -4,6 +4,7 @@
  Utilitário criado por Luiz Anísio 05/2025 – v0.1.1
     - 07/2025 – v0.2.0 - JsonAnalise
     - 07/2025 – v0.3.0 - PromptGemma3
+    - 07/2025 - v0.4.0 - Gemma3Trainer
  --------------------------------------------------
  Exemplo de uso no Jupyter/Colab (estando em qualquer subpasta):
  >>> import get_git
@@ -120,4 +121,15 @@ def sync_git_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Promp
     util_module.PromptGemma3.verifica_versao()
     return util_module.PromptGemma3
         
+def sync_git_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma3Trainer":
+    """ Gemma3Trainer = get_git.sync_git_treina()
+    """
+    local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
+
+    # importa o modulo src.util_prompt
+    util_module = _import_or_reload("src.treinar_gemma3.py")
+    print(f"[OK] Gemma3Trainer carregado de {local_dir}")
+    util_module.Gemma3Trainer.verifica_versao()
+    return util_module.Gemma3Trainer
         
+                
