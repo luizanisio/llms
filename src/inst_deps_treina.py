@@ -36,7 +36,7 @@ def _pip(cmd: str, msg_ok: str = "✅ Instalação concluída"):
 
     print('\n', msg_ok)
 
-def dependencias():
+def inst_dependencias():
     # roda apenas no Colab
     if not _is_colab():
         return
@@ -78,4 +78,4 @@ def testar_dependencias(forcar = False):
         print(f"\n\nOCORREU UM ERRO DE IMPORT: {e}")
         print("Tentando instalar transformers e unsloth")
         if forcar or _is_colab():
-           dependencias()
+           inst_dependencias()
