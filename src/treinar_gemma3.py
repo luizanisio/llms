@@ -41,6 +41,7 @@ from unsloth.chat_templates import get_chat_template, train_on_responses_only
 from trl import SFTTrainer, SFTConfig
 from transformers import TrainerCallback
 import numpy as np
+from datetime import datetime
 
 # ---------------------------------------------------------------------------
 # utilidades
@@ -115,6 +116,11 @@ class Gemma3Trainer:
         self.save_checkpoints = self.cfg.get('save_checkpoints','') in {1,'1','True',True,'true','sim','Sim','SIM'}
         self.trainer = self._build_trainer()
 
+    # ------------------------- controle no colab ------------------------------
+    @classmethod
+    def verifica_versao(cls):
+        print(f'JsonAnalise carregado corretamente em {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}!')
+        
     # ------------------------- configuração ------------------------------
     def _load_cfg(self, path: str) -> Dict[str, Any]:
         with open(path, "r", encoding="utf-8") as fp:
