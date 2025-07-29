@@ -120,14 +120,36 @@ def sync_git_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Promp
     print(f"[OK] PromptGemma3 carregado de {local_dir}")
     util_module.PromptGemma3.verifica_versao()
     return util_module.PromptGemma3
-        
+
+def deps(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
+    """ get_git.deps_treina() 
+        instala dependências unsloth e transformers
+    """
+    local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
+
+    # testa dependências do colab
+    util_deps = _import_or_reload("src.inst_deps_treina")
+    util_deps.testar_dependencias()
+    print(f"[OK] Dependências de treinamento instaladas _o/")
+
+def deps_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
+    """ get_git.deps_analise() 
+        instala dependências rouge e Levenshtein
+    """
+    local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
+
+    # testa dependências do colab
+    util_deps = _import_or_reload("src.inst_deps_treina")
+    util_deps.testar_dependencias_analise()
+    print(f"[OK] Dependências de análise instaladas _o/")
+
 def sync_git_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma3Trainer":
     """ Gemma3Trainer = get_git.sync_git_treina()
     """
     local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
 
-    # importa o modulo src.util_prompt
-    util_module = _import_or_reload("src.treinar_gemma3.py")
+    # importa o modulo src.treinar_gemma3
+    util_module = _import_or_reload("src.treinar_gemma3")
     print(f"[OK] Gemma3Trainer carregado de {local_dir}")
     util_module.Gemma3Trainer.verifica_versao()
     return util_module.Gemma3Trainer
