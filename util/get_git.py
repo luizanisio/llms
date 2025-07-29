@@ -121,7 +121,7 @@ def sync_git_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Promp
     util_module.PromptGemma3.verifica_versao()
     return util_module.PromptGemma3
 
-def deps(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
+def deps_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     """ get_git.deps_treina() 
         instala dependências unsloth e transformers
     """
@@ -131,6 +131,9 @@ def deps(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     util_deps = _import_or_reload("src.inst_deps_treina")
     util_deps.testar_dependencias()
     print(f"[OK] Dependências de treinamento instaladas _o/")
+
+def deps_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
+    return deps_treina(des_root= dest_root, *, repo_url: str = REPO_URL)
 
 def deps_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     """ get_git.deps_analise() 
@@ -142,6 +145,10 @@ def deps_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     util_deps = _import_or_reload("src.inst_deps_treina")
     util_deps.testar_dependencias_analise()
     print(f"[OK] Dependências de análise instaladas _o/")
+
+def deps(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
+    deps_analise(des_root= dest_root, *, repo_url: str = REPO_URL)
+    deps_treina(des_root= dest_root, *, repo_url: str = REPO_URL)
 
 def sync_git_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma3Trainer":
     """ Gemma3Trainer = get_git.sync_git_treina()
