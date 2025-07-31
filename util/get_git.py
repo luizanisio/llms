@@ -133,7 +133,7 @@ def deps_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     print(f"[OK] Dependências de treinamento instaladas _o/")
 
 def deps_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
-    return deps_treina(des_root= dest_root, repo_url= REPO_URL)
+    return deps_treina(dest_root= dest_root, repo_url= REPO_URL)
 
 def deps_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     """ get_git.deps_analise() 
@@ -147,8 +147,8 @@ def deps_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     print(f"[OK] Dependências de análise instaladas _o/")
 
 def deps(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
-    deps_analise(des_root= dest_root, repo_url= REPO_URL)
-    deps_treina(des_root= dest_root, repo_url= REPO_URL)
+    deps_analise(dest_root= dest_root, repo_url= REPO_URL)
+    deps_treina(dest_root= dest_root, repo_url= REPO_URL)
 
 def sync_git_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma3Trainer":
     """ Gemma3Trainer = get_git.sync_git_treina()
