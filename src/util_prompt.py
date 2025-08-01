@@ -87,7 +87,7 @@ class PromptGemma3:
                      "content": [{"type": "text", "text": prompt}]}]
 
         prompt_text = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True
+            messages, add_generation_prompt=True, tokenizer = False
         )
         inputs = self.tokenizer(prompt_text, return_tensors="pt").to(self.model.device)
         _temperatura = temperatura if isinstance(temperatura, float) else 1.0
