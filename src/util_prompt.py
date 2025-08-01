@@ -42,6 +42,7 @@ import json
 from copy import deepcopy
 from time import time
 
+MODELO_GEMMA3_1b = "google/gemma-3-1b-it"
 MODELO_GEMMA3_4b = 'google/gemma-3-4b-it'   # 9Gb disco
 MODELO_GEMMA3_12b = 'google/gemma-3-12b-it' # 25Gb disco
 MODELO_GEMMA3_27b = 'google/gemma-3-27b-it' # 
@@ -52,13 +53,15 @@ class PromptGemma3:
 
   def __init__(self, modelo = MODELO_GEMMA3_4b, max_seq_length=4096, cache_dir = None):
       # atalhos
-      if str(modelo).lower() in {'4b','12b','27b',4,12,27}:
+      if str(modelo).lower() in {'1b','4b','12b','27b','1','4','12','27'}:
          if str(modelo) in {'12','12b'}:
             modelo = MODELO_GEMMA3_12b
          elif str(modelo) in {'27','27b'}:
             modelo = MODELO_GEMMA3_27b
+         elif str(modelo) in {'4','4b'}:
+            modelo = MODELO_GEMMA3_4b
          else:
-            modelo = MODELO_GEMMA3_4b 
+            modelo = MODELO_GEMMA3_1b 
       # carregando o modelo
       self.modelo = modelo
       self.max_seq_length = max_seq_length
