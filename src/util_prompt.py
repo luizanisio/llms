@@ -162,7 +162,7 @@ class UtilLMM():
                 if (not _corrigir_json_) or 'delimiter' not in str(e):
                     raise e
                 # corrige aspas internas dentro do json
-                return Util.mensagem_to_json(mensagem = Util.escape_json_string_literals(mensagem), 
+                return cls.mensagem_to_json(mensagem = cls.escape_json_string_literals(mensagem), 
                                              padrao = padrao, 
                                              _corrigir_json_ = False)
                 
