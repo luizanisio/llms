@@ -42,7 +42,7 @@ import json
 from copy import deepcopy
 from time import time
 
-MODELO_GEMMA3_1b = "google/gemma-3-1b-it"
+MODELO_GEMMA3_1b = "google/gemma-3-1b-it"   # 1Gb disco
 MODELO_GEMMA3_4b = 'google/gemma-3-4b-it'   # 9Gb disco
 MODELO_GEMMA3_12b = 'google/gemma-3-12b-it' # 25Gb disco
 MODELO_GEMMA3_27b = 'google/gemma-3-27b-it' # 
