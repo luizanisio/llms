@@ -99,6 +99,7 @@ def testar_dependencias():
               f.write("Transformers instalado _o/")
 
         if _is_colab():
+            _limpar()
             print("🔁 Novos pacotes instalados. Reiniciando a sessão do Colab...")
             print("⚠️ Rode novamente essa célula!!!!!")
             os.kill(os.getpid(), 9)        
