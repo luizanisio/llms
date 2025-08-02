@@ -69,6 +69,12 @@ class Prompt:
           self.verifica_modelo()
           return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
 
+      @classmethod
+      def verifica_versao(cls):
+          print('============================================')
+          print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.53.x
+          print('Tourch:', torch.__version__)
+          print('============================================')
 
 class PromptGemma3:
   START_T = '<start_of_turn>model'
@@ -146,13 +152,7 @@ class PromptGemma3:
       r = self.prompt_to_json(_prompt_teste)
       print(json.dumps(r, indent=2, ensure_ascii=False))
 
-  @classmethod
-  def verifica_versao(cls):
-      print('============================================')
-      print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.53.x
-      print('Tourch:', torch.__version__)
-      print('============================================')
-
+##########################################
 class UtilLMM():
     @classmethod
     def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True ):
