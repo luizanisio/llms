@@ -110,16 +110,16 @@ def sync_git_json_analise(dest_root: str = ".", *, repo_url: str = REPO_URL) -> 
     util_module.JsonAnalise.verifica_versao()
     return util_module.JsonAnalise
 
-def sync_git_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "PromptGemma3":
-    """ PromptGemma3 = get_git.sync_git_prompt()
+def sync_git_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Prompt":
+    """ Prompt = get_git.sync_git_prompt()
     """
     local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
 
     # importa o modulo src.util_prompt
     util_module = _import_or_reload("src.util_prompt")
-    print(f"[OK] PromptGemma3 carregado de {local_dir}")
-    util_module.PromptGemma3.verifica_versao()
-    return util_module.PromptGemma3
+    print(f"[OK] Prompt carregado de {local_dir}")
+    util_module.Prompt.verifica_versao()
+    return util_module.Prompt
 
 def deps_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> None:
     """ get_git.deps_treina() 
@@ -162,3 +162,4 @@ def sync_git_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma
     return util_module.Gemma3Trainer
         
                 
+
