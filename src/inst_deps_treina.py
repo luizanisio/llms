@@ -101,7 +101,7 @@ def testar_dependencias():
         if _is_colab():
             _limpar()
             print("🔁 Novos pacotes instalados. Reiniciando a sessão do Colab...")
-            print("⚠️ Rode novamente essa célula!!!!!")
+            print("⚠️ Rode novamente essa célula!!!!!", flush=True)
             os.kill(os.getpid(), 9)        
 
 def testar_dependencias_analise()           :
