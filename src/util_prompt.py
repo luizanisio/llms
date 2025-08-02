@@ -42,26 +42,40 @@ import json
 from copy import deepcopy
 from time import time
 
-MODELO_GEMMA3_1b = "google/gemma-3-1b-it"   # 2Gb disco
-MODELO_GEMMA3_4b = 'google/gemma-3-4b-it'   # 9Gb disco
-MODELO_GEMMA3_12b = 'google/gemma-3-12b-it' # 25Gb disco
-MODELO_GEMMA3_27b = 'google/gemma-3-27b-it' # 
+MODELO_GEMMA3_1B = "google/gemma-3-1b-it"   # 2Gb disco
+MODELO_GEMMA3_4B = 'google/gemma-3-4b-it'   # 9Gb disco
+MODELO_GEMMA3_12B = 'google/gemma-3-12b-it' # 25Gb disco
+MODELO_GEMMA3_27B = 'google/gemma-3-27b-it' # 
+
+class Prompt:
+      def __init__(self, modelo = MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir = None):
+          self.__pg = None
+          self.modelo = UtilLMM.atalhos_modelos(modelo)
+          if 'gemma' in str(self.modelo).lower():
+             print(f'PromptGemma3: carregando modelo {self.modelo} ..')
+             self.__pg = PromptGemma3(modelo=self.modelo, 
+                                      max_seq_length=max_seq_length,
+                                      cache_dir=cache_dir)
+
+      def verifica_modelo(self):
+          if self.__pg is None:
+             raise ValueError(f'Não foi carregado um modelo válido! [{self.modelo}]')
+
+      def prompt(self, prompt:str, max_new_tokens = 4096, temperatura = 0.3, detalhar = False):
+          self.verifica_modelo()
+          return self.__pg.prompt(prompt, max_new_tokens, temperatura, detalhar)
+
+      def prompt_to_json(self, prompt:str, max_new_tokens = 4096, temperatura = 0):
+          self.verifica_modelo()
+          return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
+
 
 class PromptGemma3:
   START_T = '<start_of_turn>model'
   END_T = '<end_of_turn>'
 
-  def __init__(self, modelo = MODELO_GEMMA3_4b, max_seq_length=4096, cache_dir = None):
-      # atalhos
-      if str(modelo).lower() in {'1b','4b','12b','27b','1','4','12','27'}:
-         if str(modelo) in {'12','12b'}:
-            modelo = MODELO_GEMMA3_12b
-         elif str(modelo) in {'27','27b'}:
-            modelo = MODELO_GEMMA3_27b
-         elif str(modelo) in {'4','4b'}:
-            modelo = MODELO_GEMMA3_4b
-         else:
-            modelo = MODELO_GEMMA3_1b 
+  def __init__(self, modelo = MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir = None):
+      modelo = UtilLMM.atalhos_modelos(modelo)
       # carregando o modelo
       self.modelo = modelo
       self.max_seq_length = max_seq_length
@@ -221,3 +235,13 @@ class UtilLMM():
                 prev_esc = False
                 i += 1
         return ''.join(out)       
+
+    @classmethod
+    def atalhos_modelos(cls, modelo):
+        atalho_map = {
+            '1b': MODELO_GEMMA3_1B, '1': MODELO_GEMMA3_1B,
+            '4b': MODELO_GEMMA3_4B, '4': MODELO_GEMMA3_4B,
+            '12b': MODELO_GEMMA3_12B, '12': MODELO_GEMMA3_12B,
+            '27b': MODELO_GEMMA3_27B, '27': MODELO_GEMMA3_27B,
+        }
+        return atalho_map.get(str(modelo).lower().strip(), modelo)      
