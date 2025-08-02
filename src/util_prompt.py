@@ -42,7 +42,7 @@ import json
 from copy import deepcopy
 from time import time
 
-MODELO_GEMMA3_1b = "google/gemma-3-1b-it"   # 1Gb disco
+MODELO_GEMMA3_1b = "google/gemma-3-1b-it"   # 2Gb disco
 MODELO_GEMMA3_4b = 'google/gemma-3-4b-it'   # 9Gb disco
 MODELO_GEMMA3_12b = 'google/gemma-3-12b-it' # 25Gb disco
 MODELO_GEMMA3_27b = 'google/gemma-3-27b-it' # 
@@ -85,11 +85,17 @@ class PromptGemma3:
   def prompt(self, prompt:str, max_new_tokens = 4096, temperatura = 0.3, detalhar = False):
         messages = [{"role": "user",
                      "content": [{"type": "text", "text": prompt}]}]
-
-        prompt_text = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenizer = False
+        # gemma 1b tem particularidades
+        g1b = '-1b-' in self.modelo
+        inputs = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenizer = g1b
         )
-        inputs = self.tokenizer(prompt_text, return_tensors="pt").to(self.model.device)
+        if g1b: 
+           inputs = inputs.to(self.model.device)
+           inputs = {'input_ids': inputs}
+        else:
+           inputs = self.tokenizer(inputs, return_tensors="pt").to(self.model.device)
+
         _temperatura = temperatura if isinstance(temperatura, float) else 1.0
         with torch.inference_mode():
               out_ids = self.model.generate(
