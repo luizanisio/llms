@@ -88,7 +88,8 @@ class PromptGemma3:
         # gemma 1b tem particularidades
         g1b = '-1b-' in self.modelo
         inputs = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenizer = g1b
+            messages, add_generation_prompt=True, 
+            tokenizer = g1b, return_tensors="pt"
         )
         if g1b: 
            inputs = inputs.to(self.model.device)
