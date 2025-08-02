@@ -1,4 +1,5 @@
 import os, shlex, subprocess, sys
+from time import sleep
 
 def _is_colab() -> bool:
     """Detecta se o código está rodando no Google Colab."""
@@ -102,6 +103,8 @@ def testar_dependencias():
             _limpar()
             print("🔁 Novos pacotes instalados. Reiniciando a sessão do Colab...")
             print("⚠️ Rode novamente essa célula!!!!!", flush=True)
+            sleep(1)
+            print('...')
             os.kill(os.getpid(), 9)        
 
 def testar_dependencias_analise()           :
