@@ -1,8 +1,9 @@
 # LLMs 2025
 Pacotes em desenvolvimento para estudos com LLMs
 
-## Em construção 
+## Sempre evoluindo... 
 - Desenvolvimento de pacotes para predição, treinamento e avaliação de LLMs
+- Inicalmente o foco é o Gemma 3
 
 ## Treino do GEMMA 3
 - src/treinar_gemma3.py \<arquivo yaml\> \[--gpu n\]
