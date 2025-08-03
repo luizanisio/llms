@@ -51,10 +51,12 @@ class Tarefa():
       print('=========================================')
       print(f'TAREFA: {self.nome}\nDESCRIÇÃO: {self.descricao}\nOBJETIVO :{self.objetivo}')
       print('---------------------------------------')
-      if self.concluida:
+      if self.concluida and isinstance(self.solucao,str) and self.solucao:
          print(f'SOLUÇÃO COMPLETA: {self.solucao}')
-      else:
+      elif isinstance(self.solucao,str) and self.solucao:
          print(f'SOLUÇÃO INCOMPLETA: {self.solucao}')
+      else:
+         print(f'TAREFA SEM SOLUÇÃO!')
       print('=========================================')
 
 @dataclass
