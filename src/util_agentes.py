@@ -31,7 +31,7 @@ class Servico():
   nome: str
   objetivo: str
   quando_usar: str
-  parametros: dict | None
+  parametros: str | None # string definindo os parâmetros
   call_servico: Optional[Callable] # retorna list[Conhecimento]
 
 @dataclass
@@ -52,7 +52,7 @@ class Tarefa():
 
   def print(self):
       print('=========================================')
-      print(f'TAREFA: {self.nome}\nDESCRIÇÃO: {self.descricao}\nOBJETIVO :{self.objetivo}')
+      print(f'TAREFA: {self.nome}\nDESCRIÇÃO: {self.descricao}\nOBJETIVO: {self.objetivo}')
       print('---------------------------------------')
       if self.concluida and isinstance(self.solucao,str) and self.solucao:
          print(f'SOLUÇÃO COMPLETA: {self.solucao}')
@@ -338,16 +338,13 @@ class AgentesToolsBasicos():
           return conhecimentos
 
       @classmethod
-      def datahora(cls, data:str|None = None, **agrs):
-          data = str(data).lower().strip()
-          hoje = datetime.now()
-          if data == 'ontem':
-             ontem = hoje - timedelta(days=1)
-             return ontem.strftime("%H:%M:%S")  
-          if data in {'amanhã','amanha'}:
-             amanha = hoje + timedelta(days=1)
-             return amanha.strftime("%H:%M:%S")  
-          return hoje.strftime("%H:%M:%S")  
+      def datahora(cls, **agrs):
+          ''' no momento, qualquer parâmetro é ignorado '''
+          data_resposta = datetime.now()
+          # Retorna formato: "03 de agosto de 2025"
+          res = data_resposta.strftime("%d de %B de %Y")
+          return [Conhecimento(titulo= 'Calendário com dia, mês e ano',
+                               texto= f'Hoje é o dia {res}')]
 
 class AgentesToolsExemplo(AgentesToolsBasicos):
       ''' exemplo de pedido de teste:
@@ -531,20 +528,26 @@ Sua resposta precisa ser um json válido com a seguinte estrutura:
 '''
 
 
-################################################
-# exemplo de injeção de serviço
-'''
-# Serviços disponíveis:
-## Serviço "busca_textual"
-objetivo: buscar em base externa conteúdos relacionados às palavras-chave.
-quando_usar: quando o modelo precisar de informações além do contexto disponível.
-parâmetros:
-  - palavras: [lista de 5–10 termos relevantes para auxiliar na solução da tarefa em <TAREFA>]
+def get_servicos_basicos(exemplo=True, textos_conhecimento = []):
+    ''' retorna uma lista de serviços básicos incluindo busca textual
+        sobre os textos envidados em "conhecimento" ou no formato base de conhecimento
+    '''
+    servicos = []
+    if exemplo:
+       bc = AgentesToolsExemplo(textos_conhecimento=textos_conhecimento)
+    else:
+       bc = AgentesToolsBasicos(textos_conhecimento=textos_conhecimento)
 
-## Serviço "data"
-objetivo: obter a data atual.
-quando_usar: quando o usuário perguntar "qual a data de hoje?" ou similar, ou solicitar informações que precisem considerar o dia, mês ou ano atual.
-parâmetros: {}
-</SERVICOS>
-
-'''
+    sc = Servico(nome='Busca',
+                 objetivo= 'localizar definições e formas de usar produtos e serviços',
+                 quando_usar='quando é necessário fazer busca textual na base de conhecimento',
+                 parametros='{"palavras": [lista de palavras simples]}',
+                 call_servico=bc.busca)
+    servicos.append(sc)
+    sc = Servico(nome='DataHora',
+                    objetivo= 'obeter o dia, mês e ano atual',
+                    quando_usar='quando é necessário saber a data de hoje, o dia de hoje, mês ou ano atual',
+                    parametros='{}',
+                    call_servico=bc.datahora)
+    servicos.append(sc)
+    return servicos
