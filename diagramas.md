@@ -1,4 +1,4 @@
-# Diagramas
+# Diagrama Agentes
 
 ```mermaid
 classDiagram
