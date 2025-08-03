@@ -50,10 +50,15 @@ class Tarefa():
   max_try: int = 3
   concluida: bool = False
 
-  def print(self):
+  def print(self, detalhar = False):
       print('=========================================')
       print(f'TAREFA: {self.nome}\nDESCRIÇÃO: {self.descricao}\nOBJETIVO: {self.objetivo}')
       print('---------------------------------------')
+      if detalhar:
+         print('CONHECIMENTO UTILIZADO:')
+         for c in self.conhecimento:
+             print(f'\t - {c.titulo} (pg: {c.pagina} | sc: {c.score}): {c.texto}')
+         print('---------------------------------------')
       if self.concluida and isinstance(self.solucao,str) and self.solucao:
          print(f'SOLUÇÃO COMPLETA: {self.solucao}')
       elif isinstance(self.solucao,str) and self.solucao:
@@ -291,18 +296,26 @@ class AgentesToolsBasicos():
       def __init__(self, textos_conhecimento: list[str],
                    min_score = 1) -> None:
           self.__textos_conhecimento = textos_conhecimento
-          self.processar_textos(self.__textos_conhecimento)
+          self.__textos_processados = self.processar_textos(self.__textos_conhecimento)
           self.__min_score = min_score
 
       def processar_textos(self, textos:list[str]):
           ''' processamento básico para simplificar
           '''
-          self.__textos_processados = []
+          res = []
           for texto in textos:
-              self.__textos_processados.append(self.processar_texto(texto))
+              res.append(self.processar_texto(texto))
+          return res
 
       def processar_texto(self, texto):
           return str(texto).lower().strip()
+
+      def adicionar_textos(self, textos):
+          if isinstance(textos,str):
+             textos = [textos]
+          for texto in textos:
+             self.__textos_conhecimento.append(texto)
+             self.__textos_processados.append(self.processar_texto(texto))
 
       def encontrar(self, palavra:str, texto:str):
           if palavra.find(' ') < 0:
@@ -317,7 +330,7 @@ class AgentesToolsBasicos():
           if not isinstance(palavras, list):
               palavras = [str(palavras)]
           palavras_pre = [self.processar_texto(palavra) for palavra in palavras ]
-          # print('Buscando:', palavras_low)
+          # print('Buscando:', palavras_pre, 'em', self.__textos_processados)
           conhecimentos = []
           dupla_dados = zip(self.__textos_conhecimento, self.__textos_processados)
           for i, (dado, dado_pre) in enumerate(dupla_dados):
@@ -379,14 +392,12 @@ class AgentesToolsExemplo(AgentesToolsBasicos):
             "Que dia é hoje e o que é Xibunfa e como podemos usar Xibunfa para limpar o chão?
       '''
       def __init__(self, textos_conhecimento: list[str] = []) -> None:
-          super().__init__(textos_conhecimento)
+          super().__init__(textos_conhecimento=[])
           dados = ['Definiçaõ de Xabefa: uma comida típida do povo Xisbicuim e pode ser preparada com camarão e frutas frescas',
                    'Definição de Chão: a base onde pisamos, andamos e construímos nossas residências',
                    'Definiçaõ de Xibunfa: é um produto de limpeza a base de Xabefa',
                    'Como usar Xibunfa: pode ser usada misturando 30% de álcool 76% com 30% de Xibunfa e o resto com vinagre de bacuri']
-          self.__textos_conhecimento = textos_conhecimento if isinstance(textos_conhecimento,list) else []
-          self.__textos_conhecimento.extend(dados)
-          self.processar_textos(self.__textos_conhecimento)
+          self.adicionar_textos(dados)
 
 ##################################################
 ######## Prompts para os Agentes
