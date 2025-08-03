@@ -64,17 +64,16 @@ Para testar a classe JsonAnalise:
 JsonAnalise.teste_compara(exemplo=3)
 ```
 
-## Classe PromptGemma3
-Para importar as classes PromptGemma3:
+## Classe Prompt com Gemma3
+Para importar a classe Prompt:
 ```python
 #@title Importando classes do git
 import get_git
-Util = get_git.sync_git_prompt()
-PromptGemma3 = get_git.sync_git_prompt()
+Prompt = get_git.sync_git_prompt()
 ```
 
 ```python
-pr = PromptGemma3('4b') # carrega o modelo 4b, 12b ou 27b  
+pr = Prompt('4b') # carrega o modelo 1b, 4b, 12b ou 27b  
 pr.prompt('Qual o próximo número da sequência 1, 1, 2, 3, 5, 8 ...?')
 ```
 ```
