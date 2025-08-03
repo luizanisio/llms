@@ -375,7 +375,7 @@ class AgentesToolsBasicos():
           sc = Servico(nome='Busca',
                       objetivo= objetivo_base,
                       quando_usar='quando é necessário fazer busca textual na base de conhecimento',
-                      parametros='{"palavras": [lista de palavras simples]}',
+                      parametros='{"palavras": [lista de palavras simples ou compostas]}',
                       call_servico=bc.busca)
           servicos.append(sc)
           sc = Servico(nome='DataHora',
