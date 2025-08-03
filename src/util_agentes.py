@@ -1,6 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict, List
 import json
 import re
 '''
@@ -42,8 +42,8 @@ class Tarefa():
   objetivo: str
   call_llm: Optional[Callable] # retorna json no formato esperado para saída
   servicos_disponiveis: list[Servico] # lista de serviços existentes
-  servicos_sugeridos: list[dict] # serviços sugeridos pela llm para enriquecer a base de conhecimento
-  conhecimento: list[Conhecimento]
+  servicos_sugeridos: List[Dict] = field(default_factory=list) # serviços sugeridos pela llm para enriquecer a base de conhecimento
+  conhecimento: list[Conhecimento] = field(default_factory=list) # conhecimento adicionado pela chamada dos serviços
   solucao: str = ''
   progresso: int = 0
   max_iter: int = 5
@@ -346,6 +346,34 @@ class AgentesToolsBasicos():
           return [Conhecimento(titulo= 'Calendário com dia, mês e ano',
                                texto= f'Hoje é o dia {res}')]
 
+      @classmethod
+      def get_servicos_basicos(cls, incluir_exemplos = False, textos_conhecimento = []):
+          ''' retorna uma lista de serviços básicos incluindo busca textual
+              sobre os textos envidados em "conhecimento" ou no formato base de conhecimento
+          '''
+          servicos = []
+          if incluir_exemplos:
+            bc = AgentesToolsExemplo(textos_conhecimento=textos_conhecimento)
+            objetivo_base = 'localizar definições e formas de usar produtos e serviços'
+          else:
+            bc = AgentesToolsBasicos(textos_conhecimento=textos_conhecimento)
+            objetivo_base = 'localizar definições, dicas, explicações e formas de usar produtos e serviços'
+
+          sc = Servico(nome='Busca',
+                      objetivo= objetivo_base,
+                      quando_usar='quando é necessário fazer busca textual na base de conhecimento',
+                      parametros='{"palavras": [lista de palavras simples]}',
+                      call_servico=bc.busca)
+          servicos.append(sc)
+          sc = Servico(nome='DataHora',
+                          objetivo= 'obeter o dia, mês e ano atual',
+                          quando_usar='quando é necessário saber a data de hoje, o dia de hoje, mês ou ano atual',
+                          parametros='{}',
+                          call_servico=bc.datahora)
+          servicos.append(sc)
+          return servicos
+
+
 class AgentesToolsExemplo(AgentesToolsBasicos):
       ''' exemplo de pedido de teste:
             "Que dia é hoje e o que é Xibunfa e como podemos usar Xibunfa para limpar o chão?
@@ -527,27 +555,3 @@ Sua resposta precisa ser um json válido com a seguinte estrutura:
 </SOLUCAO_TAREFA>
 '''
 
-
-def get_servicos_basicos(exemplo=True, textos_conhecimento = []):
-    ''' retorna uma lista de serviços básicos incluindo busca textual
-        sobre os textos envidados em "conhecimento" ou no formato base de conhecimento
-    '''
-    servicos = []
-    if exemplo:
-       bc = AgentesToolsExemplo(textos_conhecimento=textos_conhecimento)
-    else:
-       bc = AgentesToolsBasicos(textos_conhecimento=textos_conhecimento)
-
-    sc = Servico(nome='Busca',
-                 objetivo= 'localizar definições e formas de usar produtos e serviços',
-                 quando_usar='quando é necessário fazer busca textual na base de conhecimento',
-                 parametros='{"palavras": [lista de palavras simples]}',
-                 call_servico=bc.busca)
-    servicos.append(sc)
-    sc = Servico(nome='DataHora',
-                    objetivo= 'obeter o dia, mês e ano atual',
-                    quando_usar='quando é necessário saber a data de hoje, o dia de hoje, mês ou ano atual',
-                    parametros='{}',
-                    call_servico=bc.datahora)
-    servicos.append(sc)
-    return servicos
