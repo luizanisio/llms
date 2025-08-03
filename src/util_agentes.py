@@ -12,6 +12,9 @@ import re
   O prompt vai receber as tags <TAREFA>, <BASE_CONHECIMENTO>, <SOLUCAO_TAREFA>
 '''
 
+def verifica_versao():
+    print(f'UtilAgentes carregado corretamente em {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}!')
+  
 @dataclass
 class Conhecimento():
   ''' descrição do item da base de conhecimento e seus conteúdos'''
