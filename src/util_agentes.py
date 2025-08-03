@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, Callable
 import json
+import re
 '''
  A solicitação do usuário é inserida dentro da tag <TAREFA>
  A base de conhecimento é inserida dentro da tag <BASE_CONHECIMENTO>
@@ -45,6 +46,16 @@ class Tarefa():
   max_iter: int = 5
   max_try: int = 3
   concluida: bool = False
+
+  def print(self):
+      print('=========================================')
+      print(f'TAREFA: {self.nome}\nDESCRIÇÃO: {self.descricao}\nOBJETIVO :{self.objetivo}')
+      print('---------------------------------------')
+      if self.concluida:
+         print(f'SOLUÇÃO COMPLETA: {self.solucao}')
+      else:
+         print(f'SOLUÇÃO INCOMPLETA: {self.solucao}')
+      print('=========================================')
 
 @dataclass
 class Agente():
@@ -135,7 +146,7 @@ class ResolverTarefas():
           self.__print_debug(f'ACIONANDO AGENTE REVISOR: {agente.nome}')
       else:
           prompt = AgentesPrompts.PROMP_TAREFA
-      self.__print_debug(f'ACIONANDO AGENTE DE TAREFA: {agente.nome}')
+          self.__print_debug(f'ACIONANDO AGENTE DE TAREFA: {agente.nome}')
       # diretrizes complementares
       if agente.diretrizes:
          diretrizes = f'''# Diretrizes complementares:\n{agente.diretrizes}\n\n**Atenção**, as diretrizes básicas e diretrizes complementares precisam ser seguidas com atenção na realização das tarefas. As diretrizes básicas se sobrepõem às diretrizes complementares em caso de haver contradição entre elas.\n'''
@@ -216,7 +227,7 @@ class ResolverTarefas():
                   # Adiciona o texto retornado à base de conhecimento
                   for conhecimento in resultado:
                       if isinstance(conhecimento, Conhecimento):
-                         self.__log('CONHECIMENTO', f'{conhecimento.titulo} | pg. {conhecimento.pagina}')
+                         self.__log('CONHECIMENTO', f'{conhecimento.titulo} | pg. {conhecimento.pagina} | score {conhecimento.score}')
                          conhecimento.sugerido_llm = True
                          tarefa.conhecimento.append(conhecimento)
 
@@ -287,7 +298,13 @@ class AgentesToolsBasicos():
 
       def processar_texto(self, texto):
           return str(texto).lower().strip()
-          
+
+      def encontrar(self, palavra:str, texto:str):
+          if palavra.find(' ') < 0:
+             return bool(palavra in texto)
+          re_busca = palavra.strip().replace(' ','.{0,50}')
+          return bool(re.search(re_busca, texto))
+
       def busca(self, palavras: list[str] = []):
           if isinstance(palavras, str):
              palavras = palavras.lower().replace(',',';').split(';')
@@ -301,7 +318,7 @@ class AgentesToolsBasicos():
           for i, (dado, dado_pre) in enumerate(dupla_dados):
               palavras_ok = 0
               for palavra in palavras_pre:
-                  if palavra in dado_pre:
+                  if self.encontrar(palavra,dado_pre):
                     palavras_ok +=1
               if palavras_ok < self.__min_score:
                  continue
@@ -508,3 +525,21 @@ Sua resposta precisa ser um json válido com a seguinte estrutura:
 </SOLUCAO_TAREFA>
 '''
 
+
+################################################
+# exemplo de injeção de serviço
+'''
+# Serviços disponíveis:
+## Serviço "busca_textual"
+objetivo: buscar em base externa conteúdos relacionados às palavras-chave.
+quando_usar: quando o modelo precisar de informações além do contexto disponível.
+parâmetros:
+  - palavras: [lista de 5–10 termos relevantes para auxiliar na solução da tarefa em <TAREFA>]
+
+## Serviço "data"
+objetivo: obter a data atual.
+quando_usar: quando o usuário perguntar "qual a data de hoje?" ou similar, ou solicitar informações que precisem considerar o dia, mês ou ano atual.
+parâmetros: {}
+</SERVICOS>
+
+'''
