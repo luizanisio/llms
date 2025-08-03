@@ -63,11 +63,13 @@ class AgentesToolsBasicos {
 }
 
 Conhecimento <.. Tarefa : usa
-Servico <.. Tarefa : usa
+Servico --> Conhecimento : retorna
 Servico <.. ResolverTarefas : aciona
+Agente <.. ResolverTarefas : aciona
 Tarefa <.. ResolverTarefas : resolve
-Agente <.. ResolverTarefas : usa
+Agente ..> Tarefa : resolve
+Prompt <.. ResolverTarefas : aciona
 Prompt <.. Agente : aciona
-AgentesToolsBasicos --> Conhecimento : retorna
+AgentesToolsBasicos --> Servico : retorna
 
 ```
