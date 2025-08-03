@@ -161,5 +161,15 @@ def sync_git_treina(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma
     util_module.Gemma3Trainer.verifica_versao()
     return util_module.Gemma3Trainer
         
-                
+def sync_git_agentes(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemma3Trainer":
+    """ UtilAgentes = get_git.sync_git_agentes()
+    """
+    local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
+
+    # importa o modulo src.treinar_gemma3
+    util_module = _import_or_reload("src.util_agentes")
+    print(f"[OK] UtilAgentes carregado de {local_dir}")
+    util_module.verifica_versao()
+    return util_module                
+
 
