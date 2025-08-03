@@ -4,6 +4,7 @@ from typing import Optional, Callable, Dict, List
 import json
 import re
 '''
+ Autor Luiz Anísio Julho/2025
  A solicitação do usuário é inserida dentro da tag <TAREFA>
  A base de conhecimento é inserida dentro da tag <BASE_CONHECIMENTO>
  - Cada item da base de conhecimento tem um titulo, o texto, a página e a url da informação para permitir ao usuário validar a informação.
