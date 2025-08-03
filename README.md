@@ -5,7 +5,7 @@ Pacotes em desenvolvimento para estudos com LLMs
 - Desenvolvimento de pacotes para predição, treinamento e avaliação de LLMs
 - Inicalmente o foco é o Gemma 3
 -  [Notebook de exemplo](./Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)
--  [Diagramas](./diagrams.md)
+-  [Diagramas](./diagramas.md)
 
 ## Treino do GEMMA 3
 - src/treinar_gemma3.py \<arquivo yaml\> \[--gpu n\]
