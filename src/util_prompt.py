@@ -80,7 +80,7 @@ class PromptGemma3:
   START_T = '<start_of_turn>model'
   END_T = '<end_of_turn>'
 
-  def __init__(self, modelo = MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir = None):
+  def __init__(self, modelo = MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir = None, token = None):
       modelo = UtilLMM.atalhos_modelos(modelo)
       # carregando o modelo
       self.modelo = modelo
@@ -94,7 +94,7 @@ class PromptGemma3:
           full_finetuning = False, # [NEW!] We have full finetuning now!
           device_map      = "auto",
           cache_dir       = cache_dir, 
-          # token = "hf_...", # use one if using gated models
+          token = token, # use one if using gated models
       )
 
       self.tokenizer = get_chat_template(
