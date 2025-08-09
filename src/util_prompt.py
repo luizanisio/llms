@@ -27,14 +27,17 @@ class Modelos(Enum):
     MODELO_GEMMA3_27B = 'google/gemma-3-27b-it' # 39Gb
     MODELO_QWEN_7B = "Qwen/Qwen2.5-7B-Instruct-1M" # 14Gb
     MODELO_JUREMA_7B = "Jurema-br/Jurema-7B"       # 14Gb
-    MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct-1M'  # 28Gb
+    MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct-1M'   
 
     @classmethod
     def listar(cls):
         print("Modelos disponíveis:\n")
         for modelo in cls:
             print(f"- {modelo.name}: {modelo.value}")
-        
+
+class classproperty(property):
+    def __get__(self, obj, cls):
+        return self.fget(cls)           
 
 class Prompt:
       def __init__(self, modelo = Modelos.MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir:str = None, token:str = None):
@@ -65,20 +68,20 @@ class Prompt:
           return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
 
       @classmethod
-      def listar_modelos(cls):
-          Modelos.listar()
-          print('\n* Utilize: Prompt.modelos.MODELO....')
-
-      @property
-      def modelos(cls):
-          return Modelos  
-  
-      @classmethod
       def verifica_versao(cls):
           print('============================================')
           print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.53.x
           print('Tourch:', torch.__version__)
           print('============================================')
+
+      @classmethod
+      def listar_modelos(cls):
+          Modelos.listar()
+          print('\n* Utilize: Prompt.modelos.MODELO....')
+
+      @classproperty
+      def modelos(cls):
+          return Modelos      
 
 class PromptGemma3:
   START_T = '<start_of_turn>model'
@@ -320,4 +323,6 @@ class UtilLMM():
         res = atalho_map.get(str(modelo).lower().strip(), modelo)      
         if res:
            return res
-        return atalho_map.get(str(modelo).lower().strip(' bB'), modelo)      
+        return atalho_map.get(str(modelo).lower().strip(' bB'), modelo)  
+
+         
