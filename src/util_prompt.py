@@ -65,6 +65,10 @@ class Prompt:
           return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
 
       @classmethod
+      def modelos(cls):
+          Modelos.listar()
+  
+      @classmethod
       def verifica_versao(cls):
           print('============================================')
           print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.53.x
