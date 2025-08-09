@@ -27,7 +27,7 @@ class Modelos(Enum):
     MODELO_GEMMA3_27B = 'google/gemma-3-27b-it' # 39Gb
     MODELO_QWEN_7B = "Qwen/Qwen2.5-7B-Instruct-1M" # 14Gb
     MODELO_JUREMA_7B = "Jurema-br/Jurema-7B"       # 14Gb
-    MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct-1M'   
+    MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct-1M'  # 28Gb
 
     @classmethod
     def listar(cls):
