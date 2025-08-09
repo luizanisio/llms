@@ -65,8 +65,13 @@ class Prompt:
           return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
 
       @classmethod
-      def modelos(cls):
+      def listar_modelos(cls):
           Modelos.listar()
+          print('\n* Utilize: Prompt.modelos.MODELO....')
+
+      @property
+      def modelos(cls):
+          return Modelos  
   
       @classmethod
       def verifica_versao(cls):
