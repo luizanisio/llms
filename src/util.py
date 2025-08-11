@@ -13,6 +13,7 @@ import random
 import string
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
+from cryptography.fernet import Fernet
 
 try:
     import psutil 
@@ -342,3 +343,50 @@ class Util():
                 prev_esc = False
                 i += 1
         return ''.join(out) 
+
+
+
+################################
+class UtilCriptografia:
+    def __init__(self):
+        # Tenta obter a chave de criptografia a partir da variável de ambiente
+        self.chave = os.getenv('CHAVE_CRIPT')
+        if not self.chave:
+            # Se a chave não existir na variável de ambiente, gera uma nova chave
+            self.chave = self.nova_chave()
+            print('NOVA CHAVE FERNET GERADA:', self.chave)
+        else:
+            print('CHAVE FERNET CARREGADA _o/')
+        # O Fernet espera a chave como bytes, então garantimos esta conversão
+        if isinstance(self.chave, str):
+            self.chave = self.chave.encode()
+        # Inicializa o objeto Fernet com a chave
+        self.fernet = Fernet(self.chave)
+    
+    def criptografar(self, texto: str) -> str:
+        """
+        Criptografa uma string e retorna o token criptografado como string.
+        """
+        # Codifica o texto para bytes e aplica a criptografia
+        texto_bytes = texto.encode()
+        token = self.fernet.encrypt(texto_bytes)
+        # Decodifica o token para string, ideal para armazenamento em DataFrame
+        return token.decode()
+    
+    def decriptografar(self, texto: str) -> str:
+        """
+        Descriptografa uma string criptografada e retorna o texto original.
+        """
+        # Codifica a string criptografada em bytes
+        token_bytes = texto.encode()
+        texto_bytes = self.fernet.decrypt(token_bytes)
+        # Retorna o texto decodificado para string
+        return texto_bytes.decode()
+    
+    def nova_chave(self) -> str:
+        """
+        Gera uma nova chave para o Fernet e a retorna como string.
+        """
+        chave = Fernet.generate_key()  # chave gerada em bytes
+        # Retorna a chave decodificada para string
+        return chave.decode()
