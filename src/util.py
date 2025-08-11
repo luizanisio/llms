@@ -354,7 +354,7 @@ class UtilCriptografia:
         if not self.chave:
             # Se a chave não existir na variável de ambiente, gera uma nova chave
             self.chave = self.nova_chave()
-            print('NOVA CHAVE FERNET GERADA:', self.chave)
+            print('Env CHAVE_CRIPT não encontrado, nova chave FERNET gerada:', self.chave)
         else:
             print('CHAVE FERNET CARREGADA _o/')
         # O Fernet espera a chave como bytes, então garantimos esta conversão
