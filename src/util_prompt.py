@@ -14,6 +14,7 @@ except ImportError as e:
 import get_git
 get_git.deps() # instala unsloth, Transformers, Rouge e Levenshtein se precisar
   ''')
+  raise ImportError('dependncias no resolvidas!')
   
 import json
 from copy import deepcopy
@@ -310,19 +311,27 @@ class UtilLMM():
                 i += 1
         return ''.join(out)       
 
+    ATALHOS = {
+        '1': Modelos.MODELO_GEMMA3_1B,    '4': Modelos.MODELO_GEMMA3_4B,
+        '12': Modelos.MODELO_GEMMA3_12B,  '27': Modelos.MODELO_GEMMA3_27B,
+        'j': Modelos.MODELO_JUREMA_7B,    'j7': Modelos.MODELO_JUREMA_7B,
+        'jurema': Modelos.MODELO_JUREMA_7B,
+        'q': Modelos.MODELO_QWEN_7B,      'q7': Modelos.MODELO_QWEN_7B,
+        'q14': Modelos.MODELO_QWEN_14B
+    }
     @classmethod
     def atalhos_modelos(cls, modelo):
-        atalho_map = {
-            '1': Modelos.MODELO_GEMMA3_1B,    '4': Modelos.MODELO_GEMMA3_4B,
-            '12': Modelos.MODELO_GEMMA3_12B,  '27': Modelos.MODELO_GEMMA3_27B,
-            'j': Modelos.MODELO_JUREMA_7B,    'j7': Modelos.MODELO_JUREMA_7B,
-            'jurema': Modelos.MODELO_JUREMA_7B,
-            'q': Modelos.MODELO_QWEN_7B,      'q7': Modelos.MODELO_QWEN_7B,
-            'q14': Modelos.MODELO_QWEN_14B
-        }
-        res = atalho_map.get(str(modelo).lower().strip(), modelo)      
+        res = cls.ATALHOS.get(str(modelo).lower().strip(), modelo)      
         if res:
            return res
-        return atalho_map.get(str(modelo).lower().strip(' bB'), modelo)  
+        return cls.ATALHOS.get(str(modelo).lower().strip(' bB'), modelo)  
+
+    @classmethod
+    def print_atalhos(cls):
+        lista = list(cls.ATALHOS.items())
+        lista.sort()
+        print('Atalhos disponveis para os modelos:')
+        for atalho, modelo in lista:
+            print(f' - {atalho}: {modelo}')
 
          
