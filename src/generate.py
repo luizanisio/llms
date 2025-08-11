@@ -4,7 +4,10 @@ from dotenv import load_dotenv
 import os
 
 # Carrega as variáveis do arquivo .env se existirem
-load_dotenv()
+load_dotenv('./env')
+token = os.getenv('hf')
+if token:
+    print('* Token do hugging face carregado!')
 
 def imprimir_modelos_disponiveis():
   """Imprime a lista de modelos disponíveis."""
@@ -28,7 +31,7 @@ def main():
   
   modelo = sys.argv[1]
   
-  p =  Prompt(modelo=modelo, max_seq_length = 4096, token = os.getenv('hf'))
+  p =  Prompt(modelo=modelo, max_seq_length = 4096, token = token)
 
   while True:
     print('===========================================================')

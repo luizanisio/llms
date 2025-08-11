@@ -54,7 +54,7 @@ class Prompt:
              print(f'PromptQwen: carregando modelo {self.modelo} ..')
              self.__pg = PromptQwen(modelo=self.modelo, 
                                       max_seq_length=max_seq_length,
-                                      cache_dir=cache_dir)
+                                      cache_dir=cache_dir, token=token)
 
       def verifica_modelo(self):
           if self.__pg is None:
@@ -176,11 +176,20 @@ class PromptQwen(PromptGemma3):
                  max_seq_length: int = 4096,
                  cache_dir: str | None = None,
                  token = None):
-        # carrega o modelo base usando a mesma lógica da superclasse
-        super().__init__(modelo=modelo,
-                         max_seq_length=max_seq_length,
-                         cache_dir=cache_dir,
-                         token=token)
+        try:
+            # carrega o modelo base usando a mesma lógica da superclasse
+            super().__init__(modelo=modelo,
+                             max_seq_length=max_seq_length,
+                             cache_dir=cache_dir,
+                             token=token)
+        except Exception as e:
+            if 'gated repo' in str(e).lower():
+               msg = '\n'+\
+                     '====================================================================================================\n'+\
+                     'É necessário preencher o parâmetro "token" com um token do hugging face com esse modelo ativo.\n'+\
+                     '===================================================================================================='
+               raise ImportError(msg)
+            raise e
 
         # troca o chat-template para o “qwen2” (disponível no unsloth ≥ 0.4.0)
         self.tokenizer = get_chat_template(
