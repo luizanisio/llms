@@ -150,7 +150,11 @@ class PromptGemma3:
       ini = time()
       retorno = self.prompt(prompt, max_new_tokens = max_new_tokens, temperatura=temperatura, detalhar = True)
       # converte o retorno da chave texto em json - se der erro, fica vazio
-      res = UtilLMM.mensagem_to_json(retorno.pop('texto',None))
+      try:
+          res = UtilLMM.mensagem_to_json(retorno.pop('texto',None))
+      except json.JSONDecodeError as e:
+          res = {'erro': f'JSONDecodeError: {e}'}
+          
       retorno['time'] = time()-ini
       res.update({'usage': retorno})
       return res
