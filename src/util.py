@@ -14,6 +14,7 @@ import string
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 from cryptography.fernet import Fernet
+from typing import List, Optional, Union, Tuple, Set
 
 try:
     import psutil 
@@ -390,3 +391,103 @@ class UtilCriptografia:
         chave = Fernet.generate_key()  # chave gerada em bytes
         # Retorna a chave decodificada para string
         return chave.decode()
+
+########################################
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # A exceção só será levantada se o método 'carregar' for chamado.
+    def load_dotenv(dotenv_path):
+        raise ImportError('Erro de import: considere instalar com "pip install python-dotenv"')
+
+class UtilEnv():
+    """
+    Classe utilitária para carregar e acessar variáveis de ambiente
+    de arquivos .env de forma segura e robusta.
+    """    
+    @classmethod
+    def carregar(cls, arquivos = ['.env','env'], pastas=['./','../','./src/','../src/']):
+        """
+        Carrega variáveis de ambiente de um arquivo .env.
+        Procura por arquivos em diferentes pastas e para no primeiro que encontrar.
+        Args:
+            arquivos (Union[str, List[str]]): Nome ou lista de nomes de arquivos a procurar.
+            pastas (List[str]): Lista de pastas onde procurar os arquivos.
+        Returns:
+            Optional[str]: O caminho do arquivo .env carregado, ou None se nenhum foi encontrado.
+        """        
+        arquivos = [str(arquivos)] if not isinstance(arquivos, (list, tuple, set)) else arquivos
+        pastas = [str(pastas)] if not isinstance(pastas, (list, tuple, set)) else pastas
+        for arquivo in arquivos:
+            for pasta in pastas:
+                arq = os.path.join(pasta, arquivo)
+                if os.path.isfile(arq):
+                    load_dotenv(arq)
+                    return arq
+        return None
+
+    @classmethod
+    def get_str(cls, chave: str, padrao: Optional[str] = None) -> Optional[str]:
+        """
+        Obtém uma variável de ambiente como uma string.
+
+        Args:
+            chave (str): A chave da variável de ambiente.
+            padrao (Optional[str]): O valor padrão a ser retornado se a chave não for encontrada.
+
+        Returns:
+            Optional[str]: O valor da variável ou o padrão.
+        """
+        valor = os.getenv(chave)
+        return valor if valor is not None else padrao
+
+    @classmethod
+    def get_int(cls, chave: str, padrao: Optional[int] = None) -> Optional[int]:
+        """
+        Obtém uma variável de ambiente e a converte para inteiro.
+
+        Args:
+            chave (str): A chave da variável de ambiente.
+            padrao (Optional[int]): O valor padrão a ser retornado se a chave não for encontrada
+                                  ou se a conversão falhar.
+
+        Returns:
+            Optional[int]: O valor convertido para inteiro ou o padrão.
+        """
+        valor_str = os.getenv(chave)
+        if valor_str is None:
+            return padrao
+        
+        try:
+            return int(valor_str)
+        except (ValueError, TypeError):
+            # Retorna o padrão se a conversão para int falhar (ex: "abc", "1.5")
+            # ou se o valor for inesperado (TypeError, embora raro com getenv).
+            return padrao
+
+    @classmethod
+    def get_float(cls, chave: str, padrao: Optional[float] = None) -> Optional[float]:
+        """
+        Obtém uma variável de ambiente e a converte para float.
+        Trata tanto ponto (.) quanto vírgula (,) como separador decimal.
+
+        Args:
+            chave (str): A chave da variável de ambiente.
+            padrao (Optional[float]): O valor padrão a ser retornado se a chave não for encontrada
+                                     ou se a conversão falhar.
+
+        Returns:
+            Optional[float]: O valor convertido para float ou o padrão.
+        """
+        valor_str = os.getenv(chave)
+        if valor_str is None:
+            return padrao
+        
+        try:
+            # Substitui vírgula por ponto para garantir a conversão correta
+            valor_normalizado = valor_str.replace(',', '.', 1)
+            return float(valor_normalizado)
+        except (ValueError, TypeError):
+            # Retorna o padrão se a conversão para float falhar (ex: "abc")
+            return padrao
