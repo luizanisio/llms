@@ -1,13 +1,17 @@
 import sys
 from util_prompt import UtilLMM, Prompt
-from dotenv import load_dotenv
+from util import UtilEnv
 import os
 
 # Carrega as variáveis do arquivo .env se existirem
-load_dotenv('./env')
-token = os.getenv('hf')
+
+token = None
+if UtilEnv.carregar():
+    token = UtilEnv.get_str('hf')
 if token:
-    print('* Token do hugging face carregado!')
+    print('* Token do hugging face CARREGADO!')
+else:
+    print('* Token do hugging face NÃO CARREGADO!')
 
 def imprimir_modelos_disponiveis():
   """Imprime a lista de modelos disponíveis."""
