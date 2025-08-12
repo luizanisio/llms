@@ -15,6 +15,7 @@ from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 from cryptography.fernet import Fernet
 from typing import List, Optional, Union, Tuple, Set
+import shutil
 
 try:
     import psutil 
@@ -491,3 +492,73 @@ class UtilEnv():
         except (ValueError, TypeError):
             # Retorna o padrão se a conversão para float falhar (ex: "abc")
             return padrao
+
+############################
+class UtilZip():
+    @classmethod
+    def compactar_pasta(cls, caminho_pasta: str, caminho_zip_saida: Optional[str] = None):
+        """
+        Compacta uma pasta inteira em um arquivo .zip usando shutil.
+    
+        Args:
+            caminho_pasta (str): O caminho para a pasta que será compactada.
+                Ex: './saidas'
+            caminho_zip_saida (Optional[str]): O nome do arquivo .zip de saída.
+                Se não for fornecido, será usado o mesmo nome da pasta de origem.
+                Ex: 'meu_arquivo.zip'
+        """
+        # 1. Verifica se a pasta de origem realmente existe
+        if not os.path.isdir(caminho_pasta):
+            print(f"Erro: A pasta '{caminho_pasta}' não foi encontrada.")
+            return
+    
+        # 2. Define o nome do arquivo de saída se não for fornecido
+        if caminho_zip_saida is None:
+            # Pega o nome base da pasta (ex: './saidas' -> 'saidas')
+            base_name = os.path.basename(caminho_pasta)
+            caminho_zip_saida = base_name
+        else:
+            # Remove a extensão .zip se o usuário a incluiu, pois shutil.make_archive a adiciona
+            if caminho_zip_saida.endswith('.zip'):
+                caminho_zip_saida = caminho_zip_saida[:-4]
+    
+        try:
+            print(f"Compactando a pasta '{caminho_pasta}'...")
+            # 3. Usa shutil.make_archive para criar o arquivo zip
+            # O primeiro argumento é o nome do arquivo de saída (sem extensão)
+            # O segundo é o formato ('zip')
+            # O terceiro é a pasta raiz que será compactada
+            shutil.make_archive(caminho_zip_saida, 'zip', caminho_pasta)
+            print(f"Sucesso! Arquivo '{caminho_zip_saida}.zip' criado.")
+        
+        except Exception as e:
+            print(f"Ocorreu um erro ao compactar: {e}")
+    
+    
+    @classmethod
+    def descompactar_arquivo(cls, caminho_zip: str, pasta_destino: str):
+        """
+        Descompacta um arquivo .zip para uma pasta de destino usando shutil.
+    
+        Args:
+            caminho_zip (str): O caminho para o arquivo .zip que será descompactado.
+                Ex: 'saidas.zip'
+            pasta_destino (str): A pasta onde o conteúdo será extraído.
+                A pasta será criada se não existir.
+                Ex: './extracao'
+        """
+        # 1. Verifica se o arquivo zip realmente existe
+        if not os.path.isfile(caminho_zip):
+            print(f"Erro: O arquivo '{caminho_zip}' não foi encontrado.")
+            return
+    
+        try:
+            print(f"Descompactando '{caminho_zip}' para a pasta '{pasta_destino}'...")
+            # 2. Usa shutil.unpack_archive para extrair os arquivos
+            shutil.unpack_archive(caminho_zip, pasta_destino, 'zip')
+            print(f"Sucesso! Arquivos extraídos em '{pasta_destino}'.")
+    
+        except shutil.ReadError:
+            print(f"Erro: O arquivo '{caminho_zip}' parece não ser um arquivo zip válido ou está corrompido.")
+        except Exception as e:
+            print(f"Ocorreu um erro ao descompactar: {e}")    
