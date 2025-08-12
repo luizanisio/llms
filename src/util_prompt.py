@@ -126,18 +126,20 @@ class PromptGemma3:
            inputs = self.tokenizer(inputs, return_tensors="pt").to(self.model.device)
 
         _temperatura = temperatura if isinstance(temperatura, float) else 1.0
+        ini = time()
         with torch.inference_mode():
               out_ids = self.model.generate(
                   **inputs,
                   max_new_tokens = max_new_tokens,
-                  temperature = _temperatura
+                  temperature = _temperatura,
+                  do_sample= _temperatura > 0.3
               )
         res = self._limpar_retorno(self.tokenizer.decode(out_ids[0], skip_special_tokens=False))
         if not detalhar:
            return res
         _input_tokens = inputs["input_ids"].size(1)
         _output_tokens = out_ids.size(1) - _input_tokens
-        return {'texto': res, 'input_tokens': _input_tokens, 'output_tokens': _output_tokens}
+        return {'texto': res, 'input_tokens': _input_tokens, 'output_tokens': _output_tokens, 'time': time()-ini}
 
   def _limpar_retorno(self, txt: str) -> str:
       if self.START_T in txt:
@@ -147,16 +149,16 @@ class PromptGemma3:
       return txt.lstrip("\n ").rstrip("\n ")
 
   def prompt_to_json(self, prompt:str, max_new_tokens = 4096, temperatura = 0):
-      ini = time()
       retorno = self.prompt(prompt, max_new_tokens = max_new_tokens, temperatura=temperatura, detalhar = True)
       # converte o retorno da chave texto em json - se der erro, fica vazio
+      texto = retorno.pop('texto',None)
       try:
-          res = UtilLMM.mensagem_to_json(retorno.pop('texto',None))
-      except json.JSONDecodeError as e:
-          res = {'erro': f'JSONDecodeError: {e}'}
-          
-      retorno['time'] = time()-ini
-      res.update({'usage': retorno})
+          res = UtilLMM.mensagem_to_json(texto, padrao = None)
+          if res is None:
+              raise ValueError('Response não é um json válido!')
+      except (json.JSONDecodeError, ValueError) as e:
+          res = {'erro': f'JSONDecodeError: {e}', 'response': texto}
+      res['usage'] = retorno
       return res
 
   def exemplo(self):
@@ -211,7 +213,7 @@ class PromptQwen(PromptGemma3):
 
         # Fix: The content field should be a string, not a list of dictionaries.
         messages = [{"role": "user", "content": prompt}]
-
+        ini = time()
         # aplica o template já no formato de ids
         inputs = self.tokenizer.apply_chat_template(
             messages,
@@ -238,7 +240,8 @@ class PromptQwen(PromptGemma3):
         n_out = out_ids.size(1) - n_in
         return {"texto": resposta,
                 "input_tokens": n_in,
-                "output_tokens": n_out}
+                "output_tokens": n_out,
+                "time": time()-ini}
 
 
 ##########################################
