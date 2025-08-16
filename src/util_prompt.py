@@ -4,6 +4,7 @@ try:
   from unsloth.chat_templates import get_chat_template
   import torch
   import transformers
+  import platform
 except ImportError as e:
   print(f'''\n\nOCORREU UM ERRO DE IMPORT: {e}
 ===========================================
@@ -12,9 +13,9 @@ except ImportError as e:
 
 !curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/util/get_git.py -o ./get_git.py
 import get_git
-get_git.deps() # instala unsloth, Transformers, Rouge e Levenshtein se precisar
+get_git.deps() # instala unsloth, Transformers, Rouge, Levenshtein etc, necessário.
   ''')
-  raise ImportError('dependncias no resolvidas!')
+  raise ImportError('dependências não resolvidas!')
   
 import json
 from copy import deepcopy
@@ -43,7 +44,7 @@ class classproperty(property):
 class Prompt:
       def __init__(self, modelo = Modelos.MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir:str = None, token:str = None):
           self.__pg = None
-          self.modelo = UtilLMM.atalhos_modelos(modelo)
+          self.modelo = UtilLLM.atalhos_modelos(modelo)
           if 'gemma' in str(self.modelo).lower():
              print(f'PromptGemma3: carregando modelo {self.modelo} ..')
              self.__pg = PromptGemma3(modelo=self.modelo, 
@@ -69,11 +70,8 @@ class Prompt:
           return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
 
       @classmethod
-      def verifica_versao(cls):
-          print('============================================')
-          print('Transformers:',transformers.__version__, unsloth.__version__)  # deve mostrar 4.53.x
-          print('Tourch:', torch.__version__)
-          print('============================================')
+      def verifica_versao(cls, mostrar_gpus = True):
+          UtilLLM.verifica_versao(mostrar_gpus)
 
       @classmethod
       def listar_modelos(cls):
@@ -245,7 +243,7 @@ class PromptQwen(PromptGemma3):
 
 
 ##########################################
-class UtilLMM():
+class UtilLLM():
     @classmethod
     def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True ):
         ''' Foco em receber uma mensagem via IA generativa e identificar o json dentro dela 
@@ -256,17 +254,10 @@ class UtilLMM():
         if not isinstance(mensagem, str):
            raise ValueError('mensagem_to_json: parâmetro precisa ser string')
         _mensagem = str(mensagem).strip()
-        # limpa resposta ```json ````
-        chave_json = mensagem.find('```json\n')
-        if chave_json >= 0:
-           _mensagem = _mensagem[chave_json+8:]
-        else:
-           chave_json = mensagem.find('```json')
-           _mensagem = _mensagem[chave_json+7:] if chave_json >=0 else _mensagem
-            
+        # limpa resposta ``json\n{ ... }`` ou pequenas introduções e finalizações antes/depois do json
         chave_ini = _mensagem.find('{')
         chave_fim = _mensagem.rfind('}')
-        if len(_mensagem)>2 and chave_ini>=0 and chave_fim>0 and chave_fim > chave_ini:
+        if len(_mensagem)>2 and chave_ini>=0 and chave_fim>=0 and chave_fim > chave_ini:
             _mensagem = _mensagem[chave_ini:chave_fim+1]
             #print(f'MENSAGEM FINAL: {_mensagem}')
             try:
@@ -275,7 +266,7 @@ class UtilLMM():
                 if (not _corrigir_json_) or 'delimiter' not in str(e):
                     raise e
                 # corrige aspas internas dentro do json
-                return cls.mensagem_to_json(mensagem = cls.escape_json_string_literals(mensagem), 
+                return cls.mensagem_to_json(mensagem = cls.escape_json_string_literals(_mensagem), 
                                              padrao = padrao, 
                                              _corrigir_json_ = False)
                 
@@ -351,4 +342,52 @@ class UtilLMM():
         for atalho, modelo in lista:
             print(f' - {atalho}: {modelo}')
 
+    @classmethod
+    def verifica_versao(cls, mostrar_gpus = True):
+        print('============================================')
+        print(f'Torch version: {torch.__version__} | dynamo cache size: {torch._dynamo.config.cache_size_limit}')
+        if torch._dynamo.config.cache_size_limit < 32:
+           print(' - Considere aumentar o dynamo cache com entradas de tamanhos muito diferentes: torch._dynamo.config.cache_size_limit = 128')
+        print(f'Transformers version: {transformers.__version__} | Unsloth version: {unsloth.__version__}')  # deve mostrar 4.53.x
+        print(f"Plataforma: {platform.system()} {platform.release()}")
+        # Precisão para Multiplicação de Matrizes (a que você perguntou)
+        _ft32 = torch.backends.cuda.matmul.allow_tf32
+        print(f"1. Precisão Matmul: '{torch.get_float32_matmul_precision()}', permite TF32?: {_ft32}")
+        if not _ft32:
+           print(' - Considere ativar: torch.set_float32_matmul_precision("high")')
+        # Flag similar para a biblioteca cuDNN (usada em convoluções, etc.)
+        print(f"2. Backend cuDNN permite TF32?: {torch.backends.cudnn.allow_tf32}")
+        # Tipo de dado padrão para novos tensores
+        print(f"3. DType Padrão (torch.get_default_dtype): {torch.get_default_dtype()}")        
+        print('============================================')
+        if mostrar_gpus:
+           cls.mostrar_info_gpus_pytorch()
+    
+    @classmethod
+    def mostrar_info_gpus_pytorch(cls):
+        """
+        Verifica e exibe o número de GPUs disponíveis e suas informações
+        usando a biblioteca PyTorch.
+        """
+        print("Verificando GPUs com PyTorch...")
+        
+        # 1. Verifica se o PyTorch consegue acessar a CUDA
+        if not torch.cuda.is_available():
+            print("CUDA não está disponível. O PyTorch não detectou nenhuma GPU compatível.")
+            return
+    
+        # 2. Obtém o número de GPUs que o PyTorch consegue ver
+        num_gpus = torch.cuda.device_count()
+        print(f"Número de GPUs disponíveis: {num_gpus}\n")
+    
+        # 3. Itera sobre cada GPU e coleta as informações
+        for i in range(num_gpus):
+            gpu_name = torch.cuda.get_device_name(i)
+            
+            # A memória total é dada em bytes, convertemos para Gigabytes (GB)
+            total_memory_bytes = torch.cuda.get_device_properties(i).total_memory
+            total_memory_gb = total_memory_bytes / (1024**3)
+            
+            print(f"  - GPU {i} | {gpu_name} | Mem: {total_memory_gb:.2f} GB")
+            print("-" * 60)
          
