@@ -87,7 +87,7 @@ class PromptGemma3:
   END_T = '<end_of_turn>'
 
   def __init__(self, modelo = Modelos.MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir = None, token = None):
-      modelo = UtilLMM.atalhos_modelos(modelo)
+      modelo = UtilLLM.atalhos_modelos(modelo)
       # carregando o modelo
       self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
       self.max_seq_length = max_seq_length
@@ -190,9 +190,9 @@ class PromptQwen(PromptGemma3):
         except Exception as e:
             if 'gated repo' in str(e).lower():
                msg = '\n'+\
-                     '====================================================================================================\n'+\
-                     'É necessário preencher o parâmetro "token" com um token do hugging face com esse modelo ativo.\n'+\
-                     '===================================================================================================='
+                     '==========================================================================================================\n'+\
+                     'É necessário criar uma variável de ambiente HF_TOKEN com o seu token do HuggingFace com esse modelo ativo!\n'+\
+                     '=========================================================================================================='
                raise ImportError(msg)
             raise e
 
@@ -366,28 +366,34 @@ class UtilLLM():
     @classmethod
     def mostrar_info_gpus_pytorch(cls):
         """
-        Verifica e exibe o número de GPUs disponíveis e suas informações
-        usando a biblioteca PyTorch.
+        Verifica e exibe o número de GPUs disponíveis, seus nomes, 
+        memória total e memória livre.
         """
-        print("Verificando GPUs com PyTorch...")
-        
-        # 1. Verifica se o PyTorch consegue acessar a CUDA
-        if not torch.cuda.is_available():
-            print("CUDA não está disponível. O PyTorch não detectou nenhuma GPU compatível.")
-            return
+        try:
+            if not torch.cuda.is_available():
+                print("CUDA não está disponível. O PyTorch não detectou nenhuma GPU compatível.")
+                return
     
-        # 2. Obtém o número de GPUs que o PyTorch consegue ver
-        num_gpus = torch.cuda.device_count()
-        print(f"Número de GPUs disponíveis: {num_gpus}\n")
-    
-        # 3. Itera sobre cada GPU e coleta as informações
-        for i in range(num_gpus):
-            gpu_name = torch.cuda.get_device_name(i)
+            num_gpus = torch.cuda.device_count()
+            print(f"Número de GPUs disponíveis: {num_gpus}\n")
             
-            # A memória total é dada em bytes, convertemos para Gigabytes (GB)
-            total_memory_bytes = torch.cuda.get_device_properties(i).total_memory
-            total_memory_gb = total_memory_bytes / (1024**3)
-            
-            print(f"  - GPU {i} | {gpu_name} | Mem: {total_memory_gb:.2f} GB")
-            print("-" * 60)
+            print("-" * 65)
+            for i in range(num_gpus):
+                gpu_name = torch.cuda.get_device_name(i)
+                
+                # torch.cuda.mem_get_info(i) retorna (memória livre, memória total) em bytes para a GPU 'i'
+                free_memory_bytes, total_memory_bytes = torch.cuda.mem_get_info(i)
+                
+                # Convertendo para Gigabytes (GB)
+                total_memory_gb = total_memory_bytes / (1024**3)
+                free_memory_gb = free_memory_bytes / (1024**3)
+                used_memory_gb = total_memory_gb - free_memory_gb
+                
+                # Montando a string de saída formatada
+                print(f"GPU ID: {i} | Modelo: {gpu_name}")
+                print(f"  Memória -> Usada: {used_memory_gb:.2f} GB | Livre: {free_memory_gb:.2f} GB | Total: {total_memory_gb:.2f} GB")
+                print("-" * 65)
+                
+        except Exception as e:
+            print(f"Ocorreu um erro ao verificar as GPUs: {e}")
          

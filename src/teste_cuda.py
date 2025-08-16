@@ -10,3 +10,9 @@ if torch.cuda.is_available():
     print("CUDA está disponível. GPU encontrada.")
 else:
     print("CUDA não está disponível. Apenas CPU.")
+
+try:
+    from util_prompt import UtilLLM
+    UtilLLM.verifica_versao()
+except Exception:
+    print('* No foi possvel retornar informações mais completas do pacote UtilLLM!')
