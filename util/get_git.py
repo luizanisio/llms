@@ -177,4 +177,14 @@ def sync_git_agentes(dest_root: str = ".", *, repo_url: str = REPO_URL) -> "Gemm
     util_module.verifica_versao()
     return util_module                
 
-
+def sync(dest_root: str = ".", *, repo_url: str = REPO_URL):
+    """ Apenas sincroniza a pasta com o git
+    """
+    local_dir = _atualiza(dest_root=dest_root, repo_url=repo_url)
+    print(f'Pasta do git atualizada para: {local_dir} ')
+    if dest_root == '.':
+       print('Exemplos: \n'
+             'from src.util import Util \n'
+             'from src.util_json import JsonAnalise \n'
+             'from src.util_agentes import ResolverTarefas, Agente, Tarefa, Conhecimento, AgentesToolsBasicos \n'
+             )
