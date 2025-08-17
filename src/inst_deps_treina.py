@@ -66,7 +66,7 @@ def testar_dependencias(verificar_unsloth=False):
     arq1 = "pip_unsloth_ok.txt"
     arq2 = "pip_transformers_ok.txt"
     _unsloth = "unsloth[colab-new]==2025.7.1"
-    _transformers = "transformers>=4.53.0,<4.54.0"
+    _transformers = "transformers>=4.53.0,<4.54.0" if verificar_unsloth else "transformers>=4.55.0,<4.56.0"
 
     if os.path.isfile(arq1) and os.path.isfile(arq2):
        print('✅ Instalação já realizada nesse ambiente _o/')
