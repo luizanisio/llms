@@ -131,6 +131,11 @@ def deps_treina(dest_root: str = ".", *, repo_url: str = REPO_URL, unsloth=False
     util_deps = _import_or_reload("src.inst_deps_treina")
     util_deps.testar_dependencias(verificar_unsloth=unsloth)
     print(f"[OK] Dependências de treinamento instaladas _o/")
+    if not unsloth:
+       print('||||||||||||||||||||||\n'+\
+             '||| ATENÇÃO  \n'+\
+             '||| * Unsloth não verificado, utilize o parâmetro unsloth=True para instalar dependências do Unsloth!\n'+\
+             '||||||||||||||||||||||')
 
 def deps_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL, unsloth = False) -> None:
     return deps_treina(dest_root= dest_root, repo_url= REPO_URL, unsloth=unsloth)
