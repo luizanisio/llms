@@ -5,18 +5,28 @@
     - 07/2025 – v0.2.0 - JsonAnalise
     - 07/2025 – v0.3.0 - PromptGemma3
     - 07/2025 - v0.4.0 - Gemma3Trainer
+    - 08/2025 - v0.5.0 - Unsloth passa a ser opcional
+              - ajustes dos exemplos e otimizações
  --------------------------------------------------
- Exemplo de uso no Jupyter/Colab (estando em qualquer subpasta):
- >>> import get_git
- >>> Util = get_git.sync_git_util()
- >>> JsonAnalise = get_git.sync_git_json_analise()
- >>> PromptGemma3 = get_git.sync_git_prompt()
- >>> Util.flatten_listas([1, 2, [3, 4]])
- >>> JsonAnalise.teste_compara(3)
- >>> PromptGemma3.versao()  # pr = PromptGemma3() \n pr.prompt('Quanto é 2x5?')
+# Exemplo de uso no Jupyter/Colab (estando em qualquer subpasta):
+import os
+if not os.path.isfile('./get_git.py'):
+   !curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/util/get_git.py -o ./get_git.py
+import get_git
+get_git.deps(unsloth=False) # instala unsloth se True, Transformers, Rouge e Levenshtein se precisar
+get_git.sync()
+from src.util import Util
+Util.dados_python()
 
- Para escolher a pasta:
- >>> Util = get_git.sync_git_util(dest_root="../")  # copia repo para ../src
+# modelos testados
+from src.util_prompt import Prompt
+Prompt.listar_modelos()
+
+# rodando um prompt
+p = Prompt(modelo=Prompt.modelos.MODELO_DEEPSEEK_1_5B, max_seq_length=2048, usar_unsloth=False)
+
+res = p.prompt('Complete os próximos dois números da sequência e explique de forma objetiva em uma frase: 1, 1, 2, 3, 5, 8 ...')
+print('RESPOSTA:', res)
 """
 
 # ─── 1) CONFIGURAÇÕES GERAIS ─────────────────────────────────────────
