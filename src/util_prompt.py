@@ -10,6 +10,8 @@ FASTMODEL = None
 GETCHATTEMPLATE = None
 AUTTOTOKENIZER:any = None
 AUTOMODEL:any = None
+AUTOMODELG:any = None
+GENCONFIG:any = None
 
 class Modelos(Enum):
     MODELO_GEMMA3_1B = "google/gemma-3-1b-it"   # 2Gb 
@@ -70,7 +72,7 @@ class Prompt:
         torch.set_float32_matmul_precision(precision)
 
     def carregar_model_tokenizer(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth = False):
-        global FASTMODEL, GETCHATTEMPLATE, AUTTOTOKENIZER, AUTOMODEL
+        global FASTMODEL, GETCHATTEMPLATE, AUTTOTOKENIZER, AUTOMODEL, AUTOMODELG, GENCONFIG
         ini=time()
         try:
             if usar_unsloth:
@@ -91,17 +93,28 @@ class Prompt:
                     cache_dir       = cache_dir, 
             )
             else:
-                if not AUTOMODEL:
+                if (not AUTOMODELG) and self._tipo_modelo == 'gemma':
+                    print('Importando tranformers para modelos Gemma ... ')
+                    from transformers import Gemma3ForCausalLM
+                    AUTOMODELG = Gemma3ForCausalLM
+                elif (not AUTOMODEL) and self._tipo_modelo != 'gemma':
                     print('Importando tranformers ... ')
-                    from transformers import AutoTokenizer, AutoModelForCausalLM
-                    AUTTOTOKENIZER = AutoTokenizer
+                    from transformers import AutoModelForCausalLM
                     AUTOMODEL = AutoModelForCausalLM
+                if not AUTTOTOKENIZER:
+                   from transformers import AutoTokenizer, GenerationConfig
+                   AUTTOTOKENIZER = AutoTokenizer
+                   GENCONFIG = GenerationConfig
+                    
                 tokenizer = AUTTOTOKENIZER.from_pretrained(modelo)
-                model = AUTOMODEL.from_pretrained(
-                    modelo,
-                    device_map="auto",
-                    torch_dtype="auto",
-                )
+                if self._tipo_modelo == 'gemma':
+                    model = AUTOMODELG.from_pretrained(modelo).eval()
+                else:
+                    model = AUTOMODEL.from_pretrained(
+                        modelo,
+                        device_map="auto",
+                        torch_dtype="auto",
+                    ).eval()
         except Exception as e:
             UtilLLM.controle_erros(e)
         self._model = model
@@ -123,26 +136,18 @@ class Prompt:
           return_tensors="pt",
         ).to(self._model.device)
         _temperatura = temperatura if isinstance(temperatura, float) else 0.2
-        try:
-            with torch.inference_mode(), torch.no_grad():
-                outputs = self._model.generate(**inputs, 
-                                                max_new_tokens=max_new_tokens,
-                                                temperature = _temperatura,
-                                                do_sample = bool(_temperatura > 0.3))  
-        except Exception as e:
-              msg = traceback.format_exc()
-              try:
-                 import google.colab
-                 is_colab = True
-              except:
-                 is_colab = False
-              if 'call_method UserDefinedObjectVariable' in msg and self._tipo_modelo == 'gemma':
-                 print('||' * 30)
-                 print('* ATENÇÃO: Ocorreu um erro ao gerar predição no Gemma 3 que provavelmente pode ser resolvido usando Unsloth')
-                 if is_colab:
-                    print('** no colab, uma GPU diferente de T4 pode resolver o problema (L4, por exemplo)')
-                 print('||' * 30)
-              raise  
+        # configuração da predição
+        generation_config = GENCONFIG(
+            max_new_tokens=max_new_tokens,
+            temperature=_temperatura,
+            top_k=10 if _temperatura > 0.3 else 2,
+            do_sample = bool(_temperatura > 0.3)
+        )        
+        # predição
+        with torch.inference_mode(), torch.no_grad():
+            outputs = self._model.generate(**inputs, 
+                                            max_new_tokens=max_new_tokens,
+                                            generation_config = generation_config)  
 
         if debug: print(f'Resposta gerada: {time()-ini:.1f}s')
         res = self._tokenizer.decode(outputs[0], skip_special_tokens=False)
