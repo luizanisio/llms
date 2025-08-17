@@ -62,7 +62,7 @@ def inst_dependencias():
     else:
         print("Transformers já ok _o/")
 
-def testar_dependencias():
+def testar_dependencias(verificar_unsloth=False):
     arq1 = "pip_unsloth_ok.txt"
     arq2 = "pip_transformers_ok.txt"
     _unsloth = "unsloth[colab-new]==2025.7.1"
@@ -74,16 +74,23 @@ def testar_dependencias():
 
     try:
         print("Verificando dependências ....")
-        import unsloth
-        from unsloth import FastModel
-        from unsloth.chat_templates import get_chat_template
+        if verificar_unsloth:
+           import unsloth
+           from unsloth import FastModel
+           from unsloth.chat_templates import get_chat_template
         import torch, transformers
-        print("imports unsloth e transformers ok ___o/")
+        if verificar_unsloth:
+           print("imports unsloth e transformers ok ___o/")
+        else:
+           print("imports transformers ok ___o/")
     except ImportError as e:
         print(f"\n\nOCORREU UM ERRO DE IMPORT: {e}")
-        print("Tentando instalar transformers e unsloth")
+        if verificar_unsloth:
+           print("Tentando instalar transformers e unsloth")
+        else:
+           print("Tentando instalar transformers")
 
-        if not os.path.isfile(arq1):
+        if not os.path.isfile(arq1) and verificar_unsloth:
           print(f"Instalando {_unsloth} ...")
           _pip(f"install {_unsloth}", '✅ Unsloth instalado _o/')
           import unsloth
