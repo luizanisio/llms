@@ -439,8 +439,8 @@ class UtilLLM():
                   'É necessário criar uma variável de ambiente HF_TOKEN com o seu token do HuggingFace com esse modelo ativo!\n'+\
                   '=========================================================================================================='
             raise ImportError(msg)
-        if isinstance(e, ImportError):
-            comp = 'unsloth=True'  if 'unsloth' in _msg else ''
+        if isinstance(e, (ImportError,ModuleNotFoundError)):
+            comp = 'get_git.deps(unsloth=True) # instala unsloth,'  if 'unsloth' in _msg else 'get_git.deps() # '
             print(f'''\n\nOCORREU UM ERRO DE IMPORT: {e}
 # ===========================================
 # = DICA DE PREPARAÇÃO DO AMBIENTE NO COLAB =
@@ -448,7 +448,7 @@ class UtilLLM():
 
 # !curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/util/get_git.py -o ./get_git.py
 # import get_git
-# get_git.deps({comp}) # instala unsloth, Transformers, Rouge, Levenshtein etc, o que for necessário.
+# {comp} Transformers, Rouge, Levenshtein etc, o que for necessário.
 #   ''')
             raise ImportError('dependências não resolvidas!')            
 
