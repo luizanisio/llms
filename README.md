@@ -44,26 +44,22 @@ O dataframe tem que ter uma coluna com as mensagens no formato:
 ```python
 #@title Importando classes do git
 import get_git
-Util = get_git.sync_git_util()
-JsonAnalise = get_git.sync_git_json_analise()
-```
- 
-Caso esteja em uma subpasta ou pasta específica, defina o path de destino:
-```python
-#@title Importando classes do git em pasta definida
-import get_git
-Util = get_git.sync_git_util('/teste')
-JsonAnalise = get_git.sync_git_json_analise('/teste')
+# copia a pasta src do git para o content do colab
+get_git.sync()
+# para verificar e instalar dependências no colab
+get_git.deps() 
 ```
  
 Para testar a classe Util:
 ```python
+from src.util import Util
 lista = [1,2,3,[4,5,6],7,[8,9,[10,11]]]
 Util.flatten_listas(lista)
 ```
  
 Para testar a classe JsonAnalise:
 ```python
+from src.util_json import JsonAnalise
 JsonAnalise.teste_compara(exemplo=3)
 ```
 
@@ -71,12 +67,14 @@ JsonAnalise.teste_compara(exemplo=3)
 Para importar a classe Prompt:
 ```python
 #@title Importando classes do git
-import get_git
-Prompt = get_git.sync_git_prompt()
-```
+# para verificar e instalar dependências no colab
+# utilize unsloth = True caso deseje usar unsloth 
+get_git.deps(unsloth=False) 
 
-```python
-pr = Prompt('4b') # carrega o modelo 1b, 4b, 12b ou 27b  
+from src.util_prompt import Prompt
+# carrega o modelo 1b, 4b, 12b ou 27b
+# o padrão é não usar Unsloth
+pr = Prompt('4b', usar_unsloth=False) 
 pr.prompt('Qual o próximo número da sequência 1, 1, 2, 3, 5, 8 ...?')
 ```
 ```
