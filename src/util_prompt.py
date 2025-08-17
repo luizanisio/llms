@@ -460,6 +460,13 @@ class UtilLLM():
     @classmethod
     def controle_erros(cls, e: Exception):
         _msg = str(e).lower()
+        _msg_full = str(traceback.format_exc()).lower()
+        if 'transformers does not recognize this architecture' in _msg_full:
+            msg = '\n'+\
+                  '==========================================================================================================\n'+\
+                  'Provavelmente a versão do transformers instalada não reconhece o modelo atual, utilize: get_git.deps(unsloth=False) !\n'+\
+                  '=========================================================================================================='
+            raise ImportError(msg)
         if 'gated repo' in _msg:
             msg = '\n'+\
                   '==========================================================================================================\n'+\
