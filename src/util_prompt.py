@@ -109,7 +109,7 @@ class Prompt:
         print(f'Modelo carregado: {time()-ini:.1f}s')
 
     def prompt(self, prompt:str, max_new_tokens:int = 4096, temperatura:float = 0.2, detalhar:bool = False, debug = False):
-        if self._tipo_modelo == 'gemma' and self.usar_unsloth:
+        if self._tipo_modelo == 'gemma':
             content = [{"type": "text", "text": prompt}]
         else:
             content = prompt
@@ -130,14 +130,19 @@ class Prompt:
                                                 temperature = _temperatura,
                                                 do_sample = bool(_temperatura > 0.3))  
         except Exception as e:
-              msg = traceback.format_exception_only(e)
-              print(f'TRACE: {msg}')
-              if 'call_method UserDefinedObjectVariable' in str(e) and self._tipo_modelo == 'gemma':
+              msg = traceback.format_exc()
+              try:
+                 import google.colab
+                 is_colab = True
+              except:
+                 is_colab = False
+              if 'call_method UserDefinedObjectVariable' in msg and self._tipo_modelo == 'gemma':
                  print('||' * 30)
-                 print('* ATENÇÃO: Ocorreu um erro que provavelmente pode ser resolvido usando Unsloth ou uma GPU diferente de T4 se estiver no Colab')
-                 print('** O uso de uma versão fixa do transformers pode resolver também: pip install transformers">=4.53.0,<4.54.0" ')
+                 print('* ATENÇÃO: Ocorreu um erro ao gerar predição no Gemma 3 que provavelmente pode ser resolvido usando Unsloth')
+                 if is_colab:
+                    print('** no colab, uma GPU diferente de T4 pode resolver o problema (L4, por exemplo)')
                  print('||' * 30)
-              raise
+              raise  
 
         if debug: print(f'Resposta gerada: {time()-ini:.1f}s')
         res = self._tokenizer.decode(outputs[0], skip_special_tokens=False)
