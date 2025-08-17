@@ -4,6 +4,7 @@ from copy import deepcopy
 from time import time
 from enum import Enum
 import platform
+import traceback
 # vai guardar os pacotes importados dinamicamente
 FASTMODEL = None
 GETCHATTEMPLATE = None
@@ -122,11 +123,22 @@ class Prompt:
           return_tensors="pt",
         ).to(self._model.device)
         _temperatura = temperatura if isinstance(temperatura, float) else 0.2
-        with torch.inference_mode():
-             outputs = self._model.generate(**inputs, 
-                                            max_new_tokens=max_new_tokens,
-                                            temperature = _temperatura,
-                                            do_sample = bool(_temperatura > 0.3))  
+        try:
+            with torch.inference_mode(), torch.no_grad():
+                outputs = self._model.generate(**inputs, 
+                                                max_new_tokens=max_new_tokens,
+                                                temperature = _temperatura,
+                                                do_sample = bool(_temperatura > 0.3))  
+        except Exception as e:
+              msg = traceback.format_exception_only(e)
+              print(f'TRACE: {msg}')
+              if 'call_method UserDefinedObjectVariable' in str(e) and self._tipo_modelo == 'gemma':
+                 print('||' * 30)
+                 print('* ATENÇÃO: Ocorreu um erro que provavelmente pode ser resolvido usando Unsloth ou uma GPU diferente de T4 se estiver no Colab')
+                 print('** O uso de uma versão fixa do transformers pode resolver também: pip install transformers">=4.53.0,<4.54.0" ')
+                 print('||' * 30)
+              raise
+
         if debug: print(f'Resposta gerada: {time()-ini:.1f}s')
         res = self._tokenizer.decode(outputs[0], skip_special_tokens=False)
         res, think = self._tratar_retorno(res, debug=debug)
