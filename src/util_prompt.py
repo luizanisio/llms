@@ -50,7 +50,8 @@ class Prompt:
         modelo = UtilLLM.atalhos_modelos(modelo)
         self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
         _unsloth = ' (Unsloth)' if usar_unsloth else ''
-        print(f'Modelo selecionado: {self.modelo}{_unsloth}')
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f'Modelo selecionado: {self.modelo}{_unsloth} | device: {device}')
         self.max_seq_length = max_seq_length
         self.cache_dir = cache_dir
         self.usar_unsloth = usar_unsloth
@@ -93,6 +94,7 @@ class Prompt:
                     cache_dir       = cache_dir, 
             )
             else:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
                 if (not AUTOMODELG) and self._tipo_modelo == 'gemma':
                     print('Importando tranformers para modelos Gemma ... ')
                     from transformers import Gemma3ForCausalLM
@@ -115,6 +117,7 @@ class Prompt:
                         device_map="auto",
                         torch_dtype="auto",
                     ).eval()
+                model.to(device)
         except Exception as e:
             UtilLLM.controle_erros(e)
         self._model = model
