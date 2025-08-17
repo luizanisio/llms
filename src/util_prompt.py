@@ -1,26 +1,14 @@
-try:
-  import unsloth
-  from unsloth import FastModel
-  from unsloth.chat_templates import get_chat_template
-  import torch
-  import transformers
-  import platform
-except ImportError as e:
-  print(f'''\n\nOCORREU UM ERRO DE IMPORT: {e}
-===========================================
-= DICA DE PREPARAÇÃO DO AMBIENTE NO COLAB =
-===========================================
-
-!curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/util/get_git.py -o ./get_git.py
-import get_git
-get_git.deps() # instala unsloth, Transformers, Rouge, Levenshtein etc, necessário.
-  ''')
-  raise ImportError('dependências não resolvidas!')
-  
+import torch
 import json
 from copy import deepcopy
 from time import time
 from enum import Enum
+import platform
+# vai guardar os pacotes importados dinamicamente
+FASTMODEL = None
+GETCHATTEMPLATE = None
+AUTTOTOKENIZER:any = None
+AUTOMODEL:any = None
 
 class Modelos(Enum):
     MODELO_GEMMA3_1B = "google/gemma-3-1b-it"   # 2Gb 
@@ -30,6 +18,18 @@ class Modelos(Enum):
     MODELO_QWEN_7B = "Qwen/Qwen2.5-7B-Instruct-1M" # 14Gb
     MODELO_JUREMA_7B = "Jurema-br/Jurema-7B"       # 14Gb
     MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct-1M'   
+    MODELO_DEEPSEEK_1_5B = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B'
+    MODELO_DEEPSEEK_70B = 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B' # 150Gb
+    MODELO_DEEPSEEK_32B = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
+    MODELO_DEEPSEEK_14B = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'
+    MODELO_DEEPSEEK_7B = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'
+    MODELO_DEEPSEEK_8B = 'deepseek-ai/DeepSeek-R1-Distill-Llama-8B'
+    MODELO_OSS_20B = 'openai/gpt-oss-20b'
+    MODELO_OSS_120B = 'openai/gpt-oss-120b'
+    MODELO_LLAMA_4_SCOUT_16B = 'meta-llama/Llama-4-Scout-17B-16E-Instruct'
+    MODELO_LLAMA_3_3_70B = 'meta-llama/Llama-3.3-70B-Instruct'
+    MODELO_LLAMA_3_2_1B = 'meta-llama/Llama-3.2-1B-Instruct'
+    MODELO_LLAMA_3_2_3B = 'meta-llama/Llama-3.2-3B-Instruct'
 
     @classmethod
     def listar(cls):
@@ -39,207 +39,216 @@ class Modelos(Enum):
 
 class classproperty(property):
     def __get__(self, obj, cls):
-        return self.fget(cls)           
+        return self.fget(cls)    
 
 class Prompt:
-      def __init__(self, modelo = Modelos.MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir:str = None, token:str = None):
-          self.__pg = None
-          self.modelo = UtilLLM.atalhos_modelos(modelo)
-          if 'gemma' in str(self.modelo).lower():
-             print(f'PromptGemma3: carregando modelo {self.modelo} ..')
-             self.__pg = PromptGemma3(modelo=self.modelo, 
+    def __init__(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth:bool = False):
+        # identificando o modelo
+        modelo = UtilLLM.atalhos_modelos(modelo)
+        self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
+        _unsloth = ' (Unsloth)' if usar_unsloth else ''
+        print(f'Modelo selecionado: {self.modelo}{_unsloth}')
+        self.max_seq_length = max_seq_length
+        self.cache_dir = cache_dir
+        self.usar_unsloth = usar_unsloth
+        self._model = None
+        self._tokenizer = None
+        self._configurar_separadores()
+        self.carregar_model_tokenizer(modelo=self.modelo,
                                       max_seq_length=max_seq_length,
-                                      cache_dir=cache_dir)
-          elif 'qwen' in str(self.modelo).lower() or\
-               'jurema' in str(self.modelo).lower():
-             print(f'PromptQwen: carregando modelo {self.modelo} ..')
-             self.__pg = PromptQwen(modelo=self.modelo, 
-                                      max_seq_length=max_seq_length,
-                                      cache_dir=cache_dir, token=token)
+                                      cache_dir=cache_dir,
+                                      usar_unsloth=usar_unsloth)
 
-      def verifica_modelo(self):
-          if self.__pg is None:
-             raise ValueError(f'Não foi carregado um modelo válido! [{self.modelo}]')
 
-      def prompt(self, prompt:str, max_new_tokens = 4096, temperatura = 0.3, detalhar = False):
-          self.verifica_modelo()
-          return self.__pg.prompt(prompt, max_new_tokens, temperatura, detalhar)
+    @classmethod
+    def otimiza_torch(cls, cache_limit = 128, precision = 'high'):
+        print(f'Otimizando torch: \n\t - torch._dynamo.config.cache_size_limit = {cache_limit}\n\t - torch.set_float32_matmul_precision({precision})')
+        # Aumentar cache do dynamo
+        torch._dynamo.config.cache_size_limit = cache_limit
+        # Performance com F32
+        torch.set_float32_matmul_precision(precision)
 
-      def prompt_to_json(self, prompt:str, max_new_tokens = 4096, temperatura = 0):
-          self.verifica_modelo()
-          return self.__pg.prompt_to_json(prompt, max_new_tokens, temperatura)
+    def carregar_model_tokenizer(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth = False):
+        global FASTMODEL, GETCHATTEMPLATE, AUTTOTOKENIZER, AUTOMODEL
+        ini=time()
+        try:
+            if usar_unsloth:
+                if not FASTMODEL:
+                    print('Importando unsloth ... ')
+                    import unsloth
+                    from unsloth import FastModel
+                    from unsloth.chat_templates import get_chat_template
+                    FASTMODEL = FastModel
+                    GETCHATTEMPLATE = get_chat_template
+                model, tokenizer = FASTMODEL.from_pretrained(
+                    model_name = modelo,
+                    max_seq_length = max_seq_length, # Choose any for long context!
+                    load_in_4bit = False,  # 4 bit quantization to reduce memory
+                    load_in_8bit = False, # [NEW!] A bit more accurate, uses 2x memory
+                    full_finetuning = False, # [NEW!] We have full finetuning now!
+                    device_map      = "auto",
+                    cache_dir       = cache_dir, 
+            )
+            else:
+                if not AUTOMODEL:
+                    print('Importando tranformers ... ')
+                    from transformers import AutoTokenizer, AutoModelForCausalLM
+                    AUTTOTOKENIZER = AutoTokenizer
+                    AUTOMODEL = AutoModelForCausalLM
+                tokenizer = AUTTOTOKENIZER.from_pretrained(modelo)
+                model = AUTOMODEL.from_pretrained(
+                    modelo,
+                    device_map="auto",
+                    torch_dtype="auto",
+                )
+        except Exception as e:
+            UtilLLM.controle_erros(e)
+        self._model = model
+        self._tokenizer = tokenizer
+        print(f'Modelo carregado: {time()-ini:.1f}s')
 
-      @classmethod
-      def verifica_versao(cls, mostrar_gpus = True):
-          UtilLLM.verifica_versao(mostrar_gpus)
-
-      @classmethod
-      def listar_modelos(cls):
-          Modelos.listar()
-          print('\n* Utilize: Prompt.modelos.MODELO....')
-
-      @classproperty
-      def modelos(cls):
-          return Modelos      
-
-class PromptGemma3:
-  START_T = '<start_of_turn>model'
-  END_T = '<end_of_turn>'
-
-  def __init__(self, modelo = Modelos.MODELO_GEMMA3_1B, max_seq_length=4096, cache_dir = None, token = None):
-      modelo = UtilLLM.atalhos_modelos(modelo)
-      # carregando o modelo
-      self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
-      self.max_seq_length = max_seq_length
-      self.cache_dir = cache_dir
-      self.model, self.tokenizer = FastModel.from_pretrained(
-          model_name = self.modelo,
-          max_seq_length = max_seq_length, # Choose any for long context!
-          load_in_4bit = False,  # 4 bit quantization to reduce memory
-          load_in_8bit = False, # [NEW!] A bit more accurate, uses 2x memory
-          full_finetuning = False, # [NEW!] We have full finetuning now!
-          device_map      = "auto",
-          cache_dir       = cache_dir, 
-          token = token, # use one if using gated models
-      )
-
-      self.tokenizer = get_chat_template(
-          self.tokenizer,
-          chat_template = "gemma-3",
-      )
-
-  def prompt(self, prompt:str, max_new_tokens = 4096, temperatura = 0.3, detalhar = False):
-        messages = [{"role": "user",
-                     "content": [{"type": "text", "text": prompt}]}]
-        # gemma 1b tem particularidades
-        g1b = '-1b-' in self.modelo
-        inputs = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, 
-            tokenizer = g1b, return_tensors="pt"
-        )
-        if g1b: 
-           inputs = inputs.to(self.model.device)
-           inputs = {'input_ids': inputs}
+    def prompt(self, prompt:str, max_new_tokens:int = 4096, temperatura:float = 0.2, detalhar:bool = False, debug = False):
+        if self._tipo_modelo == 'gemma' and self.usar_unsloth:
+            content = [{"type": "text", "text": prompt}]
         else:
-           inputs = self.tokenizer(inputs, return_tensors="pt").to(self.model.device)
-
-        _temperatura = temperatura if isinstance(temperatura, float) else 1.0
+            content = prompt
+        messages = [{"role": "user", "content": content}, ]
         ini = time()
+        inputs = self._tokenizer.apply_chat_template(
+          messages,
+          add_generation_prompt=True,
+          tokenize=True,
+          return_dict=True,
+          return_tensors="pt",
+        ).to(self._model.device)
+        _temperatura = temperatura if isinstance(temperatura, float) else 0.2
         with torch.inference_mode():
-              out_ids = self.model.generate(
-                  **inputs,
-                  max_new_tokens = max_new_tokens,
-                  temperature = _temperatura,
-                  do_sample= _temperatura > 0.3
-              )
-        res = self._limpar_retorno(self.tokenizer.decode(out_ids[0], skip_special_tokens=False))
+             outputs = self._model.generate(**inputs, 
+                                            max_new_tokens=max_new_tokens,
+                                            temperature = _temperatura,
+                                            do_sample = bool(_temperatura > 0.3))  
+        if debug: print(f'Resposta gerada: {time()-ini:.1f}s')
+        res = self._tokenizer.decode(outputs[0], skip_special_tokens=False)
+        res, think = self._tratar_retorno(res, debug=debug)
         if not detalhar:
            return res
         _input_tokens = inputs["input_ids"].size(1)
-        _output_tokens = out_ids.size(1) - _input_tokens
-        return {'texto': res, 'input_tokens': _input_tokens, 'output_tokens': _output_tokens, 'time': time()-ini}
+        _output_tokens = outputs.size(1) - _input_tokens
+        res = {'texto': res, 'input_tokens': _input_tokens, 'output_tokens': _output_tokens, 'time': time()-ini}
+        if think:
+           res['think'] = think
+        return res
 
-  def _limpar_retorno(self, txt: str) -> str:
-      if self.START_T in txt:
-          txt = txt.split(self.START_T, 1)[1]
-      if self.END_T and self.END_T in txt:
-          txt = txt.split(self.END_T, 1)[0]
-      return txt.lstrip("\n ").rstrip("\n ")
+    _STRIP = "\n \t`"
+    def _tratar_retorno(self, txt: str, debug = False) -> tuple:
+        if debug:
+           print('-'*30)
+           print(f'RETORNO BRUTO: {txt}')
+           print('-'*30)
 
-  def prompt_to_json(self, prompt:str, max_new_tokens = 4096, temperatura = 0):
-      retorno = self.prompt(prompt, max_new_tokens = max_new_tokens, temperatura=temperatura, detalhar = True)
-      # converte o retorno da chave texto em json - se der erro, fica vazio
-      texto = retorno.pop('texto',None)
-      try:
-          res = UtilLMM.mensagem_to_json(texto, padrao = None)
-          if res is None:
-              raise ValueError('Response não é um json válido!')
-      except (json.JSONDecodeError, ValueError) as e:
-          res = {'erro': f'JSONDecodeError: {e}', 'response': texto}
-      res['usage'] = retorno
-      return res
+        # Se os separadores não estiverem configurados, retorna o texto limpo.
+        if not self._start_asst:
+            return txt.strip(self._STRIP), ''
 
-  def exemplo(self):
-      _prompt_teste = '''Retorne um json válido com a estrutrua {"mensagem": com a mensagem do usuário, "itens": com uma lista de itens quando ele enumerar algo }
-                         Mensagem do usuário: Eu preciso comprar abacaxi, pera e 2L de leite.'''
-      r = self.prompt_to_json(_prompt_teste)
-      print(json.dumps(r, indent=2, ensure_ascii=False))
+        # 1. Encontra a última ocorrência do início da resposta do assistente.
+        pos_inicio_assistente = txt.rfind(self._start_asst)
+        if pos_inicio_assistente == -1:
+            return txt.strip(), '' # Retorna se não encontrar o marcador
+        # 2. Isola o conteúdo gerado pelo assistente (tudo após o marcador de início).
+        conteudo_assistente = txt[pos_inicio_assistente + len(self._start_asst):]
+        think = ''
+        pos_inicio_texto_final = 0
+        # 3. Procura e extrai a seção <think> se ela existir para este modelo.
+        if self._think:
+            pos_inicio_think = conteudo_assistente.find(self._think)
+            if pos_inicio_think != -1:
+                pos_fim_think = conteudo_assistente.find(self._end_think, pos_inicio_think)
+                if pos_fim_think != -1:
+                    # Extrai o conteúdo dentro das tags <think> e </think>
+                    inicio_conteudo_think = pos_inicio_think + len(self._think)
+                    think = conteudo_assistente[inicio_conteudo_think:pos_fim_think].strip(self._STRIP)
+                    # A resposta final começa *após* a tag </think>
+                    pos_inicio_texto_final = pos_fim_think + len(self._end_think)
+        # 4. Encontra o marcador de fim de turno (<|im_end|>, <end_of_turn>, etc.).
+        pos_fim_resposta = conteudo_assistente.find(self._end_turn)
+        # 5. Extrai a resposta final.
+        if pos_fim_resposta == -1:
+            # Se não encontrar o marcador de fim, pega tudo a partir do início.
+            resposta = conteudo_assistente[pos_inicio_texto_final:]
+        else:
+            # Caso contrário, pega o trecho entre o início e o marcador de fim.
+            resposta = conteudo_assistente[pos_inicio_texto_final:pos_fim_resposta]
+        # 6. Limpa espaços, quebras de linha e outros caracteres indesejados e retorna.
+        return resposta.strip(self._STRIP), think
 
-# QWEN e JUREMA - O Jurema, em 08/2025, exige token do hugginface
-class PromptQwen(PromptGemma3):
-    """
-    Classe para rodar inferência com modelos Qwen-7B-Chat/Instr.
-    Mantém a API idêntica à PromptGemma3.
-    """
-    # tags de separação tipicamente usadas pelo template qwen-chat
-    START_U = '<|im_start|>user'      # início da pergunta do usuário
-    START_T = '<|im_start|>assistant' # início da resposta do modelo
-    END_T   = '<|im_end|>'            # fim opcional (pode não aparecer)
+    def _configurar_separadores(self):
+        nome_modelo = str(self.modelo).lower()
+        self._think      = ''
+        self._end_think  = ''
+        self._tipo_modelo =''
+        if 'gemma' in nome_modelo:
+            self._tipo_modelo = 'gemma'
+            self._start_user = '<start_of_turn>user'   # início da pergunta do usuário
+            self._start_asst = '<start_of_turn>model'  # início da resposta do modelo
+            self._end_turn   = '<end_of_turn>'          
+        elif 'deepseek' in nome_modelo:
+            self._tipo_modelo = 'deepseek'
+            self._start_user = '<｜User｜>'      # início da pergunta do usuário
+            self._start_asst = '<｜Assistant｜>' # início da resposta do modelo
+            self._end_turn   = '<｜end▁of▁sentence｜>'          
+            self._think      = '<think>'
+            self._end_think  = '</think>'
+        elif 'qwen' in nome_modelo or 'jurema' in nome_modelo:
+            self._tipo_modelo = 'qwen'
+            self._start_user = '<|im_start|>user'      # início da pergunta do usuário
+            self._start_asst = '<|im_start|>assistant' # início da resposta do modelo
+            self._end_turn   = '<|im_end|>'           
+        else:
+            print(f'`Separados náo configurados para o Modelo: {self.modelo}')
+            self._start_user = ''      # início da pergunta do usuário
+            self._start_asst = '' # início da resposta do modelo
 
-    def __init__(self,
-                 modelo: Modelos = Modelos.MODELO_QWEN_7B,
-                 max_seq_length: int = 4096,
-                 cache_dir: str | None = None,
-                 token = None):
+    def prompt_to_json(self, prompt:str, max_new_tokens = 4096, temperatura = 0, debug = False):
+        retorno = self.prompt(prompt, 
+                              max_new_tokens = max_new_tokens, 
+                              temperatura=temperatura, 
+                              detalhar = True, 
+                              debug = debug)
+        # converte o retorno da chave texto em json - se der erro, fica vazio
+        texto = retorno.pop('texto',None)
         try:
-            # carrega o modelo base usando a mesma lógica da superclasse
-            super().__init__(modelo=modelo,
-                             max_seq_length=max_seq_length,
-                             cache_dir=cache_dir,
-                             token=token)
-        except Exception as e:
-            if 'gated repo' in str(e).lower():
-               msg = '\n'+\
-                     '==========================================================================================================\n'+\
-                     'É necessário criar uma variável de ambiente HF_TOKEN com o seu token do HuggingFace com esse modelo ativo!\n'+\
-                     '=========================================================================================================='
-               raise ImportError(msg)
-            raise e
+            res = UtilLLM.mensagem_to_json(texto, padrao = None)
+            if res is None:
+                raise ValueError('Response não é um json válido!')
+        except (json.JSONDecodeError, ValueError) as e:
+            res = {'erro': f'JSONDecodeError: {e}', 'response': texto}
+        res['usage'] = retorno
+        return res
 
-        # troca o chat-template para o “qwen2” (disponível no unsloth ≥ 0.4.0)
-        self.tokenizer = get_chat_template(
-            self.tokenizer,
-            chat_template="qwen2.5",
-        )
+    def exemplo(self):
+        _prompt_teste = '''Retorne um json válido com a estrutrua {"mensagem": com a mensagem do usuário, "itens": com uma lista de itens quando ele enumerar algo }
+                            Mensagem do usuário: Eu preciso comprar abacaxi, pera e 2L de leite.'''
+        print('-'*30)
+        print(f'PROMPT:\n{_prompt_teste}')
+        print('-'*30)
+        r = self.prompt_to_json(_prompt_teste, debug=True)
+        print(f'RESPOSTA TRATADA: prompt_to_json(prompt = "...."):')
+        print('=-'*15)
+        print(json.dumps(r, indent=2, ensure_ascii=False))
+        print('=-'*30)
 
-    # TODO unir na classe herdada
-    def prompt(self,
-               prompt: str,
-               max_new_tokens: int = 4096,
-               temperatura: float = 0.3,
-               detalhar: bool = False):
+    @classmethod
+    def verifica_versao(cls, mostrar_gpus = True):
+        UtilLLM.verifica_versao(mostrar_gpus)
 
-        # Fix: The content field should be a string, not a list of dictionaries.
-        messages = [{"role": "user", "content": prompt}]
-        ini = time()
-        # aplica o template já no formato de ids
-        inputs = self.tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="pt",
-        ).to(self.model.device)
+    @classmethod
+    def listar_modelos(cls):
+        Modelos.listar()
+        print('\n* Utilize: Prompt.modelos.MODELO....\n** Ou use os atalhos: 1, 2, 12, j7, d1.5 ... em UtilLLM.ATALHOS')
 
-        _temperatura = temperatura if isinstance(temperatura, float) else 1.0
-        with torch.inference_mode():
-            out_ids = self.model.generate(
-                input_ids=inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=_temperatura,
-            )
-
-        resposta = self._limpar_retorno(
-            self.tokenizer.decode(out_ids[0], skip_special_tokens=False)
-        )
-
-        if not detalhar:
-            return resposta
-
-        n_in  = inputs.size(1)
-        n_out = out_ids.size(1) - n_in
-        return {"texto": resposta,
-                "input_tokens": n_in,
-                "output_tokens": n_out,
-                "time": time()-ini}
+    @classproperty
+    def modelos(cls):
+        return Modelos     
 
 
 ##########################################
@@ -320,13 +329,23 @@ class UtilLLM():
         return ''.join(out)       
 
     ATALHOS = {
-        '1': Modelos.MODELO_GEMMA3_1B,    '4': Modelos.MODELO_GEMMA3_4B,
-        '12': Modelos.MODELO_GEMMA3_12B,  '27': Modelos.MODELO_GEMMA3_27B,
-        'j': Modelos.MODELO_JUREMA_7B,    'j7': Modelos.MODELO_JUREMA_7B,
+      # Gemma 3
+        '1': Modelos.MODELO_GEMMA3_1B,        '4': Modelos.MODELO_GEMMA3_4B,
+        '12': Modelos.MODELO_GEMMA3_12B,      '27': Modelos.MODELO_GEMMA3_27B,
+      # Jurema 7B / Qwen
+        'j': Modelos.MODELO_JUREMA_7B,        'j7': Modelos.MODELO_JUREMA_7B,
         'jurema': Modelos.MODELO_JUREMA_7B,
-        'q': Modelos.MODELO_QWEN_7B,      'q7': Modelos.MODELO_QWEN_7B,
-        'q14': Modelos.MODELO_QWEN_14B
-    }
+        'q': Modelos.MODELO_QWEN_7B,          'q7': Modelos.MODELO_QWEN_7B,
+      # DeepSeek
+        'q14': Modelos.MODELO_QWEN_14B,
+        'd1.5': Modelos.MODELO_DEEPSEEK_1_5B, 'd70': Modelos.MODELO_DEEPSEEK_70B,
+        'd32': Modelos.MODELO_DEEPSEEK_32B,   'd14': Modelos.MODELO_DEEPSEEK_14B,
+        'd8': Modelos.MODELO_DEEPSEEK_8B,     'd7': Modelos.MODELO_DEEPSEEK_7B,
+        'o20': Modelos.MODELO_OSS_20B,        'o120': Modelos.MODELO_OSS_120B,
+      # Llama 3.2 3.3 4
+        'l1': Modelos.MODELO_LLAMA_3_2_1B,    'l3': Modelos.MODELO_LLAMA_3_2_3B,
+        'l70': Modelos.MODELO_LLAMA_3_3_70B,
+        'l4s': Modelos.MODELO_LLAMA_4_SCOUT_16B,        }
     @classmethod
     def atalhos_modelos(cls, modelo):
         res = cls.ATALHOS.get(str(modelo).lower().strip(), modelo)      
@@ -344,11 +363,24 @@ class UtilLLM():
 
     @classmethod
     def verifica_versao(cls, mostrar_gpus = True):
-        print('============================================')
+        global FASTMODEL, GETCHATTEMPLATE, AUTTOTOKENIZER, AUTOMODEL
+        try:
+            import unsloth
+            ver_us=f'Unsloth version: {unsloth.__version__}'
+        except:
+            ver_us='Unsloth version: não disponível'
+        try:
+            import transformers
+            ver_tr=f'Transformers version: {transformers.__version__}'
+        except:
+            ver_tr='Transformers version: não disponível'
+        print('=' * 30)
         print(f'Torch version: {torch.__version__} | dynamo cache size: {torch._dynamo.config.cache_size_limit}')
         if torch._dynamo.config.cache_size_limit < 32:
            print(' - Considere aumentar o dynamo cache com entradas de tamanhos muito diferentes: torch._dynamo.config.cache_size_limit = 128')
-        print(f'Transformers version: {transformers.__version__} | Unsloth version: {unsloth.__version__}')  # deve mostrar 4.53.x
+        print(ver_tr)
+        print(ver_us)
+        print('=' * 30)
         print(f"Plataforma: {platform.system()} {platform.release()}")
         # Precisão para Multiplicação de Matrizes (a que você perguntou)
         _ft32 = torch.backends.cuda.matmul.allow_tf32
@@ -359,7 +391,7 @@ class UtilLLM():
         print(f"2. Backend cuDNN permite TF32?: {torch.backends.cudnn.allow_tf32}")
         # Tipo de dado padrão para novos tensores
         print(f"3. DType Padrão (torch.get_default_dtype): {torch.get_default_dtype()}")        
-        print('============================================')
+        print('=' * 30)
         if mostrar_gpus:
            cls.mostrar_info_gpus_pytorch()
     
@@ -375,7 +407,7 @@ class UtilLLM():
                 return
     
             num_gpus = torch.cuda.device_count()
-            print(f"Número de GPUs disponíveis: {num_gpus}\n")
+            print(f"Número de GPUs disponíveis: {num_gpus}")
             
             print("-" * 65)
             for i in range(num_gpus):
@@ -397,3 +429,27 @@ class UtilLLM():
         except Exception as e:
             print(f"Ocorreu um erro ao verificar as GPUs: {e}")
          
+
+    @classmethod
+    def controle_erros(cls, e: Exception):
+        _msg = str(e).lower()
+        if 'gated repo' in _msg:
+            msg = '\n'+\
+                  '==========================================================================================================\n'+\
+                  'É necessário criar uma variável de ambiente HF_TOKEN com o seu token do HuggingFace com esse modelo ativo!\n'+\
+                  '=========================================================================================================='
+            raise ImportError(msg)
+        if isinstance(e, ImportError):
+            comp = 'unsloth=True'  if 'unsloth' in _msg else ''
+            print(f'''\n\nOCORREU UM ERRO DE IMPORT: {e}
+# ===========================================
+# = DICA DE PREPARAÇÃO DO AMBIENTE NO COLAB =
+# ===========================================
+
+# !curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/util/get_git.py -o ./get_git.py
+# import get_git
+# get_git.deps({comp}) # instala unsloth, Transformers, Rouge, Levenshtein etc, o que for necessário.
+#   ''')
+            raise ImportError('dependências não resolvidas!')            
+
+        raise e
