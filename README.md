@@ -4,7 +4,7 @@ Pacotes em desenvolvimento para estudos com LLMs
 ## Sempre evoluindo... 
 - Desenvolvimento de pacotes para predição, treinamento e avaliação de LLMs
 - Inicalmente o foco é o Gemma 3
--  [Notebook de exemplo](./Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)
+-  Notebook de exemplo para predições: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)
 -  [Diagramas](./diagramas.md)
 
 ## Treino do GEMMA 3
