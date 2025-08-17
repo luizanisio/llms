@@ -82,8 +82,10 @@ class Prompt:
                     import unsloth
                     from unsloth import FastModel
                     from unsloth.chat_templates import get_chat_template
+                    from transformers import GenerationConfig
                     FASTMODEL = FastModel
                     GETCHATTEMPLATE = get_chat_template
+                    GENCONFIG = GenerationConfig
                 model, tokenizer = FASTMODEL.from_pretrained(
                     model_name = modelo,
                     max_seq_length = max_seq_length, # Choose any for long context!
