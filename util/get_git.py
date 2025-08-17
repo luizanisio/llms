@@ -5,8 +5,6 @@
     - 07/2025 – v0.2.0 - JsonAnalise
     - 07/2025 – v0.3.0 - PromptGemma3
     - 07/2025 - v0.4.0 - Gemma3Trainer
-    - 08/2025 - v0.5.0 - Unsloth passa a ser opcional
-              - ajustes dos exemplos e otimizações
  --------------------------------------------------
 # Exemplo de uso no Jupyter/Colab (estando em qualquer subpasta):
 import os
@@ -140,12 +138,15 @@ def deps_treina(dest_root: str = ".", *, repo_url: str = REPO_URL, unsloth=False
     # testa dependências do colab
     util_deps = _import_or_reload("src.inst_deps_treina")
     util_deps.testar_dependencias(verificar_unsloth=unsloth)
-    print(f"[OK] Dependências de treinamento instaladas _o/")
     if not unsloth:
-       print('||||||||||||||||||||||\n'+\
-             '||| ATENÇÃO  \n'+\
-             '||| * Unsloth não verificado, utilize o parâmetro unsloth=True para instalar dependências do Unsloth!\n'+\
+       print('||||||||||||||||||||||\n'
+             '||| ATENÇÃO  \n'
+             '||| * Unsloth não verificado, utilize o parâmetro unsloth=True para instalar dependências do Unsloth!\n'
+             '||| ** Modelos como o Gemma 3 funcionam melhor com GPU L4 em diante ou com Unsloth\n'
+             '||| *** Considere instalar Unsloth para treinamento \n'
              '||||||||||||||||||||||')
+    else:
+       print(f"[OK] Dependências de treinamento instaladas _o/")
 
 def deps_prompt(dest_root: str = ".", *, repo_url: str = REPO_URL, unsloth = False) -> None:
     return deps_treina(dest_root= dest_root, repo_url= REPO_URL, unsloth=unsloth)
