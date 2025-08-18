@@ -169,6 +169,7 @@ class Prompt:
         gen_cfg.min_length = 1
         gen_cfg.temperature = _temperatura
         gen_cfg.top_k = 20 if _temperatura > 0.3 else 2
+        gen_cfg.top_p = 95
         gen_cfg.do_sample = bool(_temperatura > 0.3)
         # predição
         with torch.inference_mode(), torch.no_grad():
