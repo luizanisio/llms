@@ -50,8 +50,11 @@ class Prompt:
         modelo = UtilLLM.atalhos_modelos(modelo)
         self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
         _unsloth = ' (Unsloth)' if usar_unsloth else ''
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f'Modelo selecionado: {self.modelo}{_unsloth} | device: {device}')
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._num_gpus = torch.cuda.device_count()
+        _device = f' {self._num_gpus} x {self._device}' if self._device != 'cpu' else 'cpu'
+        print(f'Modelo selecionado: {self.modelo}{_unsloth} | device: {_device}')
+        self.otimiza_torch()
         self.max_seq_length = max_seq_length
         self.cache_dir = cache_dir
         self.usar_unsloth = usar_unsloth
@@ -65,11 +68,25 @@ class Prompt:
 
 
     @classmethod
-    def otimiza_torch(cls, cache_limit = 128, precision = 'high'):
-        print(f'Otimizando torch: \n\t - torch._dynamo.config.cache_size_limit = {cache_limit}\n\t - torch.set_float32_matmul_precision({precision})')
+    def otimiza_torch(cls, cache_limit = 128, precision = 'high', auto=True):
+        print(f'Otimizando torch:')
         # Aumentar cache do dynamo
-        torch._dynamo.config.cache_size_limit = cache_limit
+        current_cache_limit = torch._dynamo.config.cache_size_limit
+        if not auto or current_cache_limit < cache_limit:
+            print(f'\t- Alterando cache do dynamo de {current_cache_limit} para {cache_limit}.')
+            torch._dynamo.config.cache_size_limit = cache_limit
+        else:
+            print(f'\t- Cache do dynamo já está adequado ({current_cache_limit}).')
+        
         # Performance com F32
+        current_precision = torch.get_float32_matmul_precision()
+        # Não alteramos se a precisão já for 'high' ou 'highest' (que é ainda melhor)
+        if not auto or current_precision not in ('high', 'highest'):
+            print(f"\t- Alterando precisão matmul de '{current_precision}' para '{precision}'.")
+            torch.set_float32_matmul_precision(precision)
+        else:
+            print(f"\t- Precisão matmul já está otimizada ('{current_precision}').")
+        
         torch.set_float32_matmul_precision(precision)
 
     def carregar_model_tokenizer(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth = False):
@@ -97,6 +114,10 @@ class Prompt:
             )
             else:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
+                model_kwargs = {"torch_dtype": "auto",}
+                if self._num_gpus > 1:
+                    print("Múltiplas GPUs detectadas. Usando device_map='auto'.")
+                    model_kwargs["device_map"] = "auto"                
                 if (not AUTOMODELG) and self._tipo_modelo == 'gemma':
                     print('Importando tranformers para modelos Gemma ... ')
                     from transformers import Gemma3ForCausalLM
@@ -112,14 +133,13 @@ class Prompt:
                     
                 tokenizer = AUTTOTOKENIZER.from_pretrained(modelo)
                 if self._tipo_modelo == 'gemma':
-                    model = AUTOMODELG.from_pretrained(modelo).eval()
+                    model_kwargs.pop('torch_dtype')
+                    model = AUTOMODELG.from_pretrained(modelo,**model_kwargs).eval()
                 else:
-                    model = AUTOMODEL.from_pretrained(
-                        modelo,
-                        device_map="auto",
-                        torch_dtype="auto",
-                    ).eval()
-                model.to(device)
+                    model = AUTOMODEL.from_pretrained(modelo,**model_kwargs).eval()
+                # Se não for multi-GPU, movemos o modelo para o device correto (cuda:0 ou cpu)
+                if self._num_gpus <= 1:
+                    model.to(self._device)
         except Exception as e:
             UtilLLM.controle_erros(e)
         self._model = model
@@ -139,7 +159,9 @@ class Prompt:
           tokenize=True,
           return_dict=True,
           return_tensors="pt",
-        ).to(self._model.device)
+        )
+        if self._num_gpus == 1:
+           inputs = inputs.to(self._model.device)
         _temperatura = temperatura if isinstance(temperatura, float) else 0.2
         # configuração da predição
         gen_cfg = GENCONFIG.from_model_config(self._model.config)
