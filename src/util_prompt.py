@@ -114,7 +114,7 @@ class Prompt:
             )
             else:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                model_kwargs = {"torch_dtype": "auto",}
+                model_kwargs = {"torch_dtype": 'auto'}
                 if self._num_gpus > 1:
                     print("Múltiplas GPUs detectadas. Usando device_map='auto'.")
                     model_kwargs["device_map"] = "auto"                
@@ -133,7 +133,8 @@ class Prompt:
                     
                 tokenizer = AUTTOTOKENIZER.from_pretrained(modelo)
                 if self._tipo_modelo == 'gemma':
-                    model_kwargs.pop('torch_dtype')
+                    if UtilLLM.gpu_tesla_t4():
+                       model_kwargs.pop('torch_dtype')
                     model = AUTOMODELG.from_pretrained(modelo,**model_kwargs).eval()
                 else:
                     model = AUTOMODEL.from_pretrained(modelo,**model_kwargs).eval()
@@ -160,8 +161,9 @@ class Prompt:
           return_dict=True,
           return_tensors="pt",
         )
-        if self._num_gpus == 1:
-           inputs = inputs.to(self._model.device)
+        #if self._num_gpus == 1:
+        #   inputs = inputs.to(self._model.device)
+        inputs = self._place_inputs(inputs)
         _temperatura = temperatura if isinstance(temperatura, float) else 0.2
         # configuração da predição
         gen_cfg = GENCONFIG.from_model_config(self._model.config)
@@ -169,13 +171,12 @@ class Prompt:
         gen_cfg.min_length = 1
         gen_cfg.temperature = _temperatura
         gen_cfg.top_k = 20 if _temperatura > 0.3 else 2
-        gen_cfg.top_p = 95
         gen_cfg.do_sample = bool(_temperatura > 0.3)
         # predição
-        with torch.inference_mode(), torch.no_grad():
-            outputs = self._model.generate(**inputs, 
-                                            max_new_tokens=max_new_tokens,
-                                            generation_config = gen_cfg)  
+        with torch.inference_mode():
+             outputs = self._model.generate(**inputs, 
+                                        max_new_tokens=max_new_tokens,
+                                        generation_config = gen_cfg)  
 
         if debug: print(f'Resposta gerada: {time()-ini:.1f}s')
         res = self._tokenizer.decode(outputs[0], skip_special_tokens=False)
@@ -300,6 +301,18 @@ class Prompt:
     def modelos(cls):
         return Modelos     
 
+    def _is_sharded(self):
+        dmap = getattr(self._model, "hf_device_map", None)
+        return bool(dmap) and len(dmap) > 1
+
+    def _place_inputs(self, inputs):
+        if self._is_sharded():
+            return inputs.to("cpu") # deixa o acelerate decidir o device correto
+        try:
+            target = self._model.device
+        except AttributeError:
+            target = next(self._model.parameters()).device
+        return inputs.to(target)     
 
 ##########################################
 class UtilLLM():
@@ -445,6 +458,14 @@ class UtilLLM():
         if mostrar_gpus:
            cls.mostrar_info_gpus_pytorch()
     
+    @classmethod
+    def gpu_tesla_t4(cls):
+        if not torch.cuda.is_available():
+           return False
+        nomes = [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())]
+        nomes = ' '.join(nomes)
+        return 'tesla t4' in nomes.lower()
+
     @classmethod
     def mostrar_info_gpus_pytorch(cls):
         """
