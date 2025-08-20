@@ -3,6 +3,14 @@ from datetime import datetime, timedelta
 from typing import Optional, Callable, Dict, List
 import json
 import re
+import numpy as np
+from copy import deepcopy
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    MSG_SCIKIT = None
+except Exception:
+    MSG_SCIKIT = "Considere instalar: pip install scikit-learn"
+
 '''
  Autor Luiz Anísio Julho/2025
  A solicitação do usuário é inserida dentro da tag <TAREFA>
@@ -567,3 +575,106 @@ Sua resposta precisa ser um json válido com a seguinte estrutura:
 </SOLUCAO_TAREFA>
 '''
 
+####################################
+####### BASE DE CONHECIMENTO
+
+class BuscaTextual:
+    """
+    Uma classe para realizar buscas textuais em uma lista de documentos
+    utilizando TF-IDF (scikit-learn) + similaridade do cosseno.
+    """
+    def __init__(self, textos: List[str|Conhecimento],
+                 ngram_range=(1,2),
+                 min_df=1,
+                 max_df=0.95
+                 ):
+        """
+        Inicializa a classe, processando e indexando os textos fornecidos.
+        Args:
+            textos (List[str]): Lista de documentos.
+            ngram_range (tuple): n-gramas usados no TF-IDF.
+            min_df, max_df: limites de frequência para filtrar termos.
+        """
+        if (not textos or not isinstance(textos, list)
+                or not all(isinstance(t, str) for t in textos)):
+            raise ValueError("A entrada 'textos' deve ser uma lista de strings não vazia.")
+        if MSG_SCIKIT: raise ImportError(MSG_SCIKIT)
+
+        self._conhecimento = []
+        _textos = []
+        for i, texto in enumerate(textos):
+            if isinstance(texto, str):
+               c = Conhecimento(titulo = '', texto = texto, pagina = i)
+               self._conhecimento.append(c)
+               _textos.append(texto)
+            elif isinstance(texto, Conhecimento):
+               self._conhecimento.append(texto)
+               _textos.append(texto.texto)
+
+        # Vetorizador TF-IDF. Usamos um pré-processador que replica a sua limpeza.
+        # O token_pattern abaixo aceita tokens de 1+ caracteres (\w inclui acentos com (?u)).
+        self._vectorizer = TfidfVectorizer(
+            token_pattern=r"(?u)\b\w+\b",
+            ngram_range=ngram_range,
+            min_df=min_df,
+            max_df=max_df,
+            norm="l2",           # normalização L2 (necessária para dot == cosseno)
+            sublinear_tf=True,   # log(1 + tf) mais estável
+            dtype=np.float32,
+            strip_accents=None,   # None = preserva acentos; 'unicode' = remove acentos
+        )
+
+        # Cria a matriz TF-IDF (esparsa)
+        self._matriz = self._vectorizer.fit_transform(_textos)
+
+        self._analyzer = self._vectorizer.build_analyzer()  # útil para depurar os tokens
+
+    def tokens(self, texto: str):
+        """Mostra como o texto foi tokenizado (útil para debug)."""
+        return self._analyzer(texto)
+
+    def pesquisar(
+        self,
+        texto: str,
+        topn: int = 5
+    ):
+        """
+        Pesquisa no corpus e retorna os 'topn' textos mais relevantes
+        (apenas aqueles com score > 0), ordenados por similaridade do cosseno.
+
+        Args:
+            texto (str): Query.
+            topn (int): Número de resultados a retornar (limite superior).
+            detalhar (bool): Se True, retorna [(texto, score, i), ...]
+                             Se False, retorna [texto, ...]
+
+        Returns:
+            List[str] ou List[Tuple[str, float]]: Resultados relevantes.
+        """
+        if topn <= 0:
+            return []
+
+        print("Procurando:", self.tokens(texto))
+
+        # Vetor TF-IDF da query
+        q = self._vectorizer.transform([texto])
+        scores = (self._matriz @ q.T).toarray().ravel()
+
+        # Filtra apenas scores > 0
+        idx_validos = np.where(scores > 0)[0]
+        if len(idx_validos) == 0:
+            return []  # nenhum documento relevante
+
+        # Limita topn
+        n = min(topn, len(idx_validos))
+
+        # Seleção eficiente dos n maiores
+        idx = np.argpartition(-scores[idx_validos], range(n))[:n]
+        top_idx = idx_validos[idx[np.argsort(-scores[idx_validos][idx], kind="stable")]]
+
+        res = []
+        for i in top_idx:  
+            c = deepcopy(self._conhecimento[i])
+            c.score = float(scores[i])
+            res.append(c)
+        return res
