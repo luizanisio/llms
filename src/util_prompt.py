@@ -242,11 +242,11 @@ class Prompt:
             pass
         else:
             # Caso contrário, pega o trecho entre o início e o marcador de fim.
-            resposta = txt[:pos_fim]
+            txt = txt[:pos_fim]
         # 6. Limpa espaços, quebras de linha e outros caracteres indesejados e retorna.
         if think_sys:
            think = f'{think_sys}\n{think}'.strip(self._STRIP)
-        return resposta.strip(self._STRIP), think
+        return txt.strip(self._STRIP), think
 
     def _configurar_separadores(self):
         nome_modelo = str(self.modelo).lower()
@@ -334,7 +334,7 @@ class Prompt:
 
     def _place_inputs(self, inputs):
         if self._is_sharded():
-            return inputs.to("cpu") # deixa o acelerate decidir o device correto
+            return inputs#.to("cpu") # deixa o acelerate decidir o device correto
         try:
             target = self._model.device
         except AttributeError:
