@@ -147,7 +147,7 @@ class Prompt:
         self._tokenizer = tokenizer
         print(f'Modelo carregado: {time()-ini:.1f}s')
 
-    def prompt(self, prompt:str, max_new_tokens:int = 4096, temperatura:float = 0.2, detalhar:bool = False, debug = False):
+    def prompt(self, prompt:str, max_new_tokens:int = 4096, temperatura:float = 0.0, detalhar:bool = False, debug = False):
         if self._tipo_modelo == 'gemma':
             content = [{"type": "text", "text": prompt}]
         else:
@@ -164,7 +164,9 @@ class Prompt:
         #if self._num_gpus == 1:
         #   inputs = inputs.to(self._model.device)
         inputs = self._place_inputs(inputs)
-        _temperatura = temperatura if isinstance(temperatura, float) else 0.2
+        _temperatura = temperatura if isinstance(temperatura, (float, int)) else 0.2
+        _temperatura = min(max(_temperatura,0),1)
+        #print(f'########### temperatura: {_temperatura}')
         # configuração da predição
         gen_cfg = GENCONFIG.from_model_config(self._model.config)
         gen_cfg.max_new_tokens = 10
