@@ -215,30 +215,34 @@ class Prompt:
                     # Extrai o conteúdo dentro das tags <...system > e </  >
                     inicio_conteudo_sys = pos_inicio_sys + len(self._system)
                     think_sys = txt[inicio_conteudo_sys:pos_fim_sys].strip(self._STRIP)
-        # 2. Isola o conteúdo gerado pelo assistente (tudo após o marcador de início).
-        conteudo_assistente = txt[pos_inicio_assistente + len(self._start_asst):]
+                    txt = txt[pos_fim_sys+len(self._end_system):]
+        # 2. Marcador think
         think = ''
         pos_inicio_texto_final = 0
         # 3. Procura e extrai a seção <think> se ela existir para este modelo.
         if self._think:
-            pos_inicio_think = conteudo_assistente.find(self._think)
+            pos_inicio_think = txt.find(self._think)
             if pos_inicio_think != -1:
-                pos_fim_think = conteudo_assistente.find(self._end_think, pos_inicio_think)
+                pos_fim_think = txt.find(self._end_think, pos_inicio_think)
                 if pos_fim_think != -1:
                     # Extrai o conteúdo dentro das tags <think> e </think>
                     inicio_conteudo_think = pos_inicio_think + len(self._think)
-                    think = conteudo_assistente[inicio_conteudo_think:pos_fim_think].strip(self._STRIP)
-                    # A resposta final começa *após* a tag </think>
-                    pos_inicio_texto_final = pos_fim_think + len(self._end_think)
+                    think = txt[inicio_conteudo_think:pos_fim_think].strip(self._STRIP)
+                    # remove o think do meio
+                    txt = txt[:pos_inicio_think] + txt[pos_fim_think+len(self._end_think):]
         # 4. Encontra o marcador de fim de turno (<|im_end|>, <end_of_turn>, etc.).
-        pos_fim_resposta = conteudo_assistente.find(self._end_turn)
+        if self._start_asst:
+           pos_start = txt.find(self._start_asst) 
+           if pos_start != -1:
+              txt = txt[pos_start + len(self._start_asst):] 
+        pos_fim = txt.find(self._end_turn)
         # 5. Extrai a resposta final.
-        if pos_fim_resposta == -1:
-            # Se não encontrar o marcador de fim, pega tudo a partir do início.
-            resposta = conteudo_assistente[pos_inicio_texto_final:]
+        if pos_fim == -1:
+            # Se não encontrar o marcador de fim, pega tudo
+            pass
         else:
             # Caso contrário, pega o trecho entre o início e o marcador de fim.
-            resposta = conteudo_assistente[pos_inicio_texto_final:pos_fim_resposta]
+            resposta = txt[:pos_fim]
         # 6. Limpa espaços, quebras de linha e outros caracteres indesejados e retorna.
         if think_sys:
            think = f'{think_sys}\n{think}'.strip(self._STRIP)
@@ -274,9 +278,9 @@ class Prompt:
             self._tipo_modelo = 'gptoss'
             self._system = '<|start|>system<|message|>'
             self._end_system = '<|end|>'
-            self._think = '<|channel|>analysis<|message|>'
+            self._think = '<|start|>assistant<|channel|>analysis<|message|>'
             self._end_think = '<|end|>'
-            self._start_user = ''      # início da pergunta do usuário
+            self._start_user = '<|start|>user<|message|>'      # início da pergunta do usuário
             self._start_asst = '<|start|>assistant<|channel|>final<|message|>' # início da resposta do modelo
             self._end_turn   = '<|return|>'       
         else:
