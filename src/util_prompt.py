@@ -201,10 +201,20 @@ class Prompt:
         if not self._start_asst:
             return txt.strip(self._STRIP), ''
 
-        # 1. Encontra a última ocorrência do início da resposta do assistente.
+        # Encontra a última ocorrência do início da resposta do assistente.
         pos_inicio_assistente = txt.rfind(self._start_asst)
         if pos_inicio_assistente == -1:
             return txt.strip(), '' # Retorna se não encontrar o marcador
+        # 1. marcador de system
+        think_sys = ''
+        if self._system:
+            pos_inicio_sys = txt.find(self._system)
+            if pos_inicio_sys != -1:
+                pos_fim_sys = txt.find(self._end_system, pos_inicio_sys)
+                if pos_fim_sys != -1:
+                    # Extrai o conteúdo dentro das tags <...system > e </  >
+                    inicio_conteudo_sys = pos_inicio_sys + len(self._system)
+                    think_sys = txt[inicio_conteudo_sys:pos_fim_sys].strip(self._STRIP)
         # 2. Isola o conteúdo gerado pelo assistente (tudo após o marcador de início).
         conteudo_assistente = txt[pos_inicio_assistente + len(self._start_asst):]
         think = ''
@@ -230,12 +240,18 @@ class Prompt:
             # Caso contrário, pega o trecho entre o início e o marcador de fim.
             resposta = conteudo_assistente[pos_inicio_texto_final:pos_fim_resposta]
         # 6. Limpa espaços, quebras de linha e outros caracteres indesejados e retorna.
+        if think_sys:
+           think = f'{think_sys}\n{think}'.strip(self._STRIP)
         return resposta.strip(self._STRIP), think
 
     def _configurar_separadores(self):
         nome_modelo = str(self.modelo).lower()
+        self._start_user = '' # início da pergunta do usuário
+        self._start_asst = '' # início da resposta do modelo
         self._think      = ''
         self._end_think  = ''
+        self._system      = ''
+        self._end_system  = ''
         self._tipo_modelo =''
         if 'gemma' in nome_modelo:
             self._tipo_modelo = 'gemma'
@@ -254,10 +270,17 @@ class Prompt:
             self._start_user = '<|im_start|>user'      # início da pergunta do usuário
             self._start_asst = '<|im_start|>assistant' # início da resposta do modelo
             self._end_turn   = '<|im_end|>'           
-        else:
-            print(f'`Separados náo configurados para o Modelo: {self.modelo}')
+        elif 'gpt' in nome_modelo and 'oss' in nome_modelo:
+            self._tipo_modelo = 'gptoss'
+            self._system = '<|start|>system<|message|>'
+            self._end_system = '<|end|>'
+            self._think = '<|channel|>analysis<|message|>'
+            self._end_think = '<|end|>'
             self._start_user = ''      # início da pergunta do usuário
-            self._start_asst = '' # início da resposta do modelo
+            self._start_asst = '<|start|>assistant<|channel|>final<|message|>' # início da resposta do modelo
+            self._end_turn   = '<|return|>'       
+        else:
+            print(f'Separados não configurados para o Modelo: {self.modelo}')
 
     def prompt_to_json(self, prompt:str, max_new_tokens = 4096, temperatura = 0, debug = False):
         retorno = self.prompt(prompt, 
@@ -399,11 +422,13 @@ class UtilLLM():
         'j': Modelos.MODELO_JUREMA_7B,        'j7': Modelos.MODELO_JUREMA_7B,
         'jurema': Modelos.MODELO_JUREMA_7B,
         'q': Modelos.MODELO_QWEN_7B,          'q7': Modelos.MODELO_QWEN_7B,
+        'q14': Modelos.MODELO_QWEN_14B,       
       # DeepSeek
-        'q14': Modelos.MODELO_QWEN_14B,
         'd1.5': Modelos.MODELO_DEEPSEEK_1_5B, 'd70': Modelos.MODELO_DEEPSEEK_70B,
         'd32': Modelos.MODELO_DEEPSEEK_32B,   'd14': Modelos.MODELO_DEEPSEEK_14B,
         'd8': Modelos.MODELO_DEEPSEEK_8B,     'd7': Modelos.MODELO_DEEPSEEK_7B,
+        'd1': Modelos.MODELO_DEEPSEEK_1_5B,
+      # gpt-oss
         'o20': Modelos.MODELO_OSS_20B,        'o120': Modelos.MODELO_OSS_120B,
       # Llama 3.2 3.3 4
         'l1': Modelos.MODELO_LLAMA_3_2_1B,    'l3': Modelos.MODELO_LLAMA_3_2_3B,
