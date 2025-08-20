@@ -114,10 +114,10 @@ class Prompt:
             )
             else:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                model_kwargs = {"torch_dtype": 'auto'}
-                if self._num_gpus > 1:
-                    print("Múltiplas GPUs detectadas. Usando device_map='auto'.")
-                    model_kwargs["device_map"] = "auto"                
+                model_kwargs = {"torch_dtype": 'auto', "device_map":'auto'}
+                #if self._num_gpus > 1:
+                #    print("Múltiplas GPUs detectadas. Usando device_map='auto'.")
+                #    model_kwargs["device_map"] = "auto"                
                 if (not AUTOMODELG) and self._tipo_modelo == 'gemma':
                     print('Importando tranformers para modelos Gemma ... ')
                     from transformers import Gemma3ForCausalLM
@@ -135,12 +135,12 @@ class Prompt:
                 if self._tipo_modelo == 'gemma':
                     if UtilLLM.gpu_tesla_t4():
                        model_kwargs.pop('torch_dtype')
-                    model = AUTOMODELG.from_pretrained(modelo,**model_kwargs).eval()
+                    model = AUTOMODELG.from_pretrained(modelo,**model_kwargs)
                 else:
-                    model = AUTOMODEL.from_pretrained(modelo,**model_kwargs).eval()
+                    model = AUTOMODEL.from_pretrained(modelo,**model_kwargs)
                 # Se não for multi-GPU, movemos o modelo para o device correto (cuda:0 ou cpu)
-                if self._num_gpus <= 1:
-                    model.to(self._device)
+                #if self._num_gpus <= 1:
+                #    model.to(self._device)
         except Exception as e:
             UtilLLM.controle_erros(e)
         self._model = model
@@ -333,8 +333,8 @@ class Prompt:
         return bool(dmap) and len(dmap) > 1
 
     def _place_inputs(self, inputs):
-        if self._is_sharded():
-            return inputs#.to("cpu") # deixa o acelerate decidir o device correto
+        #if self._is_sharded():
+        #    return inputs#.to("cpu") # deixa o acelerate decidir o device correto
         try:
             target = self._model.device
         except AttributeError:
