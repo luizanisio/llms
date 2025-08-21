@@ -302,65 +302,25 @@ class ResolverTarefas():
 ##################################################
 ######## Tools básicos para os Agentes
 class AgentesToolsBasicos():
-      def __init__(self, textos_conhecimento: list[str],
-                   min_score = 1) -> None:
-          self.__textos_conhecimento = textos_conhecimento
-          self.__textos_processados = self.processar_textos(self.__textos_conhecimento)
-          self.__min_score = min_score
+      def __init__(self, textos_conhecimento: list[str|Conhecimento],
+                   topn = 5) -> None:
+          self._bucador = BuscaTextual(textos_conhecimento)
+          self.__topn = topn
 
-      def processar_textos(self, textos:list[str]):
-          ''' processamento básico para simplificar
-          '''
-          res = []
-          for texto in textos:
-              res.append(self.processar_texto(texto))
-          return res
-
-      def processar_texto(self, texto):
-          return str(texto).lower().strip()
-
-      def adicionar_textos(self, textos):
-          if isinstance(textos,str):
-             textos = [textos]
-          for texto in textos:
-             self.__textos_conhecimento.append(texto)
-             self.__textos_processados.append(self.processar_texto(texto))
-
-      def encontrar(self, palavra:str, texto:str):
-          if palavra.find(' ') < 0:
-             return bool(palavra in texto)
-          re_busca = palavra.strip().replace(' ','.{0,50}')
-          return bool(re.search(re_busca, texto))
-
-      def busca(self, palavras: list[str] = []):
-          if isinstance(palavras, str):
-             palavras = palavras.lower().replace(',',';').split(';')
-             palavras = [self.processar_texto(palavra) for palavra in palavras ]
-          if not isinstance(palavras, list):
-              palavras = [str(palavras)]
-          palavras_pre = [self.processar_texto(palavra) for palavra in palavras ]
-          # print('Buscando:', palavras_pre, 'em', self.__textos_processados)
-          conhecimentos = []
-          dupla_dados = zip(self.__textos_conhecimento, self.__textos_processados)
-          for i, (dado, dado_pre) in enumerate(dupla_dados):
-              palavras_ok = 0
-              for palavra in palavras_pre:
-                  if self.encontrar(palavra,dado_pre):
-                    palavras_ok +=1
-              if palavras_ok < self.__min_score:
-                 continue
-              titulo = dado.split(':')[0] if ':' in dado else 'Informação'
-              conhecimento = Conhecimento(titulo=titulo, 
-                                          texto=dado, 
-                                          pagina=i+1,
-                                          score = palavras_ok/len(palavras_pre))
-              conhecimentos.append(conhecimento)
-          # ordena
-          conhecimentos.sort(key=lambda x:x.score, reverse=True)
-          return conhecimentos
+      def pesquisar(self, *args, **kwargs):
+          ''' pesquisa qualquer conjunto de palavras enviadas '''
+          termos = []
+          for palavra in kwargs.values():
+              termos.append(str(palavra))
+          for palavra in args:
+              termos.append(str(palavra))
+          termos = ' '.join(termos).strip()
+          if not termos:
+             return []
+          return self._bucador.pesquisar(termos, topn=self.__topn)
 
       @classmethod
-      def datahora(cls, **agrs):
+      def datahora(cls, *args, **kwargs):
           ''' no momento, qualquer parâmetro é ignorado '''
           data_resposta = datetime.now()
           # Retorna formato: "03 de agosto de 2025"
@@ -385,7 +345,7 @@ class AgentesToolsBasicos():
                       objetivo= objetivo_base,
                       quando_usar='quando é necessário fazer busca textual na base de conhecimento',
                       parametros='{"palavras": [lista de palavras simples e compostas com algumas variações das mesmas palavras]}',
-                      call_servico=bc.busca)
+                      call_servico=bc.pesquisar)
           servicos.append(sc)
           sc = Servico(nome='DataHora',
                           objetivo= 'obeter o dia, mês e ano atual',
@@ -401,12 +361,13 @@ class AgentesToolsExemplo(AgentesToolsBasicos):
             "Que dia é hoje e o que é Xibunfa e como podemos usar Xibunfa para limpar o chão?
       '''
       def __init__(self, textos_conhecimento: list[str] = []) -> None:
-          super().__init__(textos_conhecimento=[])
           dados = ['Definiçaõ de Xabefa: uma comida típida do povo Xisbicuim e pode ser preparada com camarão e frutas frescas',
                    'Definição de Chão: a base onde pisamos, andamos e construímos nossas residências',
                    'Definiçaõ de Xibunfa: é um produto de limpeza a base de Xabefa',
                    'Como usar Xibunfa: pode ser usada misturando 30% de álcool 76% com 30% de Xibunfa e o resto com vinagre de bacuri']
-          self.adicionar_textos(dados)
+          if isinstance(textos_conhecimento, (list, tuple, set)):
+             dados.extend(list(textos_conhecimento)) 
+          super().__init__(textos_conhecimento=dados)
 
 ##################################################
 ######## Prompts para os Agentes
@@ -595,9 +556,9 @@ class BuscaTextual:
             ngram_range (tuple): n-gramas usados no TF-IDF.
             min_df, max_df: limites de frequência para filtrar termos.
         """
-        if (not textos or not isinstance(textos, list)
-                or not all(isinstance(t, str) for t in textos)):
-            raise ValueError("A entrada 'textos' deve ser uma lista de strings não vazia.")
+        if (textos is None) or not isinstance(textos, list)\
+                or not all(isinstance(t, (str, Conhecimento)) for t in textos):
+            raise ValueError("A entrada 'textos' deve ser uma lista de strings ou Conhecimento.")
         if MSG_SCIKIT: raise ImportError(MSG_SCIKIT)
 
         self._conhecimento = []
@@ -613,16 +574,24 @@ class BuscaTextual:
 
         # Vetorizador TF-IDF. Usamos um pré-processador que replica a sua limpeza.
         # O token_pattern abaixo aceita tokens de 1+ caracteres (\w inclui acentos com (?u)).
-        self._vectorizer = TfidfVectorizer(
-            token_pattern=r"(?u)\b\w+\b",
-            ngram_range=ngram_range,
-            min_df=min_df,
-            max_df=max_df,
-            norm="l2",           # normalização L2 (necessária para dot == cosseno)
-            sublinear_tf=True,   # log(1 + tf) mais estável
-            dtype=np.float32,
-            strip_accents=None,   # None = preserva acentos; 'unicode' = remove acentos
-        )
+        print(f'Iniciando base de conhecimento com {len(_textos)} textos.')
+        self._vectorizer = None
+        try:
+            self._vectorizer = TfidfVectorizer(
+                token_pattern=r"(?u)\b\w+\b",
+                ngram_range=ngram_range,
+                min_df=min_df,
+                max_df=max_df,
+                norm="l2",           # normalização L2 (necessária para dot == cosseno)
+                sublinear_tf=True,   # log(1 + tf) mais estável
+                dtype=np.float32,
+                strip_accents='unicode',   # None = preserva acentos; 'unicode' = remove acentos
+            )
+        except ValueError as e:
+               if 'empty vocabulary' in str(e).lower():
+                  print(f'* Base de conhecimento vazia!')
+               else:
+                  raise 
 
         # Cria a matriz TF-IDF (esparsa)
         self._matriz = self._vectorizer.fit_transform(_textos)
@@ -631,6 +600,8 @@ class BuscaTextual:
 
     def tokens(self, texto: str):
         """Mostra como o texto foi tokenizado (útil para debug)."""
+        if self._vectorizer is None:
+           return [] 
         return self._analyzer(texto)
 
     def pesquisar(
@@ -645,12 +616,14 @@ class BuscaTextual:
         Args:
             texto (str): Query.
             topn (int): Número de resultados a retornar (limite superior).
-            detalhar (bool): Se True, retorna [(texto, score, i), ...]
-                             Se False, retorna [texto, ...]
+            Retorna: [Conhecimento, ....]
 
         Returns:
             List[str] ou List[Tuple[str, float]]: Resultados relevantes.
         """
+        if self._vectorizer is None:
+           return [] 
+
         if topn <= 0:
             return []
 
