@@ -145,7 +145,7 @@ class Prompt:
             UtilLLM.controle_erros(e)
         self._model = model
         self._tokenizer = tokenizer
-        print(f'Modelo carregado: {time()-ini:.1f}s')
+        print(f'Modelo carregado ({next(model.parameters()).device}): {time()-ini:.1f}s')
 
     def prompt(self, prompt:str, max_new_tokens:int = 4096, temperatura:float = 0.0, detalhar:bool = False, debug = False):
         if self._tipo_modelo == 'gemma':
