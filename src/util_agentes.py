@@ -360,13 +360,13 @@ class AgentesToolsExemplo(AgentesToolsBasicos):
       ''' exemplo de pedido de teste:
             "Que dia é hoje e o que é Xibunfa e como podemos usar Xibunfa para limpar o chão?
       '''
-      def __init__(self, textos_conhecimento: list[str] = []) -> None:
+      def __init__(self, textos_conhecimento: list[str|Conhecimento] = []) -> None:
           dados = ['Definiçaõ de Xabefa: uma comida típida do povo Xisbicuim e pode ser preparada com camarão e frutas frescas',
                    'Definição de Chão: a base onde pisamos, andamos e construímos nossas residências',
                    'Definiçaõ de Xibunfa: é um produto de limpeza a base de Xabefa',
                    'Como usar Xibunfa: pode ser usada misturando 30% de álcool 76% com 30% de Xibunfa e o resto com vinagre de bacuri']
           if isinstance(textos_conhecimento, (list, tuple, set)):
-             dados.extend(list(textos_conhecimento)) 
+             dados.extend([_ for _ in textos_conhecimento if isinstance(_, (str, Conhecimento))]) 
           super().__init__(textos_conhecimento=dados)
 
 ##################################################
@@ -587,16 +587,15 @@ class BuscaTextual:
                 dtype=np.float32,
                 strip_accents='unicode',   # None = preserva acentos; 'unicode' = remove acentos
             )
+
+            # Cria a matriz TF-IDF (esparsa)
+            self._matriz = self._vectorizer.fit_transform(_textos)
+            self._analyzer = self._vectorizer.build_analyzer()  # útil para depurar os tokens
         except ValueError as e:
                if 'empty vocabulary' in str(e).lower():
                   print(f'* Base de conhecimento vazia!')
                else:
                   raise 
-
-        # Cria a matriz TF-IDF (esparsa)
-        self._matriz = self._vectorizer.fit_transform(_textos)
-
-        self._analyzer = self._vectorizer.build_analyzer()  # útil para depurar os tokens
 
     def tokens(self, texto: str):
         """Mostra como o texto foi tokenizado (útil para debug)."""
