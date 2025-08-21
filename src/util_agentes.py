@@ -626,7 +626,7 @@ class BuscaTextual:
         if topn <= 0:
             return []
 
-        print("Procurando:", self.tokens(texto))
+        #print("Procurando:", self.tokens(texto))
 
         # Vetor TF-IDF da query
         q = self._vectorizer.transform([texto])
