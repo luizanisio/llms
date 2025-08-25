@@ -165,7 +165,7 @@ class Prompt:
         #   inputs = inputs.to(self._model.device)
         inputs = self._place_inputs(inputs)
         _temperatura = temperatura if isinstance(temperatura, (float, int)) else 0.2
-        _temperatura = min(max(_temperatura,0),1)
+        _temperatura = min(max(_temperatura,0.000001),1.0)
         #print(f'########### temperatura: {_temperatura}')
         # configuração da predição
         gen_cfg = GENCONFIG.from_model_config(self._model.config)
