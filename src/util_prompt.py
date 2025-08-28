@@ -122,6 +122,8 @@ class Prompt:
                     print('Importando tranformers para modelos Gemma ... ')
                     from transformers import Gemma3ForCausalLM
                     AUTOMODELG = Gemma3ForCausalLM
+                    model_kwargs['torch_dtype']=torch.bfloat16
+                    print(f' - DTYPE: {torch.bfloat16}')
                 elif (not AUTOMODEL) and self._tipo_modelo != 'gemma':
                     print('Importando tranformers ... ')
                     from transformers import AutoModelForCausalLM
