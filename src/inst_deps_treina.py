@@ -42,6 +42,7 @@ def inst_dependencias():
     arq2 = "/content/pip_transformers_ok.txt"
 
     if not os.path.isfile(arq1):
+        _unsloth = "unsloth[colab-new]==2025.8.9"
         print(f"Instalando {_unsloth} ...")
         _pip(f"install {_unsloth}", '✅ Unsloth instalado _o/')
         import unsloth
@@ -65,8 +66,12 @@ def inst_dependencias():
 def testar_dependencias(verificar_unsloth=False):
     arq1 = "pip_unsloth_ok.txt"
     arq2 = "pip_transformers_ok.txt"
-    _unsloth = "unsloth[colab-new]==2025.7.1"
-    _transformers = "transformers>=4.53.0,<4.54.0" if verificar_unsloth else "transformers>=4.55.0,<4.56.0"
+    if _is_colab():
+       _unsloth = "unsloth[colab-new]==2025.8.9"
+    else:
+       _unsloth = "unsloth==2025.8.9"
+    #_transformers = "transformers>=4.53.0,<4.54.0" if verificar_unsloth else "transformers>=4.55.0,<4.56.0"
+    _transformers = "transformers>=4.55.3,<4.56.0"
 
     if os.path.isfile(arq1) and os.path.isfile(arq2):
        print('✅ Instalação já realizada nesse ambiente _o/')
