@@ -199,3 +199,7 @@ def sync(dest_root: str = ".", *, repo_url: str = REPO_URL):
              'from src.util_json import JsonAnalise \n'
              'from src.util_agentes import ResolverTarefas, Agente, Tarefa, Conhecimento, AgentesToolsBasicos \n'
              )
+
+
+if __name__=='__main__':
+    sync()
