@@ -3,7 +3,8 @@
 -  Notebook com exemplo para predições: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)
 
 -  Notebook com exemplo para treinamento: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//ntb_treinamento/Passo_a_Passo_LLM_Fine_Tuning_2025.ipynb)
-> 💡 copie o arquivo `puil_treinamento.txt` para o seu colab antes de iniciar o treinamento. Escolha o modelo de acordo com sua GPU no colab. A A100 é sempre a melhor escolha. A L4 dá para treinar modelos pequenos.
+> 💡 copie o arquivo `puil_treinamento.txt` para o seu colab antes de iniciar o treinamento. Escolha o modelo de acordo com sua GPU no colab. A A100 é sempre a melhor escolha. A L4 dá para treinar modelos pequenos.<br>
+> ⏳ Em breve vou disponibilizar o notebook com Unsloth, amplia o leque de treinamento em GPUs com menos memória.
 
 Pacotes em desenvolvimento para estudos com LLMs
 
