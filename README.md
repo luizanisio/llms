@@ -7,7 +7,12 @@ Pacotes em desenvolvimento para estudos com LLMs
 -  Notebook de exemplo para predições: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)
 -  [Diagramas](./diagramas.md)
 
+-  Notebook de exemplo de treinamento: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//ntb_treinamento/Passo_a_Passo_LLM_Fine_Tuning_2025.ipynb)
+> 💡 copie o arquivo `puil_treinamento.txt` para o seu colab antes de iniciar o treinamento. Escolha o modelo de acordo com sua GPU no colab. A A100 é sempre a melhor escolha. A L4 dá para treinar modelos pequenos.
+
+
 ## Treino do GEMMA 3
+- esse código é mais completo, por linha de comando, para treinos mais longos
 - src/treinar_gemma3.py \<arquivo yaml\> \[--gpu n\]
 - exemplo de arquivo yaml para o treino
 ```yaml
