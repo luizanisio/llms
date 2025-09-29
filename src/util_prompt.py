@@ -171,7 +171,7 @@ class Prompt:
         #print(f'########### temperatura: {_temperatura}')
         # configuração da predição
         gen_cfg = GENCONFIG.from_model_config(self._model.config)
-        gen_cfg.max_new_tokens = 10
+        gen_cfg.max_new_tokens = max_new_tokens
         gen_cfg.min_length = 1
         gen_cfg.temperature = float(_temperatura)
         gen_cfg.top_k = 20 if _temperatura > 0.3 else 2

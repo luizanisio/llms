@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+*/unsloth_compiled_cache*
+exemplo/modelos*
+*.gz
+unsloth_compiled_cache*
