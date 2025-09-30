@@ -6,13 +6,14 @@ Treinar Gemma‑3, Deepseek, Llhama, Qwen usando Unsloth
         + TRL‑SFTTrainer de forma configurável por yaml.
 
 Uso:
-    python treinar_unsloth.py CONFIG.yaml [--gpu 1] [--debug]
+    python treinar_unsloth.py CONFIG.yaml [--debug]
 
 * Se o YAML indicado não existir, um template é criado e o script
   termina — você revisa os valores e executa novamente.
-* O parâmetro opcional **--gpu IDX** permite escolher a GPU CUDA a ser
-  utilizada (padrão: 0).  O índice é aplicado via `torch.cuda.set_device()`
-  logo no início do programa.
+* O código utilizará automaticamente todas as GPUs disponíveis,
+  sendo gerenciado pelo ambiente do sistema operacional.
+  Para isolar as GPUs que serão usadas, defina a variável de ambiente CUDA_VISIBLE_DEVICES = <IDs das GPUs>.
+  Exemplo: export CUDA_VISIBLE_DEVICES=0,1,2  (no Linux para utilizar as GPUs 0, 1 e 2)
 * O parâmetro **--debug** ativa modo de debug que carrega e apresenta
   a estrutura do dataset e configurações importantes sem executar treino.
 * O parâmetro **--modelo N** executa predições em N exemplos do dataset.
@@ -64,17 +65,22 @@ from copy import deepcopy
 # utilidades
 # ---------------------------------------------------------------------------
 
-def _print_mem(tag: str, device_idx: int) -> dict:
+def _print_mem(tag: str) -> dict:
     """Exibe estatísticas de memória GPU para depuração rápida."""
     if not torch.cuda.is_available():
         print(f"[{tag}] CUDA não disponível.")
-        return
-    torch.cuda.synchronize(device_idx)
-    stats = torch.cuda.get_device_properties(device_idx)
-    total = round(stats.total_memory / 1024 / 1024 / 1024, 3)
-    reserved = round(torch.cuda.max_memory_reserved(device_idx) / 1024 / 1024 / 1024, 3)
-    print(f"[{tag}] GPU[{device_idx}] {stats.name} | reservada: {reserved} GB / total: {total} GB")
-    return {'mem_total_gb': total, 'mem_reserved_gm': reserved, 'gpu_idx': device_idx, 'name': stats.name}
+        return {}
+    
+    stats_list = []
+    for device_idx in range(torch.cuda.device_count()):
+        torch.cuda.synchronize(device_idx)
+        stats = torch.cuda.get_device_properties(device_idx)
+        total = round(stats.total_memory / 1024 / 1024 / 1024, 3)
+        reserved = round(torch.cuda.max_memory_reserved(device_idx) / 1024 / 1024 / 1024, 3)
+        print(f"[{tag}] GPU[{device_idx}] {stats.name} | reservada: {reserved} GB / total: {total} GB")
+        stats_list.append({'mem_total_gb': total, 'mem_reserved_gm': reserved, 'gpu_idx': device_idx, 'name': stats.name})
+    
+    return {'gpus': stats_list, 'total_gpus': torch.cuda.device_count()}
 
 class JsonLoggerCallback(TrainerCallback):
     def __init__(self, path):
@@ -114,8 +120,7 @@ class LLMsTrainer:
         "lora_r",
     }
 
-    def __init__(self, cfg_path: str, device_idx: int):
-        self.device_idx = device_idx
+    def __init__(self, cfg_path: str):
         self.cfg: Dict[str, Any] = self._load_cfg(cfg_path)
         # cria a pasta de saída se não existir
         os.makedirs(self.cfg.get("output_dir", "./saida"), exist_ok=True)
@@ -159,7 +164,7 @@ class LLMsTrainer:
         
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
-        print("[1/6] Carregando modelo base… (GPU {} )".format(self.device_idx))
+        print("[1/6] Carregando modelo base…")
         nbits = int(self.cfg.get("nbits", 0))
         
         # Verifica se existe modelo LoRA já treinado
@@ -370,7 +375,7 @@ class LLMsTrainer:
                 print(f"  - Caminho: {train_stats['caminho']}")
                 print(f"  - Formato detectado: {train_stats['formato_dataset']}")
 
-                print(f"\n📝 DADOS ANTES DO PROCESSAMENTO:")
+                print(f"\n>> DADOS ANTES DO PROCESSAMENTO:")
                 # Mostra dados originais (primeiro registro)
                 raw_sample = train_loader.dataset[0]
                 print(f"  - Tipo: {type(raw_sample)}")
@@ -385,7 +390,7 @@ class LLMsTrainer:
                 print(f"\n🔄 PROCESSANDO DATASET...")
                 ds_processado = train_loader.get_processed_dataset()
                 
-                print(f"\n📝 DADOS APÓS PROCESSAMENTO:")
+                print(f"\n>> DADOS APÓS PROCESSAMENTO:")
                 try:
                     sample = train_loader.get_sample(1)
                     print(f"  - Input IDs length: {len(sample['input_ids'])}")
@@ -468,7 +473,7 @@ class LLMsTrainer:
         if torch.cuda.is_available():
             print(f"\n🎮 GPU INFO:")
             try:
-                _print_mem("DEBUG", 0)  # usa GPU 0 como padrão para debug
+                _print_mem("DEBUG")
             except Exception as e:
                 print(f"  ❌ Erro ao obter info da GPU: {e}")
         else:
@@ -603,7 +608,7 @@ class LLMsTrainer:
 
     # ------------------------- execução ----------------------------------
     def train(self):
-        antes = _print_mem("ANTES", self.device_idx)
+        antes = _print_mem("ANTES")
         print("[4/6] Iniciando treinamento…")
         
         # Valida o modelo antes do treinamento
@@ -637,7 +642,7 @@ class LLMsTrainer:
             print("🆕 Iniciando novo treinamento")
             train_stats = self.trainer.train()
             
-        depois = _print_mem("DEPOIS", self.device_idx)
+        depois = _print_mem("DEPOIS")
         print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
         
         # Valida o modelo após o treinamento
@@ -723,9 +728,9 @@ class LLMsTrainer:
             raise ValueError("Prompt vazio")
         
         # Verifica se o modelo tem LoRA ativo
-        is_peft_model = hasattr(self.model, 'peft_config') or hasattr(self.model, 'base_model')
-        model_type = type(self.model).__name__
-        print(f"🔍 Tipo do modelo: {model_type} | PEFT ativo: {is_peft_model}")
+        #is_peft_model = hasattr(self.model, 'peft_config') or hasattr(self.model, 'base_model')
+        #model_type = type(self.model).__name__
+        #print(f"🔍 Tipo do modelo: {model_type} | PEFT ativo: {is_peft_model}")
         
         if callable(processador):
            inputs = processador(texto)
@@ -764,7 +769,7 @@ class LLMsTrainer:
         res = self.tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True)       
         return {'texto': res, 'prompt_tokens': input_length, 'completion_tokens': len(outputs[0]) - input_length}
 
-    def testar_predicoes(self, n_exemplos: int = 1, temperatura: float = 0.2, max_new_tokens: int = 2048) -> None:
+    def testar_predicoes(self, n_exemplos: int = 1, temperatura: float = 0.0, max_new_tokens: int = 2048) -> None:
         """Testa o modelo com exemplos do dataset de treino e exibe as predições."""
         print(f"\n{'='*80}")
         print(f"🧪 TESTANDO MODELO COM {n_exemplos} EXEMPLO(S)")
@@ -783,7 +788,7 @@ class LLMsTrainer:
         
         for i in range(n_exemplos):
             print(f"\n{'-'*60}")
-            print(f"📝 EXEMPLO {i+1}/{n_exemplos}")
+            print(f">> EXEMPLO {i+1}/{n_exemplos}")
             print(f"{'-'*60}")
             
             # pega o registro original do dataset
@@ -1223,18 +1228,16 @@ def _create_default_cfg(path: str) -> None:
 
 def _cli() -> None:
     parser = argparse.ArgumentParser(
-        description="Fine‑tune Gemma‑3 com opções de GPU, YAML e debug. Se o YAML não existir, um template será criado."
+        description="Fine‑tune Gemma‑3 com opções de YAML e debug. Se o YAML não existir, um template será criado."
     )
     parser.add_argument("config", help="Arquivo YAML com as configurações.")
-    parser.add_argument("--gpu", type=int, default=0, help="Índice da GPU CUDA a usar (default=0)")
     parser.add_argument("--debug", action="store_true", help="Modo debug: exibe estrutura do dataset e configuração sem treinar")
     parser.add_argument("--modelo", type=int, nargs='?', const=1, help="Modo debug: exibe exemplos de prompt e resposta do modelo treinado (padrão: 1 exemplo)")
     args = parser.parse_args()
 
-    # seleciona GPU antes de carregar quaisquer tensors
+    # informações sobre CUDA
     if torch.cuda.is_available():
-        torch.cuda.set_device(args.gpu)
-        print(f"CUDA disponível — usando GPU {args.gpu}")
+        print(f"CUDA disponível — {torch.cuda.device_count()} GPU(s) detectada(s)")
     else:
         print("CUDA não disponível — treinamento será na CPU (muito mais lento)")
 
@@ -1253,7 +1256,7 @@ def _cli() -> None:
         print("\n>> Modo DEBUG ativado - treinamento não executado")
         sys.exit(0)
 
-    trainer = LLMsTrainer(cfg_path, device_idx=args.gpu)
+    trainer = LLMsTrainer(cfg_path)
 
     if args.modelo:
         # modo teste: executa predições em exemplos do dataset

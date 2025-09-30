@@ -1,9 +1,11 @@
 dataset_train_path: ../ntb_treinamento/puil_treinamento.txt
-base_model_name: Qwen/Qwen2.5-7B-Instruct-1M
-output_dir: ./modelos/qwen-2.5-7b-puil-v01
+#base_model_name: Qwen/Qwen2.5-7B-Instruct-1M
+#output_dir: ./modelos/qwen-2.5-7b-puil-v01
+base_model_name: Qwen/Qwen3-4B-Thinking-2507
+output_dir: ./modelos/qwen-3-4b-puil-v01
 batch_size: 15
 grad_batch_size: 5
-num_train_epochs: 150
+num_train_epochs: 50
 max_seq_length: 4096
 lora_r: 16
 lora_alpha: 32
@@ -12,7 +14,7 @@ learning_rate: 2e-4
 dataset_eval_path: ''
 eval_prompt_col: ''
 eval_steps: 15%
-save_checkpoints: true  # ✅ IMPORTANTE: mantém true
+save_checkpoints: true  # IMPORTANTE: mantém true
 warmup_steps: 5
 nbits: 8
 target_modules:
