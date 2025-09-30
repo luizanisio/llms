@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Autor: Luiz Anisio 05/2025 v004
+Autor: Luiz Anisio 05/2025 v005
 
 Treinar Gemma‑3, Deepseek, Llhama, Qwen usando Unsloth 
         + TRL‑SFTTrainer de forma configurável por yaml.
@@ -12,13 +12,17 @@ Uso:
   termina — você revisa os valores e executa novamente.
 * O parâmetro opcional **--gpu IDX** permite escolher a GPU CUDA a ser
   utilizada (padrão: 0).  O índice é aplicado via `torch.cuda.set_device()`
-  logo no início do programa. Pode-se utilizar mais de um: --g        # aplica processamento a todo o dataset
-        processed_dataset = dataset.map(process_row, remove_columns=dataset.column_names)
-        print(f"✅ Dataset processado: {len(processed_dataset)} registros")
-        
-        return processed_dataset2
+  logo no início do programa.
 * O parâmetro **--debug** ativa modo de debug que carrega e apresenta
   a estrutura do dataset e configurações importantes sem executar treino.
+* O parâmetro **--modelo N** executa predições em N exemplos do dataset.
+
+**FUNCIONALIDADE DE CHECKPOINTS:**
+* O treinamento verifica automaticamente por checkpoints existentes na pasta
+  output_dir/chkpt e tenta continuar do último checkpoint válido.
+* Se houver erro ao carregar checkpoint (mudança de parâmetros), o treinamento
+  reinicia do zero mas preserva o modelo LoRA já treinado.
+* Use resume_from_checkpoint: false no YAML para desabilitar checkpoints.
 
 Exemplo de YAML gerado automaticamente:
 ```yaml
@@ -31,6 +35,8 @@ grad_batch_size: 5
 num_train_epochs: 1
 max_seq_length: 4096
 lora_r: 8
+save_checkpoints: True
+resume_from_checkpoint: True
 dataset_eval_path: ""     # opcional
 ```
 """
@@ -155,30 +161,95 @@ class LLMsTrainer:
     def _load_model(self):
         print("[1/6] Carregando modelo base… (GPU {} )".format(self.device_idx))
         nbits = int(self.cfg.get("nbits", 0))
-        model, tokenizer = FastModel.from_pretrained(
-            model_name=self.cfg["base_model_name"],
-            max_seq_length=int(self.cfg["max_seq_length"]),
-            load_in_4bit=nbits == 4,
-            load_in_8bit=nbits == 8,
-            full_finetuning=self.cfg["lora_r"] in (0,None,False)
-        )
-        model = FastModel.get_peft_model(
-            model,
-            finetune_vision_layers=False,
-            finetune_language_layers=True,
-            finetune_attention_modules=True,
-            finetune_mlp_modules=True,
-            r=int(self.cfg["lora_r"]),
-            lora_alpha=int(self.cfg.get("lora_alpha", self.cfg["lora_r"])),
-            lora_dropout=float(self.cfg.get("lora_dropout", 0.0)),
-            bias="none",
-            random_state=3407,
-            device_map="auto",
-        )
+        
+        # Verifica se existe modelo LoRA já treinado
+        lora_model_path = self.cfg['output_dir']
+        arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
+        arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
+        
+        # Verifica se é um modelo LoRA completo (não apenas um checkpoint)
+        is_trained_lora = (os.path.exists(arq_lora) and 
+                          (os.path.exists(arq_model) or 
+                           os.path.exists(os.path.join(lora_model_path, 'pytorch_model.bin'))))
+        
+        lora_ok = False
+        if is_trained_lora:
+            print(f'🔄 Carregando modelo LoRA já treinado de {lora_model_path}...')
+            try:
+                # Carrega o modelo LoRA já treinado diretamente
+                model, tokenizer = FastModel.from_pretrained(
+                    model_name=lora_model_path,  # Carrega da pasta do modelo treinado
+                    max_seq_length=int(self.cfg["max_seq_length"]),
+                    load_in_4bit=nbits == 4,
+                    load_in_8bit=nbits == 8,
+                    device_map="auto",
+                )
+                print(f'✅ Modelo LoRA treinado carregado com sucesso!')
+                lora_ok = True
+                
+                # Log de informações do modelo carregado
+                self.log_processamento(f"Modelo LoRA carregado de: {lora_model_path}", "LORA_LOADED")
+                
+            except Exception as e:
+                print(f'❌ Erro ao carregar modelo LoRA treinado: {e}')
+                traceback.print_exc()
+                print('Tentando carregar modelo base e aplicar LoRA...')
+                time.sleep(2)
+        
+        # Se não conseguiu carregar o LoRA ou não existe, carrega modelo base
+        if not lora_ok:
+            print(f'🔄 Carregando modelo base: {self.cfg["base_model_name"]}...')
+            model, tokenizer = FastModel.from_pretrained(
+                model_name=self.cfg["base_model_name"],
+                max_seq_length=int(self.cfg["max_seq_length"]),
+                load_in_4bit=nbits == 4,
+                load_in_8bit=nbits == 8,
+                full_finetuning=self.cfg["lora_r"] in (0,None,False)
+            )
+            
+            # Se usar LoRA, aplica as configurações
+            if self.cfg["lora_r"] not in (0,None,False):
+                print(f'🔄 Aplicando LoRA r={self.cfg["lora_r"]} ao modelo base ...')
+                model = FastModel.get_peft_model(
+                    model,
+                    finetune_vision_layers=False,
+                    finetune_language_layers=True,
+                    finetune_attention_modules=True,
+                    finetune_mlp_modules=True,
+                    r=int(self.cfg["lora_r"]),
+                    lora_alpha=int(self.cfg.get("lora_alpha", self.cfg["lora_r"])),
+                    lora_dropout=float(self.cfg.get("lora_dropout", 0.0)),
+                    bias="none",
+                    random_state=3407,
+                    device_map="auto",
+                )
         tokenizer = get_chat_template(tokenizer, chat_template="gemma-3")
         model.print_trainable_parameters()
+        
+        # Log detalhado do modelo carregado
+        model_type = type(model).__name__
+        is_peft_model = hasattr(model, 'peft_config') or hasattr(model, 'base_model')
+        
+        print(f"\n📊 MODELO CARREGADO:")
+        print(f"  - Tipo: {model_type}")
+        print(f"  - É modelo PEFT: {is_peft_model}")
+        print(f"  - LoRA carregado: {lora_ok}")
+        
+        if is_peft_model:
+            try:
+                if hasattr(model, 'peft_config'):
+                    peft_configs = model.peft_config
+                    print(f"  - Configurações PEFT: {list(peft_configs.keys())}")
+                    for adapter_name, config in peft_configs.items():
+                        print(f"    * {adapter_name}: r={getattr(config, 'r', 'N/A')}, alpha={getattr(config, 'lora_alpha', 'N/A')}")
+                elif hasattr(model, 'base_model'):
+                    print(f"  - Modelo base: {type(model.base_model).__name__}")
+            except Exception as e:
+                print(f"  - Erro ao obter detalhes PEFT: {e}")
+        
         self.log_processamento(self.cfg, titulo="Configuração do treinamento")
         self.log_processamento(str(model), titulo="Resumo do modelo")
+        self.log_processamento(f"Tipo do modelo: {model_type} | PEFT: {is_peft_model} | LoRA OK: {lora_ok}", titulo="Status do modelo")
         self.log_processamento(tokenizer.chat_template, titulo="Template do tokenizer")
         return model, tokenizer
 
@@ -250,6 +321,37 @@ class LLMsTrainer:
         print(f"  - LoRA r: {cfg['lora_r']}")
         print(f"  - Max seq length: {cfg['max_seq_length']}")
         print(f"  - Template com type: {template_type}")
+        
+        # Verifica se existe modelo LoRA treinado
+        lora_model_path = cfg.get('output_dir', './saida')
+        arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
+        arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
+        pytorch_model = os.path.join(lora_model_path, 'pytorch_model.bin')
+        
+        print(f"\n🔧 VERIFICAÇÃO DE MODELO TREINADO:")
+        print(f"  - Pasta do modelo: {lora_model_path}")
+        print(f"  - adapter_config.json existe: {os.path.exists(arq_lora)}")
+        print(f"  - adapter_model.safetensors existe: {os.path.exists(arq_model)}")
+        print(f"  - pytorch_model.bin existe: {os.path.exists(pytorch_model)}")
+        
+        if os.path.exists(arq_lora):
+            try:
+                with open(arq_lora, 'r') as f:
+                    lora_config = json.load(f)
+                print(f"  - Configuração LoRA: r={lora_config.get('r', 'N/A')}, alpha={lora_config.get('lora_alpha', 'N/A')}")
+            except:
+                print(f"  - Erro ao ler configuração LoRA")
+        
+        is_trained_lora = (os.path.exists(arq_lora) and 
+                          (os.path.exists(arq_model) or os.path.exists(pytorch_model)))
+        print(f"  - Modelo LoRA completo detectado: {is_trained_lora}")
+        
+        if is_trained_lora:
+            print(f"  ✅ O modelo será carregado com LoRA treinado")
+        elif cfg['lora_r'] not in (0, None, False):
+            print(f"  🔄 Será aplicado novo LoRA ao modelo base")
+        else:
+            print(f"  📄 Será usado modelo base sem LoRA")
         
         # dataset de treino
         if cfg.get("dataset_train_path"):
@@ -323,6 +425,44 @@ class LLMsTrainer:
                 print(f"  - Caminho: {eval_stats['caminho']}")
             except Exception as e:
                 print(f"\n❌ Erro ao carregar dataset de avaliação: {e}")
+        
+        # informações de checkpoints
+        print(f"\n💾 CHECKPOINT INFO:")
+        checkpoint_dir = os.path.join(cfg.get("output_dir", "./saida"), "chkpt")
+        resume_enabled = cfg.get("resume_from_checkpoint", True)
+        print(f"  - Resume from checkpoint: {resume_enabled}")
+        print(f"  - Checkpoint directory: {checkpoint_dir}")
+        
+        if os.path.exists(checkpoint_dir):
+            checkpoints = []
+            for item in os.listdir(checkpoint_dir):
+                item_path = os.path.join(checkpoint_dir, item)
+                if os.path.isdir(item_path) and item.startswith("checkpoint-"):
+                    try:
+                        step_num = int(item.split("-")[1])
+                        checkpoints.append((step_num, item))
+                    except (IndexError, ValueError):
+                        continue
+            
+            if checkpoints:
+                checkpoints.sort(key=lambda x: x[0])
+                print(f"  - Checkpoints encontrados: {len(checkpoints)}")
+                for step, name in checkpoints[-3:]:  # mostra os 3 mais recentes
+                    print(f"    * {name} (step {step})")
+                
+                latest_step, latest_name = max(checkpoints, key=lambda x: x[0])
+                latest_path = os.path.join(checkpoint_dir, latest_name)
+                required_files = ["pytorch_model.bin", "training_args.bin", "trainer_state.json"]
+                missing_files = [f for f in required_files if not os.path.exists(os.path.join(latest_path, f))]
+                
+                if missing_files:
+                    print(f"  - Último checkpoint incompleto (faltam: {missing_files})")
+                else:
+                    print(f"  - Último checkpoint válido: {latest_name}")
+            else:
+                print(f"  - Nenhum checkpoint encontrado")
+        else:
+            print(f"  - Diretório de checkpoints não existe")
         
         # informações de GPU
         if torch.cuda.is_available():
@@ -409,13 +549,100 @@ class LLMsTrainer:
         
         return trainer
 
+    # ------------------------- checkpoint management --------------------- 
+    def _find_latest_checkpoint(self) -> str:
+        """Encontra o checkpoint mais recente na pasta de checkpoints.
+        
+        Returns:
+            str: Caminho para o checkpoint mais recente ou None se não houver
+        """
+        # verifica se o resume está habilitado na configuração
+        if not self.cfg.get("resume_from_checkpoint", True):
+            print("📋 Resume from checkpoint desabilitado na configuração")
+            return None
+            
+        if not self.save_checkpoints:
+            return None
+            
+        checkpoint_dir = os.path.join(self.cfg["output_dir"], "chkpt")
+        if not os.path.exists(checkpoint_dir):
+            return None
+        
+        # procura por pastas checkpoint-* 
+        checkpoints = []
+        for item in os.listdir(checkpoint_dir):
+            item_path = os.path.join(checkpoint_dir, item)
+            if os.path.isdir(item_path) and item.startswith("checkpoint-"):
+                try:
+                    step_num = int(item.split("-")[1])
+                    checkpoints.append((step_num, item_path))
+                except (IndexError, ValueError):
+                    continue
+        
+        if not checkpoints:
+            return None
+            
+        # retorna o checkpoint com maior número de step
+        latest_step, latest_path = max(checkpoints, key=lambda x: x[0])
+        
+        # verifica se é um checkpoint válido (contém os arquivos necessários)
+        required_files = ["training_args.bin", "trainer_state.json"]
+        alternative_files = ["model.safetensors"]  # formato alternativo
+        
+        has_required = all(os.path.exists(os.path.join(latest_path, f)) for f in required_files)
+        has_alternative = any(os.path.exists(os.path.join(latest_path, f)) for f in alternative_files)
+        
+        if has_required or (has_alternative and os.path.exists(os.path.join(latest_path, "trainer_state.json"))):
+            print(f"✅ Checkpoint encontrado: {latest_path} (step {latest_step})")
+            self.log_processamento(f"Checkpoint encontrado: {latest_path} (step {latest_step})", "CHECKPOINT_FOUND")
+            return latest_path
+        else:
+            print(f"⚠️  Checkpoint incompleto encontrado: {latest_path}")
+            self.log_processamento(f"Checkpoint incompleto: {latest_path}", "CHECKPOINT_INCOMPLETE")
+            return None
+
     # ------------------------- execução ----------------------------------
     def train(self):
         antes = _print_mem("ANTES", self.device_idx)
         print("[4/6] Iniciando treinamento…")
-        train_stats = self.trainer.train()
+        
+        # Valida o modelo antes do treinamento
+        print("\n🔍 STATUS DO MODELO ANTES DO TREINAMENTO:")
+        self.print_modelo_status()
+        
+        # verifica se existe checkpoint para continuar
+        checkpoint_path = self._find_latest_checkpoint()
+        resume_from_checkpoint = checkpoint_path is not None
+        
+        if resume_from_checkpoint:
+            print(f"🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}")
+            try:
+                train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
+                print("✅ Treinamento continuado com sucesso a partir do checkpoint")
+                self.log_processamento("Treinamento continuado com sucesso do checkpoint", "CHECKPOINT_SUCCESS")
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ Erro ao continuar do checkpoint: {error_msg}")
+                print("🔄 Reiniciando treinamento do início...")
+                
+                # identifica tipos comuns de erro de checkpoint
+                if any(keyword in error_msg.lower() for keyword in ['config', 'parameter', 'mismatch', 'size']):
+                    self.log_processamento(f"Erro de configuração no checkpoint: {error_msg}", "CHECKPOINT_CONFIG_ERROR")
+                else:
+                    self.log_processamento(f"Erro geral no checkpoint: {error_msg}", "CHECKPOINT_ERROR")
+                
+                # reinicia o treinamento do zero
+                train_stats = self.trainer.train()
+        else:
+            print("🆕 Iniciando novo treinamento")
+            train_stats = self.trainer.train()
+            
         depois = _print_mem("DEPOIS", self.device_idx)
         print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
+        
+        # Valida o modelo após o treinamento
+        print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
+        info_modelo = self.print_modelo_status()
         
         # 2) dicionário de tudo que interessa
         stats = {
@@ -427,6 +654,7 @@ class LLMsTrainer:
             "config": dict(self.cfg),
             "ds_train_len" : len(self.train_ds),
             "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
+            "modelo_info": info_modelo,  # adiciona informações do modelo
         }
         # grava o modelo antes do ultimo eval, pode dar erro de memória no eval    
         self._save_model(stats=stats)
@@ -440,8 +668,31 @@ class LLMsTrainer:
         out_dir = self.cfg["output_dir"]
         os.makedirs(out_dir, exist_ok=True)
         print(f"[6/6] Salvando modelo em {out_dir}…")
+        
+        # Salva o modelo (LoRA ou modelo completo)
         self.model.save_pretrained(out_dir)
         self.tokenizer.save_pretrained(out_dir)
+        
+        # Verifica se o modelo foi salvo corretamente
+        adapter_config = os.path.join(out_dir, 'adapter_config.json')
+        adapter_model = os.path.join(out_dir, 'adapter_model.safetensors')
+        
+        if os.path.exists(adapter_config):
+            print(f"✅ Arquivo de configuração LoRA salvo: {adapter_config}")
+            
+        if os.path.exists(adapter_model):
+            print(f"✅ Modelo LoRA salvo: {adapter_model}")
+        elif os.path.exists(os.path.join(out_dir, 'pytorch_model.bin')):
+            print(f"✅ Modelo PyTorch salvo: pytorch_model.bin")
+        
+        # Log detalhado do que foi salvo
+        files_saved = []
+        for file in os.listdir(out_dir):
+            if file.endswith(('.json', '.safetensors', '.bin')):
+                files_saved.append(file)
+        
+        self.log_processamento(f"Arquivos salvos em {out_dir}: {files_saved}", "MODEL_SAVED")
+        
         if stats is not None:
             with open(os.path.join(self.cfg["output_dir"], "metrics_summary.json"), "w") as fp:
                  json.dump(stats, fp, indent=2)
@@ -470,6 +721,11 @@ class LLMsTrainer:
         """Tokeniza um prompt simples para teste rápido."""
         if not texto.strip():
             raise ValueError("Prompt vazio")
+        
+        # Verifica se o modelo tem LoRA ativo
+        is_peft_model = hasattr(self.model, 'peft_config') or hasattr(self.model, 'base_model')
+        model_type = type(self.model).__name__
+        print(f"🔍 Tipo do modelo: {model_type} | PEFT ativo: {is_peft_model}")
         
         if callable(processador):
            inputs = processador(texto)
@@ -513,6 +769,9 @@ class LLMsTrainer:
         print(f"\n{'='*80}")
         print(f"🧪 TESTANDO MODELO COM {n_exemplos} EXEMPLO(S)")
         print(f"{'='*80}")
+        
+        # Primeiro valida o status do modelo
+        self.print_modelo_status()
         
         # verifica se há dataset disponível
         if not hasattr(self, 'train_ds') or len(self.train_ds) == 0:
@@ -592,6 +851,75 @@ class LLMsTrainer:
         print(f"\n{'='*80}")
         print(">> TESTE DE PREDIÇÕES CONCLUÍDO")
         print(f"{'='*80}")
+
+    def validar_modelo_lora(self) -> dict:
+        """Valida se o modelo LoRA está carregado corretamente e retorna informações detalhadas."""
+        info = {
+            'modelo_tipo': type(self.model).__name__,
+            'is_peft_model': False,
+            'adapters_ativos': [],
+            'parametros_treinaveis': 0,
+            'parametros_totais': 0,
+            'lora_detectado': False
+        }
+        
+        # Verifica se é modelo PEFT
+        info['is_peft_model'] = hasattr(self.model, 'peft_config') or hasattr(self.model, 'base_model')
+        
+        if info['is_peft_model']:
+            info['lora_detectado'] = True
+            
+            # Obtém informações dos adaptadores
+            if hasattr(self.model, 'peft_config'):
+                peft_configs = self.model.peft_config
+                for adapter_name, config in peft_configs.items():
+                    adapter_info = {
+                        'nome': adapter_name,
+                        'r': getattr(config, 'r', 'N/A'),
+                        'alpha': getattr(config, 'lora_alpha', 'N/A'),
+                        'dropout': getattr(config, 'lora_dropout', 'N/A'),
+                        'target_modules': getattr(config, 'target_modules', [])
+                    }
+                    info['adapters_ativos'].append(adapter_info)
+        
+        # Conta parâmetros treináveis
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.model.parameters())
+        
+        info['parametros_treinaveis'] = trainable_params
+        info['parametros_totais'] = total_params
+        info['percentual_treinavel'] = (trainable_params / total_params * 100) if total_params > 0 else 0
+        
+        return info
+
+    def print_modelo_status(self):
+        """Imprime o status detalhado do modelo."""
+        info = self.validar_modelo_lora()
+        
+        print(f"\n{'='*60}")
+        print(f"📊 STATUS DETALHADO DO MODELO")
+        print(f"{'='*60}")
+        print(f"Tipo do modelo: {info['modelo_tipo']}")
+        print(f"É modelo PEFT: {info['is_peft_model']}")
+        print(f"LoRA detectado: {info['lora_detectado']}")
+        print(f"Parâmetros treináveis: {info['parametros_treinaveis']:,}")
+        print(f"Parâmetros totais: {info['parametros_totais']:,}")
+        print(f"Percentual treinável: {info['percentual_treinavel']:.4f}%")
+        
+        if info['adapters_ativos']:
+            print(f"\n🔧 ADAPTADORES ATIVOS:")
+            for adapter in info['adapters_ativos']:
+                print(f"  - {adapter['nome']}: r={adapter['r']}, alpha={adapter['alpha']}")
+                print(f"    Modules: {adapter['target_modules']}")
+        else:
+            print(f"\n⚠️  NENHUM ADAPTADOR ATIVO DETECTADO")
+        
+        print(f"{'='*60}")
+        
+        # Log no arquivo
+        self.log_processamento(info, "STATUS_MODELO_DETALHADO")
+        
+        return info
 
 # ---------------------------------------------------------------------------
 # Datasets
@@ -883,6 +1211,7 @@ def _create_default_cfg(path: str) -> None:
         "lora_dropout": 0.05,   # Opcional: dropout para LoRA
         "learning_rate": 2e-4,   # Opcional: taxa de aprendizado
         "save_checkpoints": True,
+        "resume_from_checkpoint": True,   # Tenta continuar de checkpoint se existir
         "warmup_steps": 5,
         "nbits": 4,   # 4 ou 8 ou None
         "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj",
