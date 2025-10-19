@@ -5,6 +5,7 @@ except ImportError:
     raise ImportError("Módulo 'openai' não encontrado. Instale com 'pip install openai'.")
 import os
 import json
+import traceback
 
 '''
  Autor Luiz Anísio 17/10/2025
@@ -29,7 +30,7 @@ def get_resposta(prompt:str, papel:str='',
                  temperature=0.01,
                  max_tokens=None,
                  max_retry=5,
-                 timeout=60,
+                 timeout=120,
                  api_key=None,
                  silencioso: bool = False):
     ''' Obtém a resposta do modelo de linguagem para o prompt informado.
@@ -78,12 +79,17 @@ def get_resposta(prompt:str, papel:str='',
     if not silencioso: print(f'Chamada: {modelo}:{think} [{tipo_api}] | max retry = {max_retry} | ')
     
     max_tokens = max(0, min(128*1024, max_tokens)) if isinstance(max_tokens, int) else None
-    
-    messages = []
-    if papel and isinstance(papel, str) and papel.strip():
-        messages.append({'role':'system', 'content': papel.strip()})
-    messages.append({'role':'user', 'content': prompt})
-    
+
+    if isinstance(prompt,(tuple, list)) and len(prompt) > 0:
+        messages = prompt
+    elif isinstance(prompt,str) and prompt.strip(' \n\t'):    
+        messages = []
+        if papel and isinstance(papel, str) and papel.strip():
+            messages.append({'role':'system', 'content': papel.strip()})
+        messages.append({'role':'user', 'content': prompt})
+    else:
+        raise ValueError('Formato do prompt não reconhecido: deve ser messages ou string')
+
     parametros = {
         'messages': messages,
         'model': modelo,
@@ -197,6 +203,7 @@ def get_resposta(prompt:str, papel:str='',
                            max_retry=max_retry - 1, timeout=timeout, api_key=api_key, silencioso=silencioso)
     
     except Exception as e:
+        print('ERRO inesperado:', traceback.format_exc())
         return {'erro': f'Erro inesperado: {type(e).__name__}: {str(e)}', 'model': modelo}
 
     tempo = time() - tempo
