@@ -13,13 +13,14 @@ import json
  Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento
 
 * Para usar no colab, execute a linha:
-!curl -o https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/src/util_openai.py
+!curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/src/util_openai.py -o ./util_openai.py
 
-E depois use: 
-- from util_openai import get_resposta
 Adicione a(s) chave(s) de API no ambiente do colab:
-- PESSOAL_OPENAI_API_KEY='sua-chave-aqui'
-- PESSOAL_OPENROUTER_API_KEY='sua-chave-aqui'
+> PESSOAL_OPENAI_API_KEY='sua-chave-aqui'
+> PESSOAL_OPENROUTER_API_KEY='sua-chave-aqui'
+Teste:
+> from util_openai import get_resposta, teste_resposta
+> teste_resposta(as_json=True, modelo='or:openai/gpt-oss-20b')
 '''
 
 def get_resposta(prompt:str, papel:str='',
