@@ -6,6 +6,7 @@
  '''
 
 import os, sys
+import os.path as os_path
 import hashlib
 from datetime import datetime
 import json
@@ -16,12 +17,18 @@ from multiprocessing.dummy import Pool as ThreadPool
 from cryptography.fernet import Fernet
 from typing import List, Optional, Union, Tuple, Set
 import shutil
+import threading
 
 try:
     import psutil 
     PSUTIL_OK = True
 except:
     PSUTIL_OK = False
+try:
+    from dotenv import load_dotenv
+    DOTENV_OK = True
+except:
+    DOTENV_OK = False
 
 HASH_BUF_SIZE = 65536  # lets read stuff in 64kb chunks!
 class Util():
@@ -562,3 +569,159 @@ class UtilZip():
             print(f"Erro: O arquivo '{caminho_zip}' parece não ser um arquivo zip válido ou está corrompido.")
         except Exception as e:
             print(f"Ocorreu um erro ao descompactar: {e}")    
+
+class UtilEnv():
+    # IGNORAR_PRINT_DEBUG pode ser usado para ignorar o print em determinados contextos
+    IGNORAR_PRINT_DEBUG = False 
+    LOCK_ARQUIVO_LOG = threading.Lock()
+    
+    @classmethod
+    def debug(cls, chave = 'DEBUG'):
+        return cls.env_true(chave)
+
+    @classmethod
+    def desativar_print_debug(cls):
+        cls.IGNORAR_PRINT_DEBUG = True
+
+    @classmethod
+    def ativar_print_debug(cls):
+        cls.IGNORAR_PRINT_DEBUG = False
+
+    @classmethod
+    def env_true(cls, chave_env = '', default=False):
+        ''' retorna True se a chave existir e for 1,S,SIM,TRUE ou T
+            retorna o valor default caso a chave não exista
+        '''
+        if not chave_env: 
+            return False
+        _env = os_get_env(chave_env,'')
+        return _env.upper().strip() in ('1','S','SIM','TRUE','T') 
+
+    @classmethod
+    def teste_rapido(cls):
+        _res = os_get_env('TESTE_RAPIDO','')
+        return _res.upper() in ('1','S','SIM','TRUE') 
+
+    @classmethod
+    def print_debug(cls, msg, incluir_hora:bool = True, incluir_pid:bool = False, grupo = '', pausa = 0):
+        if cls.IGNORAR_PRINT_DEBUG or (not cls.debug()):
+           return 
+        msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
+        if incluir_pid:
+            msg_final += f' <<PID#{os_getpid()}>> |'
+        if grupo:
+           msg_final = f'{grupo} | {msg_final}'
+        print(f'{msg_final}>> {msg}', flush=True)
+        cls.pausa_debug(pausa)
+
+    @classmethod
+    def file_debug(cls, arquivo:str, valor:str|dict, incluir_hora:bool = True, incluir_pid:bool = False, append = False):
+        if not cls.debug():
+           return 
+        pasta, _ = os_path.split(arquivo)
+        if not os_path.isdir(pasta):
+            os_makedirs(pasta, exist_ok=True)
+        msg_final = json.dumps(valor) if isinstance(valor, dict) else str(valor)
+        if incluir_hora:
+           msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} | {msg_final}' if incluir_hora else msg_final
+        if incluir_pid:
+            msg_final = f'<<PID#{os_getpid()}>> | {msg_final}'
+        with cls.LOCK_ARQUIVO_LOG:
+            if append and os_path.isfile(arquivo):
+                with open(arquivo, 'a') as f:
+                    f.write(f'\n{msg_final}')
+            else:
+                with open(arquivo, 'w') as f:
+                    f.write(msg_final)
+
+    @classmethod
+    def print_log(cls, msg, incluir_hora:bool = True, incluir_pid:bool = False, grupo = '', pausa_debug = 0):
+        msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
+        if incluir_pid:
+            msg_final += f' <<PID#{os_getpid()}>> |'
+        if grupo:
+           msg_final = f'{grupo} | {msg_final}'
+        print(f'{msg_final}>> {msg}', flush=True)
+        cls.pausa_debug(pausa_debug)
+
+    @ classmethod
+    def pausa_debug(cls, segundos):
+        if isinstance(segundos, int) and segundos > 0 and cls.debug():
+            sleep(segundos)
+
+    @classmethod
+    def print_debug_timer(cls, msg):
+        if cls.IGNORAR_PRINT_DEBUG or (not cls.debug('DEBUG_TIMER')):
+           return 
+        msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} |'
+        msg_final = f'TIMER | {msg_final}'
+        print(f'{msg_final}>> {msg}', flush=True)
+
+    @classmethod
+    def carregar_env(cls, arquivo = '.env', pastas = None):
+        assert DOTENV_OK, 'Instale o pacote: pip install python-dotenv'
+        arq_env = UtilArquivos.encontrar_arquivo(arquivo=arquivo, pastas=pastas)
+        if arq_env:
+            print(f'Env encontrado em {arq_env}')
+            from dotenv import load_dotenv
+            load_dotenv(arq_env, override=True)
+            return True
+        print(f'Arquivo Env "{arquivo}" não encontrado')
+        return False
+    
+    @classmethod
+    def get_int(cls, chave_env, default=0) -> int:
+        try:
+            valor = os_get_env(chave_env)
+            if isinstance(valor,str):
+                return int(valor.strip())
+            return default
+        except:
+            return default
+
+    @classmethod
+    def get_str(cls, chave_env, default='') -> str:
+        try:
+            valor = os_get_env(chave_env)
+            if isinstance(valor,str):
+                return valor
+            return default
+        except:
+            return default            
+
+class UtilArquivos(object):
+
+    @staticmethod
+    def tamanho_arquivo(nome_arquivo):
+        if os_path.isfile(nome_arquivo):
+           return os_path.getsize(nome_arquivo)
+        return 0
+
+    @staticmethod
+    def carregar_json(arquivo):
+        tipos = ['utf8', 'ascii', 'latin1']
+        for tp in tipos:
+            try:
+                with open(arquivo, encoding=tp) as f:
+                    return json.load(f)
+            except UnicodeError:
+                continue
+        with open(arquivo, encoding='latin1', errors='ignore') as f:
+            return json.load(f)
+
+    @classmethod
+    def encontrar_arquivo(cls, arquivo, pastas = None, incluir_subpastas = False):
+        ''' pastas = None ele volta até 5 pastas procurando a pasta ou o arquivo informado
+        '''
+        from os import walk as os_walk
+        _pastas = ['../','../../','../../../','../../../../','../../../../../'] if pastas is None else pastas
+        _arq = os_path.split(arquivo)[1]
+        subpastas = []
+        if incluir_subpastas:
+            for root, dirs, files in os_walk('./'):
+                for sub in dirs:
+                    subpastas.append( os_path.join(root,sub) )
+        for pasta in set(list(_pastas) + ['./'] + subpastas):
+            if os_path.isfile( os_path.join(pasta, _arq) ):
+                return os_path.join(pasta, _arq)
+        return None            
