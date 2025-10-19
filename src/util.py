@@ -725,3 +725,294 @@ class UtilArquivos(object):
             if os_path.isfile( os_path.join(pasta, _arq) ):
                 return os_path.join(pasta, _arq)
         return None            
+
+class UtilArquivos(object):
+
+    @staticmethod
+    def tamanho_arquivo(nome_arquivo):
+        if os_path.isfile(nome_arquivo):
+           return os_path.getsize(nome_arquivo)
+        return 0
+
+    @staticmethod
+    def carregar_json(arquivo):
+        tipos = ['utf8', 'ascii', 'latin1']
+        for tp in tipos:
+            try:
+                with open(arquivo, encoding=tp) as f:
+                    return json.load(f)
+            except UnicodeError:
+                continue
+        with open(arquivo, encoding='latin1', errors='ignore') as f:
+            return json.load(f)
+
+    @classmethod
+    def encontrar_arquivo(cls, arquivo, pastas = None, incluir_subpastas = False):
+        ''' pastas = None ele volta até 5 pastas procurando a pasta ou o arquivo informado
+        '''
+        from os import walk as os_walk
+        _pastas = ['../','../../','../../../','../../../../','../../../../../'] if pastas is None else pastas
+        _arq = os_path.split(arquivo)[1]
+        subpastas = []
+        if incluir_subpastas:
+            for root, dirs, files in os_walk('./'):
+                for sub in dirs:
+                    subpastas.append( os_path.join(root,sub) )
+        for pasta in set(list(_pastas) + ['./'] + subpastas):
+            if os_path.isfile( os_path.join(pasta, _arq) ):
+                return os_path.join(pasta, _arq)
+        return None
+
+class Util(object):
+
+    @staticmethod
+    def pausa(segundos, progresso = True):
+        if segundos ==0:
+            return
+        if segundos<1:
+            segundos =1
+        for ps in range(0,segundos):
+            time.sleep(1)
+            if progresso:
+                increments = 50
+                percentual = int((ps / segundos) * 100)
+                i = int(percentual // (100 / increments))
+                text = "\r[{0: <{1}}] {2:.2f}%".format('=' * i, increments, percentual)
+                print('{} Pausa por {}s           '.format(text, segundos-ps), end="")
+        if progresso:
+            print(f'\rPausa finalizada {segundos}s' + ' ' * 50)
+
+class UtilTextos(object):
+    
+    @classmethod
+    def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True ):
+        ''' O objetivo é receber uma resposta de um modelo LLM e identificar o json dentro dela 
+            Exemplo: dicionario = UtilTextos.mensagem_to_json('```json\n{"chave":"valor qualquer", "numero":1}\```')
+        '''
+        if isinstance(mensagem, dict):
+            return mensagem
+        if not isinstance(mensagem, str):
+           raise ValueError('mensagem_to_json: parâmetro precisa ser string')
+        _mensagem = str(mensagem).strip()
+        # limpa resposta ```json ````
+        chave_json = mensagem.find('```json\n')
+        if chave_json >= 0:
+           _mensagem = _mensagem[chave_json+8:]
+        else:
+           chave_json = mensagem.find('```json')
+           _mensagem = _mensagem[chave_json+7:] if chave_json >=0 else _mensagem
+            
+        chave_ini = _mensagem.find('{')
+        chave_fim = _mensagem.rfind('}')
+        if len(_mensagem)>2 and chave_ini>=0 and chave_fim>0 and chave_fim > chave_ini:
+            _mensagem = _mensagem[chave_ini:chave_fim+1]
+            try:
+                return json.loads(_mensagem)
+            except json.decoder.JSONDecodeError as e:
+                if (not _corrigir_json_):
+                    print(f'UtilTextos.mensagem_to_json: retornando padrão - erro ao decodificar string json >>> {str(_mensagem)[:50]}...')
+                    return padrao
+                # corrige aspas internas dentro do json
+                return cls.mensagem_to_json(mensagem = cls.__escape_json_string_literals(mensagem), 
+                                             padrao = padrao, 
+                                             _corrigir_json_ = False)
+                
+        return padrao
+    
+    @classmethod
+    def __escape_json_string_literals(cls, s: str) -> str:
+        ''' Percorre a string 's' e escapa apenas as aspas duplas internas
+            não-escapadas dentro de literais JSON.
+        '''
+        if not isinstance(s, str):
+           raise TypeError(f'escape_json_string_literals espera receber uma string e recebeu {type(s)}')
+        out = []
+        in_str = False
+        prev_esc = False
+        i, n = 0, len(s)
+        while i < n:
+            c = s[i]
+            if c == '"' and not prev_esc:
+                if not in_str:
+                    in_str = True
+                    out.append(c)
+                else:
+                    j = i + 1
+                    while j < n and s[j].isspace():
+                        j += 1
+                    next_char = s[j] if j < n else ''
+                    if next_char in {',', '}', ']', ':'}:
+                        in_str = False
+                        out.append(c)
+                    else:
+                        out.append('\\"')
+                i += 1
+            elif c == '\\':
+                out.append(c)
+                prev_esc = not prev_esc
+                i += 1
+            else:
+                out.append(c)
+                prev_esc = False
+                i += 1
+        return ''.join(out)
+
+class UtilDataHora():
+    FORMATOS = [
+            '%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S',  # Data, hora e segundos
+            '%Y-%m-%d %H:%M', '%Y/%m/%d %H:%M',  # Data e hora
+            '%Y-%m-%d', '%Y/%m/%d',  # Data
+            '%Y-%m-%d %H:%M:%S.%f', '%Y/%m/%d %H:%M:%S.%f'  # Data, hora, segundos e milissegundos
+        ]
+    @staticmethod
+    def validar_data(data_hora_string):
+        #print(f'TESTE: {data_hora_string}')
+        if (data_hora_string is None) or len(data_hora_string) < 5:
+           return False
+        for formato in UtilDataHora.FORMATOS:
+            try:
+                datetime.datetime.strptime(data_hora_string, formato)
+                return True
+            except ValueError:
+                continue  # Tenta o próximo formato
+        return False
+    
+    @staticmethod
+    def compara_data1_data2(data1 = None, tipo = '=', data2 = None):
+        '''  espera datas no formato string yyyy-mm-dd hh:mm:ss ou datetime
+             =, ==, >, <, >=, <=, <>, !
+        '''
+        _dt1 = '' if data1 is None else data1 
+        _dt2 = '' if data2 is None else data2 
+        _dt1 = _dt1 if type(_dt1) is str else UtilDataHora.data_hora_str(_dt1)
+        _dt2 = _dt2 if type(_dt2) is str else UtilDataHora.data_hora_str(_dt2)
+        #print(f'{_dt1} {tipo} {_dt2}')
+        if tipo in ('=', '=='):
+           return bool(_dt1 == _dt2)
+        if tipo in ('<>', '!'):
+           return bool(_dt1 != _dt2)
+        if tipo == '>=':
+           return bool(_dt1 >= _dt2)
+        if tipo == '>':
+           return bool(_dt1 > _dt2)
+        if tipo == '<=':
+           return bool(_dt1 <= _dt2)
+        if tipo == '<':
+           return bool(_dt1 < _dt2)
+        return False
+
+    @staticmethod
+    def data_hora_str(data_hora=None, somar_dias: int = 0):
+        if not (data_hora is None or isinstance(data_hora, datetime.datetime)):
+            raise ValueError(f'UtilDataHora.data_hora_str recebeu um parâmetro com tipo inválido {type(data_hora)}')
+        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        if isinstance(somar_dias,int) and somar_dias != 0:
+           _data_hora = _data_hora + datetime.timedelta(days = somar_dias)
+        return _data_hora.strftime('%Y-%m-%d %H:%M:%S')
+    
+    @staticmethod
+    def data_str(data_hora=None, somar_dias: int = 0):
+        if not (data_hora is None or isinstance(data_hora, datetime.datetime)):
+            raise ValueError(f'UtilDataHora.data_str recebeu um parâmetro com tipo inválido {type(data_hora)}')
+        _data_hora = data_hora if isinstance(data_hora, datetime.datetime) else datetime.datetime.now()
+        if isinstance(somar_dias,int) and somar_dias != 0:
+           _data_hora = _data_hora + datetime.timedelta(days = somar_dias)
+        return _data_hora.strftime('%Y-%m-%d')
+
+    @staticmethod
+    def hora_entre(data_hora = None, hora_inicial = '00:00', hora_final = '23:59'):
+        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        # Converter as strings 'hh:mm' de hora_inicial e hora_final para objetos time
+        hora_inicial_obj = datetime.datetime.strptime(hora_inicial, "%H:%M").time()
+        hora_final_obj = datetime.datetime.strptime(hora_final, "%H:%M").time()
+        # Extrair apenas a hora da data informada
+        hora_data = _data_hora.time()
+        # Verificar se a hora está dentro do intervalo especificado
+        if hora_inicial_obj <= hora_final_obj:
+            # Caso comum: quando hora_inicial é menor ou igual a hora_final
+            return hora_inicial_obj <= hora_data <= hora_final_obj
+        else:
+            # Caso que atravessa a meia-noite: quando hora_inicial é maior que hora_final
+            return hora_data >= hora_inicial_obj or hora_data <= hora_final_obj
+
+    @staticmethod
+    def hora_na_lista(data_hora = None, lista:list = []):
+        # recebe uma lista de inteiros que são as horas aceitas [0~23]
+        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        if isinstance(_data_hora, str):
+            _data_hora = UtilDataHora.to_datetime(_data_hora)
+        # Extrair apenas a hora da data informada
+        hora = _data_hora.time().hour
+        # Verificar se a hora está dentro do intervalo especificado
+        return int(hora) in [_ for _ in lista if isinstance(_, int)]
+
+    @staticmethod
+    def dia_da_semana(data_hora = None, sigla = False):
+        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        # Mapeamento dos números para os dias da semana
+        dias = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"]
+        siglas = ["SEQ", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"]
+        # Obter o número do dia da semana
+        numero_dia = _data_hora.weekday()
+        # Retornar o nome do dia da semana correspondente
+        if sigla:
+           return siglas[numero_dia] 
+        return dias[numero_dia]
+    
+    @staticmethod
+    def to_datetime(data_hora_string):
+        if (data_hora_string is None) or len(data_hora_string) < 5:
+           return None
+        for formato in UtilDataHora.FORMATOS:
+            try:
+                return datetime.datetime.strptime(data_hora_string, formato)
+            except ValueError:
+                continue  # Tenta o próximo formato
+        return None
+
+    @staticmethod
+    def somar_dias(data, dias:int):
+        _data = data
+        if isinstance(data, str):
+           _data = UtilDataHora.to_datetime(data)
+        elif not isinstance(data, datetime.datetime):
+           raise ValueError(f'UtilDataHora.somar_dias recebeu um parâmetro com tipo inválido {type(data)} - era esperado str ou datetime.datetime')
+        return _data + datetime.timedelta(days = dias)
+    
+    @staticmethod
+    def segundos_to_str(segundos):
+        horas = int(segundos // 3600)
+        minutos = int((segundos % 3600) // 60)
+        segundos = int(segundos % 60)
+        return f"{horas:02d}:{minutos:02d}:{segundos:02d}"    
+    
+    @staticmethod
+    def data_hora_arquivo(arquivo, formato_string = False):
+        tempo_criacao = os_path.getctime(arquivo)
+        data_hora = datetime.datetime.fromtimestamp(tempo_criacao, tz=datetime.timezone.utc)
+        if not formato_string:
+            return data_hora
+        return data_hora.strftime('%Y-%m-%d %H:%M:%S')
+    
+    @staticmethod
+    def segundos_arquivo(arquivo, default = 0):
+        if not os_path.isfile(arquivo):
+            return default
+        tempo_criacao = os_path.getctime(arquivo)
+        return time.time() - tempo_criacao
+
+    @staticmethod
+    def data_extenso(data = None):
+        # Caso nenhuma data seja passada, usa a data e hora atuais
+        if isinstance(data, str):
+            data = UtilDataHora.to_datetime(data)        
+        if data is None:
+            data = datetime.datetime.now()
+        # Lista dos meses em português
+        meses_pt = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+        dia_formatado = f"{data.day:02d}"
+        mes_extenso = meses_pt[data.month - 1]
+        ano = data.year
+        # Exemplo: "17 de fevereiro de 2025"
+        return f"{dia_formatado} de {mes_extenso} de {ano}"
