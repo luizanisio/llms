@@ -148,8 +148,8 @@ def get_resposta(prompt:str, papel:str='',
 
         # Extrai o conteúdo da resposta
         if as_json:
+            conteudo = res_dict['choices'][0]['message']['content']
             try:
-                conteudo = res_dict['choices'][0]['message']['content']
                 conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
                 if conteudo_json is None:
                    resultado['resposta'] = conteudo
