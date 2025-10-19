@@ -153,14 +153,16 @@ def get_resposta(prompt:str, papel:str='',
                 resultado['resposta'] = conteudo_json
             except Exception as e:
                 resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
-                resultado['resposta'] = None
+                resultado['resposta'] = conteudo
         else:
             resultado['resposta'] = res_dict['choices'][0]['message']['content']
 
         # Extrai informações de uso
         usage_data = res_dict.get('usage', {})
-        completion_details = usage_data.get('completion_tokens_details', {})
-        prompt_details = usage_data.get('prompt_tokens_details', {})
+        completion_details = usage_data.get('completion_tokens_details', {}) or {}
+        prompt_details = usage_data.get('prompt_tokens_details', {}) or {}
+
+        #print(json.dumps(res_dict,ensure_ascii=False,indent=2))
 
         resultado['usage'] = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
