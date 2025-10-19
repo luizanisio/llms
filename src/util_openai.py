@@ -144,16 +144,24 @@ def get_resposta(prompt:str, papel:str='',
 
         # Estrutura padronizada de retorno
         resultado = {}
+        #print(json.dumps(res_dict, ensure_ascii=False, indent=2))
 
         # Extrai o conteúdo da resposta
         if as_json:
             try:
                 conteudo = res_dict['choices'][0]['message']['content']
-                conteudo_json = UtilJson.mensagem_to_json(conteudo)
-                resultado['resposta'] = conteudo_json
+                conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
+                if conteudo_json is None:
+                   resultado['resposta'] = conteudo
+                   resultado['erro'] = f'Erro ao extrair JSON da resposta.'
+                   resultado['json'] = False
+                else:  
+                   resultado['resposta'] = conteudo_json
+                   resultado['json'] = True
             except Exception as e:
-                resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
                 resultado['resposta'] = conteudo
+                resultado['json'] = False
+                resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
         else:
             resultado['resposta'] = res_dict['choices'][0]['message']['content']
 
@@ -162,8 +170,8 @@ def get_resposta(prompt:str, papel:str='',
         completion_details = usage_data.get('completion_tokens_details', {}) or {}
         prompt_details = usage_data.get('prompt_tokens_details', {}) or {}
 
-        #print(json.dumps(res_dict,ensure_ascii=False,indent=2))
-
+        print(json.dumps(res_dict,ensure_ascii=False,indent=2))
+        print('-'*40)
         resultado['usage'] = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
             'completion_tokens': usage_data.get('completion_tokens', 0),
@@ -354,7 +362,9 @@ def teste_api(openrouter=False):
 
 
 if __name__ == '__main__':
-    from stjiautilbase.stj_utilitarios import UtilEnv
-    UtilEnv.carregar_env('.env', pastas=['../', '../../'])
-    assert os.getenv("PESSOAL_OPENAI_API_KEY"), "Chave PESSOAL_OPENAI_API_KEY não encontrada no .env"
-    teste_api(openrouter=True)
+    import sys 
+    sys.path.insert(0, os.path.abspath('..'))
+    sys.path.extend(['../src','./src'])
+    from util import UtilEnv
+    UtilEnv.carregar_env('.env', pastas=['../', './'])
+    teste_resposta(as_json=True,modelo='or:google/gemma-3-27b-it')
