@@ -606,7 +606,7 @@ class UtilEnv():
     def print_debug(cls, msg, incluir_hora:bool = True, incluir_pid:bool = False, grupo = '', pausa = 0):
         if cls.IGNORAR_PRINT_DEBUG or (not cls.debug()):
            return 
-        msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
+        msg_final = f'{datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
         if incluir_pid:
             msg_final += f' <<PID#{os_getpid()}>> |'
         if grupo:
@@ -623,7 +623,7 @@ class UtilEnv():
             os_makedirs(pasta, exist_ok=True)
         msg_final = json.dumps(valor) if isinstance(valor, dict) else str(valor)
         if incluir_hora:
-           msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} | {msg_final}' if incluir_hora else msg_final
+           msg_final = f'{datetime.now().strftime("%H:%M:%S")} | {msg_final}' if incluir_hora else msg_final
         if incluir_pid:
             msg_final = f'<<PID#{os_getpid()}>> | {msg_final}'
         with cls.LOCK_ARQUIVO_LOG:
@@ -636,7 +636,7 @@ class UtilEnv():
 
     @classmethod
     def print_log(cls, msg, incluir_hora:bool = True, incluir_pid:bool = False, grupo = '', pausa_debug = 0):
-        msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
+        msg_final = f'{datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
         if incluir_pid:
             msg_final += f' <<PID#{os_getpid()}>> |'
         if grupo:
@@ -653,7 +653,7 @@ class UtilEnv():
     def print_debug_timer(cls, msg):
         if cls.IGNORAR_PRINT_DEBUG or (not cls.debug('DEBUG_TIMER')):
            return 
-        msg_final = f'{datetime.datetime.now().strftime("%H:%M:%S")} |'
+        msg_final = f'{datetime.now().strftime("%H:%M:%S")} |'
         msg_final = f'TIMER | {msg_final}'
         print(f'{msg_final}>> {msg}', flush=True)
 
@@ -871,7 +871,7 @@ class UtilDataHora():
            return False
         for formato in UtilDataHora.FORMATOS:
             try:
-                datetime.datetime.strptime(data_hora_string, formato)
+                datetime.strptime(data_hora_string, formato)
                 return True
             except ValueError:
                 continue  # Tenta o próximo formato
@@ -903,28 +903,28 @@ class UtilDataHora():
 
     @staticmethod
     def data_hora_str(data_hora=None, somar_dias: int = 0):
-        if not (data_hora is None or isinstance(data_hora, datetime.datetime)):
+        if not (data_hora is None or isinstance(data_hora, datetime)):
             raise ValueError(f'UtilDataHora.data_hora_str recebeu um parâmetro com tipo inválido {type(data_hora)}')
-        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        _data_hora = data_hora if data_hora else datetime.now()
         if isinstance(somar_dias,int) and somar_dias != 0:
            _data_hora = _data_hora + datetime.timedelta(days = somar_dias)
         return _data_hora.strftime('%Y-%m-%d %H:%M:%S')
     
     @staticmethod
     def data_str(data_hora=None, somar_dias: int = 0):
-        if not (data_hora is None or isinstance(data_hora, datetime.datetime)):
+        if not (data_hora is None or isinstance(data_hora, datetime)):
             raise ValueError(f'UtilDataHora.data_str recebeu um parâmetro com tipo inválido {type(data_hora)}')
-        _data_hora = data_hora if isinstance(data_hora, datetime.datetime) else datetime.datetime.now()
+        _data_hora = data_hora if isinstance(data_hora, datetime) else datetime.now()
         if isinstance(somar_dias,int) and somar_dias != 0:
            _data_hora = _data_hora + datetime.timedelta(days = somar_dias)
         return _data_hora.strftime('%Y-%m-%d')
 
     @staticmethod
     def hora_entre(data_hora = None, hora_inicial = '00:00', hora_final = '23:59'):
-        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        _data_hora = data_hora if data_hora else datetime.now()
         # Converter as strings 'hh:mm' de hora_inicial e hora_final para objetos time
-        hora_inicial_obj = datetime.datetime.strptime(hora_inicial, "%H:%M").time()
-        hora_final_obj = datetime.datetime.strptime(hora_final, "%H:%M").time()
+        hora_inicial_obj = datetime.strptime(hora_inicial, "%H:%M").time()
+        hora_final_obj = datetime.strptime(hora_final, "%H:%M").time()
         # Extrair apenas a hora da data informada
         hora_data = _data_hora.time()
         # Verificar se a hora está dentro do intervalo especificado
@@ -938,7 +938,7 @@ class UtilDataHora():
     @staticmethod
     def hora_na_lista(data_hora = None, lista:list = []):
         # recebe uma lista de inteiros que são as horas aceitas [0~23]
-        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        _data_hora = data_hora if data_hora else datetime.now()
         if isinstance(_data_hora, str):
             _data_hora = UtilDataHora.to_datetime(_data_hora)
         # Extrair apenas a hora da data informada
@@ -948,7 +948,7 @@ class UtilDataHora():
 
     @staticmethod
     def dia_da_semana(data_hora = None, sigla = False):
-        _data_hora = data_hora if data_hora else datetime.datetime.now()
+        _data_hora = data_hora if data_hora else datetime.now()
         # Mapeamento dos números para os dias da semana
         dias = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"]
         siglas = ["SEQ", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"]
@@ -965,7 +965,7 @@ class UtilDataHora():
            return None
         for formato in UtilDataHora.FORMATOS:
             try:
-                return datetime.datetime.strptime(data_hora_string, formato)
+                return datetime.strptime(data_hora_string, formato)
             except ValueError:
                 continue  # Tenta o próximo formato
         return None
@@ -975,8 +975,8 @@ class UtilDataHora():
         _data = data
         if isinstance(data, str):
            _data = UtilDataHora.to_datetime(data)
-        elif not isinstance(data, datetime.datetime):
-           raise ValueError(f'UtilDataHora.somar_dias recebeu um parâmetro com tipo inválido {type(data)} - era esperado str ou datetime.datetime')
+        elif not isinstance(data, datetime):
+           raise ValueError(f'UtilDataHora.somar_dias recebeu um parâmetro com tipo inválido {type(data)} - era esperado str ou datetime')
         return _data + datetime.timedelta(days = dias)
     
     @staticmethod
@@ -989,7 +989,7 @@ class UtilDataHora():
     @staticmethod
     def data_hora_arquivo(arquivo, formato_string = False):
         tempo_criacao = os_path.getctime(arquivo)
-        data_hora = datetime.datetime.fromtimestamp(tempo_criacao, tz=datetime.timezone.utc)
+        data_hora = datetime.fromtimestamp(tempo_criacao, tz=datetime.timezone.utc)
         if not formato_string:
             return data_hora
         return data_hora.strftime('%Y-%m-%d %H:%M:%S')
@@ -1007,7 +1007,7 @@ class UtilDataHora():
         if isinstance(data, str):
             data = UtilDataHora.to_datetime(data)        
         if data is None:
-            data = datetime.datetime.now()
+            data = datetime.now()
         # Lista dos meses em português
         meses_pt = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
                     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
