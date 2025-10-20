@@ -3,12 +3,13 @@
 '''
  Autor Luiz Anísio 10/05/2025
  Utilitários simples para facilitar alguns códigos comuns
+ Fonte: https://github.com/luizanisio/llms/tree/main/src
  '''
 
+from glob import glob
 import os, sys
-import os.path as os_path
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import random
 import string
@@ -609,7 +610,7 @@ class UtilEnv():
            return 
         msg_final = f'{datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
         if incluir_pid:
-            msg_final += f' <<PID#{os_getpid()}>> |'
+            msg_final += f' <<PID#{os.getpid()}>> |'
         if grupo:
            msg_final = f'{grupo} | {msg_final}'
         print(f'{msg_final}>> {msg}', flush=True)
@@ -619,16 +620,16 @@ class UtilEnv():
     def file_debug(cls, arquivo:str, valor:str|dict, incluir_hora:bool = True, incluir_pid:bool = False, append = False):
         if not cls.debug():
            return 
-        pasta, _ = os_path.split(arquivo)
-        if not os_path.isdir(pasta):
-            os_makedirs(pasta, exist_ok=True)
+        pasta, _ = os.path.split(arquivo)
+        if not os.path.isdir(pasta):
+            os.makedirs(pasta, exist_ok=True)
         msg_final = json.dumps(valor) if isinstance(valor, dict) else str(valor)
         if incluir_hora:
            msg_final = f'{datetime.now().strftime("%H:%M:%S")} | {msg_final}' if incluir_hora else msg_final
         if incluir_pid:
-            msg_final = f'<<PID#{os_getpid()}>> | {msg_final}'
+            msg_final = f'<<PID#{os.getpid()}>> | {msg_final}'
         with cls.LOCK_ARQUIVO_LOG:
-            if append and os_path.isfile(arquivo):
+            if append and os.path.isfile(arquivo):
                 with open(arquivo, 'a') as f:
                     f.write(f'\n{msg_final}')
             else:
@@ -639,7 +640,7 @@ class UtilEnv():
     def print_log(cls, msg, incluir_hora:bool = True, incluir_pid:bool = False, grupo = '', pausa_debug = 0):
         msg_final = f'{datetime.now().strftime("%H:%M:%S")} |' if incluir_hora else ''
         if incluir_pid:
-            msg_final += f' <<PID#{os_getpid()}>> |'
+            msg_final += f' <<PID#{os.getpid()}>> |'
         if grupo:
            msg_final = f'{grupo} | {msg_final}'
         print(f'{msg_final}>> {msg}', flush=True)
@@ -694,8 +695,8 @@ class UtilArquivos(object):
 
     @staticmethod
     def tamanho_arquivo(nome_arquivo):
-        if os_path.isfile(nome_arquivo):
-           return os_path.getsize(nome_arquivo)
+        if os.path.isfile(nome_arquivo):
+           return os.path.getsize(nome_arquivo)
         return 0
 
     @staticmethod
@@ -716,23 +717,23 @@ class UtilArquivos(object):
         '''
         from os import walk as os_walk
         _pastas = ['../','../../','../../../','../../../../','../../../../../'] if pastas is None else pastas
-        _arq = os_path.split(arquivo)[1]
+        _arq = os.path.split(arquivo)[1]
         subpastas = []
         if incluir_subpastas:
             for root, dirs, files in os_walk('./'):
                 for sub in dirs:
-                    subpastas.append( os_path.join(root,sub) )
+                    subpastas.append( os.path.join(root,sub) )
         for pasta in set(list(_pastas) + ['./'] + subpastas):
-            if os_path.isfile( os_path.join(pasta, _arq) ):
-                return os_path.join(pasta, _arq)
-        return None            
+            if os.path.isfile( os.path.join(pasta, _arq) ):
+                return os.path.join(pasta, _arq)
+        return None
 
 class UtilArquivos(object):
 
     @staticmethod
     def tamanho_arquivo(nome_arquivo):
-        if os_path.isfile(nome_arquivo):
-           return os_path.getsize(nome_arquivo)
+        if os.path.isfile(nome_arquivo):
+           return os.path.getsize(nome_arquivo)
         return 0
 
     @staticmethod
@@ -753,16 +754,24 @@ class UtilArquivos(object):
         '''
         from os import walk as os_walk
         _pastas = ['../','../../','../../../','../../../../','../../../../../'] if pastas is None else pastas
-        _arq = os_path.split(arquivo)[1]
+        _arq = os.path.split(arquivo)[1]
         subpastas = []
         if incluir_subpastas:
             for root, dirs, files in os_walk('./'):
                 for sub in dirs:
-                    subpastas.append( os_path.join(root,sub) )
+                    subpastas.append( os.path.join(root,sub) )
         for pasta in set(list(_pastas) + ['./'] + subpastas):
-            if os_path.isfile( os_path.join(pasta, _arq) ):
-                return os_path.join(pasta, _arq)
+            if os.path.isfile( os.path.join(pasta, _arq) ):
+                return os.path.join(pasta, _arq)
         return None
+
+    @staticmethod
+    def listar_arquivos(pasta='./', nm_reduzido=False, mascara='*.txt'):
+        assert os.path.isdir(pasta), f'listar_arquivos: pasta "{pasta}" não existe'
+        arqs = [f for f in glob(fr"{pasta}{mascara}")]
+        if nm_reduzido:
+            arqs = [os.path.split(arq)[1] for arq in arqs]
+        return arqs
 
 class Util(object):
 
@@ -908,7 +917,7 @@ class UtilDataHora():
             raise ValueError(f'UtilDataHora.data_hora_str recebeu um parâmetro com tipo inválido {type(data_hora)}')
         _data_hora = data_hora if data_hora else datetime.now()
         if isinstance(somar_dias,int) and somar_dias != 0:
-           _data_hora = _data_hora + datetime.timedelta(days = somar_dias)
+           _data_hora = _data_hora + timedelta(days = somar_dias)
         return _data_hora.strftime('%Y-%m-%d %H:%M:%S')
     
     @staticmethod
@@ -917,7 +926,7 @@ class UtilDataHora():
             raise ValueError(f'UtilDataHora.data_str recebeu um parâmetro com tipo inválido {type(data_hora)}')
         _data_hora = data_hora if isinstance(data_hora, datetime) else datetime.now()
         if isinstance(somar_dias,int) and somar_dias != 0:
-           _data_hora = _data_hora + datetime.timedelta(days = somar_dias)
+           _data_hora = _data_hora + timedelta(days = somar_dias)
         return _data_hora.strftime('%Y-%m-%d')
 
     @staticmethod
@@ -978,7 +987,7 @@ class UtilDataHora():
            _data = UtilDataHora.to_datetime(data)
         elif not isinstance(data, datetime):
            raise ValueError(f'UtilDataHora.somar_dias recebeu um parâmetro com tipo inválido {type(data)} - era esperado str ou datetime')
-        return _data + datetime.timedelta(days = dias)
+        return _data + timedelta(days = dias)
     
     @staticmethod
     def segundos_to_str(segundos):
@@ -989,17 +998,17 @@ class UtilDataHora():
     
     @staticmethod
     def data_hora_arquivo(arquivo, formato_string = False):
-        tempo_criacao = os_path.getctime(arquivo)
-        data_hora = datetime.fromtimestamp(tempo_criacao, tz=datetime.timezone.utc)
+        tempo_criacao = os.path.getctime(arquivo)
+        data_hora = datetime.fromtimestamp(tempo_criacao, tz=timezone.utc)
         if not formato_string:
             return data_hora
         return data_hora.strftime('%Y-%m-%d %H:%M:%S')
     
     @staticmethod
     def segundos_arquivo(arquivo, default = 0):
-        if not os_path.isfile(arquivo):
+        if not os.path.isfile(arquivo):
             return default
-        tempo_criacao = os_path.getctime(arquivo)
+        tempo_criacao = os.path.getctime(arquivo)
         return time.time() - tempo_criacao
 
     @staticmethod
