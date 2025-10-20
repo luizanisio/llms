@@ -9,6 +9,7 @@ import traceback
 
 '''
  Autor Luiz Anísio 17/10/2025
+ Fonte: https://github.com/luizanisio/llms/tree/main/src
  Utilitários para acionar apis generativas da openai ou openrouter
  Realiza tratamento de erros comuns e padroniza retorno json ou texto
  Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento
@@ -32,7 +33,7 @@ def get_resposta(prompt:str, papel:str='',
                  max_retry=5,
                  timeout=120,
                  api_key=None,
-                 silencioso: bool = False):
+                 silencioso: bool = False, **kwargs) -> dict:
     ''' Obtém a resposta do modelo de linguagem para o prompt informado.
         Quando as_json for True, tenta converter a resposta em JSON e retorna uma chave "erro" em caso de falha.
         Qualquer implementação de get_resposta deve seguir essa assinatura para ser usada pelos agentes.
@@ -58,6 +59,8 @@ def get_resposta(prompt:str, papel:str='',
         }
     '''
     tempo = time()
+    if 'modelo_think' in kwargs and kwargs['modelo_think']:
+        think = kwargs['modelo_think'] 
 
     # Validação da API key
     if modelo.lower().startswith('or:'):
