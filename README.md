@@ -12,6 +12,30 @@ Pacotes em desenvolvimento para estudos com LLMs
 - Desenvolvimento de pacotes para predição, treinamento e avaliação de LLMs (📦 [Diagramas](./diagramas.md) )
 - Inicalmente o foco é o Gemma 3
 
+> 💡 Instalação manual do unsloth. Consultar: [Unsloth Notebooks](https://docs.unsloth.ai/get-started/unsloth-notebooks)
+```python
+#@title Instalando Unsloth
+import os, re
+from IPython.display import clear_output
+try:
+  import unsloth
+  print("✅ Unsloth e vllm OK _o/")
+  import transformers
+  print("✅ Transformers OK _o/")
+except ImportError as e:
+    clear_output()
+    # Do this only in Colab notebooks! Otherwise use pip install unsloth
+    import torch; v = re.match(r"[0-9\.]{3,}", str(torch.__version__)).group(0)
+    xformers = "xformers==" + ("0.0.32.post2" if v == "2.8.0" else "0.0.29.post3")
+    !pip install --no-deps bitsandbytes accelerate {xformers} peft trl triton cut_cross_entropy unsloth_zoo
+    !pip install sentencepiece protobuf "datasets>=3.4.1,<4.0.0" "huggingface_hub>=0.34.0" hf_transfer
+    !pip install --no-deps unsloth
+    !pip install transformers==4.55.4
+    !pip install --no-deps trl==0.22.2
+    clear_output()
+    import unsloth
+    print('✅ Instalação do Unsloth e Transformers concluídas _o/')
+```
 
 
 ## Treino do GEMMA 3
