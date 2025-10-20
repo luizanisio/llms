@@ -170,8 +170,8 @@ def get_resposta(prompt:str, papel:str='',
         completion_details = usage_data.get('completion_tokens_details', {}) or {}
         prompt_details = usage_data.get('prompt_tokens_details', {}) or {}
 
-        print(json.dumps(res_dict,ensure_ascii=False,indent=2))
-        print('-'*40)
+        #print(json.dumps(res_dict,ensure_ascii=False,indent=2))
+        #print('-'*40)
         resultado['usage'] = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
             'completion_tokens': usage_data.get('completion_tokens', 0),
