@@ -177,3 +177,5 @@ cython_debug/
 exemplo/modelos*
 *.gz
 unsloth_compiled_cache*
+src/_bertmodels*
+src/analises_json*

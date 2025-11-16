@@ -1,3 +1,17 @@
+# -*- coding: utf-8 -*-
+
+"""
+Utilitários para trabalhar com modelos de linguagem locais.
+
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
+Descrição:
+-----------
+Classes e utilitários para carregar e utilizar modelos de linguagem (LLMs) locais,
+incluindo Gemma, Qwen, DeepSeek, Llama e outros, com suporte a Unsloth.
+"""
+
 import torch
 import json
 from copy import deepcopy
@@ -45,6 +59,47 @@ class classproperty(property):
         return self.fget(cls)    
 
 class Prompt:
+    """
+    Classe para gerenciar modelos de linguagem locais.
+    
+    Facilita o carregamento e uso de LLMs locais com suporte a diversos modelos
+    (Gemma, Qwen, DeepSeek, Llama) e opção de otimização com Unsloth.
+    
+    Parâmetros:
+    -----------
+    modelo : str
+        Nome ou atalho do modelo (ex: 'gemma-3-4b-it', '4', 'q7')
+    max_seq_length : int, padrão 4096
+        Tamanho máximo da sequência de tokens
+    cache_dir : str, opcional
+        Diretório para cache dos modelos
+    usar_unsloth : bool, padrão False
+        Se True, utiliza otimizações do Unsloth
+    
+    Atributos:
+    ----------
+    modelo : str
+        Nome completo do modelo carregado
+    max_seq_length : int
+        Tamanho máximo de sequência configurado
+    
+    Métodos principais:
+    -------------------
+    prompt(prompt, max_new_tokens, temperatura, detalhar, debug)
+        Envia um prompt e retorna a resposta do modelo
+    prompt_to_json(prompt, max_new_tokens, temperatura, debug)
+        Envia um prompt e tenta retornar JSON parseado
+    
+    Exemplo:
+    --------
+    >>> p = Prompt(modelo='gemma-3-4b-it', max_seq_length=8192)
+    >>> resposta = p.prompt('Explique o que é IA')
+    >>> print(resposta)
+    >>> 
+    >>> # Com JSON
+    >>> json_resp = p.prompt_to_json('Liste 3 linguagens: {"linguagens": [...]}}')
+    >>> print(json_resp['linguagens'])
+    """
     def __init__(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth:bool = False):
         # identificando o modelo
         modelo = UtilLLM.atalhos_modelos(modelo)

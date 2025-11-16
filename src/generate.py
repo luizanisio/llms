@@ -1,3 +1,25 @@
+# -*- coding: utf-8 -*-
+
+"""
+Script para geração interativa de respostas com LLMs.
+
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
+Descrição:
+-----------
+Script de linha de comando para interação com modelos de linguagem locais.
+Permite fazer perguntas e obter respostas de forma interativa.
+
+Uso:
+----
+    python generate.py <nome_do_modelo>
+
+Exemplo:
+--------
+    python generate.py gemma-3-4b-it
+"""
+
 import sys
 from util_prompt import UtilLMM, Prompt
 from util import UtilEnv

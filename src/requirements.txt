@@ -11,8 +11,11 @@ deepdiff
 fuzzywuzzy
 tensorboardX==2.6.2.2
 tiktoken==0.9.0
+xlsxwriter
+pandas
 
 # JsonAnalise
+bert_score
 rouge-score
 python-Levenshtein
 

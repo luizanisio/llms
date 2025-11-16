@@ -12,8 +12,15 @@ except Exception:
     MSG_SCIKIT = "Considere instalar: pip install scikit-learn"
 
 '''
- Autor Luiz Anísio Julho/2025
- A solicitação do usuário é inserida dentro da tag <TAREFA>
+Autor: Luiz Anísio
+Data: Julho/2025
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
+Descrição:
+-----------
+Sistema de agentes para resolução de tarefas com base de conhecimento e serviços.
+
+A solicitação do usuário é inserida dentro da tag <TAREFA>
  A base de conhecimento é inserida dentro da tag <BASE_CONHECIMENTO>
  - Cada item da base de conhecimento tem um titulo, o texto, a página e a url da informação para permitir ao usuário validar a informação.
 
