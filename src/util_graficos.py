@@ -79,7 +79,8 @@ class UtilGraficos:
         - 'quantidade' (contagem por valor de cada coluna),
         - 'soma' (soma dos valores por coluna),
         - 'media' ou 'média' (média dos valores por coluna),
-        - 'boxplot' (boxplot dos valores de cada coluna).
+        - 'boxplot' (boxplot dos valores de cada coluna),
+        - 'histograma' (histograma da distribuição dos valores de cada coluna).
 
         Params:
         - configuracao: dict de
@@ -89,7 +90,7 @@ class UtilGraficos:
                 'alias': [...],         # opcional - nome apresentado para as colunas
                 'x': 'rótulo eixo X',
                 'y': 'rótulo eixo Y',
-                'agregacao': 'quantidade'|'soma'|'media'|'média'|'boxplot',
+                'agregacao': 'quantidade'|'soma'|'media'|'média'|'boxplot'|'histograma',
                 'paleta': Cores ou lista # opcional, por gráfico
                 'ylim': (min, max)       # opcional, limites do eixo Y (ex: (0, 1))
                 'x_crescente': bool      # opcional, ordena eixo x em ordem crescente
@@ -259,10 +260,37 @@ class UtilGraficos:
                     rotacao = 45
                 ax.tick_params(axis='x', rotation=rotacao)
 
+            elif aggr in ('histograma'):
+                # histograma dos valores de cada coluna
+                df_plot = df[cols].copy()
+                # Aplicar filtros
+                if drop_nan:
+                    df_plot = df_plot.dropna()
+                if drop_zero:
+                    df_plot = df_plot[(df_plot > 0).all(axis=1)]
+                
+                if len(df_plot) > 0 and len(df_plot.columns) > 0:
+                    paleta = sns.color_palette(pal, len(cols))
+                    for i, col in enumerate(cols):
+                        alias = aliases[i] if i < len(aliases) else col
+                        ax.hist(df_plot[col].dropna(), 
+                               bins=30, 
+                               alpha=0.7, 
+                               color=paleta[i],
+                               label=alias,
+                               edgecolor='black',
+                               linewidth=0.5)
+                    
+                    if len(cols) > 1:
+                        ax.legend(loc='best', frameon=True, framealpha=0.9)
+                else:
+                    ax.text(0.5, 0.5, 'Sem dados após filtros', 
+                           ha='center', va='center', transform=ax.transAxes)
+
             else:
                 raise ValueError(
                     f"Agregação '{aggr}' não suportada. "
-                    "Use 'quantidade', 'soma', 'media' ou 'boxplot'.")
+                    "Use 'quantidade', 'soma', 'media', 'boxplot' ou 'histograma'.")
 
             ax.set_title(titulo, fontsize=12, fontweight='bold')
             ax.set_xlabel(xlabel, fontsize=10)
@@ -351,6 +379,13 @@ if __name__ == '__main__':
             'y': 'Distribuição dos Valores',
             'agregacao': 'boxplot',
             'drop_zero': True
+        },
+        'Gráfico de Histograma': {
+            'df': df_exemplo,
+            'colunas': ['A', 'B'],
+            'x': 'Valores',
+            'y': 'Frequência',
+            'agregacao': 'histograma'
         }
     }
 
