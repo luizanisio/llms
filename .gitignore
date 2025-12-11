@@ -176,6 +176,10 @@ cython_debug/
 */unsloth_compiled_cache*
 exemplo/modelos*
 *.gz
+*.zip
+*.7z
 unsloth_compiled_cache*
 src/_bertmodels*
 src/analises_json*
+experimentos/agentes-esp-acordao/saidas**
+.github/agents/Documentação.agent.md

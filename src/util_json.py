@@ -2320,52 +2320,7 @@ class JsonAnaliseDataFrame():
         # ═══════════════════════════════════════════════════════════════════════
         # ABA DE AVALIAÇÃO LLM
         # ═══════════════════════════════════════════════════════════════════════
-        df_avaliacao = self._criar_dataframe_avaliacao_llm()
-        if df_avaliacao is not None:
-            # Escreve DataFrame normalmente
-            excel.write_df(df_avaliacao, 'Avaliação LLM', auto_width_colums_list=True)
-            
-            if congelar_paineis:
-                excel.congelar_painel('Avaliação LLM', 1, 1)
-            
-            # Usa nome do campo ID configurado
-            nome_campo_id = self.dados_analise.config.nome_campo_id
-            
-            # Identifica colunas numéricas para aplicar cores condicionais
-            # P, R, F1, nota (escala 0-1 ou 0-10)
-            colunas_metricas = []
-            for col in df_avaliacao.columns:
-                if col == nome_campo_id or col.endswith('_explicacao'):
-                    continue
-                if df_avaliacao[col].dtype in [np.int64, np.float64]:
-                    colunas_metricas.append(col)
-            
-            print(f"   🎨 Aplicando formatação condicional em {len(colunas_metricas)} colunas de avaliação LLM...")
-            
-            # Aplica formatação condicional nas métricas (escala 0-1 ou 0-10)
-            if len(colunas_metricas) > 0 and len(df_avaliacao) > 0:
-                from xlsxwriter.utility import xl_col_to_name
-                
-                for col_name in colunas_metricas:
-                    col_idx = df_avaliacao.columns.get_loc(col_name)
-                    col_letter = xl_col_to_name(col_idx)
-                    
-                    # Define range de células (da linha 2 até última linha)
-                    cells_range = f'{col_letter}2:{col_letter}{len(df_avaliacao) + 1}'
-                    
-                    # Calcula valores reais da coluna para escala adequada
-                    col_min = float(df_avaliacao[col_name].min())
-                    col_max = float(df_avaliacao[col_name].max())
-                    col_mid = (col_min + col_max) / 2
-                    
-                    # Aplica escala de 3 cores (verde = melhor, vermelho = pior)
-                    # min_value < max_value = escala normal
-                    excel.conditional_color('Avaliação LLM', cells_range, 
-                                          min_value=col_min,   # valor baixo = vermelho (pior)
-                                          mid_value=col_mid,   # valor médio = amarelo
-                                          max_value=col_max)   # valor alto = verde (melhor)
-            
-            print(f"   ✅ Formatação condicional aplicada em Avaliação LLM")
+        self._adicionar_aba_avaliacao_llm_excel(excel, congelar_paineis)
         
         # ═══════════════════════════════════════════════════════════════════════
         # ABA DE OBSERVABILIDADE
@@ -3050,6 +3005,184 @@ class JsonAnaliseDataFrame():
             print(f"✅ {len(arquivos_gerados)} gráficos de tokens gerados em: {pasta_saida}")
         
         return arquivos_gerados
+    
+    def _adicionar_aba_avaliacao_llm_excel(self, excel, congelar_paineis: bool = True):
+        """
+        Adiciona a aba 'Avaliação LLM' ao Excel usando UtilPandasExcel.
+        Método auxiliar reutilizado por _exportar_excel_formatado e atualizar_avaliacao_llm_no_excel.
+        
+        Args:
+            excel: instância de UtilPandasExcel
+            congelar_paineis: se True, congela painéis na aba
+        
+        Returns:
+            True se a aba foi criada, False se não há dados disponíveis
+        """
+        df_avaliacao = self._criar_dataframe_avaliacao_llm()
+        if df_avaliacao is None:
+            return False
+        
+        # Escreve DataFrame normalmente
+        excel.write_df(df_avaliacao, 'Avaliação LLM', auto_width_colums_list=True)
+        
+        if congelar_paineis:
+            excel.congelar_painel('Avaliação LLM', 1, 1)
+        
+        # Usa nome do campo ID configurado
+        nome_campo_id = self.dados_analise.config.nome_campo_id
+        
+        # Identifica colunas numéricas para aplicar cores condicionais
+        # P, R, F1, nota (escala 0-1 ou 0-10)
+        colunas_metricas = []
+        for col in df_avaliacao.columns:
+            if col == nome_campo_id or col.endswith('_explicacao'):
+                continue
+            if df_avaliacao[col].dtype in [np.int64, np.float64]:
+                colunas_metricas.append(col)
+        
+        print(f"   🎨 Aplicando formatação condicional em {len(colunas_metricas)} colunas de avaliação LLM...")
+        
+        # Aplica formatação condicional nas métricas (escala 0-1 ou 0-10)
+        if len(colunas_metricas) > 0 and len(df_avaliacao) > 0:
+            from xlsxwriter.utility import xl_col_to_name
+            
+            for col_name in colunas_metricas:
+                col_idx = df_avaliacao.columns.get_loc(col_name)
+                col_letter = xl_col_to_name(col_idx)
+                
+                # Define range de células (da linha 2 até última linha)
+                cells_range = f'{col_letter}2:{col_letter}{len(df_avaliacao) + 1}'
+                
+                # Detecta escala: 0-10 para 'nota', 0-1 para P/R/F1
+                if col_name.endswith('_nota'):
+                    # Nota: escala 0-10, maior é melhor
+                    excel.conditional_color('Avaliação LLM', cells_range,
+                                          min_value=0.0, mid_value=5.0, max_value=10.0)
+                else:
+                    # P/R/F1: escala 0-1, maior é melhor
+                    excel.conditional_color('Avaliação LLM', cells_range,
+                                          min_value=0.0, mid_value=0.5, max_value=1.0)
+            
+            print(f"   ✅ Formatação condicional aplicada em Avaliação LLM")
+        
+        return True
+    
+    def atualizar_avaliacao_llm_no_excel(self, arquivo_excel: str, gerar_graficos: bool = True) -> str:
+        """
+        Atualiza apenas a aba 'Avaliação LLM' no Excel existente, mantendo todas as outras abas intactas.
+        Cria arquivo temporário com formatação completa e copia a planilha para o Excel existente.
+        Opcionalmente gera gráficos de avaliação LLM.
+        
+        Args:
+            arquivo_excel: caminho do arquivo Excel existente para atualizar
+            gerar_graficos: se True, gera gráficos boxplot de avaliação LLM
+        
+        Returns:
+            caminho do arquivo Excel atualizado
+        
+        Raises:
+            FileNotFoundError: se o arquivo Excel não existir
+        """
+        import tempfile
+        from openpyxl import load_workbook
+        from openpyxl.utils import get_column_letter
+        
+        if not os.path.isfile(arquivo_excel):
+            raise FileNotFoundError(f"Arquivo Excel não encontrado: {arquivo_excel}")
+        
+        # Verifica se há dados de avaliação LLM
+        df_avaliacao = self._criar_dataframe_avaliacao_llm()
+        if df_avaliacao is None or df_avaliacao.empty:
+            print("⚠️  Aviso: Nenhum dado de avaliação LLM disponível para atualizar")
+            return arquivo_excel
+        
+        # Cria arquivo temporário com formatação completa usando UtilPandasExcel
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.xlsx', delete=False) as tmp_file:
+            arquivo_temp = tmp_file.name
+        
+        try:
+            # Cria Excel temporário com UtilPandasExcel (xlsxwriter) - com formatação completa
+            print(f"   📝 Criando planilha temporária com formatação...")
+            excel_temp = UtilPandasExcel(arquivo_temp, columns_auto_width=True, header_formatting=True)
+            
+            # Adiciona aba com TODA a formatação (cores condicionais, freeze panes, etc)
+            self._adicionar_aba_avaliacao_llm_excel(excel_temp, congelar_paineis=True)
+            
+            # Salva arquivo temporário
+            excel_temp.save()
+            print(f"   ✓ Planilha temporária criada com formatação completa")
+            
+            # Carrega ambos os workbooks com openpyxl
+            print(f"   📋 Copiando planilha formatada para Excel existente...")
+            wb_temp = load_workbook(arquivo_temp)
+            wb_original = load_workbook(arquivo_excel)
+            
+            # Remove aba antiga se existir
+            if 'Avaliação LLM' in wb_original.sheetnames:
+                del wb_original['Avaliação LLM']
+            
+            # COPIA A PLANILHA INTEIRA do arquivo temporário (mantém formatação xlsxwriter)
+            # Nota: openpyxl consegue LER formatação condicional de arquivos xlsxwriter,
+            # mas não consegue CRIAR formatação compatível via código Python
+            ws_source = wb_temp['Avaliação LLM']
+            ws_dest = wb_original.create_sheet('Avaliação LLM')
+            
+            # Copia células (valores e estilos básicos)
+            for row in ws_source.iter_rows():
+                for cell in row:
+                    dest_cell = ws_dest[cell.coordinate]
+                    dest_cell.value = cell.value
+                    
+                    # Copia estilos se existirem
+                    if cell.has_style:
+                        dest_cell.font = cell.font.copy()
+                        dest_cell.border = cell.border.copy()
+                        dest_cell.fill = cell.fill.copy()
+                        dest_cell.number_format = cell.number_format
+                        dest_cell.alignment = cell.alignment.copy()
+            
+            # Copia dimensões de colunas
+            for col_letter in ws_source.column_dimensions:
+                if col_letter in ws_source.column_dimensions:
+                    ws_dest.column_dimensions[col_letter].width = ws_source.column_dimensions[col_letter].width
+            
+            # Copia freeze panes
+            if ws_source.freeze_panes:
+                ws_dest.freeze_panes = ws_source.freeze_panes
+            
+            # Copia formatação condicional (openpyxl consegue ler do xlsxwriter)
+            if hasattr(ws_source, 'conditional_formatting') and ws_source.conditional_formatting:
+                # Copia regras de formatação condicional
+                for range_string, rules in ws_source.conditional_formatting._cf_rules.items():
+                    for rule in rules:
+                        # Aqui o rule já é um objeto openpyxl.formatting.rule.Rule válido
+                        # porque foi LIDO do arquivo xlsxwriter
+                        ws_dest.conditional_formatting.add(range_string, rule)
+            
+            # Salva arquivo original com nova aba
+            wb_original.save(arquivo_excel)
+            wb_original.close()
+            wb_temp.close()
+            
+            print(f"   ✓ Aba 'Avaliação LLM' atualizada com {len(df_avaliacao)} registros e formatação completa")
+            
+        finally:
+            # Remove arquivo temporário
+            if os.path.exists(arquivo_temp):
+                os.remove(arquivo_temp)
+        
+        # Gera gráficos se solicitado
+        if gerar_graficos:
+            print("   Gerando gráficos de avaliação LLM...")
+            pasta_saida = os.path.dirname(arquivo_excel) or self.pasta_analises or '.'
+            arquivos_graficos = self.gerar_graficos_avaliacao_llm(
+                arquivo_excel=arquivo_excel,
+                pasta_saida=pasta_saida
+            )
+            if arquivos_graficos:
+                print(f"   ✓ {len(arquivos_graficos)} gráficos de avaliação LLM gerados")
+        
+        return arquivo_excel
     
     def gerar_graficos_avaliacao_llm(self, arquivo_excel: str = None, pasta_saida: str = None,
                                       paleta: str = 'Cividis') -> List[str]:

@@ -16,7 +16,7 @@ Seleciona métricas apropriadas para cada tipo de campo conforme filosofia docum
 import os
 import sys
 
-sys.path.extend(['./utils','./src'])
+sys.path.extend(['./utils','./src','../../src'])
 import regex as re
 from util import UtilEnv, Util
 UtilEnv.carregar_env('.env', pastas=['../','./'])
@@ -216,15 +216,32 @@ if __name__ == '__main__':
         max_exemplos_md_por_metrica=5  # Máximo de 5 exemplos por métrica
     )
 
+    # Define nome base dos arquivos (usado pelos métodos de exportação)
+    nome_arquivo_base = 'comparacao_extracoes'
+    arquivo_excel = os.path.join(PASTA_SAIDA_COMPARACAO, f'{nome_arquivo_base}.xlsx')
+
     SO_GRAFICOS = False  # Define como True para gerar apenas gráficos de Excel existente
     if SO_GRAFICOS:
-       # Faz um teste só gerando os gráficos do excel já existente 
-        _arq_excel = os.path.join(PASTA_SAIDA_COMPARACAO, 'comparacao_extracoes.xlsx')
-        if os.path.isfile(_arq_excel):
-            print(f"\n⚠️  Aviso: O arquivo Excel de comparação já existe: {_arq_excel}\nGerando gráficos...")
-            analisador.gerar_graficos_de_excel(_arq_excel, pasta_saida=PASTA_SAIDA_COMPARACAO)
+       # Apenas atualiza os gráficos do excel já existente 
+        if os.path.isfile(arquivo_excel):
+            print(f"\n⚠️  Aviso: O arquivo Excel de comparação já existe: {arquivo_excel}\nGerando gráficos...")
+            analisador.gerar_graficos_de_excel(arquivo_excel, pasta_saida=PASTA_SAIDA_COMPARACAO)
             exit(0)
     
+    SO_LLM_AS_A_JUDGE = True  # Define como True para usar LLM as a Judge
+    if SO_LLM_AS_A_JUDGE:
+        # Apenas atualiza as análises de LLM as a Judge do Excel existente
+        if os.path.isfile(arquivo_excel):
+            print(f"\n⚠️  Aviso: O arquivo Excel de comparação já existe: {arquivo_excel}\nAtualizando com análises de LLM as a Judge...")
+            # Atualiza apenas a aba de avaliação LLM
+            analisador.atualizar_avaliacao_llm_no_excel(arquivo_excel, gerar_graficos=True)
+            print(f"\n✅ Aba 'Avaliação LLM' atualizada com sucesso!")
+            print(f"📁 Arquivo: {arquivo_excel}")
+            exit(0)
+        else:
+            print(f"\n❌ Erro: Arquivo Excel não encontrado: {arquivo_excel}")
+            print(f"   Execute primeiro sem SO_LLM_AS_A_JUDGE=True para gerar o arquivo base.")
+            exit(1)
     
     # Gera DataFrame
     print("📊 Gerando DataFrame...")
@@ -275,15 +292,16 @@ if __name__ == '__main__':
     # Exporta resultados
     print("\n💾 Exportando resultados...")
     
-    # CSV
-    arquivo_csv = analisador.exportar_csv('comparacao_extracoes.csv')
+    # CSV (método retorna o caminho do arquivo gerado)
+    arquivo_csv = analisador.exportar_csv(nome_arquivo_base)
+    arquivo_estatisticas = arquivo_csv.replace('.csv', '.estatisticas.csv')
     print(f"   ✓ CSV: {arquivo_csv}")
-    print(f"   ✓ Estatísticas CSV: {arquivo_csv.replace('.csv', '.estatisticas.csv')}")
+    print(f"   ✓ Estatísticas CSV: {arquivo_estatisticas}")
     
     # Excel com formatação avançada (mapas de calor)
     print("\n   Gerando Excel formatado com mapas de calor...")
     arquivo_excel = analisador.exportar_excel(
-        'comparacao_extracoes.xlsx', 
+        nome_arquivo_base,  # Método adiciona .xlsx automaticamente
         incluir_estatisticas=True,
         usar_formatacao_avancada=True,  # Usa UtilPandasExcel com mapas de calor
         congelar_paineis=True,

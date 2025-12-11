@@ -16,7 +16,7 @@ feitas por diferentes modelos (base, agentes, raw).
 import pandas as pd
 import os, sys, json
 
-sys.path.extend(['./utils','./src'])
+sys.path.extend(['./utils','./src','../../src'])
 from util import UtilEnv, UtilCriptografia, UtilArquivos
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,7 +29,7 @@ if not UtilEnv.carregar_env('.env', pastas=['../']):
 
 CRIPT = UtilCriptografia()
 MODELO_JUIZ = 'gpt5'
-MODELO_JUIZ_THINK = 'm:l'
+MODELO_JUIZ_THINK = 'h:l'
 OA = STJOpenAIA()
 
 sessao = {}
@@ -146,7 +146,7 @@ if __name__ == '__main__':
     id_peca = None
     
     # Define pasta de saída
-    QTD_LLM_AS_A_JUDGE = 300
+    QTD_LLM_AS_A_JUDGE = 3000
     print(f'Quantidade de LLM as a Judge por peça: {QTD_LLM_AS_A_JUDGE}')
     PASTA_RAIZ = './saidas/'
     PASTAS_EXTRACAO = [
@@ -175,18 +175,20 @@ if __name__ == '__main__':
         df = df[df['id_peca'].isin(id_peca)]
         print(f' - filtrado para lista de id_peca, total de {len(df)} peças.')
     else:
-        df = df.sample(n=QTD_LLM_AS_A_JUDGE, random_state=42).reset_index(drop=True)
+        if QTD_LLM_AS_A_JUDGE < len(df):
+            print(f' - selecionando aleatoriamente {QTD_LLM_AS_A_JUDGE} peças de um total de {len(df)} para avaliação LLM as a Judge.')
+            df = df.sample(n=QTD_LLM_AS_A_JUDGE, random_state=42).reset_index(drop=True)
     #df=df[:1]
     print('DataFrame carregado com ', len(df), 'peças para processamento e avaliação LLM-AS-A-JUDGE.')
       
     for PASTA_EXTRACAO in PASTAS_EXTRACAO:
         print(f'\n{"#"*80}\nIniciando avaliações LLM as a Judge para extrações em: {PASTA_EXTRACAO}\n{"#"*80}\n')  
         # Executar extrações em paralelo com threads
-        NUM_THREADS = 10  # Ajuste conforme necessário
+        NUM_THREADS = 5  # Ajuste conforme necessário
         with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
             futures = {executor.submit(gerar_respostas, row, PASTA_EXTRACAO): row['id_peca'] for _, row in df.iterrows()}
             
-            for future in tqdm(as_completed(futures), desc='Extraindo espelhos', ncols=60, total=len(df)):
+            for future in tqdm(as_completed(futures), desc='Julgando extrações', ncols=60, total=len(df)):
                 try:
                     future.result()
                 except Exception as e:
