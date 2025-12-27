@@ -17,7 +17,7 @@ modelos LLM (GPT-5, Gemma-3) e mantém sessão de controle com estatísticas de 
 import pandas as pd
 import os, sys, json
 
-sys.path.extend(['./utils','./src'])
+sys.path.extend(['./utils','./src','../../utils','../../src'])
 from util import UtilEnv, UtilCriptografia, UtilArquivos
 from agentes_orquestrador import AgenteOrquestradorEspelho
 import traceback
@@ -145,7 +145,7 @@ if __name__ == '__main__':
         print(f' - filtrado para lista de id_peca, total de {len(df)} peças.')
         
     # Executar extrações em paralelo com threads
-    NUM_THREADS = 20  # Ajuste conforme necessário
+    NUM_THREADS = 20  # Ajuste se precisar
     with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
         futures = {executor.submit(gerar_respostas, row, PASTA_EXTRACAO): row['id_peca'] for _, row in df.iterrows()}
         

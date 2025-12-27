@@ -29,7 +29,7 @@ if not UtilEnv.carregar_env('.env', pastas=['../']):
 
 CRIPT = UtilCriptografia()
 MODELO_JUIZ = 'gpt5'
-MODELO_JUIZ_THINK = 'h:l'
+MODELO_JUIZ_THINK = 'm:l'
 OA = STJOpenAIA()
 
 sessao = {}
