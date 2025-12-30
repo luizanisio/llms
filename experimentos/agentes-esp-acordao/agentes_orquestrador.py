@@ -24,6 +24,17 @@ from datetime import datetime
 
 MAXIMO_ITERACOES = 3
 
+# Mapeamento de tags de campos para nomes de agentes
+MAPEAMENTO_TAGS_AGENTES = {
+    '#teseJuridica': 'AgenteTeses',
+    '#JuCi': 'AgenteJurisprudenciasCitadas',
+    '#RefLeg': 'AgenteReferenciasLegislativas',
+    '#ICE': 'AgenteInformacoesComplementares',
+    '#TAP': 'AgenteTermosAuxiliares',
+    '#notas': 'AgenteNotas',
+    '#tema': 'AgenteTema'
+}
+
 '''
 Pipeline de execução:
 1. AgenteCampos - identifica campos necessários
@@ -68,7 +79,7 @@ class Agente():
         if revisao:
             prompt += f'\n\n<REVISAO>\n{revisao}\n</REVISAO>'
         else:
-            prompt += f'\n\n<REVISAO>\n</REVISAO>'
+            prompt += f'\n\n<REVISAO> \n</REVISAO>'
         
         return prompt
         
@@ -556,7 +567,7 @@ class AgenteOrquestradorEspelho():
                     f.write("\n")
                     # Grava a resposta em JSON formatado
                     f.write(json.dumps(resposta, ensure_ascii=False, indent=2))
-                
+                                    
                 self._registrar_log(f"Resposta gravada: {nome_arquivo} (iteração {iteracao})")
         except Exception as e:
             self._registrar_log(f"Erro ao gravar resposta de {nome_agente}: {str(e)}", 'warning')
@@ -714,18 +725,8 @@ class AgenteOrquestradorEspelho():
         # Log para debug
         self._registrar_log(f"Texto extraído do AgenteCampos (primeiros 500 chars): {texto_resposta[:500]}")
         
-        # Extrai tags #campo do texto
-        mapeamento_tags_agentes = {
-            '#teseJuridica': 'AgenteTeses',
-            '#JuCi': 'AgenteJurisprudenciasCitadas',
-            '#RefLeg': 'AgenteReferenciasLegislativas',
-            '#ICE': 'AgenteInformacoesComplementares',
-            '#TAP': 'AgenteTermosAuxiliares',
-            '#notas': 'AgenteNotas',
-            '#tema': 'AgenteTema'
-        }
-        
-        for tag, agente in mapeamento_tags_agentes.items():
+        # Extrai tags #campo do texto (usando constante)
+        for tag, agente in MAPEAMENTO_TAGS_AGENTES.items():
             if tag in texto_resposta:
                 campos.add(agente)
                 self._registrar_log(f"Tag '{tag}' encontrada -> Agente '{agente}'")
@@ -798,8 +799,12 @@ class AgenteOrquestradorEspelho():
     def arquivo_final_valido(self) -> bool:
         ''' Verifica se o arquivo final já existe e contém dados válidos.
             
+            Casos válidos:
+            1. Arquivo com pelo menos um campo preenchido (teses, jurisprudências, etc)
+            2. Arquivo com metadados indicando que não havia campos para extrair (campos_identificados vazio)
+            
             Returns:
-                bool: True se o arquivo existe e tem pelo menos uma chave com dados, False caso contrário
+                bool: True se o arquivo existe e é válido (com dados ou sem campos identificados), False caso contrário
         '''
         if not self.arquivo_resultado or not os.path.exists(self.arquivo_resultado):
             return False
@@ -808,7 +813,18 @@ class AgenteOrquestradorEspelho():
             with open(self.arquivo_resultado, 'r', encoding='utf-8') as f:
                 espelho_existente = json.load(f)
             
-            # Valida se o arquivo tem pelo menos uma chave com dados
+            # Verifica se tem metadados
+            metadados = espelho_existente.get('metadados', {})
+            if not isinstance(metadados, dict):
+                return False
+            
+            # Caso 1: Verifica se nenhum campo foi identificado (caso válido sem dados)
+            campos_identificados = metadados.get('campos_identificados', [])
+            if isinstance(campos_identificados, list) and len(campos_identificados) == 0:
+                # Arquivo considerado inválido: agente campos não identificou campos de extração?
+                return False
+            
+            # Caso 2: Verifica se tem pelo menos uma chave com dados extraídos
             chaves_com_dados = [
                 'teseJuridica', 'jurisprudenciaCitada', 'referenciasLegislativas',
                 'notas', 'informacoesComplementares', 'termosAuxiliares', 'tema'
@@ -819,6 +835,7 @@ class AgenteOrquestradorEspelho():
                 if valor and len(valor) > 0:
                     return True
             
+            # Arquivo existe mas não tem dados válidos nem campos_identificados vazio
             return False
             
         except Exception:
@@ -881,14 +898,22 @@ class AgenteOrquestradorEspelho():
         # Extrai quais campos precisam ser processados
         self._campos_para_extrair = self._extrair_campos_necessarios(resposta_campos)
         
-        if not self._campos_para_extrair:
-            self._registrar_log("Nenhum campo identificado para extração", 'warning')
-            return {
-                'id_peca': self.id_peca,
-                'campos_identificados': [],
-                'resultado': 'nenhum_campo_para_extrair',
-                'observabilidade': self.observabilidade
-            }
+        # ===== ETAPA 1.5: Revisão do AgenteCampos se não identificou campos =====
+        if not self._campos_para_extrair and 'erro' not in resposta_campos:
+            self._registrar_log("ETAPA 1.5: Nenhum campo identificado - solicitando revisão ao AgenteCampos", 'warning')
+            # texto com os nomes dos campos para revisar
+            txt_campso = ", ".join(MAPEAMENTO_TAGS_AGENTES.keys())
+            revisao_campos = f"Por favor, confira atentamente se realmente não há campos para extrair no texto do acórdão. Os campos possíveis são: {txt_campso}. Se houver qualquer campo aplicável, extraia-os corretamente conforme instruções fornecidas."
+            resposta_campos_revisada = self._executar_agente_unico('AgenteCampos', revisao=revisao_campos)
+            self.resultados['AgenteCampos'] = resposta_campos_revisada
+            
+            # Reextrai campos após revisão
+            self._campos_para_extrair = self._extrair_campos_necessarios(resposta_campos_revisada)
+            
+            if not self._campos_para_extrair:
+                self._registrar_log("Após revisão, AgenteCampos confirmou que não há campos para extração", 'warning')
+            else:
+                self._registrar_log(f"Após revisão, AgenteCampos identificou campos: {', '.join(self._campos_para_extrair)}")
         
         # ===== ETAPA 2: Extração de Teses (obrigatória se identificada) =====
         if 'AgenteTeses' in self._campos_para_extrair:
@@ -920,100 +945,23 @@ class AgenteOrquestradorEspelho():
         # ===== ETAPA 4: Validação Final =====
         self._registrar_log("ETAPA 4: Validação final e consolidação")
         
-        # Prepara saídas para o validador (somente nome e resposta, sem tokens/usage)
-        # Identifica agentes que retornaram erro
-        agentes_com_erro = []
-        saidas_para_validacao = {}
-        for agente, resultado in self.resultados.items():
-            if agente not in ['AgenteCampos']:  # AgenteCampos não precisa ser validado
-                # Verifica se há erro na resposta
-                if 'erro' in resultado:
-                    agentes_com_erro.append(agente)
-                    self._registrar_log(f"AVISO: Agente {agente} retornou erro: {resultado.get('erro')}", 'warning')
-                    # Inclui informação de erro para validação
-                    saidas_para_validacao[agente] = {
-                        'agente': agente,
-                        'resposta': {
-                            'erro': resultado.get('erro'),
-                            'contribuição': 'Erro na extração - nenhum dado foi extraído'
-                        }
-                    }
-                else:
-                    # Extrai apenas a resposta (já é dict após correção em get_resposta)
-                    saidas_para_validacao[agente] = {
-                        'agente': agente,
-                        'resposta': resultado.get('resposta', {})
-                    }
-        
-        # Se há agentes com erro, cria instruções de revisão para o validador processar
-        if agentes_com_erro:
-            self._registrar_log(f"Detectados {len(agentes_com_erro)} agentes com erro: {', '.join(agentes_com_erro)}")
-        
-        # Executa validação
-        resposta_validacao = self._executar_agente_unico(
-            'AgenteValidacaoFinal',
-            contexto_adicional=saidas_para_validacao
-        )
-        self.resultados['AgenteValidacaoFinal'] = resposta_validacao
-        
-        # ===== ETAPA 5: Loop de Revisão =====
-        max_loops_revisao = 2  # Máximo de ciclos de revisão
+        # Inicializa variáveis de loop de revisão
         loop_revisao = 0
         validacao_aprovada = False
         
-        while loop_revisao < max_loops_revisao and not validacao_aprovada:
-            loop_revisao += 1
-            self._registrar_log(f"LOOP DE REVISÃO {loop_revisao}/{max_loops_revisao}")
-            
-            # Verifica se há agentes com erro que precisam ser reexecutados
-            agentes_com_erro_atual = []
-            for agente, resultado in self.resultados.items():
-                if agente not in ['AgenteCampos', 'AgenteValidacaoFinal'] and 'erro' in resultado:
-                    agentes_com_erro_atual.append(agente)
-            
-            # Se há erros, adiciona instruções de revisão automática para esses agentes
-            if agentes_com_erro_atual:
-                self._registrar_log(f"Adicionando instruções de revisão para {len(agentes_com_erro_atual)} agentes com erro")
-                
-                # Extrai revisões do validador (se houver)
-                resposta_agente = resposta_validacao.get('resposta', {})
-                if isinstance(resposta_agente, dict):
-                    revisao_validador = resposta_agente.get('revisao', {})
-                else:
-                    revisao_validador = {}
-                
-                # Adiciona instruções simples para agentes com erro
-                for agente_erro in agentes_com_erro_atual:
-                    if agente_erro not in revisao_validador:
-                        revisao_validador[agente_erro] = "A extração anterior retornou erro. Por favor, tente novamente realizar a extração conforme as instruções do seu prompt base."
-                        self._registrar_log(f"Adicionada instrução de revisão automática para {agente_erro}")
-                
-                # Cria resposta de validação modificada com as revisões
-                if revisao_validador:
-                    resposta_validacao_modificada = {
-                        'resposta': {
-                            'revisao': revisao_validador,
-                            'validacao_aprovada': False,
-                            'contribuição': f"Revisão necessária para {len(revisao_validador)} agentes (incluindo {len(agentes_com_erro_atual)} com erro)"
-                        }
-                    }
-                    resposta_validacao = resposta_validacao_modificada
-            
-            # Processa revisões e verifica se foi aprovada
-            validacao_aprovada = self._processar_revisao(resposta_validacao)
-            
-            if validacao_aprovada:
-                self._registrar_log("Validação aprovada - encerrando loop de revisão")
-                break
-            
-            # Reexecuta validação com novos resultados (somente nome e resposta)
-            saidas_para_validacao = {}
+        # Só executa validação se houver campos para extrair
+        if self._campos_para_extrair:
+            # Prepara saídas para o validador (somente nome e resposta, sem tokens/usage)
+            # Identifica agentes que retornaram erro
             agentes_com_erro = []
+            saidas_para_validacao = {}
             for agente, resultado in self.resultados.items():
-                if agente not in ['AgenteCampos', 'AgenteValidacaoFinal']:
-                    # Verifica novamente se há erro
+                if agente not in ['AgenteCampos', 'AgenteValidacaoFinal']:  # AgenteCampos já foi revisado na etapa prévia
+                    # Verifica se há erro na resposta
                     if 'erro' in resultado:
                         agentes_com_erro.append(agente)
+                        self._registrar_log(f"AVISO: Agente {agente} retornou erro: {resultado.get('erro')}", 'warning')
+                        # Inclui informação de erro para validação
                         saidas_para_validacao[agente] = {
                             'agente': agente,
                             'resposta': {
@@ -1022,23 +970,107 @@ class AgenteOrquestradorEspelho():
                             }
                         }
                     else:
+                        # Extrai apenas a resposta (já é dict após correção em get_resposta)
                         saidas_para_validacao[agente] = {
                             'agente': agente,
                             'resposta': resultado.get('resposta', {})
                         }
             
+            # Se há agentes com erro, cria instruções de revisão para o validador processar
             if agentes_com_erro:
-                self._registrar_log(f"Após revisão, ainda há {len(agentes_com_erro)} agentes com erro: {', '.join(agentes_com_erro)}", 'warning')
+                self._registrar_log(f"Detectados {len(agentes_com_erro)} agentes com erro: {', '.join(agentes_com_erro)}")
             
+            # Executa validação
             resposta_validacao = self._executar_agente_unico(
                 'AgenteValidacaoFinal',
                 contexto_adicional=saidas_para_validacao
             )
             self.resultados['AgenteValidacaoFinal'] = resposta_validacao
-        
-        # Verifica se saiu do loop sem aprovação
-        if not validacao_aprovada:
-            self._registrar_log(f"Loop de revisão encerrado sem aprovação completa após {loop_revisao} iterações", 'warning')
+            
+            # ===== ETAPA 5: Loop de Revisão =====
+            max_loops_revisao = 2  # Máximo de ciclos de revisão
+            
+            while loop_revisao < max_loops_revisao and not validacao_aprovada:
+                loop_revisao += 1
+                self._registrar_log(f"LOOP DE REVISÃO {loop_revisao}/{max_loops_revisao}")
+                
+                # Verifica se há agentes com erro que precisam ser reexecutados
+                agentes_com_erro_atual = []
+                for agente, resultado in self.resultados.items():
+                    if agente not in ['AgenteCampos', 'AgenteValidacaoFinal'] and 'erro' in resultado:
+                        agentes_com_erro_atual.append(agente)
+                
+                # Se há erros, adiciona instruções de revisão automática para esses agentes
+                if agentes_com_erro_atual:
+                    self._registrar_log(f"Adicionando instruções de revisão para {len(agentes_com_erro_atual)} agentes com erro")
+                    
+                    # Extrai revisões do validador (se houver)
+                    resposta_agente = resposta_validacao.get('resposta', {})
+                    if isinstance(resposta_agente, dict):
+                        revisao_validador = resposta_agente.get('revisao', {})
+                    else:
+                        revisao_validador = {}
+                    
+                    # Adiciona instruções simples para agentes com erro
+                    for agente_erro in agentes_com_erro_atual:
+                        if agente_erro not in revisao_validador:
+                            revisao_validador[agente_erro] = "A extração anterior retornou erro. Por favor, tente novamente realizar a extração conforme as instruções do seu prompt base."
+                            self._registrar_log(f"Adicionada instrução de revisão automática para {agente_erro}")
+                    
+                    # Cria resposta de validação modificada com as revisões
+                    if revisao_validador:
+                        resposta_validacao_modificada = {
+                            'resposta': {
+                                'revisao': revisao_validador,
+                                'validacao_aprovada': False,
+                                'contribuição': f"Revisão necessária para {len(revisao_validador)} agentes (incluindo {len(agentes_com_erro_atual)} com erro)"
+                            }
+                        }
+                        resposta_validacao = resposta_validacao_modificada
+                
+                # Processa revisões e verifica se foi aprovada
+                validacao_aprovada = self._processar_revisao(resposta_validacao)
+                
+                if validacao_aprovada:
+                    self._registrar_log("Validação aprovada - encerrando loop de revisão")
+                    break
+                
+                # Reexecuta validação com novos resultados (somente nome e resposta)
+                saidas_para_validacao = {}
+                agentes_com_erro = []
+                for agente, resultado in self.resultados.items():
+                    if agente not in ['AgenteCampos', 'AgenteValidacaoFinal']:
+                        # Verifica novamente se há erro
+                        if 'erro' in resultado:
+                            agentes_com_erro.append(agente)
+                            saidas_para_validacao[agente] = {
+                                'agente': agente,
+                                'resposta': {
+                                    'erro': resultado.get('erro'),
+                                    'contribuição': 'Erro na extração - nenhum dado foi extraído'
+                                }
+                            }
+                        else:
+                            saidas_para_validacao[agente] = {
+                                'agente': agente,
+                                'resposta': resultado.get('resposta', {})
+                            }
+                
+                if agentes_com_erro:
+                    self._registrar_log(f"Após revisão, ainda há {len(agentes_com_erro)} agentes com erro: {', '.join(agentes_com_erro)}", 'warning')
+                
+                resposta_validacao = self._executar_agente_unico(
+                    'AgenteValidacaoFinal',
+                    contexto_adicional=saidas_para_validacao
+                )
+                self.resultados['AgenteValidacaoFinal'] = resposta_validacao
+            
+            # Verifica se saiu do loop sem aprovação
+            if not validacao_aprovada:
+                self._registrar_log(f"Loop de revisão encerrado sem aprovação completa após {loop_revisao} iterações", 'warning')
+        else:
+            # Sem campos identificados - não há validação ou revisão
+            self._registrar_log("Nenhum campo identificado - pulando validação e revisão")
         
         # ===== CONSOLIDAÇÃO FINAL - Construção Automática do Espelho =====
         duracao_total = (datetime.now() - inicio_orquestracao).total_seconds()
@@ -1101,6 +1133,8 @@ class AgenteOrquestradorEspelho():
             }
         }
         
+        # Não adiciona mais a chave 'resultado' - agentes_gerar_espelhos.py verifica campos_identificados vazio
+        
         # Log de debug do espelho final
         self._registrar_log(f"DEBUG espelho_final construído com {sum(1 for k, v in espelho_final.items() if k != 'metadados' and v and len(v) > 0)} campos não-vazios")
         
@@ -1113,10 +1147,21 @@ class AgenteOrquestradorEspelho():
         }
         self._soma_observabilidade('OrquestracaoFinal', dados_observabilidade)
         
-        # Grava arquivos de saída se pasta estiver definida
-        self._gravar_resultado_final(espelho_final)
-        self._gravar_resumo_observabilidade_md()
-        self._gravar_resumo_tokens()
+        # Verifica se há erros que impedem a gravação
+        # Só grava arquivo se NÃO houver erros em NENHUM agente
+        # Casos válidos:
+        # 1. Execução com campos identificados e extraídos com sucesso
+        # 2. Execução sem campos identificados (AgenteCampos não encontrou campos - não é erro)
+        # Nota: Não identificar campos é diferente de ter erro - verificar presença da chave 'erro'
+        tem_erros = any('erro' in resultado for agente, resultado in self.resultados.items())
+        
+        if not tem_erros:
+            # Grava arquivos de saída se pasta estiver definida
+            self._gravar_resultado_final(espelho_final)
+            self._gravar_resumo_observabilidade_md()
+            self._gravar_resumo_tokens()
+        else:
+            self._registrar_log("Arquivos não gravados devido a erros na extração", 'warning')
         
         return espelho_final
     

@@ -7,6 +7,8 @@ import os
 import json
 import traceback
 
+from threading import Lock
+LOCK_ARQUIVO_BRUTO = Lock()
 '''
  Autor Luiz Anísio 17/10/2025
  Fonte: https://github.com/luizanisio/llms/tree/main/src
@@ -148,6 +150,23 @@ def get_resposta(prompt:str, papel:str='',
         # Estrutura padronizada de retorno
         resultado = {}
         #print(json.dumps(res_dict, ensure_ascii=False, indent=2))
+
+        if False:
+            with LOCK_ARQUIVO_BRUTO:
+                # grava a resposta no arquivo de log bruto
+                with open('log_openai_resposta_bruta.txt', 'a', encoding='utf-8') as f:
+                    f.write('#'*60 + '\n')
+                    f.write(f'Timestamp: {time()}\n')
+                    f.write(f'Modelo: {modelo}\n')
+                    f.write('='*40 + '\n')
+                    # grava o prompt bruto
+                    f.write('Prompt enviado:\n')
+                    f.write(json.dumps(messages, ensure_ascii=False, indent=2))
+                    f.write('\n' + ('-'*40) + '\n')
+                    # grava a resposta bruta
+                    f.write(json.dumps(res_dict, ensure_ascii=False, indent=2))
+                    f.write('\n' + ('-'*80) + '\n')
+                    f.write('#'*60 + '\n')
 
         # Extrai o conteúdo da resposta
         if as_json:

@@ -2,6 +2,8 @@
 
 Este projeto implementa e compara abordagens para a extração de metadados estruturados (Espelhos de Acórdãos) a partir de textos jurídicos do STJ. O experimento contrasta uma abordagem tradicional de prompt único ("Base") com uma arquitetura de múltiplos agentes especializados ("Orquestração"), avaliando os resultados através de métricas clássicas e LLM-as-a-Judge.
 
+**📊 [Ver todos os diagramas de fluxo e arquitetura](README_MERMAID.md)**
+
 ### Como extrair os dados da origem "Dados abertos" do STJ com o "ckan"
 
 O script principal para esta etapa é `ckan_extrair_espelhos.py`.
@@ -37,14 +39,22 @@ Esta abordagem divide a tarefa entre vários agentes especializados coordenados 
 
 - **Como rodar a orquestração**:
   - Execute o script `agentes_gerar_espelhos.py`.
-  - Este script instancia a classe `AgenteOrquestradorEspelho` (de `agentes_orquestrador.py`), que gerencia o fluxo:
-    1. **AgenteCampos**: Identifica quais campos existem no acórdão.
-    2. **AgenteTeses**: Extrai as teses jurídicas (dependência primária).
-    3. **AgenteJurisprudenciasCitadas**: Extrai precedentes baseados nas teses.
-    4. **Execução Paralela**: Agentes de Notas, ICE, TAP, Tema e Referências Legislativas rodam simultaneamente.
-    5. **AgenteValidacaoFinal**: Consolida e revisa o JSON final.
+  - Este script instancia a classe `AgenteOrquestradorEspelho` (de `agentes_orquestrador.py`).
   - Os prompts específicos para cada agente estão em `prompt_espelho_agentes.py`.
   - Os resultados são salvos em pastas específicas por modelo (ex: `saidas/espelhos_agentes_gpt5/`).
+  - **📊 [Ver diagrama detalhado do fluxo de orquestração](README_MERMAID.md#2-fluxo-de-orquestração-completo-sistema-de-agentes)**
+
+**Pipeline de Execução:**
+
+1. **ETAPA 1**: `AgenteCampos` - Identifica quais campos existem no acórdão
+2. **ETAPA 1.5**: Revisão do `AgenteCampos` - Se não identificou campos, solicita revisão com instrução específica para conferir atentamente
+3. **ETAPA 2**: `AgenteTeses` - Extrai as teses jurídicas (dependência primária)
+4. **ETAPA 2.5**: `AgenteJurisprudenciasCitadas` - Extrai precedentes baseados nas teses extraídas
+5. **ETAPA 3**: Execução Paralela - `AgenteNotas`, `AgenteInformacoesComplementares`, `AgenteTermosAuxiliares`, `AgenteTema` e `AgenteReferenciasLegislativas` rodam simultaneamente
+6. **ETAPA 4**: `AgenteValidacaoFinal` - Consolida e valida todas as extrações
+7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões conforme necessário, reexecutando agentes com erros ou que precisam de ajustes
+8. **Consolidação Final**: Monta o espelho final com todos os campos extraídos e metadados
+9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes, permitindo novas tentativas em caso de falha
 
 ### Avaliação LLM-as-a-judge
 
@@ -55,6 +65,7 @@ Utiliza um modelo avançado (GPT-5) para avaliar a qualidade semântica das extr
   - O script percorre as pastas de saída (Base e Agentes) e compara cada extração com o texto original do acórdão.
   - Calcula métricas de **Precision**, **Recall** e **F1-Score** baseadas na interpretação do LLM Juiz.
   - Gera arquivos `.avaliacao.json` junto aos arquivos extraídos.
+  - **📊 [Ver diagrama do fluxo de avaliação](README_MERMAID.md#4-avaliação-llm-as-a-judge)**
 
 ### Geração de planilha de comparações
 
@@ -72,3 +83,4 @@ Realiza uma comparação técnica entre as extrações geradas e o *Ground Truth
 
 - **Dados que a planilha consolida**:
   - Gera relatórios comparativos que permitem visualizar a performance de cada modelo e abordagem (Base vs. Agentes) em relação aos dados oficiais.
+  - **📊 [Ver diagramas de métricas e comparação](README_MERMAID.md#5-comparação-de-extrações-métricas-de-similaridade)**
