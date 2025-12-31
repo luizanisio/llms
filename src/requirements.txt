@@ -13,6 +13,7 @@ tensorboardX==2.6.2.2
 tiktoken==0.9.0
 xlsxwriter
 pandas
+openpyxl==3.1.5
 
 # JsonAnalise
 bert_score

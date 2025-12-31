@@ -88,7 +88,7 @@ def base_gpt5_g():
     global ORIGEM, TESTE
     ORIGEM = 'espelhos_base_gpt5/'
     TESTE = True # não usa bertscore para teste rápido
-base_gpt5()
+base_gpt5_p()
 
 assert len(DESTINOS) == len(D_ROTULOS), 'Número de destinos e rótulos deve ser igual!'
 ORIGEM = os.path.join(PASTA_ENTRADA_RAIZ, ORIGEM)

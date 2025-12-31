@@ -1220,19 +1220,18 @@ class JsonAnaliseDataFrame():
     
     def _criar_dataframe_avaliacao_llm(self):
         """
-        Cria DataFrame consolidado de avaliações LLM a partir da lista self.avaliacao_llm.
+        Cria DataFrames consolidados de avaliações LLM a partir da lista self.avaliacao_llm.
         Remove colunas que estão completamente vazias (todos valores 0, None ou '').
         
-        Agora suporta métricas por campo:
-        - Métricas globais: modelo_P, modelo_R, modelo_F1, modelo_nota, modelo_explicacao
-        - Métricas por campo: modelo_campo_P, modelo_campo_R, modelo_campo_F1
+        Agora retorna DOIS DataFrames separados:
+        1. Métricas globais: modelo_P, modelo_R, modelo_F1, modelo_nota, modelo_explicacao
+        2. Métricas por campo: modelo_campo_P, modelo_campo_R, modelo_campo_F1
         
         Returns:
-            DataFrame com colunas ordenadas: id_peca, métricas globais, métricas por campo
-            None se não houver dados
+            tuple: (df_global, df_campos) ou (None, None) se não houver dados
         """
         if self.avaliacao_llm is None or len(self.avaliacao_llm) == 0:
-            return None
+            return None, None
         
         import pandas as pd
         
@@ -1244,107 +1243,177 @@ class JsonAnaliseDataFrame():
         
         # Verifica se tem coluna de ID
         if nome_campo_id not in df_avaliacao.columns:
-            return None
+            return None, None
         
-        # Remove colunas completamente vazias (todos None, 0, '' ou NaN)
-        colunas_manter = [nome_campo_id]
+        # ═════════════════════════════════════════════════════════════════════
+        # SEPARA MÉTRICAS GLOBAIS DE MÉTRICAS POR CAMPO
+        # ═════════════════════════════════════════════════════════════════════
+        
+        colunas_globais = [nome_campo_id]
+        colunas_campos = [nome_campo_id]
+        
         for col in df_avaliacao.columns:
             if col == nome_campo_id:
                 continue
             
-            # Verifica se a coluna tem algum valor significativo
+            # Verifica se coluna está vazia
             valores = df_avaliacao[col].dropna()
             if len(valores) == 0:
-                continue  # Coluna vazia
-            
-            # Verifica se todos são 0 ou string vazia
-            tem_valor = False
-            for val in valores:
-                if isinstance(val, str):
-                    if val.strip():  # String não-vazia
-                        tem_valor = True
-                        break
-                elif isinstance(val, (int, float)):
-                    if val != 0:  # Número diferente de zero
-                        tem_valor = True
-                        break
-                else:
-                    tem_valor = True  # Outro tipo
-                    break
-            
-            if tem_valor:
-                colunas_manter.append(col)
-        
-        if len(colunas_manter) <= 1:  # Apenas campo ID
-            return None
-        
-        # Reordena colunas: campo ID primeiro, depois agrupadas por modelo e campo
-        df_avaliacao = df_avaliacao[colunas_manter]
-        
-        # Identifica estrutura: modelos e campos
-        # Formato: modelo_P, modelo_R, modelo_F1 (globais)
-        #          modelo_campo_P, modelo_campo_R, modelo_campo_F1 (por campo)
-        estrutura = {}  # {modelo: {'globais': [...], 'campos': {campo: [...]}}}
-        
-        for col in colunas_manter[1:]:  # Pula id_peca
-            if '_' not in col:
                 continue
             
-            partes = col.split('_')
+            # Verifica se tem algum valor significativo
+            tem_valor = False
+            for val in valores:
+                if isinstance(val, str) and val.strip():
+                    tem_valor = True
+                    break
+                elif isinstance(val, (int, float)) and val != 0:
+                    tem_valor = True
+                    break
             
-            # Métricas globais: modelo_metrica (ex: agentes_P, agentes_explicacao)
-            if len(partes) == 2:
-                modelo, metrica = partes
-                if modelo not in estrutura:
-                    estrutura[modelo] = {'globais': [], 'campos': {}}
-                estrutura[modelo]['globais'].append((metrica, col))
+            if not tem_valor:
+                continue
             
-            # Métricas por campo: modelo_campo_metrica (ex: agentes_tema_P)
-            elif len(partes) >= 3:
-                modelo = partes[0]
-                metrica = partes[-1]  # Última parte (P, R, F1)
-                campo = '_'.join(partes[1:-1])  # Meio (pode ter underscores)
-                
-                if modelo not in estrutura:
-                    estrutura[modelo] = {'globais': [], 'campos': {}}
-                if campo not in estrutura[modelo]['campos']:
-                    estrutura[modelo]['campos'][campo] = []
-                estrutura[modelo]['campos'][campo].append((metrica, col))
+            # Classifica como global ou por campo usando lista de rótulos conhecidos
+            # Os rótulos estão em self.rotulos: ['id', 'origem', 'destino1', 'destino2', ...]
+            # Formato global: rotulo_metrica (ex: agentes_gpt5_P, base_gemma3(12)_R)
+            # Formato campo: rotulo_campo_metrica (ex: agentes_gpt5_notas_P)
+            
+            # Tenta identificar qual rótulo corresponde a esta coluna
+            modelo_identificado = None
+            rotulos_modelos = self.rotulos[1:] if len(self.rotulos) > 1 else []  # Exclui 'id'
+            
+            for rotulo in rotulos_modelos:
+                if col.startswith(rotulo + '_'):
+                    modelo_identificado = rotulo
+                    break
+            
+            if modelo_identificado is None:
+                continue  # Não conseguiu identificar o modelo, ignora
+            
+            # Remove o prefixo do modelo para verificar o sufixo
+            sufixo = col[len(modelo_identificado) + 1:]  # +1 para remover o underscore
+            
+            # Métricas conhecidas de avaliação global
+            metricas_globais = ['P', 'R', 'F1', 'nota', 'explicacao']
+            
+            # Se o sufixo é exatamente uma métrica global, é métrica global
+            if sufixo in metricas_globais:
+                colunas_globais.append(col)
+            # Se o sufixo termina com _metrica, é métrica por campo
+            elif '_' in sufixo:
+                # Verifica se termina com uma métrica conhecida
+                partes_sufixo = sufixo.rsplit('_', 1)
+                if len(partes_sufixo) == 2 and partes_sufixo[1] in metricas_globais:
+                    colunas_campos.append(col)
+                else:
+                    # Não conseguiu classificar, adiciona como campo por segurança
+                    colunas_campos.append(col)
         
-        # Monta ordem das colunas: id_peca, depois por modelo (globais + campos)
+        # Cria DataFrames separados
+        df_global = None
+        df_campos = None
+        
+        if len(colunas_globais) > 1:  # Tem mais que só ID
+            df_global = df_avaliacao[colunas_globais].copy()
+            
+            # Ordena colunas globais
+            df_global = self._ordenar_colunas_avaliacao_llm(df_global, tipo='global')
+        
+        if len(colunas_campos) > 1:  # Tem mais que só ID
+            df_campos = df_avaliacao[colunas_campos].copy()
+            
+            # Ordena colunas por campo
+            df_campos = self._ordenar_colunas_avaliacao_llm(df_campos, tipo='campos')
+        
+        return df_global, df_campos
+    
+    def _ordenar_colunas_avaliacao_llm(self, df, tipo='global'):
+        """
+        Ordena colunas de avaliação LLM conforme tipo.
+        
+        Args:
+            df: DataFrame com colunas de avaliação
+            tipo: 'global' ou 'campos'
+        
+        Returns:
+            DataFrame com colunas ordenadas
+        """
+        nome_campo_id = self.dados_analise.config.nome_campo_id
         colunas_ordenadas = [nome_campo_id]
         
-        # Ordem preferencial de métricas
-        ordem_metricas_globais = ['P', 'R', 'F1', 'nota', 'explicacao']
-        ordem_metricas_campos = ['P', 'R', 'F1']
+        # Usa lista de rótulos conhecidos para identificar modelos corretamente
+        rotulos_modelos = self.rotulos[1:] if len(self.rotulos) > 1 else []  # Exclui 'id'
         
-        for modelo in sorted(estrutura.keys()):
-            info = estrutura[modelo]
+        if tipo == 'global':
+            # Ordem preferencial de métricas globais
+            ordem_metricas = ['P', 'R', 'F1', 'nota', 'explicacao']
             
-            # Adiciona métricas globais primeiro
-            for metrica in ordem_metricas_globais:
-                for m, col in info['globais']:
-                    if m == metrica:
+            for rotulo in sorted(rotulos_modelos):
+                for metrica in ordem_metricas:
+                    col = f'{rotulo}_{metrica}'
+                    if col in df.columns:
                         colunas_ordenadas.append(col)
-            
-            # Adiciona outras métricas globais não classificadas
-            for metrica, col in info['globais']:
-                if col not in colunas_ordenadas:
-                    colunas_ordenadas.append(col)
-            
-            # Adiciona métricas por campo (ordenadas alfabeticamente por campo)
-            for campo in sorted(info['campos'].keys()):
-                for metrica in ordem_metricas_campos:
-                    for m, col in info['campos'][campo]:
-                        if m == metrica:
-                            colunas_ordenadas.append(col)
+                
+                # Adiciona outras métricas não classificadas para este rotulo
+                for col in df.columns:
+                    if col.startswith(f'{rotulo}_') and col not in colunas_ordenadas:
+                        colunas_ordenadas.append(col)
         
-        # Adiciona colunas restantes que não foram classificadas
-        for col in colunas_manter:
+        else:  # tipo == 'campos'
+            # Agrupa por modelo e depois por campo
+            estrutura = {}  # {modelo: {campo: [colunas]}}
+            
+            for col in df.columns:
+                if col == nome_campo_id:
+                    continue
+                
+                # Identifica qual rotulo corresponde a esta coluna
+                modelo_identificado = None
+                for rotulo in rotulos_modelos:
+                    if col.startswith(rotulo + '_'):
+                        modelo_identificado = rotulo
+                        break
+                
+                if modelo_identificado is None:
+                    continue
+                
+                # Remove o prefixo do modelo
+                sufixo = col[len(modelo_identificado) + 1:]
+                
+                # Divide sufixo em campo e métrica (última parte após último _)
+                if '_' not in sufixo:
+                    continue
+                
+                partes_sufixo = sufixo.rsplit('_', 1)
+                campo = partes_sufixo[0]
+                metrica = partes_sufixo[1]
+                
+                if modelo_identificado not in estrutura:
+                    estrutura[modelo_identificado] = {}
+                if campo not in estrutura[modelo_identificado]:
+                    estrutura[modelo_identificado][campo] = []
+                
+                estrutura[modelo_identificado][campo].append((metrica, col))
+            
+            # Ordem preferencial de métricas por campo
+            ordem_metricas = ['P', 'R', 'F1']
+            
+            for modelo in sorted(estrutura.keys()):
+                for campo in sorted(estrutura[modelo].keys()):
+                    # Adiciona métricas na ordem preferencial
+                    for metrica in ordem_metricas:
+                        for m, col in estrutura[modelo][campo]:
+                            if m == metrica:
+                                colunas_ordenadas.append(col)
+                                break
+        
+        # Adiciona colunas restantes não classificadas
+        for col in df.columns:
             if col not in colunas_ordenadas:
                 colunas_ordenadas.append(col)
         
-        return df_avaliacao[colunas_ordenadas]
+        return df[colunas_ordenadas]
     
     def _criar_dataframe_observabilidade(self):
         """
@@ -2022,12 +2091,18 @@ class JsonAnaliseDataFrame():
             stats = self.estatisticas_globais()
             stats.to_csv(arquivo_stats, index=False, sep=separador, encoding='utf-8-sig')
         
-        # Exporta avaliação LLM se disponível
-        df_avaliacao = self._criar_dataframe_avaliacao_llm()
-        if df_avaliacao is not None:
-            arquivo_avaliacao = arquivo.replace('.csv', '.avaliacao_llm.csv')
-            df_avaliacao.to_csv(arquivo_avaliacao, index=False, sep=separador, encoding='utf-8-sig')
-            print(f"   ✓ Avaliação LLM CSV: {arquivo_avaliacao}")
+        # Exporta avaliação LLM se disponível (agora são dois DataFrames separados)
+        df_global, df_campos = self._criar_dataframe_avaliacao_llm()
+        
+        if df_global is not None:
+            arquivo_avaliacao_global = arquivo.replace('.csv', '.avaliacao_llm_global.csv')
+            df_global.to_csv(arquivo_avaliacao_global, index=False, sep=separador, encoding='utf-8-sig')
+            print(f"   ✓ Avaliação LLM (Global) CSV: {arquivo_avaliacao_global}")
+        
+        if df_campos is not None:
+            arquivo_avaliacao_campos = arquivo.replace('.csv', '.avaliacao_llm_campos.csv')
+            df_campos.to_csv(arquivo_avaliacao_campos, index=False, sep=separador, encoding='utf-8-sig')
+            print(f"   ✓ Avaliação LLM (Campos) CSV: {arquivo_avaliacao_campos}")
         
         return arquivo
 
@@ -2321,9 +2396,9 @@ class JsonAnaliseDataFrame():
                 print(f"   ✅ Formatação condicional aplicada em Resumo_Tokens")
         
         # ═══════════════════════════════════════════════════════════════════════
-        # ABA DE AVALIAÇÃO LLM
+        # ABAS DE AVALIAÇÃO LLM (Global e Campos)
         # ═══════════════════════════════════════════════════════════════════════
-        self._adicionar_aba_avaliacao_llm_excel(excel, congelar_paineis)
+        tem_global, tem_campos = self._adicionar_aba_avaliacao_llm_excel(excel, congelar_paineis)
         
         # ═══════════════════════════════════════════════════════════════════════
         # ABA DE OBSERVABILIDADE
@@ -3011,69 +3086,111 @@ class JsonAnaliseDataFrame():
     
     def _adicionar_aba_avaliacao_llm_excel(self, excel, congelar_paineis: bool = True):
         """
-        Adiciona a aba 'Avaliação LLM' ao Excel usando UtilPandasExcel.
+        Adiciona as abas 'Avaliação LLM' (global) e 'Avaliação LLM Campos' ao Excel.
         Método auxiliar reutilizado por _exportar_excel_formatado e atualizar_avaliacao_llm_no_excel.
         
         Args:
             excel: instância de UtilPandasExcel
-            congelar_paineis: se True, congela painéis na aba
+            congelar_paineis: se True, congela painéis nas abas
         
         Returns:
-            True se a aba foi criada, False se não há dados disponíveis
+            tuple: (tem_global, tem_campos) - True se a aba foi criada
         """
-        df_avaliacao = self._criar_dataframe_avaliacao_llm()
-        if df_avaliacao is None:
-            return False
+        df_global, df_campos = self._criar_dataframe_avaliacao_llm()
         
-        # Escreve DataFrame normalmente
-        excel.write_df(df_avaliacao, 'Avaliação LLM', auto_width_colums_list=True)
-        
-        if congelar_paineis:
-            excel.congelar_painel('Avaliação LLM', 1, 1)
+        tem_global = False
+        tem_campos = False
         
         # Usa nome do campo ID configurado
         nome_campo_id = self.dados_analise.config.nome_campo_id
         
-        # Identifica colunas numéricas para aplicar cores condicionais
-        # P, R, F1, nota (escala 0-1 ou 0-10)
-        colunas_metricas = []
-        for col in df_avaliacao.columns:
-            if col == nome_campo_id or col.endswith('_explicacao'):
-                continue
-            if df_avaliacao[col].dtype in [np.int64, np.float64]:
-                colunas_metricas.append(col)
+        # ═════════════════════════════════════════════════════════════════════
+        # ABA: AVALIAÇÃO LLM (GLOBAL)
+        # ═════════════════════════════════════════════════════════════════════
         
-        print(f"   🎨 Aplicando formatação condicional em {len(colunas_metricas)} colunas de avaliação LLM...")
-        
-        # Aplica formatação condicional nas métricas (escala 0-1 ou 0-10)
-        if len(colunas_metricas) > 0 and len(df_avaliacao) > 0:
-            from xlsxwriter.utility import xl_col_to_name
+        if df_global is not None:
+            excel.write_df(df_global, 'Avaliação LLM', auto_width_colums_list=True)
             
-            for col_name in colunas_metricas:
-                col_idx = df_avaliacao.columns.get_loc(col_name)
-                col_letter = xl_col_to_name(col_idx)
-                
-                # Define range de células (da linha 2 até última linha)
-                cells_range = f'{col_letter}2:{col_letter}{len(df_avaliacao) + 1}'
-                
-                # Detecta escala: 0-10 para 'nota', 0-1 para P/R/F1
-                if col_name.endswith('_nota'):
-                    # Nota: escala 0-10, maior é melhor
-                    excel.conditional_color('Avaliação LLM', cells_range,
-                                          min_value=0.0, mid_value=5.0, max_value=10.0)
-                else:
-                    # P/R/F1: escala 0-1, maior é melhor
-                    excel.conditional_color('Avaliação LLM', cells_range,
-                                          min_value=0.0, mid_value=0.5, max_value=1.0)
+            if congelar_paineis:
+                excel.congelar_painel('Avaliação LLM', 1, 1)
             
-            print(f"   ✅ Formatação condicional aplicada em Avaliação LLM")
+            # Identifica colunas numéricas para aplicar cores condicionais
+            colunas_metricas = []
+            for col in df_global.columns:
+                if col == nome_campo_id or col.endswith('_explicacao'):
+                    continue
+                if df_global[col].dtype in [np.int64, np.float64]:
+                    colunas_metricas.append(col)
+            
+            if len(colunas_metricas) > 0:
+                print(f"   🎨 Aplicando formatação condicional em {len(colunas_metricas)} colunas de avaliação LLM (global)...")
+                
+                from xlsxwriter.utility import xl_col_to_name
+                
+                for col_name in colunas_metricas:
+                    col_idx = df_global.columns.get_loc(col_name)
+                    col_letter = xl_col_to_name(col_idx)
+                    
+                    # Aplica escala de cores: vermelho (0) -> amarelo (0.5) -> verde (1)
+                    excel.conditional_color(
+                        'Avaliação LLM',
+                        f'{col_letter}2:{col_letter}{len(df_global) + 1}',
+                        min_value=0.0,
+                        mid_value=0.5,
+                        max_value=1.0
+                    )
+                
+                print(f"   ✅ Formatação condicional aplicada em Avaliação LLM (global)")
+            
+            tem_global = True
         
-        return True
+        # ═════════════════════════════════════════════════════════════════════
+        # ABA: AVALIAÇÃO LLM CAMPOS
+        # ═════════════════════════════════════════════════════════════════════
+        
+        if df_campos is not None:
+            excel.write_df(df_campos, 'Avaliação LLM Campos', auto_width_colums_list=True)
+            
+            if congelar_paineis:
+                excel.congelar_painel('Avaliação LLM Campos', 1, 1)
+            
+            # Identifica colunas numéricas para aplicar cores condicionais
+            colunas_metricas = []
+            for col in df_campos.columns:
+                if col == nome_campo_id:
+                    continue
+                if df_campos[col].dtype in [np.int64, np.float64]:
+                    colunas_metricas.append(col)
+            
+            if len(colunas_metricas) > 0:
+                print(f"   🎨 Aplicando formatação condicional em {len(colunas_metricas)} colunas de avaliação LLM (por campo)...")
+                
+                from xlsxwriter.utility import xl_col_to_name
+                
+                for col_name in colunas_metricas:
+                    col_idx = df_campos.columns.get_loc(col_name)
+                    col_letter = xl_col_to_name(col_idx)
+                    
+                    # Aplica escala de cores: vermelho (0) -> amarelo (0.5) -> verde (1)
+                    excel.conditional_color(
+                        'Avaliação LLM Campos',
+                        f'{col_letter}2:{col_letter}{len(df_campos) + 1}',
+                        min_value=0.0,
+                        mid_value=0.5,
+                        max_value=1.0
+                    )
+                
+                print(f"   ✅ Formatação condicional aplicada em Avaliação LLM Campos")
+            
+            tem_campos = True
+        
+        return tem_global, tem_campos
     
     def atualizar_avaliacao_llm_no_excel(self, arquivo_excel: str, gerar_graficos: bool = True) -> str:
         """
-        Atualiza apenas a aba 'Avaliação LLM' no Excel existente, mantendo todas as outras abas intactas.
-        Cria arquivo temporário com formatação completa e copia a planilha para o Excel existente.
+        Atualiza as abas 'Avaliação LLM' e 'Avaliação LLM Campos' no Excel existente.
+        Mantém todas as outras abas intactas.
+        Cria arquivo temporário com formatação completa e copia as planilhas para o Excel existente.
         Opcionalmente gera gráficos de avaliação LLM.
         
         Args:
@@ -3088,14 +3205,13 @@ class JsonAnaliseDataFrame():
         """
         import tempfile
         from openpyxl import load_workbook
-        from openpyxl.utils import get_column_letter
         
         if not os.path.isfile(arquivo_excel):
             raise FileNotFoundError(f"Arquivo Excel não encontrado: {arquivo_excel}")
         
         # Verifica se há dados de avaliação LLM
-        df_avaliacao = self._criar_dataframe_avaliacao_llm()
-        if df_avaliacao is None or df_avaliacao.empty:
+        df_global, df_campos = self._criar_dataframe_avaliacao_llm()
+        if df_global is None and df_campos is None:
             print("⚠️  Aviso: Nenhum dado de avaliação LLM disponível para atualizar")
             return arquivo_excel
         
@@ -3105,85 +3221,77 @@ class JsonAnaliseDataFrame():
         
         try:
             # Cria Excel temporário com UtilPandasExcel (xlsxwriter) - com formatação completa
-            print(f"   📝 Criando planilha temporária com formatação...")
+            print(f"   📝 Criando planilhas temporárias com formatação...")
             excel_temp = UtilPandasExcel(arquivo_temp, columns_auto_width=True, header_formatting=True)
             
-            # Adiciona aba com TODA a formatação (cores condicionais, freeze panes, etc)
-            self._adicionar_aba_avaliacao_llm_excel(excel_temp, congelar_paineis=True)
+            # Adiciona abas com TODA a formatação (cores condicionais, freeze panes, etc)
+            tem_global, tem_campos = self._adicionar_aba_avaliacao_llm_excel(excel_temp, congelar_paineis=True)
+            
+            if not tem_global and not tem_campos:
+                print("⚠️  Aviso: Nenhuma aba de avaliação LLM foi criada")
+                return arquivo_excel
             
             # Salva arquivo temporário
             excel_temp.save()
-            print(f"   ✓ Planilha temporária criada com formatação completa")
+            print(f"   ✓ Planilhas temporárias criadas com formatação completa")
             
             # Carrega ambos os workbooks com openpyxl
-            print(f"   📋 Copiando planilha formatada para Excel existente...")
+            print(f"   📋 Copiando planilhas formatadas para Excel existente...")
             wb_temp = load_workbook(arquivo_temp)
             wb_original = load_workbook(arquivo_excel)
             
-            # Remove aba antiga se existir
-            if 'Avaliação LLM' in wb_original.sheetnames:
-                del wb_original['Avaliação LLM']
+            # Remove abas antigas se existirem e copia as novas
+            abas_para_copiar = []
+            if tem_global:
+                if 'Avaliação LLM' in wb_original.sheetnames:
+                    del wb_original['Avaliação LLM']
+                abas_para_copiar.append('Avaliação LLM')
             
-            # COPIA A PLANILHA INTEIRA do arquivo temporário (mantém formatação xlsxwriter)
-            # Nota: openpyxl consegue LER formatação condicional de arquivos xlsxwriter,
-            # mas não consegue CRIAR formatação compatível via código Python
-            ws_source = wb_temp['Avaliação LLM']
-            ws_dest = wb_original.create_sheet('Avaliação LLM')
+            if tem_campos:
+                if 'Avaliação LLM Campos' in wb_original.sheetnames:
+                    del wb_original['Avaliação LLM Campos']
+                abas_para_copiar.append('Avaliação LLM Campos')
             
-            # Copia células (valores e estilos básicos)
-            for row in ws_source.iter_rows():
-                for cell in row:
-                    dest_cell = ws_dest[cell.coordinate]
-                    dest_cell.value = cell.value
-                    
-                    # Copia estilos se existirem
-                    if cell.has_style:
-                        dest_cell.font = cell.font.copy()
-                        dest_cell.border = cell.border.copy()
-                        dest_cell.fill = cell.fill.copy()
-                        dest_cell.number_format = cell.number_format
-                        dest_cell.alignment = cell.alignment.copy()
+            # Copia as planilhas do arquivo temporário
+            for nome_aba in abas_para_copiar:
+                ws_temp = wb_temp[nome_aba]
+                ws_novo = wb_original.create_sheet(nome_aba)
+                
+                # Copia valores e formatação
+                for row in ws_temp.iter_rows():
+                    for cell in row:
+                        ws_novo[cell.coordinate].value = cell.value
+                        if cell.has_style:
+                            ws_novo[cell.coordinate].font = cell.font.copy()
+                            ws_novo[cell.coordinate].border = cell.border.copy()
+                            ws_novo[cell.coordinate].fill = cell.fill.copy()
+                            ws_novo[cell.coordinate].number_format = cell.number_format
+                            ws_novo[cell.coordinate].protection = cell.protection.copy()
+                            ws_novo[cell.coordinate].alignment = cell.alignment.copy()
+                
+                # Copia larguras de colunas
+                for col_letter, col_dim in ws_temp.column_dimensions.items():
+                    ws_novo.column_dimensions[col_letter].width = col_dim.width
+                
+                # Copia freeze panes
+                if ws_temp.freeze_panes:
+                    ws_novo.freeze_panes = ws_temp.freeze_panes
+                
+                print(f"   ✓ Aba '{nome_aba}' copiada com formatação")
             
-            # Copia dimensões de colunas
-            for col_letter in ws_source.column_dimensions:
-                if col_letter in ws_source.column_dimensions:
-                    ws_dest.column_dimensions[col_letter].width = ws_source.column_dimensions[col_letter].width
-            
-            # Copia freeze panes
-            if ws_source.freeze_panes:
-                ws_dest.freeze_panes = ws_source.freeze_panes
-            
-            # Copia formatação condicional (openpyxl consegue ler do xlsxwriter)
-            if hasattr(ws_source, 'conditional_formatting') and ws_source.conditional_formatting:
-                # Copia regras de formatação condicional
-                for range_string, rules in ws_source.conditional_formatting._cf_rules.items():
-                    for rule in rules:
-                        # Aqui o rule já é um objeto openpyxl.formatting.rule.Rule válido
-                        # porque foi LIDO do arquivo xlsxwriter
-                        ws_dest.conditional_formatting.add(range_string, rule)
-            
-            # Salva arquivo original com nova aba
+            # Salva workbook original modificado
             wb_original.save(arquivo_excel)
-            wb_original.close()
-            wb_temp.close()
-            
-            print(f"   ✓ Aba 'Avaliação LLM' atualizada com {len(df_avaliacao)} registros e formatação completa")
+            print(f"   ✅ Abas de avaliação LLM atualizadas com sucesso!")
             
         finally:
             # Remove arquivo temporário
             if os.path.exists(arquivo_temp):
-                os.remove(arquivo_temp)
+                os.unlink(arquivo_temp)
         
         # Gera gráficos se solicitado
         if gerar_graficos:
-            print("   Gerando gráficos de avaliação LLM...")
-            pasta_saida = os.path.dirname(arquivo_excel) or self.pasta_analises or '.'
-            arquivos_graficos = self.gerar_graficos_avaliacao_llm(
-                arquivo_excel=arquivo_excel,
-                pasta_saida=pasta_saida
-            )
-            if arquivos_graficos:
-                print(f"   ✓ {len(arquivos_graficos)} gráficos de avaliação LLM gerados")
+            pasta_saida = self.pasta_analises or '.'
+            self.gerar_graficos_avaliacao_llm(arquivo_excel=arquivo_excel, pasta_saida=pasta_saida)
         
         return arquivo_excel
     
@@ -3215,19 +3323,31 @@ class JsonAnaliseDataFrame():
             pasta_saida = self.pasta_analises or '.'
         os.makedirs(pasta_saida, exist_ok=True)
         
-        # Carrega DataFrame de avaliação LLM
+        # Carrega DataFrames de avaliação LLM (agora são dois: global e campos)
         if arquivo_excel:
             try:
-                df_avaliacao = pd.read_excel(arquivo_excel, sheet_name='Avaliação LLM')
+                df_global = pd.read_excel(arquivo_excel, sheet_name='Avaliação LLM')
             except Exception as e:
                 print(f"⚠️  Aviso: Não foi possível carregar aba 'Avaliação LLM': {e}")
-                return []
+                df_global = None
+            
+            try:
+                df_campos = pd.read_excel(arquivo_excel, sheet_name='Avaliação LLM Campos')
+            except Exception as e:
+                # Normal não ter esta aba se não houver métricas por campo
+                df_campos = None
         else:
-            df_avaliacao = self._criar_dataframe_avaliacao_llm()
+            df_global, df_campos = self._criar_dataframe_avaliacao_llm()
         
-        if df_avaliacao is None or df_avaliacao.empty:
+        if df_global is None and df_campos is None:
             print("⚠️  Aviso: Nenhum dado de avaliação LLM disponível para gráficos")
             return []
+        
+        print(f"   📊 Gerando gráficos de avaliação LLM...")
+        if df_global is not None:
+            print(f"      - Métricas globais: {len(df_global)} linhas × {len(df_global.columns)} colunas")
+        if df_campos is not None:
+            print(f"      - Métricas por campo: {len(df_campos)} linhas × {len(df_campos.columns)} colunas")
         
         # Mapeia string de paleta para enum
         try:
@@ -3241,196 +3361,75 @@ class JsonAnaliseDataFrame():
         # Usa nome do campo ID configurado
         nome_campo_id = self.dados_analise.config.nome_campo_id
         
-        # ═════════════════════════════════════════════════════════════════════
-        # SEPARA MÉTRICAS GLOBAIS DE MÉTRICAS POR CAMPO
-        # ═════════════════════════════════════════════════════════════════════
-        # Estrutura: {metrica: {'globais': [...], 'campos': {campo: [...]}}}
-        estrutura_metricas = {}
-        
         # Obtém lista de rótulos dos modelos (exclui apenas 'id', inclui origem e destinos)
         # rotulos[0] = 'id', rotulos[1] = origem, rotulos[2:] = destinos
         rotulos_modelos = self.rotulos[1:] if len(self.rotulos) > 1 else []
-        
-        for col in df_avaliacao.columns:
-            if col == nome_campo_id or col.endswith('_explicacao'):
-                continue
-            
-            # Verifica se é coluna numérica
-            if df_avaliacao[col].dtype not in [np.int64, np.float64]:
-                continue
-            
-            if '_' not in col:
-                continue
-            
-            # Identifica qual modelo é (pode conter parênteses, underscores, etc)
-            modelo_identificado = None
-            for rotulo in rotulos_modelos:
-                if col.startswith(rotulo + '_'):
-                    modelo_identificado = rotulo
-                    break
-            
-            if modelo_identificado is None:
-                continue  # Não conseguiu identificar o modelo
-            
-            # Remove o prefixo do modelo para obter resto: campo_metrica ou só metrica
-            sufixo = col[len(modelo_identificado) + 1:]  # +1 para remover o underscore
-            
-            # Verifica se é métrica global (sufixo é P, R, F1, nota, etc)
-            metricas_globais = ['P', 'R', 'F1', 'nota']
-            if sufixo in metricas_globais:
-                # Global: modelo_metrica (ex: agentes_gpt5_P, base_gemma3(12)_nota)
-                metrica = sufixo
-                if metrica not in estrutura_metricas:
-                    estrutura_metricas[metrica] = {'globais': [], 'campos': {}}
-                estrutura_metricas[metrica]['globais'].append(col)
-            else:
-                # Por campo: modelo_campo_metrica (ex: agentes_gpt5_tema_P)
-                # Divide sufixo em campo e métrica (última parte após último underscore)
-                if '_' in sufixo:
-                    partes_sufixo = sufixo.rsplit('_', 1)  # rsplit para pegar último underscore
-                    campo = partes_sufixo[0]
-                    metrica = partes_sufixo[1]
-                    
-                    if metrica not in estrutura_metricas:
-                        estrutura_metricas[metrica] = {'globais': [], 'campos': {}}
-                    if campo not in estrutura_metricas[metrica]['campos']:
-                        estrutura_metricas[metrica]['campos'][campo] = []
-                    estrutura_metricas[metrica]['campos'][campo].append(col)
         
         # ═════════════════════════════════════════════════════════════════════
         # GERA GRÁFICOS PARA MÉTRICAS GLOBAIS
         # ═════════════════════════════════════════════════════════════════════
-        titulos_metricas = {
-            'P': 'Avaliação LLM - Precision (Global)',
-            'R': 'Avaliação LLM - Recall (Global)',
-            'F1': 'Avaliação LLM - F1-Score (Global)',
-            'nota': 'Avaliação LLM - Nota Geral'
-        }
-        
-        # Obtém lista de rótulos dos modelos (exclui apenas 'id', inclui origem e destinos)
-        # rotulos[0] = 'id', rotulos[1] = origem, rotulos[2:] = destinos
-        rotulos_modelos = self.rotulos[1:] if len(self.rotulos) > 1 else []
-        
-        for metrica in sorted(estrutura_metricas.keys()):
-            colunas_globais = estrutura_metricas[metrica]['globais']
-            
-            if len(colunas_globais) == 0:
-                continue
-            
-            # Define nome do arquivo
-            arquivo_grafico = os.path.join(pasta_saida, f'grafico_bp_avaliacaollm_{metrica.lower()}.png')
-            
-            # Título
-            titulo = titulos_metricas.get(metrica, f'Avaliação LLM - {metrica} (Global)')
-            
-            # Agrupa colunas por modelo usando os rótulos originais
-            colunas_por_modelo = []
-            aliases_ordenados = []
-            
-            for rotulo in rotulos_modelos:
-                # Busca coluna que começa com este rótulo: rotulo_metrica
-                col_modelo = None
-                for col in colunas_globais:
-                    if col == f'{rotulo}_{metrica}':
-                        col_modelo = col
-                        break
-                
-                if col_modelo is not None:
-                    colunas_por_modelo.append(col_modelo)
-                    aliases_ordenados.append(rotulo)
-            
-            # Se não encontrou nenhuma coluna, pula
-            if not colunas_por_modelo:
-                continue
-            
-            # Configura gráfico boxplot usando grafico_multi_colunas
-            configuracao = {
-                titulo: {
-                    'df': df_avaliacao,
-                    'colunas': colunas_por_modelo,
-                    'alias': aliases_ordenados,
-                    'x': 'Modelo',
-                    'y': metrica,
-                    'agregacao': 'boxplot',
-                    'paleta': paleta_enum,
-                    'ylim': (0, 1) if metrica in ['P', 'R', 'F1'] else None,  # Fixar eixo Y para métricas [0, 1]
-                    'dropnan': True,
-                    'rotacao_labels': 0 if len(aliases_ordenados) <= 5 else 45
-                }
+        if df_global is not None:
+            titulos_metricas = {
+                'P': 'Avaliação LLM - Precision (Global)',
+                'R': 'Avaliação LLM - Recall (Global)',
+                'F1': 'Avaliação LLM - F1-Score (Global)',
+                'nota': 'Avaliação LLM - Nota Geral'
             }
             
-            # Gera gráfico
-            try:
-                UtilGraficos.grafico_multi_colunas(
-                    configuracao=configuracao,
-                    plots_por_linha=1,
-                    paleta_cores=paleta_enum,
-                    arquivo_saida=arquivo_grafico
-                )
-                arquivos_gerados.append(arquivo_grafico)
-                print(f"   ✓ Gráfico gerado: {os.path.basename(arquivo_grafico)}")
-            except Exception as e:
-                print(f"⚠️  Erro ao gerar gráfico de avaliação LLM global ({metrica}): {e}")
-        
-        # ═════════════════════════════════════════════════════════════════════
-        # GERA GRÁFICOS PARA MÉTRICAS POR CAMPO
-        # ═════════════════════════════════════════════════════════════════════
-        for metrica in sorted(estrutura_metricas.keys()):
-            campos = estrutura_metricas[metrica]['campos']
-            
-            if len(campos) == 0:
-                continue
-            
-            # Para cada campo, gera um gráfico separado
-            for campo in sorted(campos.keys()):
-                colunas_campo = campos[campo]
-                
-                if len(colunas_campo) == 0:
+            # Para cada métrica numérica global
+            for col in df_global.columns:
+                if col == nome_campo_id or col.endswith('_explicacao'):
                     continue
                 
-                # Define nome do arquivo
-                arquivo_grafico = os.path.join(pasta_saida, 
-                    f'grafico_bp_avaliacaollm_{campo.lower()}_{metrica.lower()}.png')
+                # Verifica se é coluna numérica
+                if df_global[col].dtype not in [np.int64, np.float64]:
+                    continue
                 
-                # Título
-                titulos_metricas_campo = {
-                    'P': f'Avaliação LLM - {campo} - Precision',
-                    'R': f'Avaliação LLM - {campo} - Recall',
-                    'F1': f'Avaliação LLM - {campo} - F1-Score'
-                }
-                titulo = titulos_metricas_campo.get(metrica, f'Avaliação LLM - {campo} - {metrica}')
+                # Identifica modelo e métrica usando rótulos conhecidos
+                modelo_identificado = None
+                for rotulo in rotulos_modelos:
+                    if col.startswith(rotulo + '_'):
+                        modelo_identificado = rotulo
+                        break
                 
-                # Agrupa colunas por modelo usando os rótulos originais
+                if modelo_identificado is None:
+                    continue
+                
+                # Extrai métrica (tudo depois do modelo_)
+                metrica = col[len(modelo_identificado) + 1:]  # +1 para remover o underscore
+                
+                # Verifica se já gerou gráfico para esta métrica
+                arquivo_grafico = os.path.join(pasta_saida, f'grafico_bp_avaliacaollm_{metrica.lower()}.png')
+                if arquivo_grafico in arquivos_gerados:
+                    continue
+                
+                # Coleta todas as colunas desta métrica
                 colunas_por_modelo = []
                 aliases_ordenados = []
                 
                 for rotulo in rotulos_modelos:
-                    # Busca coluna que começa com este rótulo: rotulo_campo_metrica
-                    col_modelo = None
-                    for col in colunas_campo:
-                        if col == f'{rotulo}_{campo}_{metrica}':
-                            col_modelo = col
-                            break
-                    
-                    if col_modelo is not None:
+                    col_modelo = f'{rotulo}_{metrica}'
+                    if col_modelo in df_global.columns:
                         colunas_por_modelo.append(col_modelo)
                         aliases_ordenados.append(rotulo)
                 
-                # Se não encontrou nenhuma coluna, pula
                 if not colunas_por_modelo:
                     continue
+                
+                # Título
+                titulo = titulos_metricas.get(metrica, f'Avaliação LLM - {metrica} (Global)')
                 
                 # Configura gráfico boxplot
                 configuracao = {
                     titulo: {
-                        'df': df_avaliacao,
+                        'df': df_global,
                         'colunas': colunas_por_modelo,
                         'alias': aliases_ordenados,
                         'x': 'Modelo',
                         'y': metrica,
                         'agregacao': 'boxplot',
                         'paleta': paleta_enum,
-                        'ylim': (0, 1) if metrica in ['P', 'R', 'F1'] else None,  # Fixar eixo Y para métricas [0, 1]
+                        'ylim': (0, 1) if metrica in ['P', 'R', 'F1'] else None,
                         'dropnan': True,
                         'rotacao_labels': 0 if len(aliases_ordenados) <= 5 else 45
                     }
@@ -3447,7 +3446,117 @@ class JsonAnaliseDataFrame():
                     arquivos_gerados.append(arquivo_grafico)
                     print(f"   ✓ Gráfico gerado: {os.path.basename(arquivo_grafico)}")
                 except Exception as e:
-                    print(f"⚠️  Erro ao gerar gráfico de avaliação LLM por campo ({campo}.{metrica}): {e}")
+                    print(f"⚠️  Erro ao gerar gráfico de avaliação LLM global ({metrica}): {e}")
+        
+        # ═════════════════════════════════════════════════════════════════════
+        # GERA GRÁFICOS PARA MÉTRICAS POR CAMPO
+        # ═════════════════════════════════════════════════════════════════════
+        if df_campos is not None:
+            print(f"   📊 Processando gráficos por campo ({len(df_campos.columns)} colunas)...")
+            # Agrupa colunas por campo e métrica
+            # Estrutura: {campo: {metrica: [colunas]}}
+            estrutura_campos = {}
+            
+            for col in df_campos.columns:
+                if col == nome_campo_id:
+                    continue
+                
+                # Verifica se é coluna numérica
+                if df_campos[col].dtype not in [np.int64, np.float64]:
+                    continue
+                
+                # Formato esperado: rotulo_campo_metrica (ex: agentes_tema_P, base_p_tema_F1)
+                # Tenta identificar o modelo usando self.rotulos
+                campo_metrica = None
+                for rotulo in rotulos_modelos:
+                    if col.startswith(rotulo + '_'):
+                        # Remove o prefixo do modelo
+                        campo_metrica = col[len(rotulo) + 1:]
+                        break
+                
+                if not campo_metrica:
+                    continue
+                
+                # Extrai campo e métrica do sufixo campo_metrica
+                partes = campo_metrica.split('_')
+                if len(partes) < 2:
+                    continue
+                
+                # Métrica é sempre a última parte
+                metrica = partes[-1]
+                # Campo é tudo antes da métrica
+                campo = '_'.join(partes[:-1])
+                
+                if campo not in estrutura_campos:
+                    estrutura_campos[campo] = {}
+                if metrica not in estrutura_campos[campo]:
+                    estrutura_campos[campo][metrica] = []
+                
+                estrutura_campos[campo][metrica].append(col)
+            
+            print(f"   📊 Campos identificados: {len(estrutura_campos)} ({', '.join(sorted(estrutura_campos.keys())[:5])}...)")
+            
+            # Gera gráficos por campo e métrica
+            for campo in sorted(estrutura_campos.keys()):
+                for metrica in sorted(estrutura_campos[campo].keys()):
+                    colunas_campo = estrutura_campos[campo][metrica]
+                    
+                    if not colunas_campo:
+                        continue
+                    
+                    # Define nome do arquivo
+                    arquivo_grafico = os.path.join(pasta_saida, 
+                        f'grafico_bp_avaliacaollm_{campo.lower()}_{metrica.lower()}.png')
+                    
+                    # Título
+                    titulos_metricas_campo = {
+                        'P': f'Avaliação LLM - {campo} - Precision',
+                        'R': f'Avaliação LLM - {campo} - Recall',
+                        'F1': f'Avaliação LLM - {campo} - F1-Score'
+                    }
+                    titulo = titulos_metricas_campo.get(metrica, f'Avaliação LLM - {campo} - {metrica}')
+                    
+                    # Agrupa colunas por modelo
+                    colunas_por_modelo = []
+                    aliases_ordenados = []
+                    
+                    for rotulo in rotulos_modelos:
+                        col_modelo = f'{rotulo}_{campo}_{metrica}'
+                        if col_modelo in colunas_campo:
+                            colunas_por_modelo.append(col_modelo)
+                            aliases_ordenados.append(rotulo)
+                    
+                    if not colunas_por_modelo:
+                        continue
+                    
+                    # Configura gráfico boxplot
+                    configuracao = {
+                        titulo: {
+                            'df': df_campos,
+                            'colunas': colunas_por_modelo,
+                            'alias': aliases_ordenados,
+                            'x': 'Modelo',
+                            'y': metrica,
+                            'agregacao': 'boxplot',
+                            'paleta': paleta_enum,
+                            'ylim': (0, 1) if metrica in ['P', 'R', 'F1'] else None,
+                            'dropnan': True,
+                            'rotacao_labels': 0 if len(aliases_ordenados) <= 5 else 45
+                        }
+                    }
+                    
+                    # Gera gráfico
+                    try:
+                        UtilGraficos.grafico_multi_colunas(
+                            configuracao=configuracao,
+                            plots_por_linha=1,
+                            paleta_cores=paleta_enum,
+                            arquivo_saida=arquivo_grafico
+                        )
+                        arquivos_gerados.append(arquivo_grafico)
+                        print(f"   ✓ Gráfico gerado: {os.path.basename(arquivo_grafico)}")
+                    except Exception as e:
+                        print(f"⚠️  Erro ao gerar gráfico de avaliação LLM por campo ({campo}/{metrica}): {e}")
         
         if len(arquivos_gerados) > 0:
             print(f"✅ {len(arquivos_gerados)} gráficos de avaliação LLM gerados em: {pasta_saida}")
