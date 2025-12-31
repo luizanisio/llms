@@ -24,6 +24,8 @@ Como usar:
     # Para obter estatísticas do serviço.
     stats = service.get_stats() 
 
+    ENV: BERTSCORE_DEVICE=cuda (para usar gpu)
+
 """
 try:
     from bert_score import score
@@ -55,7 +57,7 @@ if UtilEnv.carregar_env('.env', pastas=['../','./']):
 _locais_ = [f'{_}_bertmodels/' for _ in ['./','../'] if os.path.isdir(f'{_}_bertmodels/')]
 PASTA_LOCAL = _locais_[0] if len(_locais_)>0 else './_bertmodels/'
 VERBOSE_BATCH_SIZE = 5
-BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE')
+BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE') or 'cpu'
 try:
     BERTSCORE_TIMEOUT = int(os.getenv('BERTSCORE_TIMEOUT', '300'))
 except ValueError:

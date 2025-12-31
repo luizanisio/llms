@@ -184,3 +184,4 @@ src/analises_json*
 experimentos/agentes-esp-acordao/saidas**
 .github/agents/Documentação.agent.md
 experimentos/agentes-esp-acordao/log_openai_resposta_bruta.txt
+experimentos/agentes-esp-acordao/_bertmodels*

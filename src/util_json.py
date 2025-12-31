@@ -1620,6 +1620,9 @@ class JsonAnaliseDataFrame():
         
         # Define nome do arquivo MD baseado no arquivo de exportação
         self._arquivo_exemplos_md = arquivo_exemplos
+        # cria a pasta do arquivo se não existir
+        pasta_arquivo = os.path.dirname(self._arquivo_exemplos_md)
+        os.makedirs(pasta_arquivo, exist_ok=True)
 
         # Cria cabeçalho do arquivo
         try:

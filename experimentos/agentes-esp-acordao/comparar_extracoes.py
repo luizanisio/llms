@@ -16,7 +16,7 @@ Seleciona métricas apropriadas para cada tipo de campo conforme filosofia docum
 import os
 import sys
 
-sys.path.extend(['./utils','./src','../../src'])
+sys.path.extend(['./utils','./src','../../src'])  # adiciona pastas de utilitários ao path
 import regex as re
 from util import UtilEnv, Util
 UtilEnv.carregar_env('.env', pastas=['../','./'])
@@ -24,12 +24,16 @@ UtilEnv.carregar_env('.env', pastas=['../','./'])
 from util_json import JsonAnaliseDataFrame
 from util_json_carga import CargaDadosComparacao
 from util_bertscore import configurar_bertscore_workers
-''' 
-  CONSTANTES E CONFIGURAÇÕES DE VARIÁVEIS DE AMBIENTE
-'''
+
 max_workers_bert = UtilEnv.get_int('BERT_WORKERS', 10)
 MAX_WORKERS_ANALISE = UtilEnv.get_int('MAX_WORKERS_ANALISE', 10)
 PASTA_ENTRADA_RAIZ = os.getenv('PASTA_ENTRADA_RAIZ') or './saidas/'
+f''' 
+  CONSTANTES E CONFIGURAÇÕES DE VARIÁVEIS DE AMBIENTE
+  - `{MAX_WORKERS_ANALISE}`: número máximo de workers para análise paralela
+  - `{PASTA_ENTRADA_RAIZ}`: pasta raíz de entrada dos espelhos
+  - `{max_workers_bert}`: número de workers para BERTScore
+'''
 configurar_bertscore_workers(max_workers = max_workers_bert)
 '''
 Compara com JsonAnalise os espelhos RAW, base e extrações feitas pelos agentes.
@@ -85,6 +89,7 @@ def base_gpt5_g():
     ORIGEM = 'espelhos_base_gpt5/'
     TESTE = True # não usa bertscore para teste rápido
 base_gpt5()
+
 assert len(DESTINOS) == len(D_ROTULOS), 'Número de destinos e rótulos deve ser igual!'
 ORIGEM = os.path.join(PASTA_ENTRADA_RAIZ, ORIGEM)
 DESTINOS = [os.path.join(PASTA_ENTRADA_RAIZ, d) for d in DESTINOS]
@@ -95,7 +100,7 @@ print('Destinos:', DESTINOS)
 print('Saída:', PASTA_SAIDA_COMPARACAO)
 assert os.path.isdir(ORIGEM), f'Pasta de origem "{ORIGEM}" não existe!'
 for d in DESTINOS:
-    assert os.path.isdir(d), f'Pasta de destino "{d}" não existe: {d}'
+    assert os.path.isdir(d), f'Pasta de destinos "{d}" não existe!'
 
 # Configuração otimizada para nova estrutura JsonAnalise (sem metrica_global)
 CONFIG_COMPARACAO = {
@@ -228,7 +233,7 @@ if __name__ == '__main__':
             analisador.gerar_graficos_de_excel(arquivo_excel, pasta_saida=PASTA_SAIDA_COMPARACAO)
             exit(0)
     
-    SO_LLM_AS_A_JUDGE = True  # Define como True para usar LLM as a Judge
+    SO_LLM_AS_A_JUDGE = False  # Define como True para usar LLM as a Judge
     if SO_LLM_AS_A_JUDGE:
         # Apenas atualiza as análises de LLM as a Judge do Excel existente
         if os.path.isfile(arquivo_excel):
