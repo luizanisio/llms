@@ -51,25 +51,37 @@ RAZÕES:
    gerando múltiplas perspectivas onde necessário (ex: teseJuridica tem tanto
    semântica profunda quanto precisão de fraseamento).
 '''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONSTANTES PADRÃO (reduz duplicação nos cenários)
+# ═══════════════════════════════════════════════════════════════════════════════
+ROTULO_ID_PADRAO = 'id'
+CAMPOS_COMPARACAO_PADRAO = [
+    'jurisprudenciaCitada', 'notas', 'informacoesComplementares', 
+    'termosAuxiliares', 'teseJuridica', 'tema', 'referenciasLegislativas'
+]
+
+# Variáveis globais configuradas pelos cenários
 ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO, ROTULO_ID, ROTULO_ORIGEM = None, None, None, None, None, None, None
 TESTE = False
+
 def base_raw():
     global ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO, ROTULO_ID, ROTULO_ORIGEM
     ORIGEM = 'espelhos_raw/'
     DESTINOS = ['espelhos_base_gpt5/', 'espelhos_agentes_gpt5/', 'espelhos_base_gemma3_12b/', 'espelhos_agentes_gemma3_12b/', 'espelhos_base_gemma3_27b/', 'espelhos_agentes_gemma3_27b/']
     D_ROTULOS = ['base_gpt5','agentes_gpt5','base_gemma3(12)','agentes_gemma3(12)','base_gemma3(27)','agentes_gemma3(27)']
-    ROTULO_ID = 'id'
+    ROTULO_ID = ROTULO_ID_PADRAO
     ROTULO_ORIGEM = 'RAW'
-    CAMPOS_COMPARACAO = ['jurisprudenciaCitada','notas','informacoesComplementares', 'termosAuxiliares', 'teseJuridica', 'tema', 'referenciasLegislativas']
+    CAMPOS_COMPARACAO = CAMPOS_COMPARACAO_PADRAO
     PASTA_SAIDA_COMPARACAO = 'analises_comparacao_raw/'
 def base_gpt5():
     global ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO, ROTULO_ID, ROTULO_ORIGEM
     ORIGEM = 'espelhos_base_gpt5/'
     DESTINOS = ['espelhos_agentes_gpt5/', 'espelhos_base_gemma3_12b/', 'espelhos_agentes_gemma3_12b/', 'espelhos_base_gemma3_27b/', 'espelhos_agentes_gemma3_27b/']
     D_ROTULOS = ['agentes_gpt5','base_gemma3(12)','agentes_gemma3(12)','base_gemma3(27)','agentes_gemma3(27)']
-    ROTULO_ID = 'id'
+    ROTULO_ID = ROTULO_ID_PADRAO
     ROTULO_ORIGEM = 'base_gpt5'
-    CAMPOS_COMPARACAO = ['jurisprudenciaCitada','notas','informacoesComplementares', 'termosAuxiliares', 'teseJuridica', 'tema', 'referenciasLegislativas']
+    CAMPOS_COMPARACAO = CAMPOS_COMPARACAO_PADRAO
     PASTA_SAIDA_COMPARACAO = 'analises_comparacao_base_gpt5/'
 def base_gpt5_p():
     base_gpt5()
@@ -161,6 +173,25 @@ if TESTE:
     Util.pausa(3)
 
 
+def _buscar_metricas_globais(stats):
+    """
+    Busca métricas globais F1 nas estatísticas, com fallback inteligente.
+    
+    Args:
+        stats: DataFrame de estatísticas do analisador
+    
+    Returns:
+        DataFrame filtrado com métricas globais F1, ou DataFrame vazio se não encontrar
+    """
+    # Tenta ROUGE-2 primeiro (métrica padrão preferida)
+    f1_global = stats[stats['metrica'] == '(global)_rouge2_F1']
+    
+    if len(f1_global) == 0:
+        # Fallback: tenta qualquer (global)_*_F1
+        f1_global = stats[stats['metrica'].str.contains(r'\(global\)_.*_F1', regex=True)]
+    
+    return f1_global
+
     
 if __name__ == '__main__':
     ''' realiza a comparação das extrações dos espelhos na pasta ORIGEM com as extrações nas pastas DESTINOS
@@ -218,8 +249,22 @@ if __name__ == '__main__':
         max_workers=MAX_WORKERS_ANALISE,
         incluir_valores_analise=True,  # incluir valores nos JSONs de análise
         gerar_exemplos_md=True,  # Gera arquivo Markdown com exemplos
-        max_exemplos_md_por_metrica=5  # Máximo de 5 exemplos por métrica
+        max_exemplos_md_por_metrica=5,  # Máximo de 5 exemplos por métrica
+        gerar_relatorio=True  # Gera relatório markdown
     )
+    
+    # Configura informações do relatório
+    if analisador.relatorio:
+        titulo_experimento = f"Comparação {ROTULO_ORIGEM} vs Modelos"
+        descricao_experimento = f"Análise comparativa de extrações JSON usando múltiplas métricas (BERTScore, ROUGE, Levenshtein)"
+        analisador.relatorio.set_overview(
+            titulo=titulo_experimento,
+            descricao=descricao_experimento,
+            rotulos=analisador.rotulos,
+            total_documentos=len(dados_analise.dados),
+            campos_comparacao=CAMPOS_COMPARACAO
+        )
+        analisador.relatorio.set_config(CONFIG_COMPARACAO, CAMPOS_COMPARACAO)
 
     # Define nome base dos arquivos (usado pelos métodos de exportação)
     nome_arquivo_base = 'comparacao_extracoes'
@@ -276,11 +321,8 @@ if __name__ == '__main__':
             for _, row in f1_tecnica.iterrows():
                 print(f"      {row['modelo']:15s}: Mean={row['mean']:.4f}, Median={row['median']:.4f}, Std={row['std']:.4f}")
     
-    # Mostra melhor métrica global (tenta ROUGE-2 primeiro, depois qualquer outra)
-    f1_global = stats[stats['metrica'] == '(global)_rouge2_F1']
-    if len(f1_global) == 0:
-        # Fallback: tenta qualquer (global)_*_F1
-        f1_global = stats[stats['metrica'].str.contains(r'\(global\)_.*_F1', regex=True)]
+    # Busca métricas globais usando função auxiliar
+    f1_global = _buscar_metricas_globais(stats)
     
     # Mostra comparação de modelos (usa métrica disponível)
     if len(f1_global) > 0:
@@ -322,14 +364,15 @@ if __name__ == '__main__':
     print(f"   Total de campos comparados: {len(CAMPOS_COMPARACAO)}")
     print(f"   Campos: {', '.join(CAMPOS_COMPARACAO[:3])}...")
     
-    # Melhor modelo por F1 (usa qualquer métrica global disponível)
+    # Melhor modelo por F1 (reutiliza f1_global já calculado)
     if len(f1_global) > 0:
-        modelo_vencedor = f1_global.loc[f1_global['mean'].idxmax(), 'modelo']
-        f1_vencedor = f1_global.loc[f1_global['mean'].idxmax(), 'mean']
+        idx_vencedor = f1_global['mean'].idxmax()
+        modelo_vencedor = f1_global.loc[idx_vencedor, 'modelo']
+        f1_vencedor = f1_global.loc[idx_vencedor, 'mean']
         metrica_vencedor = f1_global.iloc[0]['metrica']
         print(f"\n🏆 Melhor modelo ({metrica_vencedor}): {modelo_vencedor} (Mean={f1_vencedor:.4f})")
         
-        # Mostra também outras técnicas do vencedor
+        # Mostra todas as métricas globais do vencedor (reutiliza padrão de busca)
         print(f"\n   Todas as métricas do modelo vencedor ({modelo_vencedor}):")
         stats_vencedor = stats[(stats['modelo'] == modelo_vencedor) & (stats['metrica'].str.contains(r'\(global\)_.*_F1', regex=True))]
         for _, row in stats_vencedor.iterrows():

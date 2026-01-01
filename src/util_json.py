@@ -70,7 +70,7 @@ import json
 import re
 import os, sys
 import numpy as np
-from typing import Any, Dict, List, Tuple, Union, Iterable
+from typing import Any, Dict, List, Tuple, Union, Iterable, Optional
 from tqdm import tqdm
 import hashlib
 from copy import deepcopy
@@ -84,6 +84,7 @@ from util_pandas import UtilPandasExcel
 from util_graficos import UtilGraficos, Cores
 from util_bertscore import bscore
 from util_json_dados import JsonAnaliseDados
+from util_json_relatorio import JsonAnaliseRelatorio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # OTIMIZAÇÃO: Variável global para controlar inicialização do BERTScore
@@ -1100,7 +1101,8 @@ class JsonAnaliseDataFrame():
                  filtro_callable = None,
                  incluir_valores_analise: bool = False,
                  gerar_exemplos_md: bool = True,
-                 max_exemplos_md_por_metrica: int = 5):
+                 max_exemplos_md_por_metrica: int = 5,
+                 gerar_relatorio: bool = True):
         importar('pandas')
         
         # Valida que recebeu JsonAnaliseDados
@@ -1136,6 +1138,12 @@ class JsonAnaliseDataFrame():
         self._exemplos_lock = threading.Lock()  # Thread-safe para append
         self._arquivo_exemplos_md = None  # Será definido na exportação
         self._lock = threading.Lock()  # Lock global para escrita thread-safe
+        
+        # Relatório de análise
+        self.gerar_relatorio = gerar_relatorio
+        self.relatorio: Optional[JsonAnaliseRelatorio] = None
+        if gerar_relatorio:
+            self.relatorio = JsonAnaliseRelatorio(pasta_saida=pasta_analises)
     
     # ═════════════════════════════════════════════════════════════════════════
     # Properties para acesso aos dados via dados_analise
@@ -2530,7 +2538,103 @@ class JsonAnaliseDataFrame():
             if self.observabilidade is not None and len(self.observabilidade) > 0:
                 self.gerar_graficos_observabilidade(arquivo_excel=None)
         
+        # Salva relatório se habilitado
+        if self.gerar_relatorio and self.relatorio:
+            # Adiciona arquivo Excel aos arquivos gerados
+            arquivos_gerados = [arquivo]
+            # Adiciona arquivos CSV se existirem
+            arquivo_csv = arquivo.replace('.xlsx', '.csv')
+            if os.path.exists(arquivo_csv):
+                arquivos_gerados.append(arquivo_csv)
+            arquivo_stats_csv = arquivo.replace('.xlsx', '.estatisticas.csv')
+            if os.path.exists(arquivo_stats_csv):
+                arquivos_gerados.append(arquivo_stats_csv)
+            
+            # Atualiza seção de avaliação LLM se disponível
+            if self.avaliacao_llm is not None and len(self.avaliacao_llm) > 0:
+                df_global, df_campos = self._criar_dataframe_avaliacao_llm()
+                metricas_disponiveis = []
+                if df_global is not None:
+                    metricas_disponiveis = [col.split('_')[-1] for col in df_global.columns if '_' in col and col != self.dados_analise.config.nome_campo_id]
+                    metricas_disponiveis = sorted(set(metricas_disponiveis))
+                
+                self.relatorio.set_avaliacao_llm(
+                    tem_global=df_global is not None,
+                    tem_campos=df_campos is not None,
+                    num_graficos=len([f for f in os.listdir(pasta_saida) if 'avaliacaollm' in f and f.endswith('.png')]) if os.path.exists(pasta_saida) else 0,
+                    metricas_disponiveis=metricas_disponiveis
+                )
+            
+            # Consolida todos os gráficos gerados e atualiza relatório
+            self._consolidar_graficos_relatorio(pasta_saida)
+            
+            self.salvar_relatorio(arquivos_gerados=arquivos_gerados)
+        
         return arquivo
+    
+    def _consolidar_graficos_relatorio(self, pasta_saida: str):
+        """
+        Consolida todos os gráficos PNG da pasta e atualiza o relatório.
+        
+        Args:
+            pasta_saida: pasta onde estão os gráficos
+        """
+        if not self.gerar_relatorio or self.relatorio is None:
+            return
+        
+        import glob
+        
+        # Busca todos os PNGs
+        graficos_png = glob.glob(os.path.join(pasta_saida, '*.png'))
+        
+        if not graficos_png:
+            return
+        
+        # Lista para consolidar todos os gráficos
+        graficos_consolidados = []
+        
+        for arquivo_completo in sorted(graficos_png):
+            nome_arq = os.path.basename(arquivo_completo)
+            
+            # Categoriza e descreve o gráfico
+            if 'tokens' in nome_arq:
+                tipo_token = nome_arq.replace('grafico_tokens_', '').replace('.png', '')
+                categoria = 'Tokens (Consumo)'
+                descricao = f"Consumo de tokens - {tipo_token.upper()}"
+            
+            elif 'avaliacaollm' in nome_arq:
+                # Diferencia global vs por campo
+                if any(c in nome_arq for c in ['_tema_', '_notas_', '_referencias_', '_informacoes_', '_jurisprudencia_', '_tese_', '_termos_']):
+                    partes = nome_arq.replace('grafico_bp_avaliacaollm_', '').replace('.png', '').split('_')
+                    campo = '_'.join(partes[:-1]) if len(partes) > 1 else partes[0]
+                    metrica = partes[-1].upper() if len(partes) > 1 else 'F1'
+                    categoria = 'Avaliação LLM'
+                    descricao = f"Campo: {campo} - {metrica}"
+                else:
+                    metrica = nome_arq.split('_')[-1].replace('.png', '').upper()
+                    categoria = 'Avaliação LLM'
+                    descricao = f"Global - {metrica}"
+            
+            elif 'observabilidade' in nome_arq:
+                metrica = nome_arq.replace('grafico_bp_observabilidade_', '').replace('grafico_observabilidade_', '').replace('.png', '').upper()
+                categoria = 'Observabilidade'
+                descricao = f"{metrica.replace('_', ' ')}"
+            
+            else:
+                # Gráficos de métricas de comparação
+                categoria = 'Métricas de Comparação'
+                # Extrai campo e métrica do nome
+                nome_base = nome_arq.replace('grafico_bp_', '').replace('grafico_comp_', '').replace('grafico_dist_', '').replace('.png', '')
+                descricao = nome_base.replace('_', ' ').title()
+            
+            graficos_consolidados.append({
+                'arquivo': nome_arq,
+                'descricao': descricao,
+                'categoria': categoria
+            })
+        
+        # Atualiza relatório com lista consolidada
+        self.relatorio.set_graficos_completo(graficos_consolidados)
 
     def gerar_graficos_metricas(self, arquivo_excel: str = None, pasta_saida: str = None, 
                                 paleta: str = 'Cividis') -> List[str]:
@@ -4389,6 +4493,68 @@ class JsonAnaliseDataFrame():
                     print(f"   ⚠️  Erro ao remover {caminho_f}: {e}")
             if arquivos_removidos > 0:
                 print(f"   ✓ {arquivos_removidos} arquivo(s) removido(s)")
+    
+    def salvar_relatorio(self, titulo_experimento: str = None, descricao: str = None,
+                        tempo_processamento: float = None, arquivos_gerados: List[str] = None) -> Optional[str]:
+        """
+        Salva relatório markdown da análise.
+        
+        Args:
+            titulo_experimento: título do experimento (opcional)
+            descricao: descrição do objetivo (opcional)
+            tempo_processamento: tempo total em segundos (opcional)
+            arquivos_gerados: lista de arquivos gerados (opcional)
+        
+        Returns:
+            Caminho do arquivo de relatório ou None se relatório desabilitado
+        """
+        if not self.gerar_relatorio or self.relatorio is None:
+            return None
+        
+        # Popula overview se não foi feito ainda
+        if not self.relatorio.secoes['OVERVIEW'] and titulo_experimento:
+            campos_comparacao = self.dados_analise.config.campos_comparacao or []
+            self.relatorio.set_overview(
+                titulo=titulo_experimento,
+                descricao=descricao or 'Análise comparativa de extrações JSON',
+                rotulos=self.rotulos,
+                total_documentos=len(self.dados),
+                campos_comparacao=campos_comparacao
+            )
+        
+        # Popula config se não foi feito ainda
+        if not self.relatorio.secoes['CONFIG'] and self.config:
+            campos_comparacao = self.dados_analise.config.campos_comparacao or []
+            self.relatorio.set_config(self.config, campos_comparacao)
+        
+        # Popula results se disponível
+        if not self.relatorio.secoes['RESULTS']:
+            try:
+                stats = self.estatisticas_globais()
+                
+                # Busca melhor modelo
+                f1_global = stats[stats['metrica'].str.contains(r'\(global\)_.*_F1', regex=True)]
+                melhor_modelo = None
+                if len(f1_global) > 0:
+                    idx_vencedor = f1_global['mean'].idxmax()
+                    melhor_modelo = {
+                        'nome': f1_global.loc[idx_vencedor, 'modelo'],
+                        'metrica': f1_global.loc[idx_vencedor, 'metrica'],
+                        'f1': f1_global.loc[idx_vencedor, 'mean'],
+                        'tecnica': f1_global.loc[idx_vencedor, 'tecnica']
+                    }
+                
+                self.relatorio.set_results(stats, melhor_modelo)
+            except Exception as e:
+                print(f"⚠️  Aviso: Não foi possível gerar estatísticas para relatório: {e}")
+        
+        # Popula footer
+        self.relatorio.set_footer(tempo_processamento, arquivos_gerados)
+        
+        # Salva relatório
+        arquivo_relatorio = self.relatorio.salvar()
+        return arquivo_relatorio
+
         
 class Json2Texto:
     """

@@ -1489,22 +1489,22 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=avaliacao_llm
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Validações básicas
-        self.assertIsNotNone(df_avaliacao)
-        self.assertIn('id_peca', df_avaliacao.columns)
-        self.assertIn('M1_P', df_avaliacao.columns)
-        self.assertIn('M1_R', df_avaliacao.columns)
-        self.assertIn('M1_F1', df_avaliacao.columns)
-        self.assertIn('M1_nota', df_avaliacao.columns)
-        self.assertIn('M1_explicacao', df_avaliacao.columns)
+        # Validações básicas - métricas globais ficam em df_global
+        self.assertIsNotNone(df_global)
+        self.assertIn('id_peca', df_global.columns)
+        self.assertIn('M1_P', df_global.columns)
+        self.assertIn('M1_R', df_global.columns)
+        self.assertIn('M1_F1', df_global.columns)
+        self.assertIn('M1_nota', df_global.columns)
+        self.assertIn('M1_explicacao', df_global.columns)
         
         # Verifica valores
-        self.assertEqual(df_avaliacao['M1_P'].iloc[0], 0.95)
-        self.assertEqual(df_avaliacao['M1_R'].iloc[0], 0.90)
-        self.assertEqual(df_avaliacao['M1_F1'].iloc[0], 0.92)
-        self.assertEqual(df_avaliacao['M1_nota'].iloc[0], 9.5)
+        self.assertEqual(df_global['M1_P'].iloc[0], 0.95)
+        self.assertEqual(df_global['M1_R'].iloc[0], 0.90)
+        self.assertEqual(df_global['M1_F1'].iloc[0], 0.92)
+        self.assertEqual(df_global['M1_nota'].iloc[0], 9.5)
     
     def test_criar_dataframe_avaliacao_llm_multiplos_modelos(self):
         """Testa DataFrame de avaliação com múltiplos modelos"""
@@ -1536,12 +1536,12 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=avaliacao_llm
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Verifica colunas de ambos os modelos
+        # Verifica colunas de ambos os modelos no df_global
         for modelo in ['M1', 'M2']:
             for metrica in ['P', 'R', 'F1', 'nota', 'explicacao']:
-                self.assertIn(f'{modelo}_{metrica}', df_avaliacao.columns)
+                self.assertIn(f'{modelo}_{metrica}', df_global.columns)
     
     def test_criar_dataframe_avaliacao_llm_ordem_colunas(self):
         """Testa que colunas são ordenadas corretamente (P, R, F1, nota, explicacao)"""
@@ -1563,14 +1563,14 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=avaliacao_llm
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Verifica ordem das colunas (id_peca primeiro, depois P, R, F1, nota, explicacao)
+        # Verifica ordem das colunas no df_global (id_peca primeiro, depois P, R, F1, nota, explicacao)
         colunas_esperadas = ['id_peca', 'M1_P', 'M1_R', 'M1_F1', 'M1_nota', 'M1_explicacao']
-        self.assertEqual(list(df_avaliacao.columns), colunas_esperadas)
+        self.assertEqual(list(df_global.columns), colunas_esperadas)
     
     def test_criar_dataframe_avaliacao_llm_vazio(self):
-        """Testa que retorna None quando não há dados de avaliação"""
+        """Testa que retorna (None, None) quando não há dados de avaliação"""
         dados = [{'id': 1, 'True': {'a': 1}, 'M1': {'a': 1}}]
         rotulos = ['id', 'True', 'M1']
         
@@ -1578,8 +1578,9 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=None  # Sem avaliação
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
-        self.assertIsNone(df_avaliacao)
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
+        self.assertIsNone(df_global)
+        self.assertIsNone(df_campos)
     
     def test_criar_dataframe_avaliacao_llm_remove_colunas_vazias(self):
         """Testa que colunas completamente vazias são removidas"""
@@ -1602,12 +1603,12 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=avaliacao_llm
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Colunas com valores significativos devem estar presentes
-        self.assertIn('M1_P', df_avaliacao.columns)
-        self.assertIn('M1_R', df_avaliacao.columns)
-        self.assertIn('M1_F1', df_avaliacao.columns)
+        # Colunas com valores significativos devem estar presentes no df_global
+        self.assertIn('M1_P', df_global.columns)
+        self.assertIn('M1_R', df_global.columns)
+        self.assertIn('M1_F1', df_global.columns)
         
         # Colunas vazias (0, '', None) podem ou não estar presentes
         # dependendo da lógica de remoção
@@ -1644,16 +1645,16 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=avaliacao_llm
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Verifica que tem 2 linhas
-        self.assertEqual(len(df_avaliacao), 2)
+        # Verifica que tem 2 linhas no df_global
+        self.assertEqual(len(df_global), 2)
         
         # Verifica valores da primeira peça
-        self.assertEqual(df_avaliacao[df_avaliacao['id_peca'] == 1]['M1_nota'].iloc[0], 9.5)
+        self.assertEqual(df_global[df_global['id_peca'] == 1]['M1_nota'].iloc[0], 9.5)
         
         # Verifica valores da segunda peça
-        self.assertEqual(df_avaliacao[df_avaliacao['id_peca'] == 2]['M1_nota'].iloc[0], 8.5)
+        self.assertEqual(df_global[df_global['id_peca'] == 2]['M1_nota'].iloc[0], 8.5)
     
     def test_criar_dataframe_avaliacao_llm_sem_id_peca(self):
         """Testa que valida dados de avaliação sem id_peca"""
@@ -1716,8 +1717,8 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             # Verifica que arquivo foi criado
             self.assertTrue(os.path.exists(arquivo_csv))
             
-            # Verifica que arquivo de avaliação LLM foi criado
-            arquivo_avaliacao = arquivo_csv.replace('.csv', '.avaliacao_llm.csv')
+            # Verifica que arquivo de avaliação LLM global foi criado (novo nome)
+            arquivo_avaliacao = arquivo_csv.replace('.csv', '.avaliacao_llm_global.csv')
             self.assertTrue(os.path.exists(arquivo_avaliacao))
             
             # Lê e valida conteúdo
@@ -1811,16 +1812,16 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
             avaliacao_llm=avaliacao_llm
         )
         
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Deve manter colunas com pelo menos um valor não-zero
-        self.assertIn('M1_P', df_avaliacao.columns)  # Tem valores não-zero
+        # Deve manter colunas com pelo menos um valor não-zero no df_global
+        self.assertIn('M1_P', df_global.columns)  # Tem valores não-zero
         
         # R e F1 têm um zero e um não-zero, devem ser mantidos
         # (a lógica atual remove apenas se TODOS forem 0)
-        if 'M1_R' in df_avaliacao.columns:
-            self.assertEqual(df_avaliacao[df_avaliacao['id_peca'] == 1]['M1_R'].iloc[0], 0.0)
-            self.assertEqual(df_avaliacao[df_avaliacao['id_peca'] == 2]['M1_R'].iloc[0], 0.80)
+        if 'M1_R' in df_global.columns:
+            self.assertEqual(df_global[df_global['id_peca'] == 1]['M1_R'].iloc[0], 0.0)
+            self.assertEqual(df_global[df_global['id_peca'] == 2]['M1_R'].iloc[0], 0.80)
     
     def test_avaliacao_llm_com_metricas_por_campo(self):
         """Testa DataFrame de avaliação LLM com métricas por campo"""
@@ -1859,33 +1860,35 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
         )
         
         analisador = JsonAnaliseDataFrame(dados_analise)
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        # Validações básicas
-        self.assertIsNotNone(df_avaliacao)
-        self.assertEqual(len(df_avaliacao), 1)
+        # Validações básicas - agora temos dois DataFrames
+        self.assertIsNotNone(df_global)
+        self.assertIsNotNone(df_campos)
+        self.assertEqual(len(df_global), 1)
+        self.assertEqual(len(df_campos), 1)
         
-        # Verifica métricas globais
-        self.assertIn('M1_P', df_avaliacao.columns)
-        self.assertIn('M1_R', df_avaliacao.columns)
-        self.assertIn('M1_F1', df_avaliacao.columns)
-        self.assertIn('M1_explicacao', df_avaliacao.columns)
+        # Verifica métricas globais no df_global
+        self.assertIn('M1_P', df_global.columns)
+        self.assertIn('M1_R', df_global.columns)
+        self.assertIn('M1_F1', df_global.columns)
+        self.assertIn('M1_explicacao', df_global.columns)
         
-        # Verifica métricas por campo
-        self.assertIn('M1_tema_P', df_avaliacao.columns)
-        self.assertIn('M1_tema_R', df_avaliacao.columns)
-        self.assertIn('M1_tema_F1', df_avaliacao.columns)
-        self.assertIn('M1_notas_P', df_avaliacao.columns)
-        self.assertIn('M1_notas_R', df_avaliacao.columns)
-        self.assertIn('M1_notas_F1', df_avaliacao.columns)
+        # Verifica métricas por campo no df_campos
+        self.assertIn('M1_tema_P', df_campos.columns)
+        self.assertIn('M1_tema_R', df_campos.columns)
+        self.assertIn('M1_tema_F1', df_campos.columns)
+        self.assertIn('M1_notas_P', df_campos.columns)
+        self.assertIn('M1_notas_R', df_campos.columns)
+        self.assertIn('M1_notas_F1', df_campos.columns)
         
-        # Verifica valores
-        self.assertEqual(df_avaliacao['M1_tema_P'].iloc[0], 0.90)
-        self.assertEqual(df_avaliacao['M1_tema_R'].iloc[0], 0.80)
-        self.assertEqual(df_avaliacao['M1_tema_F1'].iloc[0], 0.85)
-        self.assertEqual(df_avaliacao['M1_notas_P'].iloc[0], 0.50)
-        self.assertEqual(df_avaliacao['M1_notas_R'].iloc[0], 0.40)
-        self.assertEqual(df_avaliacao['M1_notas_F1'].iloc[0], 0.44)
+        # Verifica valores por campo
+        self.assertEqual(df_campos['M1_tema_P'].iloc[0], 0.90)
+        self.assertEqual(df_campos['M1_tema_R'].iloc[0], 0.80)
+        self.assertEqual(df_campos['M1_tema_F1'].iloc[0], 0.85)
+        self.assertEqual(df_campos['M1_notas_P'].iloc[0], 0.50)
+        self.assertEqual(df_campos['M1_notas_R'].iloc[0], 0.40)
+        self.assertEqual(df_campos['M1_notas_F1'].iloc[0], 0.44)
     
     def test_avaliacao_llm_ordem_colunas_com_campos(self):
         """Testa ordenação de colunas: globais primeiro, depois por campo"""
@@ -1912,30 +1915,33 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
         
         rotulos = ['id', 'True', 'M1']
         analisador = criar_analisador(dados, rotulos, avaliacao_llm=avaliacao_llm)
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
-        colunas = list(df_avaliacao.columns)
+        # Verifica ordem das colunas no df_global
+        colunas_global = list(df_global.columns)
         
         # Primeira coluna é id_peca
-        self.assertEqual(colunas[0], 'id_peca')
+        self.assertEqual(colunas_global[0], 'id_peca')
         
-        # Métricas globais vêm antes das por campo
-        idx_global_p = colunas.index('M1_P')
-        idx_global_r = colunas.index('M1_R')
-        idx_global_f1 = colunas.index('M1_F1')
-        idx_campo1_p = colunas.index('M1_campo1_P')
+        # Métricas globais: ordem correta P, R, F1, explicacao
+        idx_global_p = colunas_global.index('M1_P')
+        idx_global_r = colunas_global.index('M1_R')
+        idx_global_f1 = colunas_global.index('M1_F1')
         
-        self.assertLess(idx_global_p, idx_campo1_p)
-        self.assertLess(idx_global_r, idx_campo1_p)
-        self.assertLess(idx_global_f1, idx_campo1_p)
-        
-        # Dentro das globais: P, R, F1, explicacao
         self.assertLess(idx_global_p, idx_global_r)
         self.assertLess(idx_global_r, idx_global_f1)
         
+        # Verifica ordem no df_campos (métricas por campo)
+        self.assertIsNotNone(df_campos)
+        colunas_campos = list(df_campos.columns)
+        
+        # Primeira coluna é id_peca
+        self.assertEqual(colunas_campos[0], 'id_peca')
+        
         # Dentro de cada campo: P, R, F1
-        idx_campo1_r = colunas.index('M1_campo1_R')
-        idx_campo1_f1 = colunas.index('M1_campo1_F1')
+        idx_campo1_p = colunas_campos.index('M1_campo1_P')
+        idx_campo1_r = colunas_campos.index('M1_campo1_R')
+        idx_campo1_f1 = colunas_campos.index('M1_campo1_F1')
         self.assertLess(idx_campo1_p, idx_campo1_r)
         self.assertLess(idx_campo1_r, idx_campo1_f1)
     
@@ -1964,17 +1970,26 @@ class TestJsonAnaliseDataFrameAvaliacaoLLM(unittest.TestCase):
         
         rotulos = ['id', 'True', 'M1']
         analisador = criar_analisador(dados, rotulos, avaliacao_llm=avaliacao_llm)
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
+        
+        # Métricas globais devem estar em df_global
+        self.assertIsNotNone(df_global)
+        self.assertIn('M1_P', df_global.columns)
+        self.assertIn('M1_R', df_global.columns)
+        self.assertIn('M1_F1', df_global.columns)
+        
+        # Métricas por campo ficam em df_campos
+        self.assertIsNotNone(df_campos)
         
         # Colunas com None devem ser removidas (todas vazias)
-        self.assertNotIn('M1_tema_P', df_avaliacao.columns)
-        self.assertNotIn('M1_tema_R', df_avaliacao.columns)
-        self.assertNotIn('M1_tema_F1', df_avaliacao.columns)
+        self.assertNotIn('M1_tema_P', df_campos.columns)
+        self.assertNotIn('M1_tema_R', df_campos.columns)
+        self.assertNotIn('M1_tema_F1', df_campos.columns)
         
         # Colunas com valores válidos devem permanecer
-        self.assertIn('M1_notas_P', df_avaliacao.columns)
-        self.assertIn('M1_notas_R', df_avaliacao.columns)
-        self.assertIn('M1_notas_F1', df_avaliacao.columns)
+        self.assertIn('M1_notas_P', df_campos.columns)
+        self.assertIn('M1_notas_R', df_campos.columns)
+        self.assertIn('M1_notas_F1', df_campos.columns)
 
 
 class TestJsonAnaliseObservabilidade(unittest.TestCase):
@@ -2451,16 +2466,16 @@ class TestJsonAnaliseNomeCampoID(unittest.TestCase):
         analisador = JsonAnaliseDataFrame(dados_analise, max_workers=1)
         
         # Cria DataFrame de avaliação LLM
-        df_avaliacao = analisador._criar_dataframe_avaliacao_llm()
+        df_global, df_campos = analisador._criar_dataframe_avaliacao_llm()
         
         # Verifica se DataFrame foi criado
-        self.assertIsNotNone(df_avaliacao, "DataFrame de avaliação LLM não deve ser None")
+        self.assertIsNotNone(df_global, "DataFrame de avaliação LLM global não deve ser None")
         
         # Verifica se a coluna de ID está presente
-        self.assertIn('registro_id', df_avaliacao.columns, "Coluna registro_id deve existir")
+        self.assertIn('registro_id', df_global.columns, "Coluna registro_id deve existir")
         
         # Verifica valor
-        self.assertEqual(df_avaliacao['registro_id'].iloc[0], 'A1')
+        self.assertEqual(df_global['registro_id'].iloc[0], 'A1')
     
     def test_validacao_tokens_com_nome_campo_id_errado(self):
         """Testa se validação detecta campo ID incorreto em tokens"""

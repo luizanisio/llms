@@ -596,12 +596,12 @@ class UtilEnv():
         '''
         if not chave_env: 
             return False
-        _env = os_get_env(chave_env,'')
+        _env = os.getenv(chave_env,'')
         return _env.upper().strip() in ('1','S','SIM','TRUE','T') 
 
     @classmethod
     def teste_rapido(cls):
-        _res = os_get_env('TESTE_RAPIDO','')
+        _res = os.getenv('TESTE_RAPIDO','')
         return _res.upper() in ('1','S','SIM','TRUE') 
 
     @classmethod
@@ -674,7 +674,7 @@ class UtilEnv():
     @classmethod
     def get_int(cls, chave_env, default=0) -> int:
         try:
-            valor = os_get_env(chave_env)
+            valor = os.getenv(chave_env)
             if isinstance(valor,str):
                 return int(valor.strip())
             return default
@@ -684,7 +684,7 @@ class UtilEnv():
     @classmethod
     def get_str(cls, chave_env, default='') -> str:
         try:
-            valor = os_get_env(chave_env)
+            valor = os.getenv(chave_env)
             if isinstance(valor,str):
                 return valor
             return default
