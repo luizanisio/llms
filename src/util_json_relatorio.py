@@ -383,6 +383,38 @@ class JsonAnaliseRelatorio:
 """
         self.secoes['LLM_EVAL'] = conteudo
     
+    def set_observabilidade(self, tem_dados: bool = False, num_graficos: int = 0):
+        """
+        Define seção de observabilidade.
+        
+        Args:
+            tem_dados: se tem dados de observabilidade
+            num_graficos: número de gráficos gerados
+        """
+        if not tem_dados:
+            self.secoes['OBSERVABILIDADE'] = ''
+            return
+        
+        conteudo = f"""## 📊 Observabilidade
+
+**Métricas de execução:**
+- **SEG** - Tempo de execução em segundos
+- **REV** - Número de revisões/tentativas realizadas
+- **IT** - Iterações executadas no processamento
+- **AGT** - Número de agentes utilizados
+- **QTD** - Quantidade de campos preenchidos (somente origem)
+- **BYTES** - Tamanho dos dados por campo em bytes (somente origem)
+- **OK** - Status de sucesso da execução (0=erro, 1=sucesso)
+
+**Gráficos gerados:** {num_graficos} boxplots
+
+**Aba no Excel:**
+- `Observabilidade`: Métricas de execução por modelo/agente
+
+---
+"""
+        self.secoes['OBSERVABILIDADE'] = conteudo
+    
     def set_footer(self, tempo_processamento: Optional[float] = None,
                    arquivos_gerados: Optional[List[str]] = None):
         """
@@ -438,7 +470,7 @@ class JsonAnaliseRelatorio:
         conteudo_completo += self._gerar_header(titulo)
         
         # Adiciona seções na ordem
-        ordem = ['OVERVIEW', 'CONFIG', 'RESULTS', 'GRAPHICS', 'LLM_EVAL', 'FOOTER']
+        ordem = ['OVERVIEW', 'CONFIG', 'RESULTS', 'GRAPHICS', 'OBSERVABILIDADE', 'LLM_EVAL', 'FOOTER']
         for secao in ordem:
             if self.secoes[secao]:
                 conteudo_completo += self._wrap_section(secao, self.secoes[secao])

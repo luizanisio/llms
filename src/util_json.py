@@ -2565,6 +2565,14 @@ class JsonAnaliseDataFrame():
                     metricas_disponiveis=metricas_disponiveis
                 )
             
+            # Atualiza seção de observabilidade se disponível
+            if self.observabilidade is not None and len(self.observabilidade) > 0:
+                num_graficos_obs = len([f for f in os.listdir(pasta_saida) if 'observabilidade' in f.lower() and f.endswith('.png')]) if os.path.exists(pasta_saida) else 0
+                self.relatorio.set_observabilidade(
+                    tem_dados=True,
+                    num_graficos=num_graficos_obs
+                )
+            
             # Consolida todos os gráficos gerados e atualiza relatório
             self._consolidar_graficos_relatorio(pasta_saida)
             
