@@ -21,15 +21,15 @@ Exemplo:
 """
 
 import sys
-from util_prompt import UtilLMM, Prompt
+from util_prompt import Prompt, UtilLLM
 from util import UtilEnv
 import os
 
 # Carrega as variáveis do arquivo .env se existirem
 
 token = None
-if UtilEnv.carregar():
-    token = UtilEnv.get_str('hf')
+if UtilEnv.carregar_env(pastas = ['./', '../']):
+    token = UtilEnv.get_str('HF_TOKEN')
 if token:
     print('* Token do hugging face CARREGADO!')
 else:
@@ -40,7 +40,7 @@ def imprimir_modelos_disponiveis():
   print("Você deve especificar um modelo na linha de comando.")
   print("Exemplo de uso: python seu_script.py <nome_do_modelo>")
   
-  UtilLMM.print_atalhos()
+  UtilLLM.print_atalhos()
     
 def main():
   """
@@ -55,9 +55,11 @@ def main():
     # Encerra o programa se nenhum modelo for fornecido
     return
   
+  # avalia os parâmetros fornecidos, se o termo unsloth for encontrado, ativa o modo unsloth
   modelo = sys.argv[1]
+  modo_unsloth = 'unsloth' in sys.argv[2:] if len(sys.argv) > 2 else False
   
-  p =  Prompt(modelo=modelo, max_seq_length = 4096, token = token)
+  p =  Prompt(modelo=modelo, max_seq_length = 4096, usar_unsloth=modo_unsloth)
 
   while True:
     print('===========================================================')
