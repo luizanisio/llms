@@ -40,8 +40,6 @@ import time
 import atexit
 import os
 
-from networkx import dedensify
-
 # Força o método 'spawn' para evitar problemas com fork em bibliotecas CUDA/PyTorch
 try:
     if get_start_method(allow_none=True) != 'spawn':
