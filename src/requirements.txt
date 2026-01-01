@@ -1,6 +1,6 @@
 # llms
 tqdm
-regex
+regex==2025.11.3
 transformers==4.51.3
 unsloth==2025.5.6
 unsloth_zoo==2025.5.7
@@ -8,17 +8,17 @@ vllm==0.8.5.post1
 ipywidgets==8.1.7
 matplotlib==3.10.3
 deepdiff
-fuzzywuzzy
+fuzzywuzzy==0.18.0
 tensorboardX==2.6.2.2
 tiktoken==0.9.0
-xlsxwriter
-pandas
+xlsxwriter==3.2.9
+pandas==2.3.3
 openpyxl==3.1.5
 
 # JsonAnalise
-bert_score
-rouge-score
-python-Levenshtein
+bert_score==0.3.13
+rouge-score==0.1.2
+python-Levenshtein==0.27.3
 
 # Util
 cryptography
