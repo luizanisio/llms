@@ -100,7 +100,7 @@ def base_gpt5_g():
     global ORIGEM, TESTE
     ORIGEM = 'espelhos_base_gpt5/'
     TESTE = True # não usa bertscore para teste rápido
-base_gpt5_p()
+base_gpt5()
 
 assert len(DESTINOS) == len(D_ROTULOS), 'Número de destinos e rótulos deve ser igual!'
 ORIGEM = os.path.join(PASTA_ENTRADA_RAIZ, ORIGEM)
@@ -192,7 +192,93 @@ def _buscar_metricas_globais(stats):
     
     return f1_global
 
+
+def processar_analise_estatistica(dados_analise, pasta_saida):
+    """
+    Executa a análise estatística (LLM-as-a-Judge) usando a classe AnaliseEstatistica.
+    """
+    print("\n📊 Iniciando Análise Estatística (LLM-as-a-Judge)...")
+    # Importa da nova localização em src (já no path)
+    try:
+        from util_analise_estatistica import AnaliseEstatistica
+    except ImportError:
+        # Fallback se não encontrar no path padrão, tenta adicionar ../src
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
+        from util_analise_estatistica import AnaliseEstatistica
+        
+    import pandas as pd
     
+    lista_dados = []
+    
+    # Lookups agora são feitos via métodos do objeto dados_analise
+    pk = dados_analise.config.nome_campo_id
+
+    # Definição EXPLICITA dos pares para análise (Base vs Agentes da mesma família)
+    # Tuplas: (Nome Família/Relatório, Rótulo Base, Rótulo Agente)
+    PARES_ANALISE = [
+        ('GPT-5',            'base_gpt5',        'agentes_gpt5'),
+        ('Gemma 3 12b',      'base_gemma3(12)',  'agentes_gemma3(12)'),
+        ('Gemma 3 27b',      'base_gemma3(27)',  'agentes_gemma3(27)')
+    ]
+    
+    # Iterar sobre cada PAR definido
+    for nome_familia, rotulo_base, rotulo_agente in PARES_ANALISE:
+        print(f"   Processando família: {nome_familia} ({rotulo_base} vs {rotulo_agente})...")
+        
+        # Verifica se os rótulos existem nos dados
+        if rotulo_base not in dados_analise.rotulos or rotulo_agente not in dados_analise.rotulos:
+            print(f"      ⚠️  Saltando {nome_familia}: rótulos não encontrados nos dados.")
+            continue
+
+        # Para cada peça carregada
+        for item in dados_analise.dados:
+            id_peca = item.get(pk)
+            if not id_peca: continue
+            
+            # Busca dados nos lookups
+            tokens = dados_analise.get_tokens(id_peca)
+            evals = dados_analise.get_avaliacao(id_peca)
+            
+            # Extrai valores usando os rótulos do PAR
+            v1 = evals.get(f'{rotulo_base}_F1')
+            v2 = evals.get(f'{rotulo_agente}_F1')
+            
+            # Custo (Tokens Total)
+            c1 = tokens.get(f'{rotulo_base}_total', 0)
+            c2 = tokens.get(f'{rotulo_agente}_total', 0)
+            
+            # Fallback para evitar divisão por zero
+            if c1 == 0: c1 = 1 
+            if c2 == 0: c2 = 1
+
+            # Só adiciona se tiver avaliação em ambos
+            if v1 is not None and v2 is not None:
+                lista_dados.append({
+                    'valor1': v1, # Base (F1)
+                    'valor2': v2, # Agente (F1)
+                    'custo1': c1, # Base (Tokens)
+                    'custo2': c2, # Agente (Tokens)
+                    'familia': nome_familia
+                })
+    
+    if not lista_dados:
+        print("❌ Nenhum dado de avaliação (LLM-as-a-Judge) encontrado para análise estatística.")
+        return
+        
+    print(f"   Total de pares recuperados: {len(lista_dados)}")
+    df_stat = pd.DataFrame(lista_dados)
+    
+    # Configura análise com rótulos genéricos pois agora estamos agrupando corretamente
+    analise = AnaliseEstatistica(df_stat, config={
+        'rotulo1': 'Base',   # Genérico
+        'rotulo2': 'Agente', # Genérico
+        'arquivo_saida': os.path.join(pasta_saida, 'relatorio_analise_estatistica.md')
+    })
+    analise.processar_analise()
+    analise.salvar_relatorio()
+    print("\n✅ Análise Estatística concluída.")
+
+
 if __name__ == '__main__':
     ''' realiza a comparação das extrações dos espelhos na pasta ORIGEM com as extrações nas pastas DESTINOS
         todas as pastas devem conter arquivos json nomeados com o id_peca.json, outros arquivos são ignorados
@@ -230,7 +316,12 @@ if __name__ == '__main__':
         print("\n❌ Nenhum dado encontrado para comparação!")
         sys.exit(1)
     
+    SO_ANALISE_ESTATISTICA = False # Configurar conforme necessidade
     
+    if SO_ANALISE_ESTATISTICA:
+        processar_analise_estatistica(dados_analise, PASTA_SAIDA_COMPARACAO)
+        sys.exit(0)
+
     print(f"\n⚙️  Configuração de comparação:")
     print(f"   Campos analisados: {len(CAMPOS_COMPARACAO)}")
     print(f"   Nível de campos: {CONFIG_COMPARACAO.get('nivel_campos')}")
@@ -381,6 +472,10 @@ if __name__ == '__main__':
     else:
         print("\n   ⚠️  Estatísticas não disponíveis para exibir vencedor")
     
+
+    # Gera estatística também se não for só estatística (já que se fosse True teria saído antes)
+    processar_analise_estatistica(dados_analise, PASTA_SAIDA_COMPARACAO)
+
     print("\n" + "=" * 80)
     print("✅ Comparação concluída com sucesso!")
     print(f"📁 Resultados salvos em: {PASTA_SAIDA_COMPARACAO}")

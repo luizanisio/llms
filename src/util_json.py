@@ -2511,11 +2511,14 @@ class JsonAnaliseDataFrame():
         
         excel.save()
         
+        # Define pasta de saída para uso geral (gráficos e relatórios)
+        pasta_saida = self.pasta_analises or '.'
+        
         # Gera gráficos se solicitado
         if gerar_graficos:
             # Limpa gráficos antigos UMA VEZ antes de gerar todos os novos
             import glob
-            pasta_saida = self.pasta_analises or '.'
+            # pasta_saida já definida acima
             graficos_antigos = glob.glob(os.path.join(pasta_saida, 'grafico_*.png'))
             if graficos_antigos:
                 print(f"   🧹 Removendo {len(graficos_antigos)} gráficos antigos...")

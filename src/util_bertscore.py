@@ -39,6 +39,8 @@ from multiprocessing import cpu_count
 import time
 import atexit
 import os
+import hashlib
+import json
 
 # Força o método 'spawn' para evitar problemas com fork em bibliotecas CUDA/PyTorch
 try:
@@ -54,6 +56,7 @@ if UtilEnv.carregar_env('.env', pastas=['../','./']):
 
 _locais_ = [f'{_}_bertmodels/' for _ in ['./','../'] if os.path.isdir(f'{_}_bertmodels/')]
 PASTA_LOCAL = _locais_[0] if len(_locais_)>0 else './_bertmodels/'
+ARQUIVO_CACHE = os.path.join(PASTA_LOCAL, 'cache_bertscore.csv')
 VERBOSE_BATCH_SIZE = 5
 BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE') or 'cpu'
 try:
@@ -126,6 +129,177 @@ def configurar_bertscore_workers(workers: int = None, max_workers: int = None):
     _BERTSCORE_MAX_WORKERS_CONFIG = max_workers
     return True
 
+class BERTScoreCache:
+    """
+    Gerencia o cache de resultados do BERTScore para evitar recálculos desnecessários.
+    
+    O cache é baseado no hash md5 dos textos (hipótese e referência).
+    A ordem dos textos não importa para o armazenamento: (A, B) é armazenado igual a (B, A),
+    mas recuperado com P e R trocados se necessário.
+    """
+    def __init__(self, cache_dir: str = None):
+        """
+        Inicializa o gerenciador de cache.
+        
+        Args:
+            cache_dir: Diretório para salvar os arquivos de cache.
+                       Se None, usa BERTSCORE_CACHE_PATH ou padrão local.
+        """
+        if cache_dir is None:
+            cache_dir = os.environ.get('BERTSCORE_CACHE_PATH')
+        
+        if not cache_dir:
+            # PASTA_LOCAL é variável global deste módulo
+            cache_dir = os.path.join(PASTA_LOCAL, 'bs_cache')
+            
+        self.cache_dir = cache_dir
+        self._ensure_dir()
+        
+    def _ensure_dir(self):
+        """Garante que o diretório de cache existe."""
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        except OSError:
+            pass # Pode falhar em concorrência, mas se existir ok
+
+    def _get_key_info(self, text1: str, text2: str) -> dict:
+        """
+        Calcula hashes e informações para chave de cache.
+        Normaliza a ordem para garantir que (A,B) e (B,A) gerem a mesma chave.
+        """
+        # Garante string e encoding
+        t1_str = str(text1)
+        t2_str = str(text2)
+        b1 = t1_str.encode('utf-8')
+        b2 = t2_str.encode('utf-8')
+        
+        h1 = hashlib.md5(b1).hexdigest()
+        h2 = hashlib.md5(b2).hexdigest()
+        
+        # Ordenação determinística
+        swapped = False
+        if h1 > h2:
+            swapped = True
+            h_first, h_second = h2, h1
+            bytes_first, bytes_second = len(b2), len(b1)
+        else:
+            h_first, h_second = h1, h2
+            bytes_first, bytes_second = len(b1), len(b2)
+            
+        filename = f"{h_first}-{h_second}.json"
+        filepath = os.path.join(self.cache_dir, filename)
+        
+        return {
+            'filepath': filepath,
+            'swapped': swapped,
+            'bytes1': bytes_first,
+            'bytes2': bytes_second,
+            'h1': h1,
+            'h2': h2
+        }
+
+    def get_batch(self, preds: List[str], trues: List[str]) -> Tuple[
+            List[float], List[float], List[float], 
+            List[int], List[str], List[str], List[dict]]:
+        """
+        Recupera resultados do cache para uma lista de pares.
+        
+        Returns:
+            Tuple contendo:
+            - Listas de P, R, F1 (preenchidas com None onde não achou)
+            - Lista de índices originais dos itens não encontrados
+            - Lista de preds não encontrados
+            - Lista de trues não encontrados
+            - Lista de metadados para salvar os não encontrados depois
+        """
+        n = len(preds)
+        final_P = [None] * n
+        final_R = [None] * n
+        final_F1 = [None] * n
+        
+        missed_indices = []
+        missed_preds = []
+        missed_trues = []
+        missed_meta = []
+
+        for i, (p, t) in enumerate(zip(preds, trues)):
+            info = self._get_key_info(p, t)
+            filepath = info['filepath']
+            swapped = info['swapped']
+            
+            loaded = False
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    if self._validate_cache_data(data, info):
+                        p_val = data['P']
+                        r_val = data['R']
+                        f1_val = data['F1']
+                        
+                        # Se cache é (A,B) e pedimos (B,A): P_ba = R_ab, R_ba = P_ab
+                        if swapped:
+                            p_val, r_val = r_val, p_val
+                            
+                        final_P[i] = p_val
+                        final_R[i] = r_val
+                        final_F1[i] = f1_val
+                        loaded = True
+                except Exception:
+                    pass # Erro de leitura/parse = cache miss
+
+            if not loaded:
+                missed_indices.append(i)
+                missed_preds.append(p)
+                missed_trues.append(t)
+                missed_meta.append(info)
+                
+        return final_P, final_R, final_F1, missed_indices, missed_preds, missed_trues, missed_meta
+
+    def _validate_cache_data(self, data: dict, info: dict) -> bool:
+        """Valida se os dados do cache correspondem ao esperado."""
+        required_keys = ['P', 'R', 'F1', 'bytes1', 'bytes2']
+        if not all(k in data for k in required_keys):
+            return False
+            
+        # Verificação simples de colisão/integridade por tamanho
+        if data['bytes1'] != info['bytes1'] or data['bytes2'] != info['bytes2']:
+            return False
+            
+        return True
+
+    def save_batch(self, meta_list: List[dict], P_list: List[float], R_list: List[float], F1_list: List[float], verbose: bool = False):
+        """Salva novos resultados no cache."""
+        for i, meta in enumerate(meta_list):
+            filepath = meta['filepath']
+            swapped = meta['swapped']
+            
+            p_val = P_list[i]
+            r_val = R_list[i]
+            f1_val = F1_list[i]
+            
+            # Se swapped, o resultado calculado foi (B,A).
+            # Para salvar (A,B), invertemos P e R.
+            p_save, r_save = p_val, r_val
+            if swapped:
+                p_save, r_save = r_val, p_val
+                
+            data = {
+                "P": p_save,
+                "R": r_save,
+                "F1": f1_val,
+                "bytes1": meta['bytes1'],
+                "bytes2": meta['bytes2']
+            }
+            
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f)
+            except Exception as e:
+                if verbose:
+                    print(f"⚠️ [BERTScoreCache] Falha ao salvar {filepath}: {e}")
+
 # ============================================================================
 # Serviço BERTScore global (singleton)
 def bscore(preds: List[str] = None, trues: List[str] = None, 
@@ -160,39 +334,67 @@ def bscore(preds: List[str] = None, trues: List[str] = None,
         # Calcula scores
         P, R, F1 = bscore(['texto 1', 'texto 2'], ['referência 1', 'referência 2'])
     """
-    # Usa configuração global se foi definida
     global _BERTSCORE_WORKERS_CONFIG, _BERTSCORE_MAX_WORKERS_CONFIG
-    if _BERTSCORE_WORKERS_CONFIG is not None:
-        workers = _BERTSCORE_WORKERS_CONFIG
-    if _BERTSCORE_MAX_WORKERS_CONFIG is not None:
-        max_workers = _BERTSCORE_MAX_WORKERS_CONFIG
-    
-    # Inicializa serviço (singleton - só cria uma vez)
-    service = BERTScoreService.get_instance(workers=workers,max_workers=max_workers, lang=lang)
-    
-    # Chamada sem parâmetros: apenas inicializa e retorna
+
+    # Chamada sem parâmetros: inicializa serviço explicitamente e retorna None
     if preds is None or trues is None:
+        if _BERTSCORE_WORKERS_CONFIG is not None:
+            workers = _BERTSCORE_WORKERS_CONFIG
+        if _BERTSCORE_MAX_WORKERS_CONFIG is not None:
+            max_workers = _BERTSCORE_MAX_WORKERS_CONFIG
+        BERTScoreService.get_instance(workers=workers, max_workers=max_workers, lang=lang)
         return None
     
-    # Validação
+    # Validação básica
     if not isinstance(preds, (list, tuple)) or not isinstance(trues, (list, tuple)):
         raise TypeError("preds e trues devem ser listas ou tuplas de strings")
     
     if len(preds) != len(trues):
         raise ValueError(f"preds ({len(preds)}) e trues ({len(trues)}) devem ter o mesmo tamanho")
     
-    # Processa com o serviço
-    try:
-        P, R, F1 = service.processar(preds, trues, verbose=verbose)
-        if isinstance(decimais, int):
-            decimais = max(1, decimais)
-            P = [round(p, decimais) for p in P]
-            R = [round(r, decimais) for r in R]
-            F1 = [round(f1, decimais) for f1 in F1]
-        return P, R, F1
-    except Exception as e:
-        # Re-lança com contexto adicional
-        raise RuntimeError(f"Erro ao calcular BERTScore: {e}") from e
+    
+    # -------------------------------------------------------------------------
+    # USO DO CACHE
+    # -------------------------------------------------------------------------
+    cache = BERTScoreCache()
+    final_P, final_R, final_F1, missed_indices, missed_preds, missed_trues, missed_meta = cache.get_batch(preds, trues)
+
+    # -------------------------------------------------------------------------
+    # PROCESSAMENTO DOS ITENS NÃO ENCONTRADOS NO CACHE
+    # -------------------------------------------------------------------------
+    if missed_preds:
+        # Configuração global (apenas se for inicializar agora)
+        if _BERTSCORE_WORKERS_CONFIG is not None:
+            workers = _BERTSCORE_WORKERS_CONFIG
+        if _BERTSCORE_MAX_WORKERS_CONFIG is not None:
+            max_workers = _BERTSCORE_MAX_WORKERS_CONFIG
+        
+        # Inicializa/Obtém Singleton
+        service = BERTScoreService.get_instance(workers=workers, max_workers=max_workers, lang=lang)
+        
+        try:
+            # Processa em lote
+            mP, mR, mF1 = service.processar(missed_preds, missed_trues, verbose=verbose)
+        except Exception as e:
+            raise RuntimeError(f"Erro ao calcular BERTScore: {e}") from e
+
+        # Distribui resultados na lista final
+        for idx_missed, original_idx in enumerate(missed_indices):
+            final_P[original_idx] = mP[idx_missed]
+            final_R[original_idx] = mR[idx_missed]
+            final_F1[original_idx] = mF1[idx_missed]
+            
+        # Salva no cache
+        cache.save_batch(missed_meta, mP, mR, mF1, verbose=verbose)
+
+    # Arredondamento (para manter compatibilidade com contrato da função)
+    if isinstance(decimais, int):
+        decimais = max(1, decimais)
+        final_P = [round(x, decimais) for x in final_P]
+        final_R = [round(x, decimais) for x in final_R]
+        final_F1 = [round(x, decimais) for x in final_F1]
+
+    return final_P, final_R, final_F1
 
 
 def _worker_process(input_queue, lang: str, worker_id: int):

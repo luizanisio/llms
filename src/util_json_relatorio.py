@@ -68,6 +68,7 @@ class JsonAnaliseRelatorio:
             'RESULTS': '',
             'GRAPHICS': '',
             'LLM_EVAL': '',
+            'OBSERVABILIDADE': '',
             'FOOTER': ''
         }
         

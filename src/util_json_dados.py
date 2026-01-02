@@ -133,6 +133,36 @@ class JsonAnaliseDados:
         self._rotulo_true = rotulos[1]
         self._rotulos_modelos = rotulos[2:]
 
+        # Indexação para acesso rápido
+        pk = self.config.nome_campo_id
+        self._idx_tokens = {d.get(pk): d for d in self.tokens if d.get(pk) is not None}
+        self._idx_avaliacao = {d.get(pk): d for d in self.avaliacao_llm if d.get(pk) is not None}
+
+    def get_tokens(self, id_peca: str, por_mil: bool = True) -> dict:
+        """
+        Retorna dados de tokens para um ID.
+        
+        Args:
+            id_peca: ID do documento
+            por_mil: Se True, divide os valores de tokens por 1000 (padrão=True)
+        """
+        dados = self._idx_tokens.get(id_peca, {})
+        if not dados:
+            return {}
+            
+        if por_mil:
+            dados = dados.copy()
+            for k, v in dados.items():
+                # Divide apenas campos de contagem de tokens
+                if isinstance(v, (int, float)) and any(k.endswith(s) for s in ['_input', '_output', '_total', '_cache', '_reason']):
+                    dados[k] = v / 1000.0
+                    
+        return dados
+
+    def get_avaliacao(self, id_peca: str) -> dict:
+        """Retorna dados de avaliação para um ID."""
+        return self._idx_avaliacao.get(id_peca, {})
+
     @property
     def n_documentos(self) -> int:
         """Retorna o número de documentos a serem analisados"""
