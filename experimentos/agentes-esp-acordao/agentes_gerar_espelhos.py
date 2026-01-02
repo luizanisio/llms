@@ -139,7 +139,7 @@ def gerar_respostas(row, pasta_extracao):
             sessao['sem_espelho'] = sessao.get('sem_espelho', 0) + 1
             registrar_log_inconsistencia(id_peca, 'SEM_ESPELHO', 'Orquestrador não retornou espelho')
         
-        if (sessao.get('concluidos',0)+sessao.get('com_erro',0))  % 10 == 0:
+        if (sessao.get('excecoes',0)+sessao.get('concluidos',0)+sessao.get('existentes',0)+sessao.get('com_erro',0))  % 10 == 0:
             print_sessao()
     except Exception as e:
         sessao['excecoes'] = sessao.get('excecoes', 0) + 1
@@ -175,7 +175,10 @@ if __name__ == '__main__':
     #id_peca = ['202200038900.29.', '202200205729.40.']
     #id_peca = '202200205729.40.'
     id_peca = None
-    
+
+    # Executar extrações em paralelo com threads
+    NUM_THREADS = 10  # Ajuste se precisar
+
     # Define pasta de saída
     
     modelo_azure = False
@@ -188,8 +191,9 @@ if __name__ == '__main__':
         PASTA_EXTRACAO = os.path.join(PASTA_RAIZ, 'espelhos_agentes_gpt5/')
         DATAFRAME_ESPELHOS = os.path.join(PASTA_RAIZ, 'espelhos_acordaos_consolidado_textos.parquet')
     else:
+        NUM_THREADS = 3
         TAMANHO = '12b' # 12b ou 27b
-        MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it'#:floor free nitro'
+        MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it:floor'#:floor free nitro'
         MODELO_ESPELHO_THINK = 'low:low'
         from util_openai import get_resposta
         def def_resposta_router(*args, **kwargs):
@@ -217,8 +221,6 @@ if __name__ == '__main__':
         df = df[df['id_peca'].isin(id_peca)]
         print(f' - filtrado para lista de id_peca, total de {len(df)} peças.')
         
-    # Executar extrações em paralelo com threads
-    NUM_THREADS = 10  # Ajuste se precisar
     # identifica peças únicas para processamento
     print(f'Identificando peças únicas para processamento de {len(df)} peças...')
     pecas_unicas = list(set(df['id_peca']))

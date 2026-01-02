@@ -839,16 +839,25 @@ class AgenteOrquestradorEspelho():
         return False  # Retorna False pois ainda há revisões pendentes
     
     def arquivo_final_valido(self) -> bool:
-        ''' Verifica se o arquivo final já existe e contém dados válidos.
+        ''' Verifica se os arquivos finais já existem e contêm dados válidos.
             
-            Casos válidos:
+            Ambos os arquivos devem existir para considerar extração completa:
+            1. <id_peca>.json - arquivo principal de extração
+            2. <id_peca>.resumo.json - arquivo de resumo de tokens
+            
+            Casos válidos para o arquivo principal:
             1. Arquivo com pelo menos um campo preenchido (teses, jurisprudências, etc)
             2. Arquivo com metadados indicando que não havia campos para extrair (campos_identificados vazio)
             
             Returns:
-                bool: True se o arquivo existe e é válido (com dados ou sem campos identificados), False caso contrário
+                bool: True se ambos os arquivos existem e o principal é válido, False caso contrário
         '''
+        # Verifica se o arquivo principal de extração existe
         if not self.arquivo_resultado or not os.path.exists(self.arquivo_resultado):
+            return False
+        
+        # Verifica se o arquivo de resumo de tokens existe
+        if not self.arquivo_resumo or not os.path.exists(self.arquivo_resumo):
             return False
         
         try:
@@ -921,7 +930,7 @@ class AgenteOrquestradorEspelho():
             except Exception as e:
                 self._registrar_log(f"Erro ao carregar arquivo existente: {str(e)}", 'warning')
                 self._registrar_log("Prosseguindo com a execução")
-        
+
         if self.pasta_observabilidade:
             # limpa saídas anteriores para a peça
             self.limpar_observabilidade()
