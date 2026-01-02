@@ -188,8 +188,8 @@ if __name__ == '__main__':
         PASTA_EXTRACAO = os.path.join(PASTA_RAIZ, 'espelhos_agentes_gpt5/')
         DATAFRAME_ESPELHOS = os.path.join(PASTA_RAIZ, 'espelhos_acordaos_consolidado_textos.parquet')
     else:
-        TAMANHO = '12b'
-        MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it:nitro'#:floor free nitro'
+        TAMANHO = '12b' # 12b ou 27b
+        MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it'#:floor free nitro'
         MODELO_ESPELHO_THINK = 'low:low'
         from util_openai import get_resposta
         def def_resposta_router(*args, **kwargs):

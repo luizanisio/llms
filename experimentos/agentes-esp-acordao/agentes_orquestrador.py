@@ -62,6 +62,7 @@ class Agente():
         self.modelo_think = modelo_think
         self.resposta = None
         self.iteracoes = 0
+        self.erros_consecutivos = 0  # Contador de erros que não consomem iterações
         self.maximo_iteracoes = maximo_iteracoes
         self.texto = None
         self.revisao = None
@@ -91,6 +92,10 @@ class Agente():
             informando o limite atingido e não executa o prompt.
             Caso contrário, executa o prompt e armazena a resposta.
             
+            IMPORTANTE: Erros de execução NÃO consomem iterações.
+            O contador self.iteracoes só é incrementado após execução bem-sucedida.
+            Um contador separado self.erros_consecutivos evita retry infinito.
+            
             Args:
                 texto (str): Texto do acórdão a ser processado
                 revisao (str, optional): Instruções de revisão do agente validador
@@ -103,10 +108,9 @@ class Agente():
         inicio = datetime.now()
         self.texto = texto
         self.revisao = revisao
-        self.iteracoes += 1
         
-        # Verifica se atingiu o máximo de iterações
-        if self.iteracoes > self.maximo_iteracoes:
+        # Verifica se atingiu o máximo de iterações BEM-SUCEDIDAS
+        if self.iteracoes >= self.maximo_iteracoes:
             resultado = {
                 "contribuição": f"Limite de {self.maximo_iteracoes} iterações atingido sem sucesso na validação",
                 "erro": "maximo_iteracoes_atingido"
@@ -118,6 +122,24 @@ class Agente():
                 'fim': datetime.now().isoformat(),
                 'duracao_segundos': (datetime.now() - inicio).total_seconds(),
                 'resultado': 'limite_atingido',
+                'resposta': resultado
+            })
+            return resultado
+        
+        # Verifica se há muitos erros consecutivos (evita retry infinito)
+        max_erros_consecutivos = 3
+        if self.erros_consecutivos >= max_erros_consecutivos:
+            resultado = {
+                "contribuição": f"Limite de {max_erros_consecutivos} erros consecutivos atingido",
+                "erro": "maximo_erros_consecutivos"
+            }
+            self.resposta = resultado
+            self.historico_execucoes.append({
+                'iteracao': self.iteracoes,
+                'inicio': inicio.isoformat(),
+                'fim': datetime.now().isoformat(),
+                'duracao_segundos': (datetime.now() - inicio).total_seconds(),
+                'resultado': 'limite_erros',
                 'resposta': resultado
             })
             return resultado
@@ -137,6 +159,10 @@ class Agente():
             # Não é necessário parsear novamente
             self.resposta = resposta
             
+            # Execução bem-sucedida: incrementa iterações e reseta erros consecutivos
+            self.iteracoes += 1
+            self.erros_consecutivos = 0
+            
             # Registra no histórico
             self.historico_execucoes.append({
                 'iteracao': self.iteracoes,
@@ -151,21 +177,26 @@ class Agente():
             return resposta
             
         except Exception as e:
+            # Erro: NÃO incrementa iterações, mas incrementa erros consecutivos
+            self.erros_consecutivos += 1
+            
             resultado = {
                 "contribuição": f"Erro na execução do agente: {str(e)}",
                 "erro": "exception",
                 "exception_type": type(e).__name__,
-                "exception_message": str(e)
+                "exception_message": str(e),
+                "erros_consecutivos": self.erros_consecutivos
             }
             self.resposta = resultado
             
             self.historico_execucoes.append({
-                'iteracao': self.iteracoes,
+                'iteracao': self.iteracoes,  # Não incrementado - erro não conta
                 'inicio': inicio.isoformat(),
                 'fim': datetime.now().isoformat(),
                 'duracao_segundos': (datetime.now() - inicio).total_seconds(),
                 'resultado': 'erro',
                 'tem_revisao': bool(revisao),
+                'erros_consecutivos': self.erros_consecutivos,
                 'resposta': resultado
             })
             
@@ -186,6 +217,7 @@ class Agente():
         '''
         self.resposta = None
         self.iteracoes = 0
+        self.erros_consecutivos = 0
         self.texto = None
         self.revisao = None
         self.historico_execucoes = []
@@ -767,8 +799,18 @@ class AgenteOrquestradorEspelho():
         # A revisão agora vem com nomes de agentes diretamente (AgenteTeses, AgenteJurisprudenciasCitadas, etc)
         # Não é mais necessário mapear campos para agentes
         
+        # Prepara a ordem de execução das revisões
+        # AgenteTeses deve ser o primeiro pois AgenteJurisprudenciasCitadas depende dele
+        agentes_ordenados = list(revisao.keys())
+        if 'AgenteTeses' in agentes_ordenados:
+            agentes_ordenados.remove('AgenteTeses')
+            agentes_ordenados.insert(0, 'AgenteTeses')
+            
+        self._registrar_log(f"Ordem de execução das revisões: {', '.join(agentes_ordenados)}")
+
         # Reexecuta agentes com revisão
-        for nome_agente, instrucao_revisao in revisao.items():
+        for nome_agente in agentes_ordenados:
+            instrucao_revisao = revisao[nome_agente]
             # Valida se o nome do agente é válido
             if nome_agente not in self._agentes_disponiveis:
                 self._registrar_log(f"Agente '{nome_agente}' não reconhecido - ignorando", 'warning')
