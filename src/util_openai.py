@@ -175,7 +175,7 @@ def get_resposta(prompt:str, papel:str='',
                 conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
                 if conteudo_json is None:
                    resultado['resposta'] = conteudo
-                   resultado['erro'] = f'Erro ao extrair JSON da resposta.'
+                   resultado['erro'] = f'Erro ao extrair JSON da resposta (conteudo=None) (Dict resposta={res_dict}).'
                    resultado['json'] = False
                 else:  
                    resultado['resposta'] = conteudo_json
