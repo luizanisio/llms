@@ -51,10 +51,15 @@ Esta abordagem divide a tarefa entre vários agentes especializados coordenados 
 3. **ETAPA 2**: `AgenteTeses` - Extrai as teses jurídicas (dependência primária)
 4. **ETAPA 2.5**: `AgenteJurisprudenciasCitadas` - Extrai precedentes baseados nas teses extraídas
 5. **ETAPA 3**: Execução Paralela - `AgenteNotas`, `AgenteInformacoesComplementares`, `AgenteTermosAuxiliares`, `AgenteTema` e `AgenteReferenciasLegislativas` rodam simultaneamente
-6. **ETAPA 4**: `AgenteValidacaoFinal` - Consolida e valida todas as extrações
-7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões conforme necessário, reexecutando agentes com erros ou que precisam de ajustes
+6. **ETAPA 4**: `AgenteValidacaoFinal` - Consolida e valida extrações conforme regras de negócio do Manual de Inclusão de Acórdãos do STJ
+7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões, reexecutando agentes que precisam de ajustes
 8. **Consolidação Final**: Monta o espelho final com todos os campos extraídos e metadados
-9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes, permitindo novas tentativas em caso de falha
+9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes
+
+**Tratamento de Erros:**
+- ⚡ Erros de execução (timeout, API, etc.) **NÃO consomem** iterações de revisão
+- Cada agente pode ter até 3 erros consecutivos antes de desistir
+- Apenas execuções bem-sucedidas contam para o limite de iterações
 
 ### Avaliação LLM-as-a-judge
 
@@ -84,3 +89,34 @@ Realiza uma comparação técnica entre as extrações geradas e o *Ground Truth
 - **Dados que a planilha consolida**:
   - Gera relatórios comparativos que permitem visualizar a performance de cada modelo e abordagem (Base vs. Agentes) em relação aos dados oficiais.
   - **📊 [Ver diagramas de métricas e comparação](README_MERMAID.md#5-comparação-de-extrações-métricas-de-similaridade)**
+
+### Análise Estatística
+
+A ferramenta de comparação também gera um relatório estatístico detalhado:
+
+- **Métricas calculadas**:
+  - Estatísticas descritivas (média, mediana, desvio padrão, IQR)
+  - Testes de normalidade (Shapiro-Wilk)
+  - Testes de hipótese (Wilcoxon Signed-Rank, t-test pareado)
+  - Tamanho do efeito (Cohen's d com classificação: pequeno/médio/grande)
+  - Intervalo de confiança a 95%
+
+- **Saídas geradas**:
+  - Arquivo CSV com estatísticas por campo e métrica
+  - Relatório Markdown consolidado
+  - Interpretação automática dos resultados
+
+### Validação de Regras de Negócio
+
+O `AgenteValidacaoFinal` realiza validação **estrutural e de regras de negócio**:
+
+- **Validação por campo**:
+  - `teseJuridica`: Verifica se tese consta na EMENTA, tem correlação com RELATÓRIO/VOTO, contém os 4 elementos obrigatórios
+  - `jurisprudenciaCitada`: Valida que precedentes estão citados no texto e associados a teses existentes
+  - `referenciasLegislativas`: Verifica prequestionamento para REsp/AREsp
+  - `notas`: Confere formatos do Manual (valores monetários com centavos e extenso)
+  - `tema`: Valida número e tribunal (STF para RG, STJ para Repetitivo)
+
+- **Instruções de revisão**:
+  - São injetadas na tag `<REVISAO>` de cada agente
+  - Específicas e acionáveis (ex: "Remova a Tese T2 pois não consta na EMENTA")

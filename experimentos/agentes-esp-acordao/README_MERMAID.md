@@ -12,7 +12,8 @@
 6. [Comparação de Extrações (Métricas de Similaridade)](#6-comparação-de-extrações-métricas-de-similaridade)
 7. [Fluxo de Métricas por Campo](#7-fluxo-de-métricas-por-campo)
 8. [Observabilidade do Sistema de Agentes](#8-observabilidade-do-sistema-de-agentes)
-9. [Principais Classes Utilitárias](#9-principais-classes-utilitárias)
+9. [Análise Estatística](#9-análise-estatística)
+10. [Principais Classes Utilitárias](#10-principais-classes-utilitárias)
 
 ---
 
@@ -101,10 +102,15 @@ flowchart TD
 3. **ETAPA 2**: `AgenteTeses` - Extrai as teses jurídicas (dependência primária)
 4. **ETAPA 2.5**: `AgenteJurisprudenciasCitadas` - Extrai precedentes baseados nas teses extraídas
 5. **ETAPA 3**: Execução Paralela - `AgenteNotas`, `AgenteInformacoesComplementares`, `AgenteTermosAuxiliares`, `AgenteTema` e `AgenteReferenciasLegislativas` rodam simultaneamente
-6. **ETAPA 4**: `AgenteValidacaoFinal` - Consolida e valida todas as extrações
-7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões conforme necessário, reexecutando agentes com erros ou que precisam de ajustes
+6. **ETAPA 4**: `AgenteValidacaoFinal` - Valida extrações conforme regras de negócio do Manual de Inclusão de Acórdãos do STJ
+7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões, reexecutando agentes que precisam de ajustes
 8. **Consolidação Final**: Monta o espelho final com todos os campos extraídos e metadados
-9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes, permitindo novas tentativas em caso de falha
+9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes
+
+**⚡ Tratamento de Erros:**
+- Erros de execução (timeout, API, etc.) **NÃO consomem** iterações de revisão
+- Cada agente pode ter até 3 erros consecutivos antes de desistir
+- Apenas execuções bem-sucedidas contam para o limite de 3 iterações
 
 ---
 
@@ -155,9 +161,11 @@ classDiagram
         +prompt_base: str
         +modelo: str
         +iteracoes: int
+        +erros_consecutivos: int
         +preparar_prompt()
         +executar()
         +get_resposta()
+        +resetar()
     }
     
     class AgenteOrquestradorEspelho {
@@ -186,6 +194,7 @@ classDiagram
     class AgenteValidacaoFinal {
         PROMPT_VALIDACAO_FINAL
         preparar_prompt(saidas_agentes)
+        +valida regras de negócio
     }
     
     Agente <|-- AgenteCampos
@@ -194,6 +203,10 @@ classDiagram
     Agente <|-- AgenteValidacaoFinal
     AgenteOrquestradorEspelho --> Agente : coordena
 ```
+
+**Notas sobre a classe Agente:**
+- `iteracoes`: Contador de execuções **bem-sucedidas** (máx 3)
+- `erros_consecutivos`: Contador de erros que **não consomem** iterações (máx 3 consecutivos)
 
 ---
 
@@ -327,7 +340,50 @@ flowchart TD
 
 ---
 
-## 9. Principais Classes Utilitárias
+## 9. Análise Estatística
+
+```mermaid
+flowchart TD
+    A[DataFrame Comparação] --> B[util_analise_estatistica.py]
+    B --> C{Para cada métrica/campo}
+    
+    C --> D1[Estatísticas Descritivas]
+    C --> D2[Testes de Normalidade]
+    C --> D3[Testes de Hipótese]
+    C --> D4[Tamanho do Efeito]
+    
+    D1 --> E1[Média, Mediana<br/>Desvio Padrão, IQR]
+    D2 --> E2[Shapiro-Wilk<br/>p-value]
+    D3 --> E3[Wilcoxon Signed-Rank<br/>t-test pareado]
+    D4 --> E4[Cohen's d<br/>pequeno/médio/grande]
+    
+    E1 & E2 & E3 & E4 --> F[Consolidação]
+    
+    F --> G1[*.estatisticas.csv]
+    F --> G2[*.estatisticas.md]
+    F --> G3[Interpretação Automática]
+    
+    G3 --> H{Diferença<br/>Significativa?}
+    H -->|α < 0.05| I[Reporta tamanho do efeito]
+    H -->|α ≥ 0.05| J[Sem diferença estatística]
+    
+    style B fill:#e1f5ff
+    style D3 fill:#ffebee
+    style D4 fill:#fff4e1
+    style G1 fill:#e8f5e9
+    style G2 fill:#e8f5e9
+```
+
+**Métricas Calculadas:**
+- **Shapiro-Wilk**: Teste de normalidade (p > 0.05 indica distribuição normal)
+- **Wilcoxon Signed-Rank**: Teste não-paramétrico para amostras pareadas
+- **t-test pareado**: Teste paramétrico (quando dados são normais)
+- **Cohen's d**: Tamanho do efeito (<0.20 = pequeno, 0.20-0.50 = médio, >0.80 = grande)
+- **Intervalo de Confiança**: 95% para a diferença média
+
+---
+
+## 10. Principais Classes Utilitárias
 
 ```mermaid
 classDiagram
