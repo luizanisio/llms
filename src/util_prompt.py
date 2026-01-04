@@ -12,6 +12,7 @@ Classes e utilitários para carregar e utilizar modelos de linguagem (LLMs) loca
 incluindo Gemma, Qwen, DeepSeek, Llama e outros, com suporte a Unsloth.
 """
 
+from typing import Union
 import torch
 import json
 from copy import deepcopy
@@ -100,7 +101,7 @@ class Prompt:
     >>> json_resp = p.prompt_to_json('Liste 3 linguagens: {"linguagens": [...]}}')
     >>> print(json_resp['linguagens'])
     """
-    def __init__(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth:bool = False):
+    def __init__(self, modelo:str, max_seq_length:int = 4096, cache_dir:Union[str, None] = None, usar_unsloth:bool = False):
         # identificando o modelo
         modelo = UtilLLM.atalhos_modelos(modelo)
         self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
@@ -144,7 +145,7 @@ class Prompt:
         
         torch.set_float32_matmul_precision(precision)
 
-    def carregar_model_tokenizer(self, modelo:str, max_seq_length:int = 4096, cache_dir:str|None = None, usar_unsloth = False):
+    def carregar_model_tokenizer(self, modelo:str, max_seq_length:int = 4096, cache_dir:Union[str, None] = None, usar_unsloth = False):
         global FASTMODEL, GETCHATTEMPLATE, AUTTOTOKENIZER, AUTOMODEL, AUTOMODELG, GENCONFIG
         ini=time()
         try:
@@ -526,9 +527,13 @@ class UtilLLM():
         except:
             ver_tr='Transformers version: não disponível'
         print('=' * 30)
-        print(f'Torch version: {torch.__version__} | dynamo cache size: {torch._dynamo.config.cache_size_limit}')
-        if torch._dynamo.config.cache_size_limit < 32:
-           print(' - Considere aumentar o dynamo cache com entradas de tamanhos muito diferentes: torch._dynamo.config.cache_size_limit = 128')
+        try:
+            print(f'Torch version: {torch.__version__} | dynamo cache size: {torch._dynamo.config.cache_size_limit}')
+            if torch._dynamo.config.cache_size_limit < 32:
+                print(' - Considere aumentar o dynamo cache com entradas de tamanhos muito diferentes: torch._dynamo.config.cache_size_limit = 128')
+        except Exception as e:
+            print(f'Torch version: {torch.__version__}')
+            print(f' - Não foi possível verificar o cache do dynamo. >> {e}')
         print(ver_tr)
         print(ver_us)
         print('=' * 30)
