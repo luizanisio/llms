@@ -29,8 +29,21 @@ pares = [
 hipoteses = [par[0] for par in pares]
 referencias = [par[1] for par in pares]
 
+# testa cuda disponível e compatível
+try:
+    score(['a','a'], ['a','a'], lang="pt", verbose=True, device='cuda')
+    device = 'cuda'
+    msg_cuda = "🚀 CUDA disponível e compatível!"
+except Exception as e:
+    device = 'cpu'
+    msg_cuda = "🚩CUDA não disponível ou não compatível!"
+
+print('=-'*20)
+print(msg_cuda)
+print('=-'*20)
+
 # Calcular o BERTScore
-P, R, F1 = score(hipoteses, referencias, lang="pt", verbose=True)
+P, R, F1 = score(hipoteses, referencias, lang="pt", verbose=True, device=device)
 
 Pr, Rr, Fr = [], [], []
 scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
@@ -46,3 +59,7 @@ for i, (h, r) in enumerate(pares):
     print(f"\t - ROUGE-1 F1: {scores['rouge1'].fmeasure:.4f}")
     print(f"\t - ROUGE-2 F1: {scores['rouge2'].fmeasure:.4f}")
     print(f"\t - ROUGE-L F1: {scores['rougeL'].fmeasure:.4f}")
+
+print('=-'*20)
+print(msg_cuda)
+print('=-'*20)

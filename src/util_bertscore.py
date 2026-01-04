@@ -51,34 +51,64 @@ except RuntimeError:
 
 from util import UtilEnv
 if UtilEnv.carregar_env('.env', pastas=['../','./']):
-   BERTSCORE_DEVICE=os.getenv('BERTSCORE_DEVICE')    
-
-
+   pass
+   
 _locais_ = [f'{_}_bertmodels/' for _ in ['./','../'] if os.path.isdir(f'{_}_bertmodels/')]
 PASTA_LOCAL = _locais_[0] if len(_locais_)>0 else './_bertmodels/'
-ARQUIVO_CACHE = os.path.join(PASTA_LOCAL, 'cache_bertscore.csv')
 VERBOSE_BATCH_SIZE = 5
-BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE') or 'cpu'
+
 try:
     BERTSCORE_TIMEOUT = int(os.getenv('BERTSCORE_TIMEOUT', '300'))
 except ValueError:
     BERTSCORE_TIMEOUT = 300
-# assert BERTSCORE_DEVICE =='cuda', 'configuração cuda não ok'
+
 # Configura cache local se PASTA_LOCAL estiver definida
 if PASTA_LOCAL:
     os.makedirs(PASTA_LOCAL, exist_ok=True)
-    os.environ['TRANSFORMERS_CACHE'] = PASTA_LOCAL # deprecated
+    # os.environ['TRANSFORMERS_CACHE'] = PASTA_LOCAL # deprecated - removido
     os.environ['HF_HOME'] = PASTA_LOCAL # atual
 
 # ============================================================================
-# CONFIGURAÇÃO GLOBAL DE WORKERS
+# CONFIGURAÇÃO GLOBAL DE WORKERS E DEVICE
 # ============================================================================
-# Variável global para pré-configurar número de workers antes da inicialização
-# Útil para testes e controle fino do uso de recursos
-_BERTSCORE_WORKERS_CONFIG = None
-_BERTSCORE_MAX_WORKERS_CONFIG = None
+# Helpers para variáveis de ambiente
+def _get_env_int(key, default=None):
+    try:
+        val = os.getenv(key)
+        return int(val) if val is not None else default
+    except ValueError:
+        return default
 
-def configurar_bertscore_workers(workers: int = None, max_workers: int = None):
+# Leitura das variáveis de ambiente
+BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE', 'auto').strip()
+_BERTSCORE_WORKERS_ENV = _get_env_int('BERTSCORE_WORKERS')
+_BERTSCORE_MAX_WORKERS_ENV = _get_env_int('BERTSCORE_MAX_WORKERS')
+
+# Lógica 'auto' para o device
+if BERTSCORE_DEVICE.lower() == 'auto':
+    try:
+        from bert_score import score
+        # Teste simples de predição para verificar GPU
+        # Usa textos mínimos 'a' e 'a' como no exemplo de teste
+        score(['a'], ['a'], lang="pt", verbose=False, device='cuda')
+        BERTSCORE_DEVICE = 'cuda'
+        print("🚀 [BERTScoreService] CUDA detectado e ativado (auto).")
+    except Exception:
+        BERTSCORE_DEVICE = 'cpu'
+        print("⚠️ [BERTScoreService] CUDA não disponível ou erro no teste. Usando CPU (auto).")
+elif BERTSCORE_DEVICE.lower() == 'gpu':
+    BERTSCORE_DEVICE = 'cuda'
+else:
+    # Se não for auto/gpu, mantém o que veio (ex: cpu, cuda:0) ou fallback para cpu se vazio
+    BERTSCORE_DEVICE = BERTSCORE_DEVICE or 'cpu'
+
+# Variável global para pré-configurar número de workers
+# Inicializa com valores do ENV se existirem
+_BERTSCORE_WORKERS_CONFIG = _BERTSCORE_WORKERS_ENV
+_BERTSCORE_MAX_WORKERS_CONFIG = _BERTSCORE_MAX_WORKERS_ENV
+_BERTSCORE_DEVICE_CONFIG = BERTSCORE_DEVICE
+
+def configurar_bertscore_workers(workers: int = None, max_workers: int = None, device: str = None):
     """
     Configura o número de workers do BERTScore ANTES da primeira inicialização.
     
@@ -93,6 +123,7 @@ def configurar_bertscore_workers(workers: int = None, max_workers: int = None):
         max_workers: Limite máximo de workers automáticos
                      - None: sem limite
                      - int positivo: limita workers automáticos a este valor
+        device: dispositivo para o BERTScore
     
     Exemplos:
         # Em testes unitários - limitar a 3 workers para economizar recursos
@@ -118,15 +149,19 @@ def configurar_bertscore_workers(workers: int = None, max_workers: int = None):
     Returns:
         bool: True se configuração foi aplicada, False se serviço já estava inicializado
     """
-    global _BERTSCORE_WORKERS_CONFIG, _BERTSCORE_MAX_WORKERS_CONFIG
+    global _BERTSCORE_WORKERS_CONFIG, _BERTSCORE_MAX_WORKERS_CONFIG, _BERTSCORE_DEVICE_CONFIG
     
     # Verifica se serviço já foi inicializado
     if BERTScoreService._initialized:
-        print("⚠️  [BERTScoreService] Serviço já inicializado. Configuração de workers ignorada.")
+        print(("⚠️  [BERTScoreService] Serviço já inicializado. Configuração de workers ignorada."  
+        + "\n"  + "Workers: " + str(_BERTSCORE_WORKERS_CONFIG)
+        + "\n"  + "Max Workers: " + str(_BERTSCORE_MAX_WORKERS_CONFIG)
+        + "\n"  + "Device: " + str(_BERTSCORE_DEVICE_CONFIG)))
         return False
     
     _BERTSCORE_WORKERS_CONFIG = workers
     _BERTSCORE_MAX_WORKERS_CONFIG = max_workers
+    _BERTSCORE_DEVICE_CONFIG = device
     return True
 
 class BERTScoreCache:
@@ -567,6 +602,17 @@ class BERTScoreService:
         
         if len(hipoteses) != len(referencias):
             raise ValueError("Hipóteses e referências devem ter o mesmo tamanho")
+
+        # Verifica integridade da fila de entrada
+        if self.input_queue is None:
+            with self._lock:
+                if self.input_queue is None:
+                    print("⚠️ [BERTScoreService] input_queue inválida. Tentando reinicializar pool...")
+                    try:
+                        self._cleanup()
+                    except Exception as e:
+                        print(f"Erro no cleanup durante recuperação: {e}")
+                    self._inicializar_pool()
         
         # Incrementa contador thread-safe
         with self._counter_lock:
@@ -628,19 +674,29 @@ class BERTScoreService:
             print("[BERTScoreService] Encerrando serviço...")
             
             # Envia sinal de encerramento para todos os workers
-            for _ in range(self._workers):
-                self.input_queue.put(None)
-            
+            if self.input_queue is not None:
+                try:
+                    for _ in range(self._workers):
+                        self.input_queue.put(None)
+                except Exception as e:
+                    print(f"Erro ao enviar sinal de encerramento (put): {e}")
+
             # Aguarda todos os processos terminarem
             for p in self.processes:
-                p.join(timeout=5)
-                if p.is_alive():
-                    p.terminate()  # Força o encerramento se necessário
+                try:
+                    p.join(timeout=5)
+                    if p.is_alive():
+                        p.terminate()  # Força o encerramento se necessário
+                except Exception as e:
+                    print(f"Erro ao encerrar processo worker: {e}")
             
             self._closed = True
             
             # Encerra o manager
-            self.manager.shutdown()
+            try:
+                self.manager.shutdown()
+            except Exception as e:
+                print(f"Erro ao encerrar manager: {e}")
             
             print("[BERTScoreService] Serviço encerrado")
     

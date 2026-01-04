@@ -186,5 +186,6 @@ experimentos/agentes-esp-acordao/saidas**
 experimentos/agentes-esp-acordao/log_openai_resposta_bruta.txt
 experimentos/agentes-esp-acordao/_bertmodels*
 **_bertmodels*
+**_models*
 analises_json*
 **my_cache*
