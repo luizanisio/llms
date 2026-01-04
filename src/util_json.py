@@ -787,6 +787,9 @@ class JsonAnalise:
         """
         Calcula métricas de similaridade entre dois textos.
         
+        NOTA: Para BERTScore, prefira usar _calcular_bertscore_batch() para processar
+        múltiplos pares em uma única chamada, o que é muito mais eficiente.
+        
         Args:
             texto_pred: texto predito
             texto_true: texto verdadeiro/esperado
@@ -840,6 +843,56 @@ class JsonAnalise:
         
         else:
             raise ValueError(f"Métrica '{metrica}' não suportada")
+
+    @classmethod
+    def _calcular_bertscore_batch(cls, pares: List[Tuple[str, str, str]]) -> Dict[str, dict]:
+        """
+        Calcula BERTScore para múltiplos pares em uma única chamada (batch).
+        
+        OTIMIZAÇÃO: Agrupa todos os pares BERTScore de uma comparação para reduzir
+        o overhead de IPC e melhorar a utilização da GPU. Em vez de N chamadas
+        individuais ao bscore(), faz apenas 1 chamada com N pares.
+        
+        Args:
+            pares: Lista de tuplas (prefixo, texto_pred, texto_true)
+                   - prefixo: identificador único do par (ex: '(global)_bertscore', 'campo_bertscore')
+                   - texto_pred: texto predito
+                   - texto_true: texto verdadeiro/esperado
+        
+        Returns:
+            dict mapeando prefixo -> {'P': float, 'R': float, 'F1': float}
+        
+        Exemplo:
+            pares = [
+                ('(global)_bertscore', 'texto pred 1', 'texto true 1'),
+                ('resumo_bertscore', 'texto pred 2', 'texto true 2'),
+            ]
+            resultados = cls._calcular_bertscore_batch(pares)
+            # {'(global)_bertscore': {'P': 0.85, 'R': 0.82, 'F1': 0.83}, ...}
+        """
+        if not pares:
+            return {}
+        
+        importar('bert_score')
+        
+        # Extrai listas de preds e trues mantendo a ordem
+        prefixos = [p[0] for p in pares]
+        preds = [p[1] for p in pares]
+        trues = [p[2] for p in pares]
+        
+        # Chamada única ao BERTScore com todos os pares
+        P_list, R_list, F1_list = bscore(preds, trues, decimais=3, max_workers=BS_MAX_WORKERS)
+        
+        # Mapeia resultados de volta aos prefixos
+        resultados = {}
+        for i, prefixo in enumerate(prefixos):
+            resultados[prefixo] = {
+                'P': P_list[i],
+                'R': R_list[i],
+                'F1': F1_list[i]
+            }
+        
+        return resultados
 
     @classmethod
     def _acuracia_estrutural(cls, campos_pred: dict, campos_true: dict) -> dict:
@@ -923,6 +976,9 @@ class JsonAnalise:
         """
         Compara dois JSONs calculando métricas com suporte a múltiplas técnicas por campo.
         
+        OTIMIZAÇÃO: Agrupa todos os pares BERTScore e processa em batch único,
+        reduzindo significativamente o tempo de processamento.
+        
         Arquitetura multi-métrica:
         1. Extração de campos por nível (config['nivel_campos'])
         2. Análise global - pode usar múltiplas métricas se (global) estiver nas listas
@@ -956,32 +1012,40 @@ class JsonAnalise:
         campos_pred = cls._extrair_campos_por_nivel(pred_json, nivel_campos)
         campos_true = cls._extrair_campos_por_nivel(true_json, nivel_campos)
         
-        # 2. ANÁLISE GLOBAL - suporta múltiplas métricas
+        # ═════════════════════════════════════════════════════════════════════════
+        # FASE 1: COLETA DE PARES BERTSCORE (para processamento em batch)
+        # ═════════════════════════════════════════════════════════════════════════
+        # Estrutura: lista de (prefixo, texto_pred, texto_true)
+        pares_bertscore = []
+        # Armazena textos para retornar_valores: prefixo -> (texto_pred, texto_true)
+        textos_bertscore = {}
+        
+        # 2. ANÁLISE GLOBAL - coleta pares BERTScore
         metricas_global = cls._determinar_metricas_campo('(global)', config)
         
         for metrica in metricas_global:
-            # Usa método otimizado que alinha + converte em uma única chamada
             texto_true, texto_pred = cls._converter_pares_para_texto(
-                true_json, pred_json, metrica, config, alinhar=False  # Global não usa alinhamento
+                true_json, pred_json, metrica, config, alinhar=False
             )
-            metricas = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
-            
             prefixo = f'(global)_{metrica}'
             
-            # Levenshtein retorna apenas SIM
-            if metrica == 'levenshtein':
-                resultado[f'{prefixo}_SIM'] = metricas['SIM']
+            if metrica == 'bertscore':
+                pares_bertscore.append((prefixo, texto_pred, texto_true))
+                textos_bertscore[prefixo] = (texto_pred, texto_true)
             else:
-                # Outras métricas retornam P, R, F1
-                resultado[f'{prefixo}_P'] = metricas['P']
-                resultado[f'{prefixo}_R'] = metricas['R']
-                resultado[f'{prefixo}_F1'] = metricas['F1']
-            
-            if retornar_valores:
-                resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
+                # Processa imediatamente métricas não-BERTScore
+                metricas = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
+                if metrica == 'levenshtein':
+                    resultado[f'{prefixo}_SIM'] = metricas['SIM']
+                else:
+                    resultado[f'{prefixo}_P'] = metricas['P']
+                    resultado[f'{prefixo}_R'] = metricas['R']
+                    resultado[f'{prefixo}_F1'] = metricas['F1']
+                
+                if retornar_valores:
+                    resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
         
-        # 3. ANÁLISE ESTRUTURAL - suporta múltiplas métricas
-        # IMPORTANTE: Levenshtein não é aplicado em análise estrutural (compara apenas chaves)
+        # 3. ANÁLISE ESTRUTURAL - não usa BERTScore (compara apenas chaves)
         metricas_estrutura = cls._determinar_metricas_campo('(estrutura)', config)
         
         for metrica in metricas_estrutura:
@@ -1005,7 +1069,7 @@ class JsonAnalise:
                         'true': list(campos_true.keys())
                     }
         
-        # 4. ANÁLISE POR CAMPO - cada campo pode ter múltiplas métricas
+        # 4. ANÁLISE POR CAMPO - coleta pares BERTScore
         todos_campos = set(campos_pred.keys()) | set(campos_true.keys())
         
         for campo in sorted(todos_campos):
@@ -1020,10 +1084,8 @@ class JsonAnalise:
                 # Campo ausente: métricas zeradas
                 if valor_pred is None or valor_true is None:
                     if metrica == 'levenshtein':
-                        # Levenshtein retorna apenas SIM
                         resultado[f'{prefixo}_SIM'] = 0.0
                     else:
-                        # Outras métricas retornam P, R, F1
                         resultado[f'{prefixo}_P'] = 0.0
                         resultado[f'{prefixo}_R'] = 0.0
                         resultado[f'{prefixo}_F1'] = 0.0
@@ -1035,26 +1097,43 @@ class JsonAnalise:
                         }
                     continue
                 
-                # ═════════════════════════════════════════════════════════════
-                # CONVERSÃO COM ALINHAMENTO AUTOMÁTICO
-                # Método otimizado: alinha + converte em uma única chamada
-                # ═════════════════════════════════════════════════════════════
+                # Conversão com alinhamento automático
                 texto_true, texto_pred = cls._converter_pares_para_texto(
                     valor_true, valor_pred, metrica, config, alinhar=True
                 )
                 
-                metricas_resultado = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
-                
-                if metrica == 'levenshtein':
-                    # Levenshtein retorna apenas SIM
-                    resultado[f'{prefixo}_SIM'] = metricas_resultado['SIM']
+                if metrica == 'bertscore':
+                    # Coleta para processamento em batch
+                    pares_bertscore.append((prefixo, texto_pred, texto_true))
+                    textos_bertscore[prefixo] = (texto_pred, texto_true)
                 else:
-                    # Outras métricas retornam P, R, F1
-                    resultado[f'{prefixo}_P'] = metricas_resultado['P']
-                    resultado[f'{prefixo}_R'] = metricas_resultado['R']
-                    resultado[f'{prefixo}_F1'] = metricas_resultado['F1']
+                    # Processa imediatamente métricas não-BERTScore
+                    metricas_resultado = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
+                    
+                    if metrica == 'levenshtein':
+                        resultado[f'{prefixo}_SIM'] = metricas_resultado['SIM']
+                    else:
+                        resultado[f'{prefixo}_P'] = metricas_resultado['P']
+                        resultado[f'{prefixo}_R'] = metricas_resultado['R']
+                        resultado[f'{prefixo}_F1'] = metricas_resultado['F1']
+                    
+                    if retornar_valores:
+                        resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
+        
+        # ═════════════════════════════════════════════════════════════════════════
+        # FASE 2: PROCESSAMENTO EM BATCH DO BERTSCORE
+        # ═════════════════════════════════════════════════════════════════════════
+        if pares_bertscore:
+            resultados_bertscore = cls._calcular_bertscore_batch(pares_bertscore)
+            
+            # Distribui resultados para o dict resultado
+            for prefixo, metricas in resultados_bertscore.items():
+                resultado[f'{prefixo}_P'] = metricas['P']
+                resultado[f'{prefixo}_R'] = metricas['R']
+                resultado[f'{prefixo}_F1'] = metricas['F1']
                 
-                if retornar_valores:
+                if retornar_valores and prefixo in textos_bertscore:
+                    texto_pred, texto_true = textos_bertscore[prefixo]
                     resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
         
         return resultado
