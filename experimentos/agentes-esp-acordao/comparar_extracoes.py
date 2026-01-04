@@ -51,10 +51,10 @@ def _inicializar_ambiente():
     from util_bertscore import configurar_bertscore_workers
     
     # Lê variáveis de ambiente
-    # Prioriza variáveis BERTSCORE_* se existirem, fallback para legado BERT_* ou defaults
+    # Prioriza variáveis BERTSCORE_* se existirem
     workers_bert = UtilEnv.get_int('BERTSCORE_WORKERS', 3)
     device_bert = UtilEnv.get_str('BERTSCORE_DEVICE', 'auto')
-    max_workers_bert = UtilEnv.get_int('BERTSCORE_MAX_WORKERS')
+    max_workers_bert = UtilEnv.get_int('BERTSCORE_MAX_WORKERS', 5)
     
     MAX_WORKERS_ANALISE = UtilEnv.get_int('MAX_WORKERS_ANALISE', 10)
     PASTA_ENTRADA_RAIZ = os.getenv('PASTA_ENTRADA_RAIZ') or './saidas/'
