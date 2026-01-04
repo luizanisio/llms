@@ -51,8 +51,11 @@ def _inicializar_ambiente():
     from util_bertscore import configurar_bertscore_workers
     
     # Lê variáveis de ambiente
-    workers_bert = UtilEnv.get_int('BERT_WORKERS', 10)
-    device_bert = UtilEnv.get_str('BERT_DEVICE', 'cpu')
+    # Prioriza variáveis BERTSCORE_* se existirem, fallback para legado BERT_* ou defaults
+    workers_bert = UtilEnv.get_int('BERTSCORE_WORKERS', 3)
+    device_bert = UtilEnv.get_str('BERTSCORE_DEVICE', 'auto')
+    max_workers_bert = UtilEnv.get_int('BERTSCORE_MAX_WORKERS')
+    
     MAX_WORKERS_ANALISE = UtilEnv.get_int('MAX_WORKERS_ANALISE', 10)
     PASTA_ENTRADA_RAIZ = os.getenv('PASTA_ENTRADA_RAIZ') or './saidas/'
     
@@ -61,12 +64,12 @@ def _inicializar_ambiente():
       CONSTANTES E CONFIGURAÇÕES DE VARIÁVEIS DE AMBIENTE
       - `{MAX_WORKERS_ANALISE}`: número máximo de workers para análise paralela
       - `{PASTA_ENTRADA_RAIZ}`: pasta raíz de entrada dos espelhos
-      - `{workers_bert}`: número de workers para BERTScore
+      - `{workers_bert}`: número de workers para BERTScore (Max: {max_workers_bert})
       - `{device_bert}`: dispositivo para BERTScore
     '''
     
     # Configura BERTScore workers ANTES de qualquer uso
-    configurar_bertscore_workers(workers=workers_bert, device=device_bert)
+    configurar_bertscore_workers(workers=workers_bert, max_workers=max_workers_bert, device=device_bert)
     
     return MAX_WORKERS_ANALISE, PASTA_ENTRADA_RAIZ
 
