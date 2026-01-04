@@ -73,4 +73,6 @@ def main():
     print('RESPOSTA:', resposta)
 
 if __name__ == "__main__":
+  # removendo o cache do huggingface
+  #os.system('rm -rf ~/.cache/huggingface')
   main()
