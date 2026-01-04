@@ -24,7 +24,7 @@ Como usar:
     # Para obter estatísticas do serviço.
     stats = service.get_stats() 
 
-    ENV: BERTSCORE_DEVICE=cuda (para usar gpu)
+    ENV: BERTSCORE_DEVICE=cuda (para usar gpu) ou auto para detectar automaticamente
 
 """
 try:
@@ -58,9 +58,9 @@ PASTA_LOCAL = _locais_[0] if len(_locais_)>0 else './_bertmodels/'
 VERBOSE_BATCH_SIZE = 5
 
 try:
-    BERTSCORE_TIMEOUT = int(os.getenv('BERTSCORE_TIMEOUT', '300'))
+    BERTSCORE_TIMEOUT = int(os.getenv('BERTSCORE_TIMEOUT', '600'))
 except ValueError:
-    BERTSCORE_TIMEOUT = 300
+    BERTSCORE_TIMEOUT = 600
 
 # Configura cache local se PASTA_LOCAL estiver definida
 if PASTA_LOCAL:
@@ -491,15 +491,16 @@ class BERTScoreService:
     """
     
     _instance = None
-    _lock = threading.Lock()
+    _condition = threading.Condition()
     _initialized = False
     
     def __new__(cls):
         """Implementa o padrão Singleton."""
         if cls._instance is None:
-            with cls._lock:
+            with cls._condition:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
+                    cls._condition.notify_all()
         return cls._instance
     
     def __init__(self):
@@ -511,7 +512,7 @@ class BERTScoreService:
         self._workers = 5
         self._lang = "pt"
         self._request_counter = 0
-        self._counter_lock = threading.Lock()
+        self._request_condition = threading.Condition()
         self._closed = False
         
         # Pool de workers
@@ -552,13 +553,14 @@ class BERTScoreService:
 
         # Inicializa o pool na primeira vez ou se foi encerrado
         if instance.manager is None or instance._closed:
-            with cls._lock:
+            with cls._condition:
                 if instance.manager is None or instance._closed:
                     instance._workers = workers
                     instance._lang = lang
                     instance._inicializar_pool()
                     _linha = '-' * 30
                     print(f"{_linha}\n 🤖🏳️ [BERTScoreService] Serviço iniciado com {workers} workers (lang={lang}) device ({BERTSCORE_DEVICE})\n{_linha}")
+                    cls._condition.notify_all()
         return instance
     
     def _inicializar_pool(self):
@@ -605,7 +607,7 @@ class BERTScoreService:
 
         # Verifica integridade da fila de entrada
         if self.input_queue is None:
-            with self._lock:
+            with self._request_condition:
                 if self.input_queue is None:
                     print("⚠️ [BERTScoreService] input_queue inválida. Tentando reinicializar pool...")
                     try:
@@ -613,11 +615,13 @@ class BERTScoreService:
                     except Exception as e:
                         print(f"Erro no cleanup durante recuperação: {e}")
                     self._inicializar_pool()
+                    self._request_condition.notify_all()
         
         # Incrementa contador thread-safe
-        with self._counter_lock:
+        with self._request_condition:
             self._request_counter += 1
             request_num = self._request_counter
+            self._request_condition.notify_all()
         
         thread_id = threading.current_thread().name
         if verbose:
@@ -715,11 +719,12 @@ class BERTScoreService:
         
         AVISO: Use com cuidado. Isso força a criação de uma nova instância.
         """
-        with cls._lock:
+        with cls._condition:
             if cls._instance is not None and cls._instance.manager is not None:
                 cls._instance._cleanup()
             cls._instance = None
             cls._initialized = False
+            cls._condition.notify_all()
 
 
 # ============================================================================
@@ -818,7 +823,7 @@ def teste_multithreading():
     n_threads = 5
     resultados = {}
     erros = []
-    lock = threading.Lock()
+    results_condition = threading.Condition()
     
     def worker_thread(thread_id):
         """Função executada por cada thread."""
@@ -828,12 +833,14 @@ def teste_multithreading():
             
             P, R, F1 = service.processar(hipoteses, referencias)
             
-            with lock:
+            with results_condition:
                 resultados[thread_id] = {'F1': F1, 'success': True}
+                results_condition.notify_all()
                 
         except Exception as e:
-            with lock:
+            with results_condition:
                 erros.append((thread_id, str(e)))
+                results_condition.notify_all()
     
     print(f"\nIniciando {n_threads} threads simultâneas...")
     threads = []
@@ -877,7 +884,7 @@ def teste_carga_pesada():
     
     completed = []
     erros = []
-    lock = threading.Lock()
+    results_condition = threading.Condition()
     
     def worker_thread(thread_id):
         """Envia múltiplas requisições."""
@@ -888,12 +895,14 @@ def teste_carga_pesada():
                 
                 P, R, F1 = service.processar(hipoteses, referencias)
                 
-                with lock:
+                with results_condition:
                     completed.append((thread_id, req_id))
+                    results_condition.notify_all()
                     
             except Exception as e:
-                with lock:
+                with results_condition:
                     erros.append((thread_id, req_id, str(e)))
+                    results_condition.notify_all()
     
     print(f"\nIniciando {n_threads} threads com {requests_per_thread} requisições cada...")
     print(f"Total de requisições: {total_requests}")
