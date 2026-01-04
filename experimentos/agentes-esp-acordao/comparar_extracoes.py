@@ -11,30 +11,68 @@ Descrição:
 Compara espelhos extraídos por diferentes abordagens (RAW, base, agentes) e modelos
 (GPT-5, Gemma-3 12b/27b) usando BERTScore, ROUGE-L, ROUGE-2 e Levenshtein.
 Seleciona métricas apropriadas para cada tipo de campo conforme filosofia documentada.
+
+IMPORTANTE:
+-----------
+Os imports e configurações pesadas são isolados em funções/blocos condicionais para
+evitar que os processos workers do BERTScore reimportem configurações desnecessárias.
+Quando multiprocessing usa 'spawn', cada processo filho reimporta o módulo principal.
 """
 
 import os
 import sys
 
-sys.path.extend(['./utils','./src','../../src'])  # adiciona pastas de utilitários ao path
+# Imports leves que não causam problemas com multiprocessing
 import regex as re
-from util import UtilEnv, Util
-UtilEnv.carregar_env('.env', pastas=['../','./'])
 
-from util_json import JsonAnaliseDataFrame
-from util_json_carga import CargaDadosComparacao
-from util_bertscore import configurar_bertscore_workers
+# ============================================================================
+# PROTEÇÃO CONTRA REIMPORTAÇÃO POR WORKERS DO MULTIPROCESSING
+# ============================================================================
+# Verificação se este é o processo principal ou um worker do multiprocessing
+# Processos workers criados por 'spawn' reimportam o módulo, mas não devem
+# executar a inicialização completa do projeto
+_IS_MAIN_PROCESS = __name__ == '__main__' or not hasattr(sys.modules.get('__mp_main__', None), '__file__')
 
-max_workers_bert = UtilEnv.get_int('BERT_WORKERS', 10)
-MAX_WORKERS_ANALISE = UtilEnv.get_int('MAX_WORKERS_ANALISE', 10)
-PASTA_ENTRADA_RAIZ = os.getenv('PASTA_ENTRADA_RAIZ') or './saidas/'
-f''' 
-  CONSTANTES E CONFIGURAÇÕES DE VARIÁVEIS DE AMBIENTE
-  - `{MAX_WORKERS_ANALISE}`: número máximo de workers para análise paralela
-  - `{PASTA_ENTRADA_RAIZ}`: pasta raíz de entrada dos espelhos
-  - `{max_workers_bert}`: número de workers para BERTScore
-'''
-configurar_bertscore_workers(max_workers = max_workers_bert)
+def _inicializar_ambiente():
+    """
+    Inicializa o ambiente do projeto (paths, .env, BERTScore workers).
+    Esta função só deve ser chamada no processo principal.
+    """
+    global MAX_WORKERS_ANALISE, PASTA_ENTRADA_RAIZ
+    
+    # Adiciona paths de utilitários
+    sys.path.extend(['./utils', './src', '../../src'])
+    
+    # Importa e carrega configurações
+    from util import UtilEnv
+    UtilEnv.carregar_env('.env', pastas=['../', './'])
+    
+    # Importa configurador de BERTScore workers
+    from util_bertscore import configurar_bertscore_workers
+    
+    # Lê variáveis de ambiente
+    workers_bert = UtilEnv.get_int('BERT_WORKERS', 10)
+    device_bert = UtilEnv.get_str('BERT_DEVICE', 'cpu')
+    MAX_WORKERS_ANALISE = UtilEnv.get_int('MAX_WORKERS_ANALISE', 10)
+    PASTA_ENTRADA_RAIZ = os.getenv('PASTA_ENTRADA_RAIZ') or './saidas/'
+    
+    # Documenta configurações (f-string apenas para documentação)
+    f''' 
+      CONSTANTES E CONFIGURAÇÕES DE VARIÁVEIS DE AMBIENTE
+      - `{MAX_WORKERS_ANALISE}`: número máximo de workers para análise paralela
+      - `{PASTA_ENTRADA_RAIZ}`: pasta raíz de entrada dos espelhos
+      - `{workers_bert}`: número de workers para BERTScore
+      - `{device_bert}`: dispositivo para BERTScore
+    '''
+    
+    # Configura BERTScore workers ANTES de qualquer uso
+    configurar_bertscore_workers(workers=workers_bert, device=device_bert)
+    
+    return MAX_WORKERS_ANALISE, PASTA_ENTRADA_RAIZ
+
+# Valores padrão para quando importado por workers
+MAX_WORKERS_ANALISE = 10
+PASTA_ENTRADA_RAIZ = './saidas/'
 '''
 Compara com JsonAnalise os espelhos RAW, base e extrações feitas pelos agentes.
 
@@ -100,77 +138,97 @@ def base_gpt5_g():
     global ORIGEM, TESTE
     ORIGEM = 'espelhos_base_gpt5/'
     TESTE = True # não usa bertscore para teste rápido
-base_gpt5()
+# Função para inicializar cenário padrão - chamada apenas no __main__
+# base_gpt5() é o cenário padrão, mas só será executado no processo principal
 
-assert len(DESTINOS) == len(D_ROTULOS), 'Número de destinos e rótulos deve ser igual!'
-ORIGEM = os.path.join(PASTA_ENTRADA_RAIZ, ORIGEM)
-DESTINOS = [os.path.join(PASTA_ENTRADA_RAIZ, d) for d in DESTINOS]
-PASTA_SAIDA_COMPARACAO=os.path.join(PASTA_ENTRADA_RAIZ, PASTA_SAIDA_COMPARACAO)
-print('Pasta raíz:', PASTA_ENTRADA_RAIZ)
-print('Origem:', ORIGEM)
-print('Destinos:', DESTINOS)
-print('Saída:', PASTA_SAIDA_COMPARACAO)
-assert os.path.isdir(ORIGEM), f'Pasta de origem "{ORIGEM}" não existe!'
-for d in DESTINOS:
-    assert os.path.isdir(d), f'Pasta de destinos "{d}" não existe!'
+def _configurar_cenario():
+    """Configura cenário e valida pastas. Chamada apenas no processo principal."""
+    global ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO
+    global ROTULO_ID, ROTULO_ORIGEM, TESTE, CONFIG_COMPARACAO
+    
+    # Seleciona cenário padrão
+    base_gpt5()
+    
+    # Valida configuração
+    assert len(DESTINOS) == len(D_ROTULOS), 'Número de destinos e rótulos deve ser igual!'
+    
+    # Ajusta caminhos com PASTA_ENTRADA_RAIZ
+    ORIGEM = os.path.join(PASTA_ENTRADA_RAIZ, ORIGEM)
+    DESTINOS = [os.path.join(PASTA_ENTRADA_RAIZ, d) for d in DESTINOS]
+    PASTA_SAIDA_COMPARACAO = os.path.join(PASTA_ENTRADA_RAIZ, PASTA_SAIDA_COMPARACAO)
+    
+    print('Pasta raíz:', PASTA_ENTRADA_RAIZ)
+    print('Origem:', ORIGEM)
+    print('Destinos:', DESTINOS)
+    print('Saída:', PASTA_SAIDA_COMPARACAO)
+    
+    assert os.path.isdir(ORIGEM), f'Pasta de origem "{ORIGEM}" não existe!'
+    for d in DESTINOS:
+        assert os.path.isdir(d), f'Pasta de destinos "{d}" não existe!'
+    
+    # Configuração otimizada para nova estrutura JsonAnalise (sem metrica_global)
+    CONFIG_COMPARACAO = {
+        # Nível de campos (1 = apenas raiz, 2 = raiz + 1 nível aninhado)
+        'nivel_campos': 1,
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # CAMPOS COM MÚLTIPLAS MÉTRICAS (análise multidimensional)
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        # BERTScore: similaridade semântica profunda (textos longos)
+        'campos_bertscore': [
+            '(global)',                  # Visão geral do documento
+            'teseJuridica',              # Teses jurídicas complexas + ROUGE-L (semântica + precisão)
+            'notas',                     # Textos descritivos (admite parafraseamento)
+            'termosAuxiliares',          # Lista de termos técnicos + ROUGE-2 (semântica + bigramas)
+            'informacoesComplementares'  # Informações adicionais (texto livre)
+        ],
+        
+        # ROUGE-L: sequências estruturadas (ordem importa)
+        'campos_rouge': [
+            '(global)',                   # Visão geral do documento
+            'jurisprudenciaCitada',       # Citações estruturadas + ROUGE-2 (estrutura + bigramas)
+            'informacoesComplementares',  # Informações adicionais (texto livre)
+            'referenciasLegislativas',    # Referências legais (estrutura Lei/Art/§)
+            'notas',                     # Textos descritivos (admite parafraseamento)
+            'teseJuridica',               # + BERTScore (valida fraseamento legal exato)
+        ],
+        
+        # ROUGE-2: precision de bigramas (fraseamento técnico e termos exatos)
+        'campos_rouge2': [
+            'termosAuxiliares',          # + BERTScore (bigramas técnicos)
+            'tema',                      # Temas como frases curtas
+            'jurisprudenciaCitada',       # Citações estruturadas + ROUGE-2 (estrutura + bigramas)
+            # (global) será adicionado automaticamente aqui se não estiver em outra métrica
+        ],
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # OBSERVAÇÃO: (global) e (estrutura) recebem métricas padrão automáticas:
+        # - (global) → campos_rouge2 (se não especificado em outra lista)
+        # - (estrutura) → campos_rouge1 (se não especificado em outra lista)
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        # Configurações de processamento
+        'padronizar_simbolos': True,    # Normaliza aspas, espaços, case
+        'rouge_stemmer': True           # Usa stemmer no ROUGE para variações morfológicas
+    }
+    
+    if TESTE:
+        # Configuração rápida para testes (sem BERTScore)
+        from util import Util
+        campos_bertscore = CONFIG_COMPARACAO.get('campos_bertscore', [])
+        CONFIG_COMPARACAO['campos_bertscore'] = []
+        CONFIG_COMPARACAO['campos_levenshtein'] = ['termosAuxiliares', 'referenciasLegislativas']
+        campos_bertscore = [_ for _ in campos_bertscore if _ not in CONFIG_COMPARACAO['campos_rouge2']]
+        _linha = '⚠️  ' * 20
+        print(f'\n{_linha}\nModo TESTE ativado: BERTScore desabilitado:\n - campos movidos para Rouge 2: {campos_bertscore}\n{_linha}\n')
+        CONFIG_COMPARACAO['campos_rouge2'] += campos_bertscore
+        Util.pausa(3)
+    
+    return CONFIG_COMPARACAO
 
-# Configuração otimizada para nova estrutura JsonAnalise (sem metrica_global)
-CONFIG_COMPARACAO = {
-    # Nível de campos (1 = apenas raiz, 2 = raiz + 1 nível aninhado)
-    'nivel_campos': 1,
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # CAMPOS COM MÚLTIPLAS MÉTRICAS (análise multidimensional)
-    # ═══════════════════════════════════════════════════════════════════════
-    
-    # BERTScore: similaridade semântica profunda (textos longos)
-    'campos_bertscore': [
-        '(global)',                  # Visão geral do documento
-        'teseJuridica',              # Teses jurídicas complexas + ROUGE-L (semântica + precisão)
-        'notas',                     # Textos descritivos (admite parafraseamento)
-        'termosAuxiliares',          # Lista de termos técnicos + ROUGE-2 (semântica + bigramas)
-        'informacoesComplementares'  # Informações adicionais (texto livre)
-    ],
-    
-    # ROUGE-L: sequências estruturadas (ordem importa)
-    'campos_rouge': [
-        '(global)',                   # Visão geral do documento
-        'jurisprudenciaCitada',       # Citações estruturadas + ROUGE-2 (estrutura + bigramas)
-        'informacoesComplementares',  # Informações adicionais (texto livre)
-        'referenciasLegislativas',    # Referências legais (estrutura Lei/Art/§)
-        'notas',                     # Textos descritivos (admite parafraseamento)
-        'teseJuridica',               # + BERTScore (valida fraseamento legal exato)
-    ],
-    
-    # ROUGE-2: precision de bigramas (fraseamento técnico e termos exatos)
-    'campos_rouge2': [
-        'termosAuxiliares',          # + BERTScore (bigramas técnicos)
-        'tema',                      # Temas como frases curtas
-        'jurisprudenciaCitada',       # Citações estruturadas + ROUGE-2 (estrutura + bigramas)
-        # (global) será adicionado automaticamente aqui se não estiver em outra métrica
-    ],
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # OBSERVAÇÃO: (global) e (estrutura) recebem métricas padrão automáticas:
-    # - (global) → campos_rouge2 (se não especificado em outra lista)
-    # - (estrutura) → campos_rouge1 (se não especificado em outra lista)
-    # ═══════════════════════════════════════════════════════════════════════
-    
-    # Configurações de processamento
-    'padronizar_simbolos': True,    # Normaliza aspas, espaços, case
-    'rouge_stemmer': True           # Usa stemmer no ROUGE para variações morfológicas
-}
-
-if TESTE:
-    # Configuração rápida para testes (sem BERTScore)
-    campos_bertscore = CONFIG_COMPARACAO.get('campos_bertscore', [])
-    CONFIG_COMPARACAO['campos_bertscore'] = []
-    CONFIG_COMPARACAO['campos_levenshtein'] = ['termosAuxiliares', 'referenciasLegislativas']  # usa Levenshtein para termosAuxiliares nos testes
-    campos_bertscore = [_ for _ in campos_bertscore if _ not in CONFIG_COMPARACAO['campos_rouge2']]
-    _linha = '⚠️  ' * 20
-    print(f'\n{_linha}\nModo TESTE ativado: BERTScore desabilitado:\n - campos movidos para Rouge 2: {campos_bertscore}\n{_linha}\n')
-    CONFIG_COMPARACAO['campos_rouge2'] += campos_bertscore
-    Util.pausa(3)
+# Variável global que será inicializada no __main__
+CONFIG_COMPARACAO = None
 
 
 def _buscar_metricas_globais(stats):
@@ -287,6 +345,25 @@ if __name__ == '__main__':
         caso o campo origem seja nulo ou vazio e no destino também, os campos podem ser removidos na comparação
         o resultado é salvo conforme exemplo no arquivo "exemplo_dataframe.py"
     '''
+    
+    # =========================================================================
+    # INICIALIZAÇÃO DO AMBIENTE (APENAS NO PROCESSO PRINCIPAL)
+    # =========================================================================
+    # Isso evita que os workers do multiprocessing reimportem as configurações
+    
+    # 1. Inicializa ambiente (paths, .env, BERTScore workers)
+    MAX_WORKERS_ANALISE, PASTA_ENTRADA_RAIZ = _inicializar_ambiente()
+    
+    # 2. Imports pesados - só após inicialização e apenas no processo principal
+    from util_json import JsonAnaliseDataFrame
+    from util_json_carga import CargaDadosComparacao
+    
+    # 3. Configura cenário (valida pastas, carrega CONFIG_COMPARACAO)
+    CONFIG_COMPARACAO = _configurar_cenario()
+    
+    # =========================================================================
+    # EXECUÇÃO PRINCIPAL
+    # =========================================================================
     
     print("=" * 80)
     print("🔍 COMPARAÇÃO DE EXTRAÇÕES - Espelhos RAW vs Base vs Agentes")
