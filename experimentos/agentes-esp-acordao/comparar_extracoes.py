@@ -47,14 +47,12 @@ def _inicializar_ambiente():
     from util import UtilEnv
     UtilEnv.carregar_env('.env', pastas=['../', './'])
     
-    # Importa configurador de BERTScore workers
-    from util_bertscore import configurar_bertscore_workers
+    # NOTA: BERTScore agora usa implementação simplificada com cache MD5 automático
+    # Não é mais necessário configurar workers - a biblioteca bert_score gerencia internamente
     
     # Lê variáveis de ambiente
-    # Prioriza variáveis BERTSCORE_* se existirem
-    workers_bert = UtilEnv.get_int('BERTSCORE_WORKERS', 3)
+    # BERTSCORE_DEVICE ainda é utilizado pela nova implementação
     device_bert = UtilEnv.get_str('BERTSCORE_DEVICE', 'auto')
-    max_workers_bert = UtilEnv.get_int('BERTSCORE_MAX_WORKERS', 5)
     
     MAX_WORKERS_ANALISE = UtilEnv.get_int('MAX_WORKERS_ANALISE', 10)
     PASTA_ENTRADA_RAIZ = os.getenv('PASTA_ENTRADA_RAIZ') or './saidas/'
@@ -64,12 +62,8 @@ def _inicializar_ambiente():
       CONSTANTES E CONFIGURAÇÕES DE VARIÁVEIS DE AMBIENTE
       - `{MAX_WORKERS_ANALISE}`: número máximo de workers para análise paralela
       - `{PASTA_ENTRADA_RAIZ}`: pasta raíz de entrada dos espelhos
-      - `{workers_bert}`: número de workers para BERTScore (Max: {max_workers_bert})
-      - `{device_bert}`: dispositivo para BERTScore
+      - `{device_bert}`: dispositivo para BERTScore (cuda/cpu/auto)
     '''
-    
-    # Configura BERTScore workers ANTES de qualquer uso
-    configurar_bertscore_workers(workers=workers_bert, max_workers=max_workers_bert, device=device_bert)
     
     return MAX_WORKERS_ANALISE, PASTA_ENTRADA_RAIZ
 
@@ -149,7 +143,7 @@ def _configurar_cenario():
     global ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO
     global ROTULO_ID, ROTULO_ORIGEM, TESTE, CONFIG_COMPARACAO
     
-    # Seleciona cenário padrão
+    # Seleciona cenário padrão >>> Aqui pode ser alterado para testar cenários menores e mais rápidos como o _p
     base_gpt5()
     
     # Valida configuração

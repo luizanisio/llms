@@ -29,9 +29,8 @@ from util_json import JsonAnalise, JsonAnaliseDataFrame, Json2Texto
 from util_json_dados import JsonAnaliseDados
 from util_json_exemplos import JsonAnaliseExemplos
 
-# Configura BERTScore para usar apenas 3 workers nos testes
-from util_bertscore import configurar_bertscore_workers
-configurar_bertscore_workers(workers=3)
+# NOTA: BERTScore agora usa implementação simplificada com cache MD5 automático
+# Não é mais necessário configurar workers
 
 # Função auxiliar para criar JsonAnaliseDataFrame com interface nova
 def criar_analisador(dados, rotulos, config=None, avaliacao_llm=None, tokens=None, **kwargs):

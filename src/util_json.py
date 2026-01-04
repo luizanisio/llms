@@ -87,8 +87,6 @@ from util_json_dados import JsonAnaliseDados
 from util_json_relatorio import JsonAnaliseRelatorio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# OTIMIZAÇÃO: Variável global para controlar inicialização do BERTScore
-BS_MAX_WORKERS = None # definido dinamicamente na classe JsonAnaliseDataFrame
 MAX_STRING_MD = 5000 # tamanho máximo da string nos exemplos de markdown
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -787,8 +785,9 @@ class JsonAnalise:
         """
         Calcula métricas de similaridade entre dois textos.
         
-        NOTA: Para BERTScore, prefira usar _calcular_bertscore_batch() para processar
-        múltiplos pares em uma única chamada, o que é muito mais eficiente.
+        OTIMIZAÇÃO: Para BERTScore, quando chamado após _precalcular_bertscore_global(),
+        usa automaticamente o cache interno (MD5-based) do BERTScore, tornando cálculos
+        subsequentes praticamente instantâneos.
         
         Args:
             texto_pred: texto predito
@@ -805,8 +804,8 @@ class JsonAnalise:
         """
         if metrica == 'bertscore':
             importar('bert_score')
-            # BERTScoreService retorna floats arredondados com decimais=3
-            P, R, F1 = bscore([texto_pred], [texto_true], decimais = 3, max_workers=BS_MAX_WORKERS)
+            # BERTScore com cache MD5 automático - retorna floats arredondados com decimais=3
+            P, R, F1 = bscore([texto_pred], [texto_true], decimais=3)
             return {
                 'P': P[0],
                 'R': R[0],
@@ -853,9 +852,12 @@ class JsonAnalise:
         o overhead de IPC e melhorar a utilização da GPU. Em vez de N chamadas
         individuais ao bscore(), faz apenas 1 chamada com N pares.
         
+        O cache interno do BERTScore (baseado em MD5) automaticamente evita
+        recálculos de pares idênticos.
+        
         Args:
             pares: Lista de tuplas (prefixo, texto_pred, texto_true)
-                   - prefixo: identificador único do par (ex: '(global)_bertscore', 'campo_bertscore')
+                   - prefixo: identificador único do par (ex: '(global)_bertscore')
                    - texto_pred: texto predito
                    - texto_true: texto verdadeiro/esperado
         
@@ -881,7 +883,8 @@ class JsonAnalise:
         trues = [p[2] for p in pares]
         
         # Chamada única ao BERTScore com todos os pares
-        P_list, R_list, F1_list = bscore(preds, trues, decimais=3, max_workers=BS_MAX_WORKERS)
+        # O cache MD5 automático evita recálculos
+        P_list, R_list, F1_list = bscore(preds, trues, decimais=3)
         
         # Mapeia resultados de volta aos prefixos
         resultados = {}
@@ -976,8 +979,9 @@ class JsonAnalise:
         """
         Compara dois JSONs calculando métricas com suporte a múltiplas técnicas por campo.
         
-        OTIMIZAÇÃO: Agrupa todos os pares BERTScore e processa em batch único,
-        reduzindo significativamente o tempo de processamento.
+        OTIMIZAÇÃO: Quando chamado após _precalcular_bertscore_global(), o BERTScore
+        usa automaticamente seu cache interno (baseado em MD5), tornando as comparações
+        de pares já calculados praticamente instantâneas.
         
         Arquitetura multi-métrica:
         1. Extração de campos por nível (config['nivel_campos'])
@@ -1012,15 +1016,7 @@ class JsonAnalise:
         campos_pred = cls._extrair_campos_por_nivel(pred_json, nivel_campos)
         campos_true = cls._extrair_campos_por_nivel(true_json, nivel_campos)
         
-        # ═════════════════════════════════════════════════════════════════════════
-        # FASE 1: COLETA DE PARES BERTSCORE (para processamento em batch)
-        # ═════════════════════════════════════════════════════════════════════════
-        # Estrutura: lista de (prefixo, texto_pred, texto_true)
-        pares_bertscore = []
-        # Armazena textos para retornar_valores: prefixo -> (texto_pred, texto_true)
-        textos_bertscore = {}
-        
-        # 2. ANÁLISE GLOBAL - coleta pares BERTScore
+        # 2. ANÁLISE GLOBAL
         metricas_global = cls._determinar_metricas_campo('(global)', config)
         
         for metrica in metricas_global:
@@ -1029,23 +1025,20 @@ class JsonAnalise:
             )
             prefixo = f'(global)_{metrica}'
             
-            if metrica == 'bertscore':
-                pares_bertscore.append((prefixo, texto_pred, texto_true))
-                textos_bertscore[prefixo] = (texto_pred, texto_true)
+            # Calcula métrica diretamente (BERTScore usará cache se pré-calculado)
+            metricas_resultado = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
+            
+            if metrica == 'levenshtein':
+                resultado[f'{prefixo}_SIM'] = metricas_resultado['SIM']
             else:
-                # Processa imediatamente métricas não-BERTScore
-                metricas = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
-                if metrica == 'levenshtein':
-                    resultado[f'{prefixo}_SIM'] = metricas['SIM']
-                else:
-                    resultado[f'{prefixo}_P'] = metricas['P']
-                    resultado[f'{prefixo}_R'] = metricas['R']
-                    resultado[f'{prefixo}_F1'] = metricas['F1']
-                
-                if retornar_valores:
-                    resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
+                resultado[f'{prefixo}_P'] = metricas_resultado['P']
+                resultado[f'{prefixo}_R'] = metricas_resultado['R']
+                resultado[f'{prefixo}_F1'] = metricas_resultado['F1']
+            
+            if retornar_valores:
+                resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
         
-        # 3. ANÁLISE ESTRUTURAL - não usa BERTScore (compara apenas chaves)
+        # 3. ANÁLISE ESTRUTURAL
         metricas_estrutura = cls._determinar_metricas_campo('(estrutura)', config)
         
         for metrica in metricas_estrutura:
@@ -1069,7 +1062,7 @@ class JsonAnalise:
                         'true': list(campos_true.keys())
                     }
         
-        # 4. ANÁLISE POR CAMPO - coleta pares BERTScore
+        # 4. ANÁLISE POR CAMPO INDIVIDUAL
         todos_campos = set(campos_pred.keys()) | set(campos_true.keys())
         
         for campo in sorted(todos_campos):
@@ -1102,38 +1095,17 @@ class JsonAnalise:
                     valor_true, valor_pred, metrica, config, alinhar=True
                 )
                 
-                if metrica == 'bertscore':
-                    # Coleta para processamento em batch
-                    pares_bertscore.append((prefixo, texto_pred, texto_true))
-                    textos_bertscore[prefixo] = (texto_pred, texto_true)
-                else:
-                    # Processa imediatamente métricas não-BERTScore
-                    metricas_resultado = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
-                    
-                    if metrica == 'levenshtein':
-                        resultado[f'{prefixo}_SIM'] = metricas_resultado['SIM']
-                    else:
-                        resultado[f'{prefixo}_P'] = metricas_resultado['P']
-                        resultado[f'{prefixo}_R'] = metricas_resultado['R']
-                        resultado[f'{prefixo}_F1'] = metricas_resultado['F1']
-                    
-                    if retornar_valores:
-                        resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
-        
-        # ═════════════════════════════════════════════════════════════════════════
-        # FASE 2: PROCESSAMENTO EM BATCH DO BERTSCORE
-        # ═════════════════════════════════════════════════════════════════════════
-        if pares_bertscore:
-            resultados_bertscore = cls._calcular_bertscore_batch(pares_bertscore)
-            
-            # Distribui resultados para o dict resultado
-            for prefixo, metricas in resultados_bertscore.items():
-                resultado[f'{prefixo}_P'] = metricas['P']
-                resultado[f'{prefixo}_R'] = metricas['R']
-                resultado[f'{prefixo}_F1'] = metricas['F1']
+                # Calcula métrica diretamente (BERTScore usará cache se pré-calculado)
+                metricas_resultado = cls._calcular_metrica(texto_pred, texto_true, metrica, config)
                 
-                if retornar_valores and prefixo in textos_bertscore:
-                    texto_pred, texto_true = textos_bertscore[prefixo]
+                if metrica == 'levenshtein':
+                    resultado[f'{prefixo}_SIM'] = metricas_resultado['SIM']
+                else:
+                    resultado[f'{prefixo}_P'] = metricas_resultado['P']
+                    resultado[f'{prefixo}_R'] = metricas_resultado['R']
+                    resultado[f'{prefixo}_F1'] = metricas_resultado['F1']
+                
+                if retornar_valores:
                     resultado[f'{prefixo}_VL'] = {'pred': texto_pred, 'true': texto_true}
         
         return resultado
@@ -1205,10 +1177,6 @@ class JsonAnaliseDataFrame():
         
         self._resultados = None  # Cache do DataFrame
         self._incluir_valores_analise = incluir_valores_analise
-
-        # define o limite de workers do BERTScoreService
-        global BS_MAX_WORKERS
-        BS_MAX_WORKERS = self.max_workers
         
         # Controle de exemplos para Markdown
         self.gerar_exemplos_md = gerar_exemplos_md
@@ -1715,6 +1683,10 @@ class JsonAnaliseDataFrame():
         """
         Compara uma linha (dict) contendo id, True e modelos.
         Retorna dict com id e resultados de comparação para cada modelo.
+        
+        Args:
+            linha: dict com id, True e predições de modelos
+            rotulos: lista de rótulos [id, True, Modelo1, Modelo2, ...]
         """
         rotulo_id = rotulos[0]
         rotulo_true = rotulos[1]
@@ -1746,6 +1718,7 @@ class JsonAnaliseDataFrame():
             
             # Compara usando JsonAnalise.comparar() - sempre inclui valores para poder extrair exemplos
             incluir_valores = self._incluir_valores_analise or self.gerar_exemplos_md
+            
             resultado = JsonAnalise.comparar(
                 pred_json=pred_json,
                 true_json=true_json,
@@ -1850,6 +1823,87 @@ class JsonAnaliseDataFrame():
                         modelo=modelo
                     )
 
+    def _precalcular_bertscore_global(self):
+        """
+        PRÉ-CALCULA TODOS OS BERTScores EM UM ÚNICO BATCH.
+        
+        OTIMIZAÇÃO CRÍTICA: Em vez de cada linha calcular seus pares BERTScore
+        individualmente (causando overhead de IPC e subutilização de GPU),
+        esta função:
+        
+        1. Coleta todos os pares (pred, true) de todas as linhas
+        2. Faz UMA única chamada bscore() com todos os pares
+        3. O cache interno do BERTScore armazena automaticamente os resultados
+        
+        Reduz drasticamente o tempo de processamento quando há muitos documentos.
+        O cache do BERTScore (baseado em MD5) garante que chamadas subsequentes
+        sejam instantâneas.
+        """
+        from util_bertscore import bscore
+        
+        # Verifica se BERTScore está configurado
+        config = self.config or {}
+        campos_bertscore = config.get('campos_bertscore', [])
+        
+        if not campos_bertscore:
+            return  # Nada a fazer
+        
+        print("\n🚀 Pré-calculando BERTScore em batch único para todos os documentos...")
+        
+        # Coleta todos os pares que precisam de BERTScore
+        todos_pares = []  # Lista de (idx_linha, prefixo, pred, true)
+        
+        for idx, linha in enumerate(self.dados):
+            for modelo_idx, modelo in enumerate(self.rotulos[1:], start=1):
+                pred_json = linha.get(modelo)
+                if not isinstance(pred_json, dict):
+                    continue
+                
+                true_json = linha.get(self.rotulos[1])  # Primeira referência
+                if not isinstance(true_json, dict):
+                    continue
+                
+                # Coleta pares para análise global
+                if '(global)' in campos_bertscore:
+                    texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
+                        true_json, pred_json, 'bertscore', config, alinhar=False
+                    )
+                    prefixo = f'{idx}_{modelo}_(global)_bertscore'
+                    todos_pares.append((idx, modelo, '(global)_bertscore', texto_pred, texto_true))
+                
+                # Coleta pares para campos individuais
+                campos_pred = JsonAnalise._extrair_campos_por_nivel(pred_json, config.get('nivel_campos', 1))
+                campos_true = JsonAnalise._extrair_campos_por_nivel(true_json, config.get('nivel_campos', 1))
+                
+                campos_comparacao = config.get('campos_comparacao', [])
+                for campo in campos_comparacao:
+                    if campo in campos_bertscore:
+                        valor_pred = campos_pred.get(campo)
+                        valor_true = campos_true.get(campo)
+                        
+                        if valor_pred is not None or valor_true is not None:
+                            texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
+                                valor_true, valor_pred, 'bertscore', config, alinhar=True
+                            )
+                            prefixo = f'{campo}_bertscore'
+                            todos_pares.append((idx, modelo, prefixo, texto_pred, texto_true))
+        
+        if not todos_pares:
+            print("   ⚠️  Nenhum par BERTScore encontrado")
+            return
+        
+        print(f"   📊 Total de pares coletados: {len(todos_pares)}")
+        
+        # Extrai listas para batch
+        preds = [p[3] for p in todos_pares]
+        trues = [p[4] for p in todos_pares]
+        
+        # ÚNICA CHAMADA AO BERTScore com TODOS os pares
+        print(f"   ⚡ Processando {len(preds)} pares em batch único...")
+        P_list, R_list, F1_list = bscore(preds, trues, decimais=3, verbose=True)
+        
+        print(f"   ✅ BERTScore pré-calculado: {len(P_list)} pares processados e armazenados no cache interno")
+
     def to_df(self):
         """Executa comparações e retorna DataFrame com métricas"""
         import pandas as pd
@@ -1867,6 +1921,11 @@ class JsonAnaliseDataFrame():
                 'analise_exemplos.md'
             )
             self._inicializar_arquivo_md(arquivo_padrao)
+        
+        # ═════════════════════════════════════════════════════════════════════════
+        # OTIMIZAÇÃO CRÍTICA: PRÉ-CALCULA TODOS OS BERTScores EM BATCH ÚNICO
+        # ═════════════════════════════════════════════════════════════════════════
+        self._precalcular_bertscore_global()
         
         # OTIMIZAÇÃO: Para poucos dados (< 10), processa sequencialmente
         # Evita overhead de threads e carregamento múltiplo do BERTScore
