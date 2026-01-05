@@ -81,7 +81,14 @@ class Agente():
             prompt += f'\n\n<REVISAO>\n{revisao}\n</REVISAO>'
         else:
             prompt += f'\n\n<REVISAO> \n</REVISAO>'
-        
+            
+        if self.nome == 'AgenteValidacaoFinal':
+            prompt += f'\n\n<ESTADO_VALIDACAO>\nIteração Atual: {self.iteracoes + 1}\nMáximo Iterações: {self.maximo_iteracoes}\n</ESTADO_VALIDACAO>'
+            
+        if '<--INICIO_TOLERANCIA-->' in prompt:
+            # Tolerância inicia na última iteração para evitar loop infinito
+            prompt = prompt.replace('<--INICIO_TOLERANCIA-->', str(self.maximo_iteracoes))
+            
         return prompt
         
     def executar(self, texto: str, revisao: str = None, callable_modelo = None, contexto_adicional: dict = None):
@@ -719,40 +726,22 @@ class AgenteOrquestradorEspelho():
         '''
         campos = set()
         
-        # Extrai o texto da resposta de forma robusta
+        # Tenta extrair diretamente do caminho esperado: resposta_campos['resposta']['campos']
         texto_resposta = ''
         
         if isinstance(resposta_campos, dict):
-            # Tenta acessar o campo 'resposta' primeiro
-            resposta_agente = resposta_campos.get('resposta', '')
+            # A resposta do modelo geralmente vem dentro de 'resposta' -> 'campos'
+            # Mas às vezes o wrapper já entregou o json parseado no nível raiz
+            resposta_agente = resposta_campos.get('resposta', resposta_campos)
             
-            # Se resposta_agente for dict, procura por campos comuns
             if isinstance(resposta_agente, dict):
-                # Tenta várias chaves possíveis
-                texto_resposta = (
-                    resposta_agente.get('campos', '') or 
-                    resposta_agente.get('contribuição', '') or
-                    resposta_agente.get('contribuicao', '') or
-                    str(resposta_agente)
-                )
-            elif isinstance(resposta_agente, str):
-                # Se for string diretamente, usa ela
-                texto_resposta = resposta_agente
-            else:
-                # Fallback: converte para string
-                texto_resposta = str(resposta_agente)
-            
-            # Se ainda não achou, tenta no nível raiz do dict
-            if not texto_resposta or texto_resposta == str(resposta_agente):
-                texto_resposta = (
-                    resposta_campos.get('campos', '') or
-                    resposta_campos.get('contribuição', '') or
-                    resposta_campos.get('contribuicao', '') or
-                    str(resposta_campos)
-                )
-        else:
-            # Se não for dict, converte para string
-            texto_resposta = str(resposta_campos)
+                texto_resposta = resposta_agente.get('campos', '')
+        
+        # Converte para string (pode vir como lista de strings)
+        texto_resposta = str(texto_resposta)
+        
+        if not isinstance(texto_resposta, str):
+            texto_resposta = str(texto_resposta)
         
         # Log para debug
         self._registrar_log(f"Texto extraído do AgenteCampos (primeiros 500 chars): {texto_resposta[:500]}")

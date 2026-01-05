@@ -4,6 +4,8 @@ Este projeto implementa e compara abordagens para a extração de metadados estr
 
 **📊 [Ver todos os diagramas de fluxo e arquitetura](README_MERMAID.md)**
 
+**📝 [Anotações e boas práticas para reprodução](README_anotacoes_importantes.md)**
+
 ### Como extrair os dados da origem "Dados abertos" do STJ com o "ckan"
 
 O script principal para esta etapa é `ckan_extrair_espelhos.py`.
@@ -52,7 +54,7 @@ Esta abordagem divide a tarefa entre vários agentes especializados coordenados 
 4. **ETAPA 2.5**: `AgenteJurisprudenciasCitadas` - Extrai precedentes baseados nas teses extraídas
 5. **ETAPA 3**: Execução Paralela - `AgenteNotas`, `AgenteInformacoesComplementares`, `AgenteTermosAuxiliares`, `AgenteTema` e `AgenteReferenciasLegislativas` rodam simultaneamente
 6. **ETAPA 4**: `AgenteValidacaoFinal` - Consolida e valida extrações conforme regras de negócio do Manual de Inclusão de Acórdãos do STJ
-7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões, reexecutando agentes que precisam de ajustes
+7. **ETAPA 5**: Loop de Revisão - Processa até 3 ciclos de revisões (configurável), reexecutando agentes que precisam de ajustes
 8. **Consolidação Final**: Monta o espelho final com todos os campos extraídos e metadados
 9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes
 
