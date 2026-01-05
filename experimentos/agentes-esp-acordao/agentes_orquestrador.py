@@ -22,7 +22,7 @@ from threading import Lock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-MAXIMO_ITERACOES = 3
+MAXIMO_ITERACOES = 5
 
 # Mapeamento de tags de campos para nomes de agentes
 MAPEAMENTO_TAGS_AGENTES = {
@@ -118,8 +118,11 @@ class Agente():
         
         # Verifica se atingiu o máximo de iterações BEM-SUCEDIDAS
         if self.iteracoes >= self.maximo_iteracoes:
+            if self.resposta:
+               return self.resposta
+               
             resultado = {
-                "contribuição": f"Limite de {self.maximo_iteracoes} iterações atingido sem sucesso na validação",
+                "contribuição": f"Limite de {self.maximo_iteracoes} iterações atingido sem sucesso",
                 "erro": "maximo_iteracoes_atingido"
             }
             self.resposta = resultado
@@ -303,18 +306,60 @@ class AgenteValidacaoFinal(Agente):
         '''
         prompt = self.prompt_base
         
+        # saidas_agentes pode ser um dict com estrutura {saidas: {...}, campos_aprovados: [...]}
+        # ou um dict simples de saídas (compatibilidade retroativa)
+        campos_aprovados = []
+        saidas = saidas_agentes
+        
+        if isinstance(saidas_agentes, dict):
+            if 'saidas' in saidas_agentes:
+                saidas = saidas_agentes.get('saidas', {})
+                campos_aprovados = saidas_agentes.get('campos_aprovados', [])
+        
         # Inclui as saídas dos agentes para validação
-        if saidas_agentes:
-            saidas_json = json.dumps(saidas_agentes, ensure_ascii=False, indent=2)
+        if saidas:
+            saidas_json = json.dumps(saidas, ensure_ascii=False, indent=2)
             # Substitui ou adiciona as saídas antes do texto
             saidas_txt = f'<SAIDAS_PARCIAIS>\n{saidas_json}\n</SAIDAS_PARCIAIS>'
         else:
             saidas_txt = '<SAIDAS_PARCIAIS>\n{ }\n</SAIDAS_PARCIAIS>'
         
+        # Adiciona lista de campos já aprovados (não devem gerar novas revisões)
+        if campos_aprovados:
+            campos_txt = f'\n<CAMPOS_JA_APROVADOS>\nOs seguintes campos já foram aprovados em iterações anteriores e NÃO DEVEM ser incluídos no dicionário "revisao":\n{", ".join(campos_aprovados)}\n</CAMPOS_JA_APROVADOS>\n'
+        else:
+            campos_txt = ''
+        
         # Adiciona o texto original (contexto mínimo para validações)
         _texto = texto.strip(" \t\n")
         prompt += f'\n<TEXTO>\n{_texto}\n</TEXTO>\n'
-        prompt += f'\n{saidas_txt}\n'        
+        prompt += f'\n{saidas_txt}\n'
+        prompt += campos_txt
+        
+        # Prepara mensagem de estado da validação
+        is_ultima_iteracao = (self.iteracoes + 1) >= self.maximo_iteracoes
+        
+        msg_status = f'\n<ESTADO_VALIDACAO>\nIteração Atual: {self.iteracoes + 1}\nMáximo Iterações: {self.maximo_iteracoes}\n'
+        
+        if is_ultima_iteracao:
+            msg_status += '''
+⚠️ ATENÇÃO: MODO DE TOLERÂNCIA MÁXIMA ATIVADO ⚠️
+Você está na ÚLTIMA TENTATIVA. O objetivo agora é ENCERRAR O PROCESSO para evitar loop infinito.
+1. APROVE a validação (validacao_aprovada: true) se o JSON estiver válido e não houver alucinações graves.
+2. IGNORE erros menores de formatação, estilo, pontuação ou precisão de termos.
+3. SÓ REJEITE se o resultado for COMPLETAMENTE INUTILIZÁVEL (ex: JSON quebrado, campos obrigatórios vazios).
+'''
+        msg_status += '</ESTADO_VALIDACAO>\n'
+        
+        # Injeta no local apropriado (placeholder) ou no final
+        if '<--STATUS_REVISAO-->' in prompt:
+            prompt = prompt.replace('<--STATUS_REVISAO-->', msg_status)
+        else:
+            prompt += f'\n{msg_status}'
+        
+        # Remove placeholder antigo de tolerância se ainda existir (limpeza legacy)
+        if '<--INICIO_TOLERANCIA-->' in prompt:
+            prompt = prompt.replace('<--INICIO_TOLERANCIA-->', str(self.maximo_iteracoes))
         
         return prompt
     
@@ -323,14 +368,20 @@ class AgenteValidacaoFinal(Agente):
         '''
         inicio = datetime.now()
         self.texto = texto
-        self.iteracoes += 1
         
-        if self.iteracoes > self.maximo_iteracoes:
+        # Verifica se atingiu limite ANTES de incrementar
+        if self.iteracoes >= self.maximo_iteracoes:
+            # Se já temos uma resposta anterior, preserva ela!
+            # Atingir o limite não deve descartar o trabalho feito.
+            if self.resposta:
+                self._registrar_log(f"Limite de iterações atingido ({self.maximo_iteracoes}). Mantendo última resposta válida.")
+                return self.resposta
+                
             resultado = {
                 "contribuição": f"Limite de {self.maximo_iteracoes} iterações de validação atingido",
                 "erro": "maximo_iteracoes_atingido"
             }
-            self.resposta = resultado
+            self.resposta = resultado # Só sobrescreve se não tinha nada
             self.historico_execucoes.append({
                 'iteracao': self.iteracoes,
                 'inicio': inicio.isoformat(),
@@ -341,6 +392,7 @@ class AgenteValidacaoFinal(Agente):
             })
             return resultado
         
+        # Prepara prompt (note que iteracoes ainda é o valor antigo, então +1 para mostrar a atual)
         prompt_completo = self.preparar_prompt(texto, saidas_agentes)
         
         # Valida que callable_modelo foi fornecido
@@ -350,9 +402,10 @@ class AgenteValidacaoFinal(Agente):
         try:
             resposta = callable_modelo(prompt_completo, modelo=self.modelo, modelo_think=self.modelo_think, as_json=True)
             
-            # get_resposta já retorna dict com 'resposta' parseado
-            # Não é necessário parsear novamente
             self.resposta = resposta
+            
+            # Incrementa APÓS sucesso
+            self.iteracoes += 1
             
             self.historico_execucoes.append({
                 'iteracao': self.iteracoes,
@@ -366,6 +419,7 @@ class AgenteValidacaoFinal(Agente):
             return resposta
             
         except Exception as e:
+            # Em caso de erro, NÃO incrementa iteração
             resultado = {
                 "contribuição": f"Erro na validação: {str(e)}",
                 "erro": "exception",
@@ -375,7 +429,7 @@ class AgenteValidacaoFinal(Agente):
             self.resposta = resultado
             
             self.historico_execucoes.append({
-                'iteracao': self.iteracoes,
+                'iteracao': self.iteracoes, # Mantém iteração anterior pois falhou
                 'inicio': inicio.isoformat(),
                 'fim': datetime.now().isoformat(),
                 'duracao_segundos': (datetime.now() - inicio).total_seconds(),
@@ -383,7 +437,7 @@ class AgenteValidacaoFinal(Agente):
                 'resposta': resultado
             })
             
-            return resultado        
+            return resultado
 
 ##################################################################
 # ==================== Orquestrador Principal ====================
@@ -460,6 +514,12 @@ class AgenteOrquestradorEspelho():
         
         # Campos identificados para extração
         self._campos_para_extrair = set()
+        
+        # Campos já aprovados pelo validador (não devem ser revisados novamente)
+        self._campos_aprovados = set()
+        
+        # Últimas instruções de revisão enviadas a cada agente (para "memória" do validador)
+        self._ultimas_revisoes = {}
     
     def _criar_agente(self, nome_agente: str) -> Agente:
         ''' Cria uma instância do agente especificado.
@@ -527,15 +587,28 @@ class AgenteOrquestradorEspelho():
         # Não chama _gravar_observabilidade() diretamente para evitar gravações excessivas
         # O arquivo será atualizado na próxima chamada de _soma_observabilidade()
     
+    def _limpar_resposta_para_validacao(self, resposta: dict) -> dict:
+        ''' Remove chaves desnecessárias da resposta para enviar ao validador.
+            Economiza tokens e reduz ruído.
+        '''
+        if not isinstance(resposta, dict):
+            return resposta
+        
+        # Chaves que não precisam ir para o validador
+        chaves_remover = ['contribuição', 'contribuicao', 'usage', 'model', 'tempo', 'json']
+        
+        resposta_limpa = {}
+        for chave, valor in resposta.items():
+            if chave.lower() not in [c.lower() for c in chaves_remover]:
+                resposta_limpa[chave] = valor
+        
+        return resposta_limpa
+    
     def _gravar_prompt(self, nome_agente: str, prompt_completo: str, iteracao: int = 1):
         ''' Grava o prompt completo em arquivo texto de forma thread-safe.
-            APENAS na primeira iteração - revisões não gravam novo prompt, apenas append.
+            Primeira iteração: cria arquivo. Iterações seguintes: append.
         '''
         if not self.pasta_observabilidade or not self.id_peca:
-            return
-        
-        # Só grava prompt completo na primeira iteração
-        if iteracao > 1:
             return
         
         try:
@@ -547,20 +620,32 @@ class AgenteOrquestradorEspelho():
                 # Trata modelo_think None
                 modelo_think_str = str(self.modelo_think) if self.modelo_think else 'None'
                 
-                # Grava o prompt completo
-                with open(arquivo_prompt, 'w', encoding='utf-8') as f:
-                    f.write(f"# Prompt para {nome_agente}\n")
-                    f.write(f"# ID Peça: {self.id_peca}\n")
-                    f.write(f"# Iteração: {iteracao}\n")
-                    f.write(f"# Timestamp: {datetime.now().isoformat()}\n")
-                    f.write(f"# Modelo: {self.modelo_espelho}\n")
-                    f.write(f"# Think: {modelo_think_str}\n")
-                    f.write("\n" + "=" * 80 + "\n")
-                    f.write("PROMPT ENVIADO\n")
-                    f.write("=" * 80 + "\n\n")
-                    f.write(prompt_completo)
+                if iteracao == 1:
+                    # Primeira iteração: cria o arquivo
+                    with open(arquivo_prompt, 'w', encoding='utf-8') as f:
+                        f.write(f"# Prompt para {nome_agente}\n")
+                        f.write(f"# ID Peça: {self.id_peca}\n")
+                        f.write(f"# Iteração: {iteracao}\n")
+                        f.write(f"# Timestamp: {datetime.now().isoformat()}\n")
+                        f.write(f"# Modelo: {self.modelo_espelho}\n")
+                        f.write(f"# Think: {modelo_think_str}\n")
+                        f.write("\n" + "=" * 80 + "\n")
+                        f.write("PROMPT ENVIADO\n")
+                        f.write("=" * 80 + "\n\n")
+                        f.write(prompt_completo)
+                else:
+                    # Iterações seguintes: append com separador
+                    with open(arquivo_prompt, 'a', encoding='utf-8') as f:
+                        f.write("\n\n")
+                        f.write("#" * 80 + "\n")
+                        f.write(f"# ITERAÇÃO {iteracao} - PROMPT DE REVISÃO\n")
+                        f.write(f"# Timestamp: {datetime.now().isoformat()}\n")
+                        f.write("#" * 80 + "\n")
+                        f.write("PROMPT ENVIADO\n")
+                        f.write("=" * 80 + "\n\n")
+                        f.write(prompt_completo)
                 
-                self._registrar_log(f"Prompt gravado: {nome_arquivo}")
+                self._registrar_log(f"Prompt gravado: {nome_arquivo} (iteração {iteracao})")
                 
                 # Retorna o caminho do arquivo para uso posterior
                 return arquivo_prompt
@@ -773,8 +858,15 @@ class AgenteOrquestradorEspelho():
             revisao = {}
             validacao_aprovada = False
         
-        # Se validação aprovada, não há revisão necessária
-        if validacao_aprovada and (not revisao or len(revisao) == 0):
+        # PRIORIDADE 1: Se houver revisão, processa a revisão (mesmo que validacao_aprovada venha como True)
+        # O fato de existir instrução de correção prevalece sobre o flag booleano
+        if revisao and len(revisao) > 0:
+            if validacao_aprovada:
+                self._registrar_log("AVISO: Validação marcada como aprovada mas contém instruções de revisão. Processando revisão.", 'warning')
+                validacao_aprovada = False # Força False para continuar o fluxo
+        
+        # Se validação aprovada E não há revisão, encerra
+        if validacao_aprovada:
             self._registrar_log("Validação aprovada - nenhuma revisão necessária")
             return True
         
@@ -784,6 +876,15 @@ class AgenteOrquestradorEspelho():
             return False
         
         self._registrar_log(f"Processando revisões para {len(revisao)} agentes: {', '.join(revisao.keys())}")
+        
+        # Atualiza lista de campos aprovados: campos não mencionados na revisão são aprovados
+        # Considera apenas agentes de extração (não AgenteCampos nem AgenteValidacaoFinal)
+        agentes_extracao = set(self._agentes_disponiveis.keys()) - {'AgenteCampos', 'AgenteValidacaoFinal'}
+        for agente in agentes_extracao:
+            if agente in self.resultados and agente not in revisao:
+                if agente not in self._campos_aprovados:
+                    self._registrar_log(f"Campo '{agente}' aprovado pelo validador (não requer revisão)")
+                    self._campos_aprovados.add(agente)
         
         # A revisão agora vem com nomes de agentes diretamente (AgenteTeses, AgenteJurisprudenciasCitadas, etc)
         # Não é mais necessário mapear campos para agentes
@@ -814,6 +915,9 @@ class AgenteOrquestradorEspelho():
                 instrucao_preview = '(vazia)'
             
             self._registrar_log(f"Reexecutando {nome_agente} com revisão: {instrucao_preview}...")
+            
+            # Armazena a instrução de revisão para enviar ao validador na próxima iteração
+            self._ultimas_revisoes[nome_agente] = instrucao_revisao
             
             # Se for AgenteJurisprudenciasCitadas, precisa passar o contexto das teses
             if nome_agente == 'AgenteJurisprudenciasCitadas':
@@ -1005,16 +1109,20 @@ class AgenteOrquestradorEspelho():
                         saidas_para_validacao[agente] = {
                             'agente': agente,
                             'resposta': {
-                                'erro': resultado.get('erro'),
-                                'contribuição': 'Erro na extração - nenhum dado foi extraído'
+                                'erro': resultado.get('erro')
                             }
                         }
                     else:
-                        # Extrai apenas a resposta (já é dict após correção em get_resposta)
-                        saidas_para_validacao[agente] = {
+                        # Extrai apenas a resposta (limpa de chaves desnecessárias)
+                        resposta_limpa = self._limpar_resposta_para_validacao(resultado.get('resposta', {}))
+                        saida_agente = {
                             'agente': agente,
-                            'resposta': resultado.get('resposta', {})
+                            'resposta': resposta_limpa
                         }
+                        # Adiciona informação de revisão se houver
+                        if agente in self._ultimas_revisoes:
+                            saida_agente['revisao_solicitada'] = self._ultimas_revisoes[agente]
+                        saidas_para_validacao[agente] = saida_agente
             
             # Se há agentes com erro, cria instruções de revisão para o validador processar
             if agentes_com_erro:
@@ -1023,7 +1131,10 @@ class AgenteOrquestradorEspelho():
             # Executa validação
             resposta_validacao = self._executar_agente_unico(
                 'AgenteValidacaoFinal',
-                contexto_adicional=saidas_para_validacao
+                contexto_adicional={
+                    'saidas': saidas_para_validacao,
+                    'campos_aprovados': list(self._campos_aprovados)
+                }
             )
             self.resultados['AgenteValidacaoFinal'] = resposta_validacao
             
@@ -1086,22 +1197,29 @@ class AgenteOrquestradorEspelho():
                             saidas_para_validacao[agente] = {
                                 'agente': agente,
                                 'resposta': {
-                                    'erro': resultado.get('erro'),
-                                    'contribuição': 'Erro na extração - nenhum dado foi extraído'
+                                    'erro': resultado.get('erro')
                                 }
                             }
                         else:
-                            saidas_para_validacao[agente] = {
+                            resposta_limpa = self._limpar_resposta_para_validacao(resultado.get('resposta', {}))
+                            saida_agente = {
                                 'agente': agente,
-                                'resposta': resultado.get('resposta', {})
+                                'resposta': resposta_limpa
                             }
+                            # Adiciona informação de revisão se houver
+                            if agente in self._ultimas_revisoes:
+                                saida_agente['revisao_solicitada'] = self._ultimas_revisoes[agente]
+                            saidas_para_validacao[agente] = saida_agente
                 
                 if agentes_com_erro:
                     self._registrar_log(f"Após revisão, ainda há {len(agentes_com_erro)} agentes com erro: {', '.join(agentes_com_erro)}", 'warning')
                 
                 resposta_validacao = self._executar_agente_unico(
                     'AgenteValidacaoFinal',
-                    contexto_adicional=saidas_para_validacao
+                    contexto_adicional={
+                        'saidas': saidas_para_validacao,
+                        'campos_aprovados': list(self._campos_aprovados)
+                    }
                 )
                 self.resultados['AgenteValidacaoFinal'] = resposta_validacao
             
