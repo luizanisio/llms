@@ -191,3 +191,6 @@ analises_json*
 **my_cache*
 **relatorio_teste_validacao.md
 **README_Análise_Estatística.md
+# aguardando autorização para publicar os prompts
+experimentos/agentes-esp-acordao/prompt_espelho_agentes.py
+experimentos/agentes-esp-acordao/prompt_espelho_base.py
