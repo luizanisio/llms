@@ -88,6 +88,7 @@ from util_json_relatorio import JsonAnaliseRelatorio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 MAX_STRING_MD = 5000 # tamanho máximo da string nos exemplos de markdown
+CHUNK_SIZE = 100 # tamanho do chunk para processamento em lote (otimização de memória)
 
 # ═════════════════════════════════════════════════════════════════════════
 # SISTEMA DE CACHE PARA OTIMIZAÇÃO DE ALINHAMENTO DE LISTAS
@@ -1907,6 +1908,7 @@ class JsonAnaliseDataFrame():
     def to_df(self):
         """Executa comparações e retorna DataFrame com métricas"""
         import pandas as pd
+        import gc
         
         if self._resultados is not None:
             return self._resultados
@@ -1927,48 +1929,66 @@ class JsonAnaliseDataFrame():
         # ═════════════════════════════════════════════════════════════════════════
         self._precalcular_bertscore_global()
         
-        # OTIMIZAÇÃO: Para poucos dados (< 10), processa sequencialmente
-        # Evita overhead de threads e carregamento múltiplo do BERTScore
-        usar_paralelo = len(self.dados) >= 10 and self.max_workers > 1
+        # ═════════════════════════════════════════════════════════════════════════
+        # PROCESSAMENTO EM CHUNKS (sempre, independente do volume)
+        # ═════════════════════════════════════════════════════════════════════════
+        total_chunks = (len(self.dados) + CHUNK_SIZE - 1) // CHUNK_SIZE
+        print(f"\n💾 Processamento em chunks ({CHUNK_SIZE} docs/chunk) - Total: {total_chunks} chunk(s)")
         
+        _linhas_df = []
+        
+        # Divide dados em chunks
+        for i in range(0, len(self.dados), CHUNK_SIZE):
+            chunk = self.dados[i:i+CHUNK_SIZE]
+            chunk_num = (i // CHUNK_SIZE) + 1
+            
+            print(f"   Chunk {chunk_num}/{total_chunks}: processando {len(chunk)} documentos...")
+            
+            # Processa chunk
+            _resultados_chunk = self._processar_chunk(chunk)
+            
+            # Salva JSONs do chunk
+            if self.pasta_analises and len(_resultados_chunk) > 0:
+                self._salvar_analises_lote(_resultados_chunk)
+            
+            # Converte para linhas de DataFrame
+            for res in _resultados_chunk:
+                _linhas_df.append(self._linha_para_df_row(res))
+            
+            # Libera memória do chunk
+            del _resultados_chunk
+            gc.collect()
+        
+        print(f"   ✅ {len(_linhas_df)} documentos processados")
+        
+        self._resultados = pd.DataFrame(_linhas_df)
+        # Libera memória final
+        del _linhas_df
+        gc.collect()
+        
+        return self._resultados
+    
+    def _processar_chunk(self, chunk: list) -> list:
+        """Processa um chunk de dados e retorna os resultados."""
+        usar_paralelo = len(chunk) >= 10 and self.max_workers > 1
         _resultados = []
         
         if usar_paralelo:
-            # Processamento paralelo para grandes volumes
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {}
-                progresso = tqdm(total=len(self.dados), desc="Comparando JSONs", unit="linha")
+                futures = {executor.submit(self._comparar_linha, linha=linha, rotulos=self.rotulos): linha 
+                          for linha in chunk}
                 
-                for linha in self.dados:
-                    future = executor.submit(self._comparar_linha, linha=linha, rotulos=self.rotulos)
-                    futures[future] = linha
-                    progresso.update(1)
-                progresso.close()
-                
-                progresso = tqdm(total=len(futures), desc="Consolidando DataFrame", unit="linha")
                 for future in as_completed(futures):
                     resultado = future.result()
-                    progresso.update(1)
                     if resultado is not None:
                         _resultados.append(resultado)
-                progresso.close()
         else:
-            # Processamento sequencial para pequenos volumes (mais rápido!)
-            progresso = tqdm(self.dados, desc="Processando arquivos", unit="arquivo")
-            for linha in progresso:
+            for linha in chunk:
                 resultado = self._comparar_linha(linha=linha, rotulos=self.rotulos)
                 if resultado is not None:
                     _resultados.append(resultado)
         
-        # OTIMIZAÇÃO: Salva JSONs em lote ao invés de um por um
-        if self.pasta_analises and len(_resultados) > 0:
-            self._salvar_analises_lote(_resultados)
-        
-        # Transforma resultados em DataFrame
-        _linhas_df = [self._linha_para_df_row(res) for res in _resultados]
-        
-        self._resultados = pd.DataFrame(_linhas_df)
-        return self._resultados
+        return _resultados
     
     def _salvar_analises_lote(self, resultados: list):
         """Salva análises individuais em lote (mais eficiente que uma por vez)"""
@@ -1987,6 +2007,8 @@ class JsonAnaliseDataFrame():
     def _linha_para_df_row(self, resultado: dict) -> dict:
         """
         Transforma resultado de comparação em linha de DataFrame.
+        
+        OTIMIZAÇÃO: Usa compreensão de dicionário e evita cópias desnecessárias.
         
         Nova estrutura com múltiplas métricas por campo:
         Entrada:
@@ -2010,22 +2032,30 @@ class JsonAnaliseDataFrame():
             ...
         }
         """
-        linha_df = {}
         rotulo_id = self.rotulos[0]
         rotulo_true = self.rotulos[1]
         
+        # ID sempre presente
+        id_valor = resultado.get(rotulo_id)
+        linha_df = {f'{rotulo_id} ({rotulo_true})': id_valor} if id_valor else {}
+        
+        # Métricas dos modelos - usa compreensão para evitar múltiplos appends
+        prefixo_true = f'{rotulo_true}_'
+        len_prefixo = len(prefixo_true)
+        
+        # Filtra campos excluídos antecipadamente
+        campos_excluir = {'id_origem', 'estrutura_detalhes'}
+        
         for chave, valor in resultado.items():
-            if chave == rotulo_id:
-                linha_df[f'{rotulo_id} ({rotulo_true})'] = valor
+            if chave == rotulo_id or not isinstance(valor, dict):
                 continue
             
-            if isinstance(valor, dict):
-                nome_modelo = chave.replace(f'{rotulo_true}_', '')
-                
-                for metrica, val_metrica in valor.items():
-                    if metrica in ('id_origem', 'estrutura_detalhes') or metrica.endswith('_VL'):
-                        continue
-                    
+            # Remove prefixo do modelo mais eficientemente
+            nome_modelo = chave[len_prefixo:] if chave.startswith(prefixo_true) else chave
+            
+            # Adiciona métricas filtradas
+            for metrica, val_metrica in valor.items():
+                if metrica not in campos_excluir and not metrica.endswith('_VL'):
                     linha_df[f'{nome_modelo}_{metrica}'] = val_metrica
         
         return linha_df

@@ -43,13 +43,20 @@ Limpeza de cache:
     cache.limpar_cache()
 """
 try:
-    from bert_score import score
+    from bert_score import score, BERTScorer
 except ImportError:
-    raise ImportError('Módulo bert_score não instalado. Instale com: pip install bert_score')    
+    raise ImportError('Módulo bert_score não instalado. Instale com: pip install bert_score')
+
+try:
+    import torch
+except ImportError:
+    raise ImportError('Módulo torch não instalado. Instale com: pip install torch')
+    
 from typing import List, Tuple, Optional
 import os
 import hashlib
 import json
+import gc
 
 from util import UtilEnv
 if UtilEnv.carregar_env('.env', pastas=['../','./']):
@@ -63,24 +70,103 @@ if PASTA_LOCAL:
     os.makedirs(PASTA_LOCAL, exist_ok=True)
     os.environ['HF_HOME'] = PASTA_LOCAL
 
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX: Desabilita meta tensors no Transformers para evitar erro "Cannot copy out of meta tensor"
+# Issue: https://github.com/huggingface/transformers/issues/29651
+# ══════════════════════════════════════════════════════════════════════════════
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'  # Evita warnings em multiprocessing
+# Força carregamento completo do modelo (sem lazy loading via meta tensors)
+if hasattr(torch, '__version__') and torch.__version__ >= '2.0':
+    # Para PyTorch 2.0+, desabilita meta device
+    os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+
+# Cache global do modelo BERTScorer para reutilização
+_bert_scorer_cache = None
+_bert_scorer_lock = None
+
 # Leitura das variáveis de ambiente
 BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE', 'auto').strip()
 
 # Lógica 'auto' para o device
 if BERTSCORE_DEVICE.lower() == 'auto':
     try:
-        # Teste simples de predição para verificar GPU
-        score(['a'], ['a'], lang="pt", verbose=False, device='cuda')
+        # Teste simples de predição para verificar GPU usando BERTScorer
+        test_scorer = BERTScorer(lang="pt", device='cuda', rescale_with_baseline=False)
+        # Testa com um par simples
+        test_scorer.score(['a'], ['a'])
+        del test_scorer
+        torch.cuda.empty_cache()
         BERTSCORE_DEVICE = 'cuda'
         print("🚀 [BERTScore] CUDA detectado e ativado (auto).")
-    except Exception:
+    except Exception as e:
         BERTSCORE_DEVICE = 'cpu'
-        print("⚠️ [BERTScore] CUDA não disponível. Usando CPU (auto).")
+        print(f"⚠️ [BERTScore] CUDA não disponível. Usando CPU (auto). Erro: {str(e)[:100]}")
 elif BERTSCORE_DEVICE.lower() == 'gpu':
     BERTSCORE_DEVICE = 'cuda'
 else:
     # Se não for auto/gpu, mantém o que veio (ex: cpu, cuda:0) ou fallback para cpu
     BERTSCORE_DEVICE = BERTSCORE_DEVICE or 'cpu'
+
+def _get_bert_scorer(lang='pt', device=None):
+    """
+    Obtém ou cria uma instância de BERTScorer com carregamento correto do modelo.
+    
+    Esta função resolve o problema de 'meta tensors' ao:
+    1. Carregar o modelo explicitamente sem lazy loading
+    2. Cachear a instância para reutilização
+    3. Usar thread lock para segurança em multiprocessing
+    
+    Args:
+        lang: Idioma do modelo (padrão: 'pt')
+        device: Device para executar o modelo (None = usa BERTSCORE_DEVICE)
+    
+    Returns:
+        BERTScorer configurado e pronto para uso
+    """
+    global _bert_scorer_cache, _bert_scorer_lock
+    
+    # Inicializa lock na primeira chamada
+    if _bert_scorer_lock is None:
+        import threading
+        _bert_scorer_lock = threading.Lock()
+    
+    _device = device if device is not None else BERTSCORE_DEVICE
+    cache_key = f"{lang}_{_device}"
+    
+    with _bert_scorer_lock:
+        # Verifica se já existe no cache
+        if _bert_scorer_cache is not None and hasattr(_bert_scorer_cache, '_lang'):
+            if _bert_scorer_cache._lang == lang and str(_bert_scorer_cache.device) == str(_device):
+                return _bert_scorer_cache
+        
+        # Cria novo scorer
+        try:
+            # SOLUÇÃO: Usa BERTScorer que carrega o modelo corretamente
+            scorer = BERTScorer(
+                lang=lang,
+                device=_device,
+                rescale_with_baseline=False,
+                batch_size=32
+            )
+            # Armazena metadados para verificação
+            scorer._lang = lang
+            _bert_scorer_cache = scorer
+            return scorer
+        except Exception as e:
+            # Fallback para CPU em caso de erro
+            if _device != 'cpu':
+                print(f"⚠️ Erro ao carregar BERTScorer em {_device}, tentando CPU: {str(e)[:100]}")
+                scorer = BERTScorer(
+                    lang=lang,
+                    device='cpu',
+                    rescale_with_baseline=False,
+                    batch_size=32
+                )
+                scorer._lang = lang
+                _bert_scorer_cache = scorer
+                return scorer
+            raise
 
 class BERTScoreCache:
     """
@@ -429,19 +515,28 @@ def bscore(preds: List[str], trues: List[str],
             )
         
         try:
-            # Processa em lote usando bert_score diretamente
-            P_tensor, R_tensor, F1_tensor = score(
+            # SOLUÇÃO: Usa BERTScorer pré-carregado ao invés de score() direto
+            # Isso evita o erro "Cannot copy out of meta tensor" que ocorre quando
+            # o modelo é carregado com lazy loading (meta tensors)
+            scorer = _get_bert_scorer(lang=lang, device=_device)
+            
+            # Calcula scores usando o scorer configurado
+            P_tensor, R_tensor, F1_tensor = scorer.score(
                 missed_preds,
                 missed_trues,
-                lang=lang,
                 verbose=verbose,
-                device=_device
+                batch_size=32  # Processa em lotes de 32 para economizar memória
             )
             
             # Converte tensors para listas de floats
             mP = [float(p) for p in P_tensor]
             mR = [float(r) for r in R_tensor]
             mF1 = [float(f) for f in F1_tensor]
+            
+            # Libera memória da GPU após processamento
+            if _device.startswith('cuda'):
+                torch.cuda.empty_cache()
+                gc.collect()
             
         except Exception as e:
             raise RuntimeError(f"Erro ao calcular BERTScore: {e}") from e
