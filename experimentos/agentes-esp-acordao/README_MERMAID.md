@@ -103,7 +103,7 @@ flowchart TD
 4. **ETAPA 2.5**: `AgenteJurisprudenciasCitadas` - Extrai precedentes baseados nas teses extraídas
 5. **ETAPA 3**: Execução Paralela - `AgenteNotas`, `AgenteInformacoesComplementares`, `AgenteTermosAuxiliares`, `AgenteTema` e `AgenteReferenciasLegislativas` rodam simultaneamente
 6. **ETAPA 4**: `AgenteValidacaoFinal` - Valida extrações conforme regras de negócio do Manual de Inclusão de Acórdãos do STJ
-7. **ETAPA 5**: Loop de Revisão - Processa até 3 iterações de revisões (configurável via `MAXIMO_ITERACOES`), reexecutando agentes que precisam de ajustes
+7. **ETAPA 5**: Loop de Revisão Inteligente - Processa até 5 iterações (configurável), com memória de revisões passadas, pulando campos já aprovados e ativando "Tolerância Máxima" na última tentativa.
 8. **Consolidação Final**: Monta o espelho final com todos os campos extraídos e metadados
 9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes
 

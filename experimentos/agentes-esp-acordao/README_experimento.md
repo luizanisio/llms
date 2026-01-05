@@ -29,7 +29,11 @@ O pipeline agêntico segue uma lógica estrita de dependências para maximizar c
     *   `AgenteTema`
     *   `AgenteReferenciasLegislativas`
 5.  **AgenteValidacaoFinal**: Consolida os dados e valida estrutura, tipos de dados e regras de negócio.
-6.  **Loop de Revisão**: Se inconsistências são detectadas, o orquestrador reativa os agentes específicos com notas de correção.
+6.  **Loop de Revisão Inteligente**: O orquestrador gerencia até 5 iterações de correções (configurável), com recursos avançados:
+    *   **Memória de Revisão**: O validador recebe o histórico do que foi solicitado anteriormente.
+    *   **Rastreamento de Aprovação**: Campos já aprovados não são revisados novamente (economia de tokens).
+    *   **Modo de Tolerância Máxima**: Na última iteração, o critério de aceitação é relaxado para evitar loops infinitos.
+    *   **Tratamento de Erros**: Falhas de execução (timeout) não consomem tentativas de revisão lógica.
 
 **Escopo dos Campos (Chaves Canônicas):**
 `teseJuridica`, `referenciasLegislativas`, `jurisprudenciaCitada`, `tema`, `termosAuxiliares`, `notas`, `informacoesComplementares`.

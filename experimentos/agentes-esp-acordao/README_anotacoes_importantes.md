@@ -42,7 +42,12 @@ Debugging de sistemas multi-agentes é complexo. O que fazer:
 1.  **Gabaritos de Formatação**: Para campos estruturados (datas, valores, leis), forneça exemplos de *few-shot* negativos e positivos no prompt. Mostre o que *não* fazer.
 2.  **Tratamento de Nulos**: Defina explicitamente como o agente deve responder quando não encontra a informação. Arrays vazios `[]` são preferíveis a alucinações de "Não consta". O modelo tem que saber que uma resposta vazia é possível e que isso não é, necessariamente, um erro.
 
-## 5. Recomendações para Reprodução ou Extensão
+## 5. Cuidados com a Interação entre Agentes
+1.  **Limpeza de Metadados**: Ao passar a saída de um agente para outro (ex: AgentTesis -> AgenteValidador), remova chaves de metadados internos (como `usage`, `model`, `contribuição`). Isso economiza tokens e reduz "ruído" que pode confundir o prompt do próximo agente.
+2.  **Memória do Validador**: Para evitar revisões circulares, o Validador precisa saber o que ele mesmo pediu anteriormente. Envie o histórico de revisões (`revisao_solicitada`) e a lista de campos já aprovados (`campos_aprovados`) para que o ele não "esqueça" o progresso e peça a mesma correção duas vezes ou critique algo que ele já aprovou.
+3.  **Sanitização de Exemplos**: Use dados genéricos/fictícios nos exemplos de *few-shot*. Modelos menores (como 12B) tendem a copiar dados dos exemplos se estes parecerem muito reais (ex: citar um número de processo específico). Use placeholders (ex: `000.000/UF`) e instruções explícitas para **NUNCA** copiar dados dos exemplos.
+
+## 6. Recomendações para Reprodução ou Extensão
 
 1.  **Mantenha o Baseline Intocado**: Ao iterar sobre os prompts dos agentes, *nunca* altere o prompt base simultaneamente. O baseline deve permanecer estável para isolar o efeito das mudanças.
 2.  **Versionamento de Prompts**: Trate os prompts como código. Versione cada alteração para rastrear o impacto de ajustes específicos.
