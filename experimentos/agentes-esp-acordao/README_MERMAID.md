@@ -63,7 +63,7 @@ flowchart TD
     
     E3 --> E4[ETAPA 4: AgenteValidacaoFinal<br/>Valida todas as extrações]
     
-    E4 --> E5{ETAPA 5:<br/>Loop de Revisão<br/>max 2 ciclos}
+    E4 --> E5{ETAPA 5:<br/>Loop de Revisão<br/>max 3 iterações}
     
     E5 -->|Há erros ou<br/>revisões| CheckErros[Detecta agentes com erro]
     CheckErros --> AddRevisao[Adiciona instruções de<br/>revisão automática]
@@ -103,7 +103,7 @@ flowchart TD
 4. **ETAPA 2.5**: `AgenteJurisprudenciasCitadas` - Extrai precedentes baseados nas teses extraídas
 5. **ETAPA 3**: Execução Paralela - `AgenteNotas`, `AgenteInformacoesComplementares`, `AgenteTermosAuxiliares`, `AgenteTema` e `AgenteReferenciasLegislativas` rodam simultaneamente
 6. **ETAPA 4**: `AgenteValidacaoFinal` - Valida extrações conforme regras de negócio do Manual de Inclusão de Acórdãos do STJ
-7. **ETAPA 5**: Loop de Revisão - Processa até 2 ciclos de revisões, reexecutando agentes que precisam de ajustes
+7. **ETAPA 5**: Loop de Revisão - Processa até 3 iterações de revisões (configurável via `MAXIMO_ITERACOES`), reexecutando agentes que precisam de ajustes
 8. **Consolidação Final**: Monta o espelho final com todos os campos extraídos e metadados
 9. **Verificação de Erros**: Apenas grava arquivos se não houver erros remanescentes
 
@@ -135,7 +135,7 @@ flowchart TD
     
     F1 & F2 & F3 & F4 & F5 --> G[5. AgenteValidacaoFinal]
     G --> H{Validação Aprovada?}
-    H -->|Não| I[Loop Revisão<br/>max 2 iterações]
+    H -->|Não| I[Loop Revisão<br/>max 3 iterações]
     I --> E2
     H -->|Sim| J[Espelho Final]
     J --> K[espelhos_agentes_modelo/id_peca.json]

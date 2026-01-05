@@ -192,8 +192,8 @@ if __name__ == '__main__':
         DATAFRAME_ESPELHOS = os.path.join(PASTA_RAIZ, 'espelhos_acordaos_consolidado_textos.parquet')
     else:
         NUM_THREADS = 3
-        TAMANHO = '12b' # 12b ou 27b
-        MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it:floor'#:floor free nitro'
+        TAMANHO = '27b' # 12b ou 27b
+        MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it'#:floor free nitro'
         MODELO_ESPELHO_THINK = 'low:low'
         from util_openai import get_resposta
         def def_resposta_router(*args, **kwargs):
