@@ -192,7 +192,11 @@ if __name__ == '__main__':
         DATAFRAME_ESPELHOS = os.path.join(PASTA_RAIZ, 'espelhos_acordaos_consolidado_textos.parquet')
     else:
         NUM_THREADS = 3
-        TAMANHO = '27b' # 12b ou 27b
+        # verifique se foi passado um tamanho por argumento
+        # se não foi passado, use o fixo 
+        TAMANHO = '12b' # 12b ou 27b
+        TAMANHO = sys.argv[1] if len(sys.argv) > 1 else TAMANHO
+        assert TAMANHO in ['12b', '27b'], f"Tamanho inválido: {TAMANHO}. Deve ser '12b' ou '27b'."
         MODELO_ESPELHO = f'or:google/gemma-3-{TAMANHO}-it'#:floor free nitro'
         MODELO_ESPELHO_THINK = 'low:low'
         from util_openai import get_resposta
@@ -230,6 +234,8 @@ if __name__ == '__main__':
         pecas.append(primeira_ocorrencia)
     df_unicas = pd.DataFrame(pecas)
     print(f'Total de peças únicas para processamento: {len(df_unicas)}')
+
+    print(f'Iniciando processamento com {NUM_THREADS} threads...\n- pasta: {PASTA_EXTRACAO}\n- modelo: {MODELO_ESPELHO}')
 
     with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
         
