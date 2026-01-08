@@ -100,6 +100,25 @@ CAMPOS_COMPARACAO_PADRAO = [
 ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO, ROTULO_ID, ROTULO_ORIGEM = None, None, None, None, None, None, None
 TESTE = False
 
+def ajustar_300_avaliacao_tcc():
+    # carrega a lista do arquivo ./saidas/300tcc.txt
+    # remove os arquivos de valiação que não estão na lista
+    if not os.path.isfile('./saidas/300tcc.txt'):
+        print('Arquivo 300tcc.txt não encontrado')
+        return
+    print('Arquivo 300tcc.txt encontrado, filtrando...')
+    with open('./saidas/300tcc.txt', 'r') as f:
+        lista_300 = f.read().splitlines()
+    q = 0
+    for arquivo in os.listdir('./saidas/espelhos_base_gpt5_300/'):
+        # o id do arquivo é o nome do arquivo sem o path e sem a extensão .avaliacao.json
+        id_peca = os.path.basename(arquivo).replace('.avaliacao.json', '').replace('.json', '')
+        if id_peca not in lista_300:
+            os.remove('./saidas/espelhos_base_gpt5_300/' + arquivo)
+            print(f'Removido: {arquivo}')
+            q += 1
+    print(f'Mantidos apenas os arquivos de avaliação dos 300 do TCC ({q} removidos)')
+
 def base_raw():
     global ORIGEM, DESTINOS, D_ROTULOS, CAMPOS_COMPARACAO, PASTA_SAIDA_COMPARACAO, ROTULO_ID, ROTULO_ORIGEM
     ORIGEM = 'espelhos_raw/'
@@ -118,6 +137,15 @@ def base_gpt5():
     ROTULO_ORIGEM = 'base_gpt5'
     CAMPOS_COMPARACAO = CAMPOS_COMPARACAO_PADRAO
     PASTA_SAIDA_COMPARACAO = 'analises_comparacao_base_gpt5/'
+def base_gpt5_300():
+    base_gpt5()
+    global ORIGEM, PASTA_SAIDA_COMPARACAO, TESTE, DESTINOS, D_ROTULOS
+    #DESTINOS = ['espelhos_agentes_gpt5/', 'espelhos_base_gemma3_12b/', 'espelhos_base_gemma3_27b/']
+    #D_ROTULOS = ['agentes_gpt5','base_gemma3(12)','base_gemma3(27)']
+    ORIGEM = 'espelhos_base_gpt5_300/'
+    PASTA_SAIDA_COMPARACAO = 'analises_comparacao_300/'
+    TESTE = False # não usa bertscore para teste rápido
+    ajustar_300_avaliacao_tcc()
 def base_gpt5_p():
     base_gpt5()
     global ORIGEM, PASTA_SAIDA_COMPARACAO, TESTE, DESTINOS, D_ROTULOS
@@ -144,7 +172,7 @@ def _configurar_cenario():
     global ROTULO_ID, ROTULO_ORIGEM, TESTE, CONFIG_COMPARACAO
     
     # Seleciona cenário padrão >>> Aqui pode ser alterado para testar cenários menores e mais rápidos como o _p
-    base_gpt5()
+    base_gpt5_300()
     
     # Valida configuração
     assert len(DESTINOS) == len(D_ROTULOS), 'Número de destinos e rótulos deve ser igual!'
