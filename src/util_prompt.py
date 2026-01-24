@@ -33,9 +33,9 @@ class Modelos(Enum):
     MODELO_GEMMA3_4B = 'google/gemma-3-4b-it'   # 9Gb 
     MODELO_GEMMA3_12B = 'google/gemma-3-12b-it' # 25Gb
     MODELO_GEMMA3_27B = 'google/gemma-3-27b-it' # 39Gb
-    MODELO_QWEN_7B = "Qwen/Qwen2.5-7B-Instruct-1M" # 14Gb
+    MODELO_QWEN_7B = "Qwen/Qwen2.5-7B-Instruct" # 14Gb
     MODELO_JUREMA_7B = "Jurema-br/Jurema-7B"       # 14Gb
-    MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct-1M'   
+    MODELO_QWEN_14B = 'Qwen/Qwen2.5-14B-Instruct'   
     MODELO_DEEPSEEK_1_5B = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B'
     MODELO_DEEPSEEK_70B = 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B' # 150Gb
     MODELO_DEEPSEEK_32B = 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'
