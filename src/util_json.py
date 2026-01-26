@@ -1058,8 +1058,6 @@ class JsonAnalise:
         # DETECÇÃO PRECOCE DE ERRO: Se pred ou true são dicts de erro, retorna vazio
         # ═════════════════════════════════════════════════════════════════════════
         # Isso evita que erros de carga sejam processados e apareçam nos exemplos
-        if isinstance(pred_json, dict) and 'erro' in pred_json:
-            return {}  # Skip comparison entirely for error dicts
         if isinstance(true_json, dict) and 'erro' in true_json:
             return {}  # Skip comparison entirely for error dicts
         

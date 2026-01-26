@@ -79,8 +79,13 @@ Mapeia campos do JSON para algoritmos de similaridade específicos.
 *   **rouge_2**: Para textos curtos, termos técnicos ou precisão de n-gramas.
 *   **levenshtein**: Para identificadores, datas ou valores exatos.
 
-## 4. Checklist de Implementação e Status
+## 4. Status de Implementação e Melhorias Recentes
 
-implementações pendentes:
-- [x] Gráfico de barras de F1 por modelo e por métrica global e estrutura (um arquivo com todos os modelos e três barras por modelo)
-- [x] Gráfico de barras de F1 por modelo e por campo (um arquivo por tipo de métrica global)
+As principais funcionalidades de visualização e correção de métricas foram implementadas:
+
+### Visualizações (Gráficos)
+- [x] **Gráfico Global F1**: Comparativo de barras agrupadas por modelo e técnica (BERTScore, ROUGE, etc.).
+- [x] **Gráfico por Campo**: Comparativo detalhado de desempenho (F1) para cada campo extraído, agrupado por métrica.
+
+### Correções de Métricas
+- [x] **Pontuação de Erros de Extração**: Documentos com falha na extração (JSON inválido ou erro de parse) agora são contabilizados com score **0.0** em todas as métricas (antes eram ignorados). Isso garante que a taxa de falha impacte a média final de desempenho do modelo.
