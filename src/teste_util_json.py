@@ -112,12 +112,12 @@ class TestJsonAnaliseBasico(unittest.TestCase):
 class TestJsonAnaliseConfig(unittest.TestCase):
     """Testes de configuração"""
     
-    def test_config_campos_bertscore_default(self):
-        """Testa configuração padrão com BERTScore para (global)"""
+    def test_config_campos_rouge_default(self):
+        """Testa configuração padrão com ROUGE para (global)"""
         config = {}
         config_ajustado = JsonAnalise._JsonAnalise__ajustar_config(config)
-        # (global) deve estar em campos_bertscore por padrão
-        self.assertIn('(global)', config_ajustado.get('campos_bertscore', []))
+        # (global) deve estar em campos_rouge por padrão
+        self.assertIn('(global)', config_ajustado.get('campos_rouge', []))
     
     def test_config_nivel_campos_default(self):
         """Testa nível de campos padrão"""
@@ -1247,8 +1247,8 @@ class TestJsonAnaliseConfiguracoesEspeciais(unittest.TestCase):
         
         resultado = JsonAnalise.comparar(pred_json, true_json, config={})
         
-        # Deve ter métricas default
-        self.assertIn('(global)_bertscore_F1', resultado)
+        # Deve ter métricas default (ROUGE-L para global e ROUGE-1 para estrutura)
+        self.assertIn('(global)_rouge_F1', resultado)
         self.assertIn('(estrutura)_rouge1_F1', resultado)
     
     def test_config_none(self):
@@ -1258,7 +1258,7 @@ class TestJsonAnaliseConfiguracoesEspeciais(unittest.TestCase):
         
         resultado = JsonAnalise.comparar(pred_json, true_json, config=None)
         
-        self.assertIn('(global)_bertscore_F1', resultado)
+        self.assertIn('(global)_rouge_F1', resultado)
         self.assertIn('(estrutura)_rouge1_F1', resultado)
     
     def test_padronizar_simbolos_desabilitado(self):
@@ -1299,8 +1299,8 @@ class TestJsonAnaliseConfiguracoesEspeciais(unittest.TestCase):
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
         
-        # Campo inexistente não gera erro, apenas não aparece no resultado
-        self.assertNotIn('campo_inexistente_rouge1_F1', resultado)
+        # Campo inexistente gera valor 0.0
+        self.assertEqual(resultado['campo_inexistente_rouge1_F1'], 0.0)
     
     def test_todas_metricas_mesmo_campo(self):
         """Campo com todas as métricas disponíveis"""
