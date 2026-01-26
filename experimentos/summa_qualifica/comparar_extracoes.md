@@ -82,5 +82,5 @@ Mapeia campos do JSON para algoritmos de similaridade específicos.
 ## 4. Checklist de Implementação e Status
 
 implementações pendentes:
-- [ ] Gráfico de barras de F1 por modelo e por métrica global e estrutura (um arquivo com todos os modelos e três barras por modelo)
-- [ ] Gráfico de barras de F1 por modelo e por campo (um arquivo por tipo de métrica global)
+- [x] Gráfico de barras de F1 por modelo e por métrica global e estrutura (um arquivo com todos os modelos e três barras por modelo)
+- [x] Gráfico de barras de F1 por modelo e por campo (um arquivo por tipo de métrica global)

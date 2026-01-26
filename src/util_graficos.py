@@ -324,11 +324,93 @@ class UtilGraficos:
             plt.show()
         else:
             plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
+        if not arquivo_saida:
+            plt.show()
+        else:
+            plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
+            plt.close()
+
+    @classmethod
+    def gerar_grafico_barras(cls, df: pd.DataFrame, titulo: str,
+                                ylabel: str = '', xlabel: str = '',
+                                arquivo_saida: str = None,
+                                paleta_cores=Cores.PuBuGn,
+                                mostrar_valores: bool = True,
+                                rotacao_labels: int = 0,
+                                stacked: bool = False,
+                                ylim: tuple = None):
+        """
+        Gera um gráfico de barras (agrupadas ou empilhadas) a partir de um DataFrame.
+        
+        Args:
+            df: DataFrame com índice (eixo X) e colunas (grupos/barras)
+            titulo: Título do gráfico
+            ylabel: Rótulo do eixo Y
+            xlabel: Rótulo do eixo X
+            arquivo_saida: Caminho para salvar o arquivo (opcional)
+            paleta_cores: Paleta de cores a utilizar
+            mostrar_valores: Se deve mostrar valores
+            rotacao_labels: Rotação dos rótulos do eixo X
+            stacked: Se True, empilha as barras. Se False, agrupa.
+            ylim: Tupla (min, max) para limites do eixo Y
+        """
+        if df.empty:
+            print(f"⚠️  Aviso: DataFrame vazio para gráfico de barras: {titulo}")
+            return
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        num_cols = len(df.columns)
+        paleta = sns.color_palette(paleta_cores.value if isinstance(paleta_cores, Cores) else Cores.Cividis.value, num_cols)
+        
+        df.plot(kind='bar', stacked=stacked, ax=ax, color=paleta, width=0.8)
+        
+        ax.set_title(titulo, fontsize=12, fontweight='bold')
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        
+        if ylim:
+            ax.set_ylim(ylim)
+        
+        # Adiciona valores
+        if mostrar_valores:
+            for c in ax.containers:
+                # Se for stacked, mostra valores no centro. Se agrupado, acima da barra.
+                # Para agrupado, bar_label funciona bem.
+                # Filtrando 0 para limpar viz
+                labels = [cls._formata_numero(v, 'float') if v > 0.01 else '' for v in c.datavalues]
+                ax.bar_label(c, labels=labels, label_type='center' if stacked else 'edge', 
+                             fontsize=8, color='black' if not stacked else 'white', 
+                             fontweight='bold', padding=3)
+
+        # Rotação de labels
+        if rotacao_labels == 0 and len(df) > 5:
+            rotacao_labels = 45
+        ax.tick_params(axis='x', rotation=rotacao_labels)
+        
+        # Grid apenas no fundo
+        ax.set_axisbelow(True)
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        
+        # Legenda
+        # Move legenda para fora se tiver muitas colunas
+        if num_cols > 10:
+             ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=True)
+        else:
+             ax.legend(loc='best', frameon=True, framealpha=0.9)
+        
+        plt.tight_layout()
+        
+        if not arquivo_saida:
+            plt.show()
+        else:
+            plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
             plt.close()
 
     @classmethod
     def gerar_grafico_empilhado(cls, df: pd.DataFrame, titulo: str,
                                 ylabel: str = '', xlabel: str = '',
+
                                 arquivo_saida: str = None,
                                 paleta_cores=Cores.RdYlGn,
                                 mostrar_valores: bool = True,
