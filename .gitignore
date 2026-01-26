@@ -194,3 +194,5 @@ analises_json*
 # aguardando autorização para publicar os prompts
 experimentos/agentes-esp-acordao/prompt_espelho_agentes.py
 experimentos/agentes-esp-acordao/prompt_espelho_base.py
+**/saidas/**
+**/analises_comparacao_**

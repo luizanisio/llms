@@ -572,9 +572,9 @@ class JsonAnalise:
             config[campo] = list(config[campo]) if isinstance(config.get(campo), (set, tuple, list)) else []
         
         # Define métricas padrão para campos especiais se não estiverem em nenhuma lista
-        # (global) -> campos_bertscore se não estiver em nenhuma lista
-        # (estrutura) -> campos_rouge1 se não estiver em nenhuma lista
-        for campo_especial, lista_padrao in [('(global)', 'campos_bertscore'), ('(estrutura)', 'campos_rouge1')]:
+        # (global) -> campos_rouge (Rouge-L) se não estiver em nenhuma lista
+        # (estrutura) -> campos_rouge1 (Rouge-1) se não estiver em nenhuma lista
+        for campo_especial, lista_padrao in [('(global)', 'campos_rouge'), ('(estrutura)', 'campos_rouge1')]:
             # Verifica se o campo especial está em alguma lista
             esta_em_alguma = any(campo_especial in config.get(lista, []) for lista in campos_lista_type)
             if not esta_em_alguma:
@@ -681,6 +681,14 @@ class JsonAnalise:
         Returns:
             str: texto convertido
         """
+        # ═════════════════════════════════════════════════════════════════════════
+        # DETECÇÃO DE ERRO: Retorna string vazia para dicts com chave 'erro'
+        # ═════════════════════════════════════════════════════════════════════════
+        # Isso garante que documentos com erro de carga não sejam processados
+        # e não apareçam nos exemplos (strings vazias são ignoradas pelo skip logic)
+        if isinstance(valor, dict) and 'erro' in valor:
+            return ''  # String vazia = skip nas comparações e exemplos
+        
         # ═════════════════════════════════════════════════════════════════════════
         # CASOS RÁPIDOS: String e escalares (não usam cache - conversão trivial)
         # ═════════════════════════════════════════════════════════════════════════
@@ -834,8 +842,33 @@ class JsonAnalise:
         
         elif metrica == 'levenshtein':
             importar('Levenshtein')
-            # Levenshtein ratio retorna similaridade [0,1]
-            similaridade = Levenshtein.ratio(texto_true, texto_pred)
+            
+            # ═════════════════════════════════════════════════════════════════════════
+            # TRATAMENTO ESPECIAL PARA STRINGS VAZIAS OU MUITO CURTAS
+            # ═════════════════════════════════════════════════════════════════════════
+            # Strings vazias, contendo apenas espaços, ou apenas pontuação mínima (como ".")
+            # devem ser tratadas como campos ausentes para comparação de Levenshtein
+            def is_effectively_empty(texto: str) -> bool:
+                """Verifica se o texto é efetivamente vazio após limpeza."""
+                if not texto:
+                    return True
+                # Remove espaços e pontos - se sobrar nada, é efetivamente vazio
+                limpo = texto.strip().replace('.', '').replace(',', '').replace(';', '').replace(':', '')
+                return len(limpo) == 0
+            
+            texto_true_empty = is_effectively_empty(texto_true)
+            texto_pred_empty = is_effectively_empty(texto_pred)
+            
+            # Se ambos estão vazios, são idênticos
+            if texto_true_empty and texto_pred_empty:
+                similaridade = 1.0
+            # Se apenas um está vazio, são completamente diferentes
+            elif texto_true_empty or texto_pred_empty:
+                similaridade = 0.0
+            # Caso normal: calcula Levenshtein
+            else:
+                similaridade = Levenshtein.ratio(texto_true, texto_pred)
+            
             # Levenshtein retorna apenas SIM (não usa P, R, F1)
             return {
                 'SIM': round(similaridade, 3)
@@ -969,6 +1002,19 @@ class JsonAnalise:
 
 
     @classmethod
+    def _obter_campos_ordenados(cls, config: dict) -> list:
+        """Obtém lista de campos na ordem definida na configuração."""
+        campos = []
+        seen = set()
+        # Prioridade de métricas
+        for key in ['campos_bertscore', 'campos_rouge', 'campos_rouge2', 'campos_rouge1', 'campos_levenshtein']:
+            for c in config.get(key, []):
+                if c not in seen:
+                    seen.add(c)
+                    campos.append(c)
+        return campos
+
+    @classmethod
     def comparar(
         cls, 
         pred_json: dict, 
@@ -1007,6 +1053,15 @@ class JsonAnalise:
         """
         config = cls.__ajustar_config(config)
         nivel_campos = config['nivel_campos']
+        
+        # ═════════════════════════════════════════════════════════════════════════
+        # DETECÇÃO PRECOCE DE ERRO: Se pred ou true são dicts de erro, retorna vazio
+        # ═════════════════════════════════════════════════════════════════════════
+        # Isso evita que erros de carga sejam processados e apareçam nos exemplos
+        if isinstance(pred_json, dict) and 'erro' in pred_json:
+            return {}  # Skip comparison entirely for error dicts
+        if isinstance(true_json, dict) and 'erro' in true_json:
+            return {}  # Skip comparison entirely for error dicts
         
         resultado = {}
         
@@ -1064,9 +1119,13 @@ class JsonAnalise:
                     }
         
         # 4. ANÁLISE POR CAMPO INDIVIDUAL
-        todos_campos = set(campos_pred.keys()) | set(campos_true.keys())
+        # Garante a ordem definida na configuração
+        campos_ordenados = cls._obter_campos_ordenados(config)
         
-        for campo in sorted(todos_campos):
+        for campo in campos_ordenados:
+            if campo.startswith('('):
+                continue
+    
             valor_pred = campos_pred.get(campo)
             valor_true = campos_true.get(campo)
             
@@ -1149,6 +1208,7 @@ class JsonAnaliseDataFrame():
                  dados_analise: 'JsonAnaliseDados',
                  config: dict = None,
                  pasta_analises: str = 'analises_json', 
+                 pasta_markdown: str = None,  # If None, uses pasta_analises
                  max_workers: int = 4, 
                  filtro_callable = None,
                  incluir_valores_analise: bool = False,
@@ -1173,6 +1233,7 @@ class JsonAnaliseDataFrame():
         # Configurações
         self.config = config
         self.pasta_analises = pasta_analises
+        self.pasta_markdown = pasta_markdown if pasta_markdown is not None else pasta_analises  # Markdown files location
         self.filtro_callable = filtro_callable
         self.max_workers = max_workers
         
@@ -1191,7 +1252,7 @@ class JsonAnaliseDataFrame():
         self.gerar_relatorio = gerar_relatorio
         self.relatorio: Optional[JsonAnaliseRelatorio] = None
         if gerar_relatorio:
-            self.relatorio = JsonAnaliseRelatorio(pasta_saida=pasta_analises)
+            self.relatorio = JsonAnaliseRelatorio(pasta_saida=self.pasta_markdown)  # Use pasta_markdown for reports
     
     # ═════════════════════════════════════════════════════════════════════════
     # Properties para acesso aos dados via dados_analise
@@ -1633,6 +1694,9 @@ class JsonAnaliseDataFrame():
             if count >= self.max_exemplos_md_por_metrica:
                 return
             
+            # Nota: Verificação de erro é feita antes de chamar este método
+            # em _salvar_exemplos_metrica, onde temos acesso aos dicts originais
+
             # Incrementa contador
             self._exemplos_contador[chave] = count + 1
             
@@ -1798,6 +1862,14 @@ class JsonAnaliseDataFrame():
             texto_pred = valor.get('pred', '')
             texto_true = valor.get('true', '')
             
+            # IMPORTANTE: Verifica se são dicts com erro ANTES de converter para string
+            # Se pred ou true são dicts com chave 'erro', pula este exemplo
+            # TODO: implementar verificação de erro não pelo texto, mas por metadados - pred e true sempre são strings
+            if isinstance(texto_pred, dict) and 'erro' in texto_pred:
+                continue  # Pula exemplos com erro na predição
+            if isinstance(texto_true, dict) and 'erro' in texto_true:
+                continue  # Pula exemplos com erro no valor esperado
+            
             # Ignora se não há textos
             if not texto_pred or not texto_true:
                 continue
@@ -1813,6 +1885,7 @@ class JsonAnaliseDataFrame():
                 chave_metrica = f'{campo}_{tecnica}_{metrica_nome}'
                 if chave_metrica in resultado:
                     valor_metrica = resultado[chave_metrica]
+                    # Erro já verificado acima, pode incluir o exemplo
                     self._incluir_exemplo_metrica(
                         campo=campo,
                         tecnica=tecnica,
@@ -1919,7 +1992,7 @@ class JsonAnaliseDataFrame():
         # Inicializa arquivo MD se ainda não foi inicializado
         if self.gerar_exemplos_md and self._arquivo_exemplos_md is None:
             arquivo_padrao = os.path.join(
-                self.pasta_analises,
+                self.pasta_markdown,  # Use pasta_markdown for examples
                 'analise_exemplos.md'
             )
             self._inicializar_arquivo_md(arquivo_padrao)
@@ -2907,7 +2980,11 @@ class JsonAnaliseDataFrame():
         
         # Limpa gráficos antigos
         if limpar_graficos_antigos:
-            graficos_antigos = glob.glob(os.path.join(pasta_saida, 'grafico_*.png'))
+            padroes = ['grafico_*.png', 'boxplot_*.png', 'tokens_*.png', 'avaliacao_*.png', 'observabilidade_*.png']
+            graficos_antigos = []
+            for p in padroes:
+                graficos_antigos.extend(glob.glob(os.path.join(pasta_saida, p)))
+            
             for arquivo in graficos_antigos:
                 try:
                     os.remove(arquivo)
@@ -2967,7 +3044,7 @@ class JsonAnaliseDataFrame():
                         # Ex: agentes_gpt5_(global)_F1 -> agentes_gpt5_(global)_bertscore_F1
                         partes = col.split('_')
                         metrica = partes[-1]
-                        if metrica in ['F1', 'P', 'R', 'LS']:
+                        if metrica in ['F1', 'P', 'R', 'LS', 'SIM']:
                             # Reconstrói: modelo_campo_tecnica_metrica
                             novo_nome = '_'.join(partes[:-1]) + f'_{tecnica_nome}_{metrica}'
                             colunas_renomeadas[col] = novo_nome
@@ -3047,7 +3124,7 @@ class JsonAnaliseDataFrame():
                                 continue
                             
                             # Arquivo e título
-                            arquivo_grafico = os.path.join(pasta_saida, f'grafico_tokens_{tipo}.png')
+                            arquivo_grafico = os.path.join(pasta_saida, f'tokens_{tipo}.png')
                             titulos_tipos = {
                                 'input': 'Consumo de Tokens de Entrada',
                                 'output': 'Consumo de Tokens de Saída',
@@ -3126,7 +3203,7 @@ class JsonAnaliseDataFrame():
                                 continue
                             
                             # Arquivo e título
-                            arquivo_grafico = os.path.join(pasta_saida, f'grafico_bp_avaliacaollm_{metrica.lower()}.png')
+                            arquivo_grafico = os.path.join(pasta_saida, f'avaliacao_llm_{metrica.lower()}.png')
                             titulos_metricas = {
                                 'P': 'Avaliação LLM - Precision',
                                 'R': 'Avaliação LLM - Recall',
@@ -3204,7 +3281,7 @@ class JsonAnaliseDataFrame():
                         aliases = [col.rsplit('_', 1)[0] for col in colunas_sufixo]
                         
                         # Gera gráfico
-                        arquivo_grafico = os.path.join(pasta_saida, f'grafico_bp_observabilidade_{sufixo}.png')
+                        arquivo_grafico = os.path.join(pasta_saida, f'observabilidade_{sufixo}.png')
                         titulo = f"Observabilidade: {info['titulo']}"
                         ylabel = info['ylabel']
                         
@@ -4419,8 +4496,8 @@ class JsonAnaliseDataFrame():
                     
                     campo_safe = campo.replace('(', '').replace(')', '').replace('.', '_')
                     
-                    # Nome: grafico_bp_<tecnica>_<campo>_<metrica>.png
-                    nome_arquivo = f'grafico_bp_{tecnica_nome}_{campo_safe}_{metrica}.png'
+                    # Nome: boxplot_<tecnica>_<campo>_<metrica>.png
+                    nome_arquivo = f'boxplot_{tecnica_nome}_{campo_safe}_{metrica}.png'
                     caminho_completo = os.path.join(pasta_saida, nome_arquivo)
                     
                     # Identifica qual coluna pertence a qual modelo (ordenado)

@@ -20,6 +20,7 @@ from typing import List, Optional, Union, Tuple, Set
 import shutil
 import threading
 import time
+import regex as re
 
 try:
     import psutil 
@@ -179,6 +180,12 @@ class Util():
         chave_fim = _mensagem.rfind('}')
         if len(_mensagem)>2 and chave_ini>=0 and chave_fim>0 and chave_fim > chave_ini:
             _mensagem = _mensagem[chave_ini:chave_fim+1]
+            
+            # Correção de trailing commas (vírgulas antes de } ou ])
+            # Exemplo: {"key": "value",} -> {"key": "value"}
+            # _mensagem = re.sub(r',(\s*})', r'\1', _mensagem)  # Remove vírgula antes de }
+            # _mensagem = re.sub(r',(\s*\])', r'\1', _mensagem)  # Remove vírgula antes de ]
+            
             #print(f'MENSAGEM FINAL: {_mensagem}')
             try:
                 return json.loads(_mensagem)
@@ -186,7 +193,7 @@ class Util():
                 if (not _corrigir_json_) or 'delimiter' not in str(e):
                     raise e
                 # corrige aspas internas dentro do json
-                return Util.mensagem_to_json(mensagem = Util.escape_json_string_literals(mensagem), 
+                return cls.mensagem_to_json(mensagem = cls.escape_json_string_literals(mensagem), 
                                              padrao = padrao, 
                                              _corrigir_json_ = False)
                 
@@ -214,7 +221,7 @@ class Util():
     @classmethod
     def map_thread(cls, func, lista, n_threads=None):
         if (not n_threads) or (n_threads<2):
-            n_threads = Util.cpus()
+            n_threads = cls.cpus()
         #print('Iniciando {} threads'.format(n_threads))
         pool = ThreadPool(n_threads)
         pool.map(func, lista)
@@ -229,12 +236,12 @@ class Util():
         prog=[0]
         def _transforma(i):
             if msg_progresso is not None:
-                Util.progress_bar(prog[0], len(lista),f'{msg_progresso} {prog[0]+1}/{len(lista)}')
+                cls.progress_bar(prog[0], len(lista),f'{msg_progresso} {prog[0]+1}/{len(lista)}')
                 prog[0] = prog[0] + 1
             lista[i] = func(lista[i])
-        Util.map_thread(func=_transforma, lista= range(len(lista)), n_threads=n_threads)
+        cls.map_thread(func=_transforma, lista= range(len(lista)), n_threads=n_threads)
         if msg_progresso is not None:
-            Util.progress_bar(1,1) #finaliza a barra
+            cls.progress_bar(1,1) #finaliza a barra
 
     @classmethod
     def progress_bar(cls, current_value, total, msg=''):
@@ -259,8 +266,8 @@ class Util():
             segundos =1
         for ps in range(0,segundos):
             time.sleep(1)
-            Util.progress_bar(ps,segundos+1,f'Pausa por {segundos-ps}s')
-        Util.progress_bar(segundos,segundos,f'Pausa finalizada {segundos}s')
+            cls.progress_bar(ps,segundos+1,f'Pausa por {segundos-ps}s')
+        cls.progress_bar(segundos,segundos,f'Pausa finalizada {segundos}s')
 
     @classmethod
     def dados_python(cls, retornar_dados_do_hardware:bool = True):

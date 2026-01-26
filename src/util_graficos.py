@@ -36,6 +36,7 @@ class Cores(Enum):
     Set2       = 'Set2'            # ColorBrewer qualitativa, 8 cores
     Dark2      = 'Dark2'           # ColorBrewer qualitativa, 8 cores
     Accent     = 'Accent'          # ColorBrewer qualitativa, 8 cores
+    RdYlGn     = 'RdYlGn'          # Divergente (Vermelho-Amarelo-Verde)
 
 class UtilGraficos:
     """
@@ -324,6 +325,118 @@ class UtilGraficos:
         else:
             plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
             plt.close()
+
+    @classmethod
+    def gerar_grafico_empilhado(cls, df: pd.DataFrame, titulo: str,
+                                ylabel: str = '', xlabel: str = '',
+                                arquivo_saida: str = None,
+                                paleta_cores=Cores.RdYlGn,
+                                mostrar_valores: bool = True,
+                                rotacao_labels: int = 0):
+        """
+        Gera um gráfico de barras empilhadas.
+        
+        Args:
+            df: DataFrame com índice (eixo X) e colunas (segmentos da pilha)
+            titulo: Título do gráfico
+            ylabel: Rótulo do eixo Y
+            xlabel: Rótulo do eixo X
+            arquivo_saida: Caminho para salvar o arquivo (opcional)
+            paleta_cores: Paleta de cores a utilizar
+            mostrar_valores: Se deve mostrar valores dentro das barras
+            rotacao_labels: Rotação dos rótulos do eixo X
+        """
+        if df.empty:
+            print("⚠️  Aviso: DataFrame vazio para gráfico empilhado")
+            return
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        paleta = sns.color_palette(paleta_cores.value, len(df.columns))
+        
+        df.plot(kind='bar', stacked=True, ax=ax, color=paleta, width=0.8)
+        
+        ax.set_title(titulo, fontsize=12, fontweight='bold')
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        
+        # Adiciona valores
+        if mostrar_valores:
+            for c in ax.containers:
+                # Otimização: só mostra se houver espaço/valor > 0
+                labels = [str(int(v)) if v > 0 else '' for v in c.datavalues]
+                ax.bar_label(c, labels=labels, label_type='center', fontsize=9, color='black', fontweight='bold')
+        
+        # Rotação de labels
+        if rotacao_labels == 0 and len(df) > 5:
+            rotacao_labels = 45
+        ax.tick_params(axis='x', rotation=rotacao_labels)
+        
+        # Grid apenas no fundo
+        ax.set_axisbelow(True)
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        
+        # Legenda
+        ax.legend(loc='best', frameon=True, framealpha=0.9, title='Status')
+        
+        plt.tight_layout()
+        
+        if not arquivo_saida:
+            plt.show()
+        else:
+            plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
+            plt.close()
+
+    @classmethod
+    def gerar_boxplot(cls, dados: dict, titulo: str, 
+                      ylabel: str = '', xlabel: str = '', 
+                      arquivo_saida: str = None, 
+                      paleta_cores=Cores.PuBuGn,
+                      mostrar_valores: bool = True,
+                      rotacao_labels: int = 45):
+        """
+        Gera um gráfico de boxplot simplificado a partir de um dicionário de listas.
+        
+        Args:
+            dados: dict {categoria: [lista_de_valores]}
+            titulo: Título do gráfico
+            ylabel: Rótulo do eixo Y
+            xlabel: Rótulo do eixo X
+            arquivo_saida: Caminho para salvar o arquivo (opcional)
+            paleta_cores: Paleta de cores a utilizar
+            mostrar_valores: Se deve mostrar valores (não aplicável a boxplot padrão, mantido para compatibilidade)
+            rotacao_labels: Rotação dos rótulos do eixo X
+        """
+        if not dados:
+            print("⚠️  Aviso: Sem dados para gerar boxplot")
+            return
+
+        # Converte dict de listas para DataFrame
+        # Como as listas podem ter tamanhos diferentes, cria um dict de Series
+        import pandas as pd
+        dados_series = {k: pd.Series(v) for k, v in dados.items()}
+        df = pd.DataFrame(dados_series)
+        
+        colunas = list(dados.keys())
+        
+        config = {
+            titulo: {
+                'df': df,
+                'colunas': colunas,
+                'x': xlabel,
+                'y': ylabel,
+                'agregacao': 'boxplot',
+                'paleta': paleta_cores,
+                'rotacao_labels': rotacao_labels
+            }
+        }
+        
+        cls.grafico_multi_colunas(
+            configuracao=config,
+            plots_por_linha=1,
+            paleta_cores=paleta_cores,
+            arquivo_saida=arquivo_saida
+        )
 
     @classmethod
     def _corrige_rotulos(cls, r):

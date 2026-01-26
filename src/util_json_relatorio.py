@@ -325,7 +325,7 @@ class JsonAnaliseRelatorio:
             arquivo = g['arquivo']
             
             # Remove prefixos comuns e extensão
-            nome_base = arquivo.replace('grafico_bp_', '').replace('grafico_', '').replace('.png', '')
+            nome_base = arquivo.replace('grafico_bp_', '').replace('grafico_', '').replace('boxplot_', '').replace('.png', '')
             
             # Identifica o grupo (tudo exceto a última parte que geralmente é a métrica)
             partes = nome_base.split('_')
