@@ -14,8 +14,8 @@ Realiza comparação campo a campo de acordo com as configurações fornecidas.
 
 FILOSOFIA DE SELEÇÃO DE MÉTRICAS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. BERTScore → Textos longos com nuances semânticas (padrão para (global))
-2. ROUGE-L   → Estruturas/sequências ordenadas
+1. BERTScore → Textos longos com nuances semânticas
+2. ROUGE-L   → Estruturas/sequências ordenadas (padrão para (global))
 3. ROUGE-2   → Frases médias, precisão de bigramas
 4. ROUGE-1   → Termos individuais, palavras-chave (padrão para (estrutura))
 5. Levenshtein → Textos curtos exatos (nomes, IDs, valores numéricos)
