@@ -3314,58 +3314,71 @@ class JsonAnaliseDataFrame():
                     print(f"⚠️  Aviso: Não foi possível gerar gráficos de observabilidade: {e}")
             
             # ═══════════════════════════════════════════════════════════════════════
-            # GRÁFICOS COMPARATIVOS DE F1 (GLOBAL E POR CAMPO)
+            # GRÁFICOS COMPARATIVOS DE SCORE (F1 ou SIM) (GLOBAL E POR CAMPO)
             # ═══════════════════════════════════════════════════════════════════════
             if df_consolidado is not None and not df_consolidado.empty:
                 try:
                     # Resolve paleta
                     try:
-                        paleta_enum_f1 = Cores[paleta]
+                        paleta_enum_score = Cores[paleta]
                     except KeyError:
-                        paleta_enum_f1 = Cores.Cividis
+                        paleta_enum_score = Cores.Cividis
 
                     # Identifica modelos a partir das colunas globais (mais seguro)
-                    # Coluna Global: <modelo>_(global)_<tecnica>_F1
+                    # Coluna Global: <modelo>_(global)_<tecnica>_F1 ou _SIM
                     
                     known_models = set()
-                    colunas_global_f1 = [c for c in df_consolidado.columns if '_(global)_' in c and c.endswith('_F1')]
+                    # Suporta F1 (para BERT/ROUGE) e SIM (para Levenshtein)
+                    sufixos_validos = ['_F1', '_SIM']
+                    
+                    colunas_global_score = [
+                        c for c in df_consolidado.columns 
+                        if '_(global)_' in c and any(c.endswith(s) for s in sufixos_validos)
+                    ]
                     
                     dados_global = []
                     tecnicas_globais = set()
                     
-                    for col in colunas_global_f1:
+                    for col in colunas_global_score:
                         partes = col.split('_(global)_')
                         if len(partes) == 2:
                             modelo = partes[0]
                             known_models.add(modelo)
                             
-                            resto = partes[1] # tecnica_F1
-                            tecnica = resto.rsplit('_', 1)[0]
+                            resto = partes[1] # tecnica_F1 ou tecnica_SIM
+                            
+                            sufixo_encontrado = next((s for s in sufixos_validos if resto.endswith(s)), None)
+                            if not sufixo_encontrado:
+                                continue
+                                
+                            tecnica = resto[:-len(sufixo_encontrado)]
+                            # Normaliza nome da técnica
+                            tecnica = tecnica.replace('_', ' ').strip()
                             tecnicas_globais.add(tecnica)
                             
-                            media_f1 = df_consolidado[col].mean()
+                            media_score = df_consolidado[col].mean()
                             dados_global.append({
                                 'Modelo': modelo,
                                 'Técnica': tecnica,
-                                'F1 Score': media_f1
+                                'Score': media_score
                             })
                     
-                    # 1. GRÁFICO GLOBAL F1
+                    # 1. GRÁFICO GLOBAL SCORE
                     if dados_global:
                         df_global = pd.DataFrame(dados_global)
                         # Pivot: Index=Modelo, Columns=Técnica
-                        df_pivot = df_global.pivot(index='Modelo', columns='Técnica', values='F1 Score')
+                        df_pivot = df_global.pivot(index='Modelo', columns='Técnica', values='Score')
                         
-                        arquivo_global = os.path.join(pasta_saida, 'comparativo_global_f1.png')
+                        arquivo_global = os.path.join(pasta_saida, 'comparativo_global_score.png')
                         
                         # Usa gerar_grafico_barras (barras agrupadas)
                         UtilGraficos.gerar_grafico_barras(
                             df=df_pivot,
-                            titulo='Performance Global (F1 Médio) por Técnica',
+                            titulo='Performance Global (Score Médio) por Técnica',
                             xlabel='Modelo',
-                            ylabel='F1 Score Médio',
+                            ylabel='Score Médio (F1 ou Sim)',
                             arquivo_saida=arquivo_global,
-                            paleta_cores=paleta_enum_f1,
+                            paleta_cores=paleta_enum_score,
                             stacked=False,
                             ylim=(0, 1.05),
                             rotacao_labels=0
@@ -3375,12 +3388,23 @@ class JsonAnaliseDataFrame():
 
                     # 2. GRÁFICOS POR CAMPO (UM ARQUIVO POR TÉCNICA)
                     tecnicas_map = {} # tecnica -> lista de colunas
-                    colunas_f1_campos = [c for c in df_consolidado.columns if c.endswith('_F1') and '_(global)_' not in c and c != col_id_nome]
                     
-                    for col in colunas_f1_campos:
+                    colunas_score_campos = [
+                        c for c in df_consolidado.columns 
+                        if any(c.endswith(s) for s in sufixos_validos) and '_(global)_' not in c and c != col_id_nome
+                    ]
+                    
+                    for col in colunas_score_campos:
                         for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein']:
-                            sufixo = f'_{t}_F1'
-                            if col.endswith(sufixo):
+                            # Verifica se coluna termina com _{tecnica}_{sufixo}
+                            # Ex: _bertscore_F1 ou _levenshtein_SIM
+                            match = False
+                            for s in sufixos_validos:
+                                if col.endswith(f'_{t}{s}'):
+                                    match = True
+                                    break
+                            
+                            if match:
                                 if t not in tecnicas_map: tecnicas_map[t] = []
                                 tecnicas_map[t].append(col)
                                 break
@@ -3390,8 +3414,11 @@ class JsonAnaliseDataFrame():
                         modelos_no_grafico = set()
                         
                         for col in colunas:
-                            sufixo = f'_{tecnica}_F1'
-                            base = col[:-len(sufixo)] # modelo_campo
+                            # Identifica o sufixo exato usado na coluna
+                            sufixo_usado = next((s for s in sufixos_validos if col.endswith(s)), '_F1')
+                            
+                            sufixo_completo = f'_{tecnica}{sufixo_usado}'
+                            base = col[:-len(sufixo_completo)] # modelo_campo
                             
                             # Tenta casar com known_models
                             modelo_match = None
@@ -3406,26 +3433,28 @@ class JsonAnaliseDataFrame():
                                 dados_tecnica.append({
                                     'Campo': campo,
                                     'Modelo': modelo_match,
-                                    'F1 Score': media
+                                    'Score': media
                                 })
                                 modelos_no_grafico.add(modelo_match)
                         
                         if dados_tecnica:
                             df_tec = pd.DataFrame(dados_tecnica)
-                            # Pivot: Index=Campo, Columns=Modelo, Values=F1
-                            df_pivot = df_tec.pivot(index='Campo', columns='Modelo', values='F1 Score')
+                            # Pivot: Index=Campo, Columns=Modelo, Values=Score
+                            df_pivot = df_tec.pivot(index='Campo', columns='Modelo', values='Score')
                             
-                            arquivo_tec = os.path.join(pasta_saida, f'comparativo_campos_{tecnica.lower()}_f1.png')
+                            arquivo_tec = os.path.join(pasta_saida, f'comparativo_campos_{tecnica.lower()}_score.png')
+                            
+                            tipo_score = 'Similaridade' if tecnica == 'levenshtein' else 'F1 Score'
                             
                             # Usa gerar_grafico_barras (agrupado por modelo para cada campo)
                             # Index (Campo) será o eixo X. Colunas (Modelos) serão as barras.
                             UtilGraficos.gerar_grafico_barras(
                                 df=df_pivot,
-                                titulo=f'Performance por Campo - {tecnica.upper()} (F1 Médio)',
+                                titulo=f'Performance por Campo - {tecnica.upper()} ({tipo_score} Médio)',
                                 xlabel='Campo',
-                                ylabel='F1 Score Médio',
+                                ylabel=f'{tipo_score} Médio',
                                 arquivo_saida=arquivo_tec,
-                                paleta_cores=paleta_enum_f1,
+                                paleta_cores=paleta_enum_score,
                                 stacked=False,
                                 ylim=(0, 1.05),
                                 rotacao_labels=45
@@ -3434,7 +3463,7 @@ class JsonAnaliseDataFrame():
                             print(f"   ✓ Gráfico comparativo de campos ({tecnica}) gerado: {os.path.basename(arquivo_tec)}")
 
                 except Exception as e:
-                    print(f"⚠️  Erro ao gerar gráficos comparativos de F1: {e}")
+                    print(f"⚠️  Erro ao gerar gráficos comparativos de Score: {e}")
             # ═══════════════════════════════════════════════════════════════════════
         
         except Exception as e:

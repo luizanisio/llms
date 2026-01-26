@@ -89,3 +89,4 @@ As principais funcionalidades de visualização e correção de métricas foram 
 
 ### Correções de Métricas
 - [x] **Pontuação de Erros de Extração**: Documentos com falha na extração (JSON inválido ou erro de parse) agora são contabilizados com score **0.0** em todas as métricas (antes eram ignorados). Isso garante que a taxa de falha impacte a média final de desempenho do modelo.
+- [x] **Gráfico Consolidado Levenshtein**: Agora gera gráficos comparativos também para a métrica Levenshtein (usando coluna `_SIM` em vez de `_F1`).
