@@ -535,10 +535,10 @@ class JsonAnalise:
     @classmethod
     def print_analise_config(cls, config):
         ''' Print do config ajustado para debug'''
-        print(f'CONFIG: {json.dumps(cls.__ajustar_config(config), indent=2, ensure_ascii=False)}')
+        print(f'CONFIG: {json.dumps(cls._ajustar_config(config), indent=2, ensure_ascii=False)}')
 
     @classmethod
-    def __ajustar_config(cls, config: dict):
+    def _ajustar_config(cls, config: dict):
         """Ajusta e valida a configuração, normalizando campos e aplicando valores padrão"""
         if (config is not None) and config.get('~cópia-validada~'):
            return config
@@ -982,7 +982,7 @@ class JsonAnalise:
         """
         importar('rouge_score')
         
-        config = cls.__ajustar_config(config)
+        config = cls._ajustar_config(config)
         
         # Determina qual métrica ROUGE usar baseado nos campos configurados
         if 'campos_rouge1' in config and config['campos_rouge1']:
@@ -1051,7 +1051,7 @@ class JsonAnalise:
                 - resumo_bertscore_F1: 0.90
                 - resumo_rouge_F1: 0.88
         """
-        config = cls.__ajustar_config(config)
+        config = cls._ajustar_config(config)
         nivel_campos = config['nivel_campos']
         
         # ═════════════════════════════════════════════════════════════════════════
@@ -2164,7 +2164,7 @@ class JsonAnaliseDataFrame():
             elif '(estrutura)_' in nome_metrica:
                 return 'Estrutural'
             else:
-                config = JsonAnalise._JsonAnalise__ajustar_config(self.config)
+                config = JsonAnalise._ajustar_config(self.config)
                 return config.get('metrica_global', 'rouge2').upper()
         
         stats = []

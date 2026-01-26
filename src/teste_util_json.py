@@ -115,27 +115,27 @@ class TestJsonAnaliseConfig(unittest.TestCase):
     def test_config_campos_rouge_default(self):
         """Testa configuração padrão com ROUGE para (global)"""
         config = {}
-        config_ajustado = JsonAnalise._JsonAnalise__ajustar_config(config)
+        config_ajustado = JsonAnalise._ajustar_config(config)
         # (global) deve estar em campos_rouge por padrão
         self.assertIn('(global)', config_ajustado.get('campos_rouge', []))
     
     def test_config_nivel_campos_default(self):
         """Testa nível de campos padrão"""
         config = {}
-        config_ajustado = JsonAnalise._JsonAnalise__ajustar_config(config)
+        config_ajustado = JsonAnalise._ajustar_config(config)
         self.assertEqual(config_ajustado['nivel_campos'], 1)
     
     def test_config_campos_rouge1_estrutura(self):
         """Testa que (estrutura) está em campos_rouge1 por padrão"""
         config = {}
-        config_ajustado = JsonAnalise._JsonAnalise__ajustar_config(config)
+        config_ajustado = JsonAnalise._ajustar_config(config)
         self.assertIn('(estrutura)', config_ajustado.get('campos_rouge1', []))
     
     def test_config_nivel_invalido(self):
         """Testa que nível inválido levanta erro"""
         config = {'nivel_campos': 0}
         with self.assertRaises(ValueError):
-            JsonAnalise._JsonAnalise__ajustar_config(config)
+            JsonAnalise._ajustar_config(config)
 
 
 class TestJsonAnaliseExtrairCampos(unittest.TestCase):
@@ -669,7 +669,7 @@ class TestJsonAnaliseMultiplasMetricas(unittest.TestCase):
             'campos_rouge2': ['campo1'],
             'campos_levenshtein': ['campo2', 'campo3']
         }
-        config_ajustado = JsonAnalise._JsonAnalise__ajustar_config(config)
+        config_ajustado = JsonAnalise._ajustar_config(config)
         
         # campo1 deve ter 3 métricas (rouge, rouge1, rouge2)
         metricas1 = JsonAnalise._determinar_metricas_campo('campo1', config_ajustado)
@@ -696,19 +696,19 @@ class TestJsonAnaliseConverterTexto(unittest.TestCase):
     
     def test_converter_string(self):
         """Converter string mantém string"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         texto = JsonAnalise._converter_para_texto("teste", "bertscore", config)
         self.assertEqual(texto, "teste")
     
     def test_converter_int(self):
         """Converter int para string"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         texto = JsonAnalise._converter_para_texto(123, "bertscore", config)
         self.assertEqual(texto, "123")
     
     def test_converter_dict_rouge(self):
         """Converter dict usa to_natural_text para ROUGE"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         dados = {"nome": "João", "idade": 30}
         texto = JsonAnalise._converter_para_texto(dados, "rouge", config)
         
@@ -717,7 +717,7 @@ class TestJsonAnaliseConverterTexto(unittest.TestCase):
     
     def test_converter_dict_levenshtein(self):
         """Converter dict usa to_natural_text para Levenshtein"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         dados = {"nome": "João", "idade": 30}
         texto = JsonAnalise._converter_para_texto(dados, "levenshtein", config)
         
@@ -726,7 +726,7 @@ class TestJsonAnaliseConverterTexto(unittest.TestCase):
     
     def test_converter_lista(self):
         """Converter lista"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         dados = [1, 2, 3]
         texto = JsonAnalise._converter_para_texto(dados, "bertscore", config)
         
@@ -740,7 +740,7 @@ class TestJsonAnaliseCalcularMetrica(unittest.TestCase):
     
     def test_calcular_bertscore_simples(self):
         """Testa cálculo com BERTScore - teste único e simples"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         # Teste com textos idênticos para ser rápido
         metricas = JsonAnalise._calcular_metrica(
             "teste", 
@@ -759,7 +759,7 @@ class TestJsonAnaliseCalcularMetrica(unittest.TestCase):
     
     def test_calcular_rouge(self):
         """Testa cálculo com ROUGE-L"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         metricas = JsonAnalise._calcular_metrica(
             "casa verde bonita", 
             "casa azul bonita", 
@@ -776,7 +776,7 @@ class TestJsonAnaliseCalcularMetrica(unittest.TestCase):
     
     def test_calcular_rouge1(self):
         """Testa cálculo com ROUGE-1"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         metricas = JsonAnalise._calcular_metrica(
             "gato preto grande", 
             "gato branco grande", 
@@ -790,7 +790,7 @@ class TestJsonAnaliseCalcularMetrica(unittest.TestCase):
     
     def test_calcular_rouge2(self):
         """Testa cálculo com ROUGE-2 (bigramas)"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         metricas = JsonAnalise._calcular_metrica(
             "o gato preto pulou", 
             "o gato branco pulou", 

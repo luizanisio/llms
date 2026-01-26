@@ -38,7 +38,7 @@ Controla onde os artefatos serão salvos e se deve reprocessar dados existentes.
 ```yaml
 saida:
   pasta: "./saida_experimento_X"
-  regerar_planilha_base: false # Cache: se true, não recalcula métricas pesadas se o excel existir
+  regerar_planilha_base: false # Se true, força o recálculo das métricas mesmo se o excel existir (ignora cache)
 ```
 
 > **Nota sobre caminhos**: Todos os caminhos definidos no YAML são resolvidos **relativamente à localização do próprio arquivo YAML**. 
@@ -81,25 +81,6 @@ Mapeia campos do JSON para algoritmos de similaridade específicos.
 
 ## 4. Checklist de Implementação e Status
 
-O código foi refatorado para suportar o modelo genérico. Abaixo o status atual e próximos passos.
-
-- [x] **Leitura de YAML**: Implementado suporte a arquivo de configuração como argumento posicional.
-- [x] **Remoção de Hardcoding**: Cenários fixos (ex: `base_gpt5`) removidos em favor do carregamento dinâmico.
-- [x] **Mapeamento Dinâmico de Métricas**: Lógica para converter config YAML em config do `JsonAnaliseDataFrame`.
-- [x] **Controle de Execução**: Flags `regerar_planilha_base`, `teste_rapido` implementadas.
-- [x] **Análise Estatística Dinâmica**: `processar_analise_estatistica` adaptada para iterar sobre os pares definidos no YAML.
-- [x] **Validação de Caminhos Relativos**: Caminhos no YAML são resolvidos relativamente ao arquivo de configuração.
-- [x] **Validação de Dependências**: Verificar se todos os imports em `src/` estão alinhados com a nova estrutura de dados (ex: `JsonAnaliseDados`).
-- [x] **Teste de Integração**: Executar o script com `config_summa.yaml` para validar ponta-a-ponta.
-
-Ajustes e conferências:
-- [x] Gráfico boxplot (global)
-- [x] Gráfico boxplot (estrutura)
-- [x] Revisão dos nomes dos gráficos para melhor compreensão
-- [x] Nos gráficos e planilha, a ordem dos campos deve ser a mesma que no YAML
-- [x] Verificar geração de gráficos de estrutura e global nos testes
-- [x] Quando ignorar_erro_extração=true, ignora os itens que deram erro na extração de qualquer modelo (base ou outros), comparando apenas itens onde todos os modelos deram sucesso. Gera um gráfico de barras com sucesso e erro por modelo.
-- [x] Verificar se todos os gráficos usam o componente de gráficos em util_graficos.py
-- [x] Quando (global) não está definido, é usado Rouge-L
-- [x] Quando (estrutura) não está definido, é usado Rouge-1
-
+implementações pendentes:
+- [ ] Gráfico de barras de F1 por modelo e por métrica global e estrutura (um arquivo com todos os modelos e três barras por modelo)
+- [ ] Gráfico de barras de F1 por modelo e por campo (um arquivo por tipo de métrica global)
