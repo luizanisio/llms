@@ -405,6 +405,7 @@ class Prompt:
 class UtilLLM():
     @classmethod
     def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True ):
+        # TODO: usar de UtilTextos.mensagem_to_json
         ''' Foco em receber uma mensagem via IA generativa e identificar o json dentro dela 
             Exemplo: dicionario = Util.mensagem_to_json('```json\n{"chave":"valor qualquer", "numero":1}')
         '''

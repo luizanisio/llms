@@ -163,15 +163,18 @@ class Util():
         ''' Foco em receber uma mensagem via IA generativa e identificar o json dentro dela 
             Exemplo: dicionario = Util.mensagem_to_json('```json\n{"chave":"valor qualquer", "numero":1}')
         '''
+        # TODO: usar de UtilTextos.mensagem_to_json
         if isinstance(mensagem, dict):
             return mensagem
         if not isinstance(mensagem, str):
            raise ValueError('mensagem_to_json: parâmetro precisa ser string')
         _mensagem = str(mensagem).strip()
         # limpa resposta ```json ````
-        chave_json = mensagem.find('```json\n')
+        chave_json = mensagem.rfind('```json\n')
         if chave_json >= 0:
            _mensagem = _mensagem[chave_json+8:]
+        elif mensagem.startswith('json\n'):
+           _mensagem = _mensagem[4:] # alguns modelos só colocam json\n no início
         else:
            chave_json = mensagem.find('```json')
            _mensagem = _mensagem[chave_json+7:] if chave_json >=0 else _mensagem
@@ -812,9 +815,11 @@ class UtilTextos(object):
            raise ValueError('mensagem_to_json: parâmetro precisa ser string')
         _mensagem = str(mensagem).strip()
         # limpa resposta ```json ````
-        chave_json = mensagem.find('```json\n')
+        chave_json = mensagem.rfind('```json\n')
         if chave_json >= 0:
            _mensagem = _mensagem[chave_json+8:]
+        elif mensagem.startswith('json\n'):
+           _mensagem = _mensagem[4:] # alguns modelos só colocam json\n no início
         else:
            chave_json = mensagem.find('```json')
            _mensagem = _mensagem[chave_json+7:] if chave_json >=0 else _mensagem

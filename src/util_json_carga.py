@@ -26,7 +26,7 @@ from statistics import harmonic_mean
 # Importa JsonAnaliseDados para retornar objeto completo
 sys.path.extend(['./utils', './src'])
 from util_json_dados import JsonAnaliseDados
-from util import Util
+from util import Util, UtilTextos
 
 class CargaDadosComparacao():
     """
@@ -172,12 +172,11 @@ class CargaDadosComparacao():
         
         return mapa
 
-    def _carregar_json(self, caminho: str, is_extraction: bool = True) -> dict:
+    def _carregar_json(self, caminho: str) -> dict:
         """Carrega arquivo JSON com suporte a múltiplos encodings.
         
         Args:
             caminho: Caminho do arquivo JSON
-            is_extraction: Não utilizado atualmente, mantido para compatibilidade.
         """
         if not os.path.exists(caminho):
             return {'erro': 'Arquivo inexistente'}
@@ -189,7 +188,8 @@ class CargaDadosComparacao():
         for encoding in encodings:
             try:
                 with open(caminho, 'r', encoding=encoding) as f:
-                    dados = json.load(f)
+                     #dados = json.load(f)
+                     dados = UtilTextos.mensagem_to_json(f.read()) # tratamentos de correção para json
                 
                 # Se chegou aqui, conseguiu carregar
                 # Verifica se já possui erro registrado no próprio JSON
