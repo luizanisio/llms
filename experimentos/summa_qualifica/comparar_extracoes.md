@@ -83,6 +83,9 @@ Mapeia campos do JSON para algoritmos de similaridade específicos.
 
 As principais funcionalidades de visualização e correção de métricas foram implementadas:
 
+### Carga dos dados
+- [x] Agrupar campos com subníveis. Se no yaml tiver o campo Temas.Ponto, deve ser criada uma chave Temas.Ponto que deve agrupar todo o conteúdo do campo Ponto. Se Temas for uma lista de chaves, busca-se a chave Ponto para agrupar todas as ocorrências de Ponto. Se Tema for um dicionário, busca-se o campo Ponto.
+
 ### Visualizações (Gráficos)
 - [x] **Gráfico Global F1**: Comparativo de barras agrupadas por modelo e técnica (BERTScore, ROUGE, etc.).
 - [x] **Gráfico por Campo**: Comparativo detalhado de desempenho (F1) para cada campo extraído, agrupado por métrica.

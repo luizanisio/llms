@@ -38,7 +38,7 @@ class CargaDadosComparacao():
     
     Premissas da estrutura de dados:
     --------------------------------
-    - Arquivos JSON nomeados como: <id_peca>.json (padrão: \d{12}.\d+.\d*.json)
+    - Arquivos JSON nomeados como: <id_peca>.json (padrão: r'\\d{12}\\.\\d+\\.\\d*\\.json')
     - Arquivos opcionais de tokens: <id_peca>.tokens.json ou <id_peca>.resumo.json
     - Arquivos opcionais de avaliação LLM: <id_peca>.avaliacao.json
     - Uma pasta de origem (ground truth) e N pastas de destino (modelos)
@@ -254,12 +254,101 @@ class CargaDadosComparacao():
         print(f"\n📝 Log de erros salvo em: {arquivo_log}")
 
 
+    def _extrair_campo_subnivel(self, json_data: dict, campo_path: str):
+        """
+        Extrai valor de um campo com subnível (notação com ponto).
+        
+        Exemplos de campo_path:
+            - "Temas.Ponto" -> busca 'Ponto' dentro de 'Temas'
+            - "Temas.Ponto.Argumentos" -> busca 'Argumentos' dentro de 'Ponto' dentro de 'Temas'
+        
+        Comportamento:
+            - Se o campo pai for um dicionário, retorna o subcampo diretamente
+            - Se o campo pai for uma lista de dicionários, agrupa todas as ocorrências
+              do subcampo em uma lista
+            - Retorna None se o caminho não existir
+        
+        Args:
+            json_data: dicionário JSON fonte
+            campo_path: caminho do campo (ex: "Temas.Ponto")
+        
+        Returns:
+            O valor do subcampo, uma lista de valores agrupados, ou None
+        """
+        partes = campo_path.split('.')
+        valor_atual = json_data
+        
+        for i, parte in enumerate(partes):
+            if valor_atual is None:
+                return None
+            
+            if isinstance(valor_atual, dict):
+                # Dicionário: busca a chave diretamente
+                valor_atual = valor_atual.get(parte)
+            
+            elif isinstance(valor_atual, list):
+                # Lista: agrupa valores do subcampo de cada item
+                # Partes restantes formam o subcampo a extrair de cada item
+                subcampo_restante = '.'.join(partes[i:])
+                valores_agrupados = []
+                
+                for item in valor_atual:
+                    if isinstance(item, dict):
+                        # Extração recursiva para subcampos mais profundos
+                        if '.' in subcampo_restante:
+                            valor_item = self._extrair_campo_subnivel(item, subcampo_restante)
+                        else:
+                            valor_item = item.get(parte)
+                        
+                        if valor_item is not None:
+                            # Se o valor extraído for uma lista, estende; senão, adiciona
+                            if isinstance(valor_item, list):
+                                valores_agrupados.extend(valor_item)
+                            else:
+                                valores_agrupados.append(valor_item)
+                
+                # Retorna a lista agrupada ou None se vazia
+                return valores_agrupados if valores_agrupados else None
+            
+            else:
+                # Valor escalar ou tipo não navegável: não pode continuar
+                return None
+        
+        return valor_atual
+
     def _filtrar_campos(self, json_data: dict, campos: list) -> dict:
-        """Filtra apenas os campos especificados para comparação (método interno)"""
+        """
+        Filtra apenas os campos especificados para comparação.
+        
+        Suporta campos com subníveis usando notação com ponto (ex: "Temas.Ponto").
+        Para campos com subnível:
+            - Se o campo pai for um dicionário, extrai o subcampo diretamente
+            - Se o campo pai for uma lista de dicionários, agrupa todas as ocorrências
+              do subcampo em uma lista
+        
+        Args:
+            json_data: dicionário JSON fonte
+            campos: lista de campos a filtrar (pode incluir campos com ".")
+        
+        Returns:
+            dict: dicionário com os campos filtrados
+        """
         if 'erro' in json_data:
             return json_data
         
-        return {campo: json_data.get(campo) for campo in campos if campo in json_data}
+        resultado = {}
+        for campo in campos:
+            if '.' in campo:
+                # Campo com subnível: usa extração especial
+                valor = self._extrair_campo_subnivel(json_data, campo)
+                if valor is not None:
+                    resultado[campo] = valor
+            else:
+                # Campo simples: busca direta
+                if campo in json_data:
+                    resultado[campo] = json_data.get(campo)
+        
+        return resultado
 
 
     def _listar_arquivos_json(self, pasta: str) -> list:
