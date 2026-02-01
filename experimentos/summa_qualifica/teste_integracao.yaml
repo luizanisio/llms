@@ -1,0 +1,61 @@
+# YAML de teste para validar integração
+# Usa mesma pasta para entrada e predição (apenas para teste de integração)
+
+formatos:
+  tipo_entrada: pastas
+  formato_saida: json
+
+pastas:
+  predicao:
+    pasta: ./saidas/ext_qwen235b_11
+    mascara: "*.txt"
+  entrada:
+    pasta: ./saidas/ext_qwen235b_11  # Mesma pasta para teste
+    mascara: "*.txt"
+    prompt_template: ''
+    tag_texto: ''
+  divisao:
+    arquivo: ./saidas/teste_divisao.csv
+    proporcao:
+    - 0.7
+    - 0.15
+    - 0.15
+    seed: 42
+  validacao:
+    exigir_json_valido: false
+    skip_invalidos: true
+
+dataset:
+  train_prompt_col: messages
+  eval_prompt_col: ''
+  train_file: ''
+  eval_file: ''
+  test_file: ''
+
+modelo:
+  base_model_name: Qwen/Qwen2.5-1.5B-Instruct
+  saida: ./treinados/teste_integracao
+
+treinamento:
+  eval_steps: 15%
+  batch_size: 2
+  grad_batch_size: 5
+  num_train_epochs: 1  # Valor completo para teste
+  max_seq_length: 4096
+  lora_r: 8
+  lora_alpha: 32
+  lora_dropout: 0.05
+  learning_rate: 0.0002
+  save_checkpoints: false
+  resume_from_checkpoint: false
+  warmup_steps: 1
+  seed: 3407
+  nbits: 4
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj

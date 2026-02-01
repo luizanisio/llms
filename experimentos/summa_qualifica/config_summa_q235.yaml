@@ -1,0 +1,106 @@
+# Configuração para comparação de extrações - Experimento Summa Qualifica
+# Executar com: python comparar_extracoes.py --config config_summa.yaml
+
+# Configuração Global de Saída
+saida:
+  pasta: "./analises_comparacao_summa_q235"
+  arquivo_base: "comparacao_summa"
+  regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
+
+# Configurações de Execução
+execucao:
+  max_workers: 10
+  teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
+  gerar_graficos: true 
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  pasta: "./saidas/ext_qwen235b_11"
+  rotulo: "qwen235b_11"
+  familia: "Qwen-235B"
+
+# Modelos Comparados
+modelos_comparacao:
+  - pasta: "./saidas/ext_qwen-1.5B_11_u"
+    rotulo: "qwen-1.5B_11_u"
+    familia: "Qwen-1.5B"
+
+  - pasta: "./saidas/ext_qwen-7b_11"
+    rotulo: "qwen-7b_11"
+    familia: "Qwen-7B"
+  
+  - pasta: "./saidas/ext_jurema-7b_11"
+    rotulo: "jurema-7b_11"
+    familia: "Jurema-7B"
+    ativo: false
+
+  - pasta: "./saidas/ext_gpt5r_11"
+    rotulo: "gpt5r_11"
+    familia: "GPT-5"
+
+  - pasta: "./saidas/ext_gemma3-27_11"
+    rotulo: "gemma3-27_11"
+    familia: "Gemma-3"
+    ativo: true
+
+  - pasta: "./saidas/ext_gptoss-120b_11"
+    rotulo: "gptoss-120b_11"
+    familia: "GPT-OSS-120B"
+    ativo: true
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  nivel_campos: 1
+  padronizar_simbolos: true
+  rouge_stemmer: true
+  
+  # Configuração do campo ID
+  nome_campo_id: "id"  # Nome interno do campo de ID (usado em DataFrames, gráficos, etc)
+  rotulo_campo_id: "ID"  # Rótulo de exibição do campo ID (usado em relatórios)
+  
+  # Máscaras de arquivos (Regex ou Sufixo)
+  # Se começar com '^', é tratado como Regex.
+  # Se não, é tratado como sufixo e o script adiciona '^(.+)' antes e escape no sufixo.
+  mascaras:
+    extracao: "^(.+)\\.txt$"
+    tokens: ".json" 
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Mapeamento de campos para métricas
+  campos:
+    bertscore:
+      - "(global)"
+      - "Materia"
+      - "Resumo"
+      - "Dispositivo"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Decisao"
+      - "Temas.Explicacao"
+      - "Temas.Normas"
+      - "Temas.Jurisprudencia"
+      - "Temas"
+
+    todo:
+
+    rouge_1:
+
+    rouge_2:
+      - "Partes"
+      - "Partes.Tipo"
+      - "Partes.Nome"
+
+    rouge_l:
+      - "(global)"
+      - "Materia"
+      - "Resumo"
+      - "DataJulgamento"
+      - "Partes"
+
+    levenshtein:
+      - "Tipo"
+      - "DataJulgamento"

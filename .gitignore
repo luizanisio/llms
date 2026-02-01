@@ -196,3 +196,5 @@ experimentos/agentes-esp-acordao/prompt_espelho_agentes.py
 experimentos/agentes-esp-acordao/prompt_espelho_base.py
 **/saidas/**
 **/analises_comparacao_**
+experimentos/summa_qualifica/treinados**
+.agent**

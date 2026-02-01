@@ -297,26 +297,117 @@ class Util():
         return res
 
     @classmethod
-    def dados_hardware(cls):
+    def dados_hardware(cls, incluir_gpu: bool = True):
+        """
+        Retorna informações detalhadas de hardware: CPU, RAM, Disco e GPU.
+        
+        Args:
+            incluir_gpu: Se True, tenta obter informações de GPU via torch.cuda
+            
+        Returns:
+            Dict com métricas de hardware incluindo:
+            - CPUs físicas e lógicas
+            - RAM: total, disponível, usada (GB) e percentual de uso
+            - Disco: percentual de uso
+            - GPU: lista de GPUs com nome, memória total e reservada (se disponível)
+        """
         # pip install psutil
         if not PSUTIL_OK:
-            raise Exception('dados_maquina: É necessário instalar o pacote psutil: pip install psutil')
-        mem = psutil.virtual_memory()
-        memoria_disponivel_gb = mem.available / (1024 ** 3)  # Convertendo bytes para GB
-        memoria_total_gb = mem.total / (1024 ** 3)
-        uso_cpu_percentual = psutil.cpu_percent(interval=1) # pausa 1s para calcular o uso da CPU
-        uso_cpu_percentual_pid = psutil.Process(os.getpid()).cpu_percent(interval=1) # pausa 1s para calcular o uso da CPU do processo
+            raise Exception('dados_hardware: É necessário instalar o pacote psutil: pip install psutil')
+        
+        # --- CPU ---
         cpus_fisicas = psutil.cpu_count(logical=False)
         cpus_logicas = psutil.cpu_count(logical=True)
+        uso_cpu_percentual = psutil.cpu_percent(interval=1)  # pausa 1s para calcular
+        uso_cpu_percentual_pid = psutil.Process(os.getpid()).cpu_percent(interval=1)
+        
+        # --- RAM ---
+        mem = psutil.virtual_memory()
+        memoria_total_gb = mem.total / (1024 ** 3)
+        memoria_disponivel_gb = mem.available / (1024 ** 3)
+        memoria_usada_gb = mem.used / (1024 ** 3)
+        memoria_uso_percentual = mem.percent
+        
+        # --- Disco ---
         disco = psutil.disk_usage('/')
         disco_uso_percentual = disco.percent
-        return {'cpus_fisicas': cpus_fisicas, 
-                'cpus_logicas': cpus_logicas,
-                'mem_disponivel_gb': round(memoria_disponivel_gb,3),
-                'mem_total_gb' : round(memoria_total_gb,3),
-                'disco_uso_%' : round(disco_uso_percentual,3),
-                'cpu_uso_%': uso_cpu_percentual,
-                'cpu_uso_processo_%': uso_cpu_percentual_pid}
+        
+        resultado = {
+            'cpus_fisicas': cpus_fisicas, 
+            'cpus_logicas': cpus_logicas,
+            'mem_total_gb': round(memoria_total_gb, 3),
+            'mem_disponivel_gb': round(memoria_disponivel_gb, 3),
+            'mem_usada_gb': round(memoria_usada_gb, 3),
+            'mem_uso_%': round(memoria_uso_percentual, 3),
+            'disco_uso_%': round(disco_uso_percentual, 3),
+            'cpu_uso_%': uso_cpu_percentual,
+            'cpu_uso_processo_%': uso_cpu_percentual_pid
+        }
+        
+        # --- GPU (opcional, requer torch) ---
+        if incluir_gpu:
+            gpu_info = cls._obter_info_gpu()
+            if gpu_info:
+                resultado['gpu'] = gpu_info
+        
+        return resultado
+    
+    @classmethod
+    def _obter_info_gpu(cls) -> dict:
+        """
+        Obtém informações de GPU via torch.cuda.
+        
+        Returns:
+            Dict com informações das GPUs ou dict vazio se não disponível
+        """
+        try:
+            import torch
+        except ImportError:
+            return {}
+        
+        if not torch.cuda.is_available():
+            return {'disponivel': False, 'motivo': 'CUDA não disponível'}
+        
+        gpus = []
+        total_gpus = torch.cuda.device_count()
+        
+        for idx in range(total_gpus):
+            try:
+                torch.cuda.synchronize(idx)
+                props = torch.cuda.get_device_properties(idx)
+                
+                # Memória total da GPU
+                mem_total_gb = round(props.total_memory / (1024 ** 3), 3)
+                
+                # Memória reservada pelo PyTorch
+                mem_reservada_gb = round(torch.cuda.memory_reserved(idx) / (1024 ** 3), 3)
+                
+                # Memória alocada pelo PyTorch
+                mem_alocada_gb = round(torch.cuda.memory_allocated(idx) / (1024 ** 3), 3)
+                
+                # Pico de memória reservada
+                mem_max_reservada_gb = round(torch.cuda.max_memory_reserved(idx) / (1024 ** 3), 3)
+                
+                gpus.append({
+                    'idx': idx,
+                    'nome': props.name,
+                    'mem_total_gb': mem_total_gb,
+                    'mem_reservada_gb': mem_reservada_gb,
+                    'mem_alocada_gb': mem_alocada_gb,
+                    'mem_max_reservada_gb': mem_max_reservada_gb,
+                    'compute_capability': f"{props.major}.{props.minor}"
+                })
+            except Exception as e:
+                gpus.append({
+                    'idx': idx,
+                    'erro': str(e)
+                })
+        
+        return {
+            'disponivel': True,
+            'total_gpus': total_gpus,
+            'gpus': gpus
+        }
 
     @classmethod
     def escape_json_string_literals(cls, s: str) -> str:
@@ -420,97 +511,6 @@ except ImportError:
     # A exceção só será levantada se o método 'carregar' for chamado.
     def load_dotenv(dotenv_path):
         raise ImportError('Erro de import: considere instalar com "pip install python-dotenv"')
-
-class UtilEnv():
-    """
-    Classe utilitária para carregar e acessar variáveis de ambiente
-    de arquivos .env de forma segura e robusta.
-    """    
-    @classmethod
-    def carregar(cls, arquivos = ['.env','env'], pastas=['./','../','./src/','../src/']):
-        """
-        Carrega variáveis de ambiente de um arquivo .env.
-        Procura por arquivos em diferentes pastas e para no primeiro que encontrar.
-        Args:
-            arquivos (Union[str, List[str]]): Nome ou lista de nomes de arquivos a procurar.
-            pastas (List[str]): Lista de pastas onde procurar os arquivos.
-        Returns:
-            Optional[str]: O caminho do arquivo .env carregado, ou None se nenhum foi encontrado.
-        """        
-        arquivos = [str(arquivos)] if not isinstance(arquivos, (list, tuple, set)) else arquivos
-        pastas = [str(pastas)] if not isinstance(pastas, (list, tuple, set)) else pastas
-        for arquivo in arquivos:
-            for pasta in pastas:
-                arq = os.path.join(pasta, arquivo)
-                if os.path.isfile(arq):
-                    load_dotenv(arq)
-                    return arq
-        return None
-
-    @classmethod
-    def get_str(cls, chave: str, padrao: Optional[str] = None) -> Optional[str]:
-        """
-        Obtém uma variável de ambiente como uma string.
-
-        Args:
-            chave (str): A chave da variável de ambiente.
-            padrao (Optional[str]): O valor padrão a ser retornado se a chave não for encontrada.
-
-        Returns:
-            Optional[str]: O valor da variável ou o padrão.
-        """
-        valor = os.getenv(chave)
-        return valor if valor is not None else padrao
-
-    @classmethod
-    def get_int(cls, chave: str, padrao: Optional[int] = None) -> Optional[int]:
-        """
-        Obtém uma variável de ambiente e a converte para inteiro.
-
-        Args:
-            chave (str): A chave da variável de ambiente.
-            padrao (Optional[int]): O valor padrão a ser retornado se a chave não for encontrada
-                                  ou se a conversão falhar.
-
-        Returns:
-            Optional[int]: O valor convertido para inteiro ou o padrão.
-        """
-        valor_str = os.getenv(chave)
-        if valor_str is None:
-            return padrao
-        
-        try:
-            return int(valor_str)
-        except (ValueError, TypeError):
-            # Retorna o padrão se a conversão para int falhar (ex: "abc", "1.5")
-            # ou se o valor for inesperado (TypeError, embora raro com getenv).
-            return padrao
-
-    @classmethod
-    def get_float(cls, chave: str, padrao: Optional[float] = None) -> Optional[float]:
-        """
-        Obtém uma variável de ambiente e a converte para float.
-        Trata tanto ponto (.) quanto vírgula (,) como separador decimal.
-
-        Args:
-            chave (str): A chave da variável de ambiente.
-            padrao (Optional[float]): O valor padrão a ser retornado se a chave não for encontrada
-                                     ou se a conversão falhar.
-
-        Returns:
-            Optional[float]: O valor convertido para float ou o padrão.
-        """
-        valor_str = os.getenv(chave)
-        if valor_str is None:
-            return padrao
-        
-        try:
-            # Substitui vírgula por ponto para garantir a conversão correta
-            valor_normalizado = valor_str.replace(',', '.', 1)
-            return float(valor_normalizado)
-        except (ValueError, TypeError):
-            # Retorna o padrão se a conversão para float falhar (ex: "abc")
-            return padrao
 
 ############################
 class UtilZip():
@@ -702,44 +702,6 @@ class UtilEnv():
             return default            
 
 class UtilArquivos(object):
-
-    @staticmethod
-    def tamanho_arquivo(nome_arquivo):
-        if os.path.isfile(nome_arquivo):
-           return os.path.getsize(nome_arquivo)
-        return 0
-
-    @staticmethod
-    def carregar_json(arquivo):
-        tipos = ['utf8', 'ascii', 'latin1']
-        for tp in tipos:
-            try:
-                with open(arquivo, encoding=tp) as f:
-                    return json.load(f)
-            except UnicodeError:
-                continue
-        with open(arquivo, encoding='latin1', errors='ignore') as f:
-            return json.load(f)
-
-    @classmethod
-    def encontrar_arquivo(cls, arquivo, pastas = None, incluir_subpastas = False):
-        ''' pastas = None ele volta até 5 pastas procurando a pasta ou o arquivo informado
-        '''
-        from os import walk as os_walk
-        _pastas = ['../','../../','../../../','../../../../','../../../../../'] if pastas is None else pastas
-        _arq = os.path.split(arquivo)[1]
-        subpastas = []
-        if incluir_subpastas:
-            for root, dirs, files in os_walk('./'):
-                for sub in dirs:
-                    subpastas.append( os.path.join(root,sub) )
-        for pasta in set(list(_pastas) + ['./'] + subpastas):
-            if os.path.isfile( os.path.join(pasta, _arq) ):
-                return os.path.join(pasta, _arq)
-        return None
-
-class UtilArquivos(object):
-
     @staticmethod
     def tamanho_arquivo(nome_arquivo):
         if os.path.isfile(nome_arquivo):
@@ -783,30 +745,12 @@ class UtilArquivos(object):
             arqs = [os.path.split(arq)[1] for arq in arqs]
         return arqs
 
-class Util(object):
-
-    @staticmethod
-    def pausa(segundos, progresso = True):
-        if segundos ==0:
-            return
-        if segundos<1:
-            segundos =1
-        for ps in range(0,segundos):
-            time.sleep(1)
-            if progresso:
-                increments = 50
-                percentual = int((ps / segundos) * 100)
-                i = int(percentual // (100 / increments))
-                text = "\r[{0: <{1}}] {2:.2f}%".format('=' * i, increments, percentual)
-                print('{} Pausa por {}s           '.format(text, segundos-ps), end="")
-        if progresso:
-            print(f'\rPausa finalizada {segundos}s' + ' ' * 50)
 
 class UtilTextos(object):
     
     @classmethod
     def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True ):
-        ''' O objetivo é receber uma resposta de um modelo LLM e identificar o json dentro dela 
+        r''' O objetivo é receber uma resposta de um modelo LLM e identificar o json dentro dela 
             Exemplo: dicionario = UtilTextos.mensagem_to_json('```json\n{"chave":"valor qualquer", "numero":1}\```')
         '''
         if isinstance(mensagem, dict):

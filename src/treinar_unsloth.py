@@ -12,7 +12,7 @@ Uso:
   termina — você revisa os valores e executa novamente.
 * O código utilizará automaticamente todas as GPUs disponíveis,
   sendo gerenciado pelo ambiente do sistema operacional.
-  Para isolar as GPUs que serão usadas, defina a variável de ambiente CUDA_VISIBLE_DEVICES = <IDs das GPUs>.
+  Para isolar as GPUs que serão usadas, defina a variável de ambiente para o tensorflow CUDA_VISIBLE_DEVICES = <IDs das GPUs>.
   Exemplo: export CUDA_VISIBLE_DEVICES=0,1,2  (no Linux para utilizar as GPUs 0, 1 e 2)
 * O parâmetro **--debug** ativa modo de debug que carrega e apresenta
   a estrutura do dataset e configurações importantes sem executar treino.
@@ -48,12 +48,86 @@ import os, time, json
 import sys
 import traceback
 from typing import Any, Dict
+import dataclasses
 import yaml
 import torch
+
+# Desabilita compilação dinâmica (Dynamo/Inductor) para evitar erros de falta de compilador C
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
+try:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+    torch._dynamo.config.disable = True
+except ImportError:
+    pass
 import pandas as pd
-from datasets import Dataset
+
+# Configuração de path para permitir execução de qualquer diretório
+# Detecta o diretório src automaticamente a partir da localização deste arquivo
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+# Sistema de logging centralizado
+from treinar_unsloth_logging import get_logger, configurar_logging, log_separador, log_bloco
+from treinar_unsloth_monitor import MonitorRecursos
+
+try:
+    from datasets import Dataset
+except ImportError:
+    print("Erro: O pacote 'datasets' não está instalado.")
+    print("Por favor, instale-o executando: pip install datasets")
+    sys.exit(1)
+try:
+    from unsloth import FastModel
+except ImportError:
+    print("Erro: O pacote 'unsloth' não está instalado.")
+    print("Por favor, instale-o executando: pip install unsloth")
+    sys.exit(1)
+try:
+    from unsloth.chat_templates import get_chat_template, CHAT_TEMPLATES, train_on_responses_only
+except ImportError:
+    print("Erro: O pacote 'unsloth.chat_templates' não está instalado.")
+    print("Por favor, instale-o executando: pip install unsloth")
+    sys.exit(1)
+try:
+    from trl import SFTTrainer, SFTConfig
+except ImportError:
+    print("Erro: O pacote 'trl' não está instalado.")
+    print("Por favor, instale-o executando: pip install trl")
+    sys.exit(1)
+try:
+    from transformers import TrainerCallback
+except ImportError:
+    print("Erro: O pacote 'transformers' não está instalado.")
+    print("Por favor, instale-o executando: pip install transformers")
+    sys.exit(1)
+try:
+    from transformers import GenerationConfig
+except ImportError:
+    print("Erro: O pacote 'transformers' não está instalado.")
+    print("Por favor, instale-o executando: pip install transformers")
+    sys.exit(1)
+try:
+    import numpy as np
+except ImportError:
+    print("Erro: O pacote 'numpy' não está instalado.")
+    print("Por favor, instale-o executando: pip install numpy")
+    sys.exit(1)
+try:
+    from datetime import datetime
+except ImportError:
+    print("Erro: O pacote 'datetime' não está instalado.")
+    print("Por favor, instale-o executando: pip install datetime")
+    sys.exit(1)
+try:
+    from copy import deepcopy
+except ImportError:
+    print("Erro: O pacote 'copy' não está instalado.")
+    print("Por favor, instale-o executando: pip install copy")
+    sys.exit(1)
 from unsloth import FastModel
-from unsloth.chat_templates import get_chat_template, CHAT_TEMPLATES, train_on_responses_only
+# from unsloth.chat_templates import get_chat_template, CHAT_TEMPLATES, train_on_responses_only
 from trl import SFTTrainer, SFTConfig
 from transformers import TrainerCallback
 from transformers import GenerationConfig
@@ -61,28 +135,71 @@ import numpy as np
 from datetime import datetime
 from copy import deepcopy
 
+# Import da nova classe de configuração YAML e Gerador de Relatório
+from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, calcular_rouge_l
+from treinar_unsloth_report import GeradorRelatorio
+from treinar_unsloth_chat import TreinarChatTemplate
+from util import UtilEnv, Util
+
+# ---------------------------------------------------------------------------
+# Logger do módulo
+# ---------------------------------------------------------------------------
+
+logger = get_logger(__name__)
+
 # ---------------------------------------------------------------------------
 # utilidades
 # ---------------------------------------------------------------------------
 
-def _print_mem(tag: str) -> dict:
-    """Exibe estatísticas de memória GPU para depuração rápida."""
-    if not torch.cuda.is_available():
-        print(f"[{tag}] CUDA não disponível.")
+def _print_mem(tag: str, incluir_ram: bool = True) -> dict:
+    """
+    Exibe estatísticas de memória (RAM e GPU) para depuração rápida.
+    Utiliza Util.dados_hardware() para obter informações centralizadas.
+    
+    Args:
+        tag: Identificador para o print (ex: "ANTES", "DEPOIS")
+        incluir_ram: Se True, também exibe informações de RAM
+        
+    Returns:
+        Dict com informações completas de hardware (CPU, RAM, GPU)
+    """
+    try:
+        hardware = Util.dados_hardware(incluir_gpu=True)
+    except Exception as e:
+        logger.warning(f"[{tag}] Erro ao obter dados de hardware: {e}")
         return {}
     
-    stats_list = []
-    for device_idx in range(torch.cuda.device_count()):
-        torch.cuda.synchronize(device_idx)
-        stats = torch.cuda.get_device_properties(device_idx)
-        total = round(stats.total_memory / 1024 / 1024 / 1024, 3)
-        reserved = round(torch.cuda.max_memory_reserved(device_idx) / 1024 / 1024 / 1024, 3)
-        print(f"[{tag}] GPU[{device_idx}] {stats.name} | reservada: {reserved} GB / total: {total} GB")
-        stats_list.append({'mem_total_gb': total, 'mem_reserved_gm': reserved, 'gpu_idx': device_idx, 'name': stats.name})
+    # Exibe informações de RAM
+    if incluir_ram:
+        ram_total = hardware.get('mem_total_gb', 0)
+        ram_usada = hardware.get('mem_usada_gb', 0)
+        ram_disp = hardware.get('mem_disponivel_gb', 0)
+        ram_uso = hardware.get('mem_uso_%', 0)
+        logger.info(f"[{tag}] RAM | usada: {ram_usada:.2f} GB / total: {ram_total:.2f} GB ({ram_uso:.1f}%) | disponível: {ram_disp:.2f} GB")
     
-    return {'gpus': stats_list, 'total_gpus': torch.cuda.device_count()}
+    # Exibe informações de GPU
+    gpu_info = hardware.get('gpu', {})
+    if not gpu_info.get('disponivel', False):
+        motivo = gpu_info.get('motivo', 'CUDA não disponível')
+        logger.info(f"[{tag}] GPU | {motivo}")
+    else:
+        gpus = gpu_info.get('gpus', [])
+        for gpu in gpus:
+            if 'erro' in gpu:
+                logger.warning(f"[{tag}] GPU[{gpu['idx']}] Erro: {gpu['erro']}")
+            else:
+                nome = gpu.get('nome', 'N/A')
+                mem_total = gpu.get('mem_total_gb', 0)
+                mem_reservada = gpu.get('mem_reservada_gb', 0)
+                mem_max_reservada = gpu.get('mem_max_reservada_gb', 0)
+                mem_alocada = gpu.get('mem_alocada_gb', 0)
+                logger.info(f"[{tag}] GPU[{gpu['idx']}] {nome} | reservada: {mem_max_reservada:.2f} GB / total: {mem_total:.2f} GB | alocada: {mem_alocada:.2f} GB")
+    
+    return hardware
 
 class JsonLoggerCallback(TrainerCallback):
+    """Callback para registrar métricas de treinamento em formato JSONL."""
+    
     def __init__(self, path):
         self.path = path
         # zera o arquivo no início
@@ -102,6 +219,210 @@ class JsonLoggerCallback(TrainerCallback):
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
         self.on_log(args, state, control, metrics)
 
+
+class HardwareMetricsCallback(TrainerCallback):
+    """
+    Callback para registrar métricas contínuas de hardware durante o treinamento.
+    
+    Registra: CPU (uso %), RAM (usada/disponível GB), Disco (uso %), GPU (memória alocada/reservada GB)
+    As métricas são salvas em arquivo JSONL separado para análise posterior.
+    """
+    
+    def __init__(self, output_dir: str, intervalo_steps: int = 10):
+        """
+        Args:
+            output_dir: Diretório onde salvar o arquivo de métricas
+            intervalo_steps: Intervalo de steps entre registros (evita overhead excessivo)
+        """
+        self.output_dir = output_dir
+        self.intervalo_steps = max(1, intervalo_steps)
+        self.metrics_file = os.path.join(output_dir, "treinamento", "hardware_metrics.jsonl")
+        self._ultimo_step = -1
+        
+        # Cria diretório e arquivo
+        os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
+        open(self.metrics_file, "w").close()  # Limpa arquivo anterior
+        
+    def _registrar_metricas(self, step: int, epoch: float, fase: str = "train"):
+        """Registra métricas de hardware no arquivo JSONL."""
+        try:
+            hardware = Util.dados_hardware(incluir_gpu=True)
+            
+            registro = {
+                "timestamp": time.time(),
+                "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "step": step,
+                "epoch": round(epoch, 4) if epoch else 0,
+                "fase": fase,
+                # CPU
+                "cpu_uso_%": hardware.get("cpu_uso_%", 0),
+                "cpu_uso_processo_%": hardware.get("cpu_uso_processo_%", 0),
+                # RAM
+                "ram_usada_gb": hardware.get("mem_usada_gb", 0),
+                "ram_disponivel_gb": hardware.get("mem_disponivel_gb", 0),
+                "ram_uso_%": hardware.get("mem_uso_%", 0),
+                # Disco
+                "disco_uso_%": hardware.get("disco_uso_%", 0),
+            }
+            
+            # GPU (pode ter múltiplas)
+            gpu_info = hardware.get("gpu", {})
+            if gpu_info.get("disponivel", False):
+                gpus = gpu_info.get("gpus", [])
+                for gpu in gpus:
+                    idx = gpu.get("idx", 0)
+                    registro[f"gpu{idx}_reservada_gb"] = gpu.get("mem_reservada_gb", 0)
+                    registro[f"gpu{idx}_alocada_gb"] = gpu.get("mem_alocada_gb", 0)
+                    registro[f"gpu{idx}_max_reservada_gb"] = gpu.get("mem_max_reservada_gb", 0)
+            
+            with open(self.metrics_file, "a") as fp:
+                fp.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                
+        except Exception as e:
+            # Não interrompe o treinamento por erro de métricas
+            pass
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        """Registra métricas a cada N steps."""
+        if state.global_step % self.intervalo_steps == 0 and state.global_step != self._ultimo_step:
+            self._ultimo_step = state.global_step
+            self._registrar_metricas(state.global_step, state.epoch, "train")
+    
+    def on_evaluate(self, args, state, control, **kwargs):
+        """Registra métricas durante avaliação."""
+        self._registrar_metricas(state.global_step, state.epoch, "eval")
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Registra métricas no início do treinamento."""
+        self._registrar_metricas(0, 0, "train_begin")
+    
+    def on_train_end(self, args, state, control, **kwargs):
+        """Registra métricas no final do treinamento."""
+        self._registrar_metricas(state.global_step, state.epoch, "train_end")
+
+
+class MetricsLoggerCallback(TrainerCallback):
+    """
+    Callback aprimorado para registrar métricas detalhadas de treinamento e validação.
+    
+    Registra: loss, learning_rate, grad_norm, e métricas de avaliação (eval_loss)
+    Salva em arquivo JSONL separado com informações adicionais de contexto.
+    """
+    
+    def __init__(self, output_dir: str):
+        """
+        Args:
+            output_dir: Diretório onde salvar o arquivo de métricas
+        """
+        self.output_dir = output_dir
+        self.metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
+        self._train_start_time = None
+        self._best_eval_loss = float('inf')
+        self._train_losses = []  # Para calcular média móvel
+        
+        # Cria diretório e arquivo
+        os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
+        open(self.metrics_file, "w").close()  # Limpa arquivo anterior
+        
+    def _registrar(self, registro: dict):
+        """Salva registro no arquivo JSONL."""
+        try:
+            with open(self.metrics_file, "a") as fp:
+                fp.write(json.dumps(registro, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Marca início do treinamento."""
+        self._train_start_time = time.time()
+        self._registrar({
+            "event": "train_begin",
+            "timestamp": self._train_start_time,
+            "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "total_steps": state.max_steps,
+            "num_epochs": args.num_train_epochs,
+            "batch_size": args.per_device_train_batch_size,
+            "grad_accum_steps": args.gradient_accumulation_steps,
+        })
+    
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        """Registra métricas de treinamento a cada log."""
+        if not logs:
+            return
+            
+        registro = {
+            "event": "log",
+            "timestamp": time.time(),
+            "step": state.global_step,
+            "epoch": round(state.epoch, 4) if state.epoch else 0,
+            "elapsed_seconds": time.time() - self._train_start_time if self._train_start_time else 0,
+        }
+        
+        # Métricas de treinamento
+        if "loss" in logs:
+            registro["train_loss"] = round(logs["loss"], 6)
+            self._train_losses.append(logs["loss"])
+            # Média móvel das últimas 10 perdas
+            if len(self._train_losses) >= 10:
+                registro["train_loss_avg_10"] = round(sum(self._train_losses[-10:]) / 10, 6)
+        
+        if "learning_rate" in logs:
+            registro["learning_rate"] = logs["learning_rate"]
+            
+        if "grad_norm" in logs:
+            registro["grad_norm"] = round(logs["grad_norm"], 6)
+        
+        # Métricas de avaliação
+        if "eval_loss" in logs:
+            registro["eval_loss"] = round(logs["eval_loss"], 6)
+            if logs["eval_loss"] < self._best_eval_loss:
+                self._best_eval_loss = logs["eval_loss"]
+                registro["is_best_eval"] = True
+        
+        # Progresso
+        if state.max_steps > 0:
+            registro["progress_%"] = round(state.global_step / state.max_steps * 100, 2)
+        
+        self._registrar(registro)
+    
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        """Registra métricas completas de avaliação."""
+        if not metrics:
+            return
+            
+        registro = {
+            "event": "evaluate",
+            "timestamp": time.time(),
+            "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "step": state.global_step,
+            "epoch": round(state.epoch, 4) if state.epoch else 0,
+        }
+        
+        # Copia todas as métricas de avaliação
+        for key, value in metrics.items():
+            if isinstance(value, (int, float)):
+                registro[key] = round(value, 6) if isinstance(value, float) else value
+        
+        self._registrar(registro)
+    
+    def on_train_end(self, args, state, control, **kwargs):
+        """Registra resumo final do treinamento."""
+        elapsed = time.time() - self._train_start_time if self._train_start_time else 0
+        
+        registro = {
+            "event": "train_end",
+            "timestamp": time.time(),
+            "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "total_steps": state.global_step,
+            "final_epoch": round(state.epoch, 4) if state.epoch else 0,
+            "total_time_seconds": round(elapsed, 2),
+            "total_time_formatted": f"{int(elapsed // 3600)}h {int((elapsed % 3600) // 60)}m {int(elapsed % 60)}s",
+            "best_eval_loss": round(self._best_eval_loss, 6) if self._best_eval_loss != float('inf') else None,
+            "final_train_loss_avg": round(sum(self._train_losses[-10:]) / len(self._train_losses[-10:]), 6) if self._train_losses else None,
+        }
+        
+        self._registrar(registro)
+
 # ---------------------------------------------------------------------------
 # classe principal
 # ---------------------------------------------------------------------------
@@ -109,40 +430,59 @@ class JsonLoggerCallback(TrainerCallback):
 class LLMsTrainer:
     """Encapsula o fluxo de fine‑tuning de LLMs com LoRA e Unsloth."""
 
-    REQUIRED_KEYS = {
-        "dataset_train_path",
-        "base_model_name",
-        "output_dir",
-        "batch_size",
-        "grad_batch_size",
-        "num_train_epochs",
-        "max_seq_length",
-        "lora_r",
-    }
+    # Chaves obrigatórias no formato flat (para compatibilidade do método para_config_flat)
+    # REQUIRED_KEYS removido pois validação é feita nos dataclasses
 
     def __init__(self, cfg_path: str):
-        self.cfg: Dict[str, Any] = self._load_cfg(cfg_path)
-        # cria a pasta de saída se não existir
-        os.makedirs(self.cfg.get("output_dir", "./saida"), exist_ok=True)
-        self._validate_cfg()
+        # Carrega configuração YAML
+        self._yaml_config = YamlTreinamento(cfg_path)
+        
+        # Cria a pasta de saída se não existir
+        os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
+        
+        # Carrega modelo e tokenizer
         self.model, self.tokenizer = self._load_model()
-        self._get_chat_template() # carrega o chat template e identifica se usa type ou str
-       # se for json, não precisa de coluna
-        self.train_ds = self._load_split(
-            self.cfg["dataset_train_path"], self.cfg.get("train_prompt_col"), split="treino"
-        )
-        # registra o primeiro registro no log
-        self.log_processamento(self.train_ds[0], titulo="Primeiro registro do dataset de treino")
-        self.eval_ds = None
-        if self.cfg.get("dataset_eval_path"):
-            self.eval_ds = self._load_split(
-                self.cfg["dataset_eval_path"],
-                self.cfg.get("eval_prompt_col", self.cfg.get("train_prompt_col")),
-                split="teste",
+        
+        # Gerenciador de templates de chat
+        self.chat_handler = TreinarChatTemplate(self.tokenizer, self._yaml_config.modelo.base)
+        self.tokenizer = self.chat_handler.tokenizer
+        
+        # Carrega datasets baseado no tipo de entrada
+        if self._yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+            # Modo pastas: carrega de arquivos pareados
+            self.train_ds = self._load_from_pastas(alvo="treino")
+            self.eval_ds = self._load_from_pastas(alvo="validacao")
+        else:
+            # Modo dataset: carrega de arquivos parquet
+            self.train_ds = self._load_split(
+                self._yaml_config.dataset.train_file, 
+                self._yaml_config.dataset.train_prompt_col, 
+                split="treino"
             )
-            self.log_processamento(self.eval_ds[0], titulo="Primeiro registro do dataset de teste")
-        self.save_checkpoints = self.cfg.get('save_checkpoints','') in {1,'1','True',True,'true','sim','Sim','SIM'}
-        self.trainer = self._build_trainer()
+            self.eval_ds = None
+            if self._yaml_config.dataset.eval_file:
+                self.eval_ds = self._load_split(
+                    self._yaml_config.dataset.eval_file,
+                    self._yaml_config.dataset.eval_prompt_col or self._yaml_config.dataset.train_prompt_col,
+                    split="validação",
+                )
+        
+        # Exibe estatísticas pré-treinamento e armazena para relatório
+        ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino")
+        es = self._print_dataset_stats(self.eval_ds, "Dataset de Validação") if self.eval_ds and len(self.eval_ds) > 0 else {}
+        
+        self._dataset_stats = {
+            "treino_len": len(self.train_ds),
+            "validacao_len": len(self.eval_ds) if self.eval_ds else 0,
+            "token_stats": ts
+        }
+
+        # Log do primeiro registro
+        if len(self.train_ds) > 0:
+            self.log_processamento(self.train_ds[0], titulo="Primeiro registro do dataset de treino")
+        
+        self.save_checkpoints = self._yaml_config.treinamento.save_checkpoints
+        self.trainer = None  # Inicialização lazy no método train()
 
     # ------------------------- controle no colab ------------------------------
     @classmethod
@@ -150,25 +490,72 @@ class LLMsTrainer:
         print(f'JsonAnalise carregado corretamente em {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}!')
         
     # ------------------------- configuração ------------------------------
-    @classmethod
-    def _load_cfg(cls, path: str) -> Dict[str, Any]:
-        with open(path, "r", encoding="utf-8") as fp:
-            return yaml.safe_load(fp) or {}
-
     def _validate_cfg(self) -> None:
-        missing = self.REQUIRED_KEYS - self.cfg.keys()
-        if missing:
-            raise ValueError(f"Parâmetros obrigatórios ausentes no YAML: {sorted(missing)}")
-        if self.cfg.get("dataset_eval_path") and not self.cfg.get("eval_prompt_col"):
-            raise ValueError("Se 'dataset_eval_path' for definido, informe 'eval_prompt_col'.")
+        """Validação já realizada pela YamlTreinamento."""
+        pass
+    
+    def _print_dataset_stats(self, dataset: Dataset, nome: str) -> dict:
+        """Exibe estatísticas de tokens do dataset e retorna dict com dados."""
+        if dataset is None or len(dataset) == 0:
+            print(f"📊 {nome}: vazio")
+            return {}
+        
+        lengths = [len(r.get('input_ids', [])) for r in dataset]
+        if not lengths or max(lengths) == 0:
+            # Dataset ainda não tokenizado, conta mensagens
+            print(f"📊 {nome}: {len(dataset)} registros (não tokenizado)")
+            return {}
+        
+        min_l, max_l = min(lengths), max(lengths)
+        avg_l = sum(lengths)/len(lengths)
+        
+        print(f"📊 {nome}:")
+        print(f"   Registros: {len(dataset)}")
+        print(f"   Tokens: min={min_l}, max={max_l}, média={avg_l:.0f}")
+        
+        # Alerta se houver sequências que excedem max_seq_length
+        max_seq = self._yaml_config.treinamento.max_seq_length
+        excedem = sum(1 for l in lengths if l > max_seq)
+        if excedem > 0:
+            print(f"   ⚠️  {excedem} registros excedem max_seq_length={max_seq}")
+        
+        return {
+            "min": min_l,
+            "max": max_l,
+            "avg": round(avg_l, 1),
+            "exceed_max_seq": excedem
+        }
+    
+    def _load_from_pastas(self, alvo: str) -> Dataset:
+        """Carrega dataset a partir de pastas usando YamlTreinamento."""
+        print(f"[2/6] Carregando dados de pastas (alvo={alvo})...")
+        
+        # Carrega mensagens usando dataset_manager via YamlTreinamento
+        mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
+        
+        if not mensagens:
+            print(f"   ⚠️  Nenhum registro encontrado para alvo='{alvo}'")
+            return Dataset.from_list([])
+        
+        print(f"   Encontrados {len(mensagens)} registros para {alvo}")
+        
+        # Cria LLMsDataset a partir dos dados em memória
+        dataset_loader = LLMsDataset(
+            data=mensagens,
+            tokenizer=self.tokenizer,
+            max_seq_length=self._yaml_config.treinamento.max_seq_length
+        )
+        
+        return dataset_loader.dataset
         
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
         print("[1/6] Carregando modelo base…")
-        nbits = int(self.cfg.get("nbits", 0))
+        # Carrega configuração de bits
+        nbits = self._yaml_config.treinamento.nbits
         
         # Verifica se existe modelo LoRA já treinado
-        lora_model_path = self.cfg['output_dir']
+        lora_model_path = self._yaml_config.modelo.saida
         arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
         arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
         
@@ -184,7 +571,7 @@ class LLMsTrainer:
                 # Carrega o modelo LoRA já treinado diretamente
                 model, tokenizer = FastModel.from_pretrained(
                     model_name=lora_model_path,  # Carrega da pasta do modelo treinado
-                    max_seq_length=int(self.cfg["max_seq_length"]),
+                    max_seq_length=self._yaml_config.treinamento.max_seq_length,
                     load_in_4bit=nbits == 4,
                     load_in_8bit=nbits == 8,
                     device_map="auto",
@@ -203,32 +590,32 @@ class LLMsTrainer:
         
         # Se não conseguiu carregar o LoRA ou não existe, carrega modelo base
         if not lora_ok:
-            print(f'🔄 Carregando modelo base: {self.cfg["base_model_name"]}...')
+            print(f'🔄 Carregando modelo base: {self._yaml_config.modelo.base}...')
             model, tokenizer = FastModel.from_pretrained(
-                model_name=self.cfg["base_model_name"],
-                max_seq_length=int(self.cfg["max_seq_length"]),
+                model_name=self._yaml_config.modelo.base,
+                max_seq_length=self._yaml_config.treinamento.max_seq_length,
                 load_in_4bit=nbits == 4,
                 load_in_8bit=nbits == 8,
-                full_finetuning=self.cfg["lora_r"] in (0,None,False)
+                full_finetuning=self._yaml_config.lora.r in (0,None,False)
             )
             
             # Se usar LoRA, aplica as configurações
-            if self.cfg["lora_r"] not in (0,None,False):
-                print(f'🔄 Aplicando LoRA r={self.cfg["lora_r"]} ao modelo base ...')
+            if self._yaml_config.lora.r not in (0,None,False):
+                print(f'🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...')
                 model = FastModel.get_peft_model(
                     model,
                     finetune_vision_layers=False,
                     finetune_language_layers=True,
                     finetune_attention_modules=True,
                     finetune_mlp_modules=True,
-                    r=int(self.cfg["lora_r"]),
-                    lora_alpha=int(self.cfg.get("lora_alpha", self.cfg["lora_r"])),
-                    lora_dropout=float(self.cfg.get("lora_dropout", 0.0)),
+                    r=self._yaml_config.lora.r,
+                    lora_alpha=self._yaml_config.lora.alpha,
+                    lora_dropout=self._yaml_config.lora.dropout,
                     bias="none",
                     random_state=3407,
                     device_map="auto",
                 )
-        tokenizer = get_chat_template(tokenizer, chat_template="gemma-3")
+        # Template agora é aplicado pelo TreinarChatTemplate após o carregamento
         model.print_trainable_parameters()
         
         # Log detalhado do modelo carregado
@@ -252,29 +639,12 @@ class LLMsTrainer:
             except Exception as e:
                 print(f"  - Erro ao obter detalhes PEFT: {e}")
         
-        self.log_processamento(self.cfg, titulo="Configuração do treinamento")
+        self.log_processamento(self._yaml_config._raw_config, titulo="Configuração do treinamento")
         self.log_processamento(str(model), titulo="Resumo do modelo")
         self.log_processamento(f"Tipo do modelo: {model_type} | PEFT: {is_peft_model} | LoRA OK: {lora_ok}", titulo="Status do modelo")
         self.log_processamento(tokenizer.chat_template, titulo="Template do tokenizer")
         return model, tokenizer
 
-    def _get_chat_template(self):
-        """Configura o chat template adequado para o modelo."""
-        if getattr(self.tokenizer, "chat_template", None):
-            return  # já tem template definido (modelos "instruct" costumam trazer)
-        _nm_teste = self.cfg["base_model_name"].replace('-','').lower()
-        if 'gemma' in _nm_teste: key = 'gemma'
-        elif 'qwen2' in _nm_teste: key = '"qwen-2.5"'
-        elif 'qwen3' in _nm_teste: key = 'chatml'
-        elif 'llama33' in _nm_teste:  key = 'llama-3.3'
-        elif 'llama32' in _nm_teste:  key = 'llama-3.2'
-        elif 'llama31' in _nm_teste:  key = 'llama-3.1'
-        elif 'llama3' in _nm_teste:  key = 'llama-3'
-        elif 'llama' in _nm_teste:  key = 'llama'
-        else: key = 'chatml'
-        if key not in CHAT_TEMPLATES:
-            key = "chatml"  # último fallback
-        self.tokenizer = get_chat_template(self.tokenizer, chat_template=key)
 
     # ------------------------- dados -------------------------------------
     def _load_split(self, parquet_path: str, prompt_col: str, *, split: str) -> Dataset:
@@ -286,31 +656,48 @@ class LLMsTrainer:
             path=parquet_path,
             prompt_col=prompt_col,
             tokenizer=self.tokenizer,
-            max_seq_length=self.cfg["max_seq_length"]
+            max_seq_length=self._yaml_config.treinamento.max_seq_length
         )
         
         # obtém dataset processado
-        processed_ds = dataset_loader.get_processed_dataset()
-        print(f" - {split} carregado com {len(processed_ds)} registros")
+        print(f" - {split} carregado com {len(dataset_loader.dataset)} registros")
         
-        return processed_ds
+        return dataset_loader.dataset
 
     @classmethod
     def debug_info(cls, cfg_path: str):
         """Exibe informações detalhadas de debug sobre configuração e datasets."""
-        cfg = cls._load_cfg(cfg_path)
         print("="*80)
         print(">> MODO DEBUG - INFORMAÇÕES DE CONFIGURAÇÃO E DATASET")
         print("="*80)
         
-        # configuração
-        print("\n📋 CONFIGURAÇÃO:")
-        print(json.dumps(cfg, indent=2, ensure_ascii=False))
+        # Carrega configuração usando YamlTreinamento
+        try:
+            yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
+        except Exception as e:
+            print(f"\n❌ Erro ao carregar YAML: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+        
+        # Mostra informações do YamlTreinamento
+        print(f"\n{yaml_config.info()}")
+        
+        # configuração estruturada
+        print("\n📋 CONFIGURAÇÃO ESTRUTURADA:")
+        config_dict = {
+             "modelo": dataclasses.asdict(yaml_config.modelo),
+             "treinamento": dataclasses.asdict(yaml_config.treinamento),
+             "lora": dataclasses.asdict(yaml_config.lora),
+             "dataset": dataclasses.asdict(yaml_config.dataset) if yaml_config.dataset else None,
+             "formatos": dataclasses.asdict(yaml_config.formatos)
+        }
+        print(json.dumps(config_dict, indent=2, ensure_ascii=False, default=str))
 
         # carrega o tokenizer para chat_template
         try:
             from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(cfg["base_model_name"], use_fast=True)
+            tokenizer = AutoTokenizer.from_pretrained(yaml_config.modelo.base, use_fast=True)
             print(f"\n✅ Tokenizer carregado com sucesso")
         except ImportError:
             print(f"\n❌ Transformers não disponível")
@@ -322,13 +709,13 @@ class LLMsTrainer:
         # informações do modelo
         template_type = LLMsDataset.template_com_type(tokenizer)
         print(f"\n🤖 MODELO:")
-        print(f"  - Nome: {cfg['base_model_name']}")
-        print(f"  - LoRA r: {cfg['lora_r']}")
-        print(f"  - Max seq length: {cfg['max_seq_length']}")
+        print(f"  - Nome: {yaml_config.modelo.base}")
+        print(f"  - LoRA r: {yaml_config.lora.r}")
+        print(f"  - Max seq length: {yaml_config.treinamento.max_seq_length}")
         print(f"  - Template com type: {template_type}")
         
         # Verifica se existe modelo LoRA treinado
-        lora_model_path = cfg.get('output_dir', './saida')
+        lora_model_path = yaml_config.modelo.saida
         arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
         arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
         pytorch_model = os.path.join(lora_model_path, 'pytorch_model.bin')
@@ -353,88 +740,79 @@ class LLMsTrainer:
         
         if is_trained_lora:
             print(f"  ✅ O modelo será carregado com LoRA treinado")
-        elif cfg['lora_r'] not in (0, None, False):
+        elif yaml_config.lora.r not in (0, None, False):
             print(f"  🔄 Será aplicado novo LoRA ao modelo base")
         else:
             print(f"  📄 Será usado modelo base sem LoRA")
         
-        # dataset de treino
-        if cfg.get("dataset_train_path"):
+        # Modo pastas: mostra arquivos pareados
+        if yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+            print(f"\n📁 MODO PASTAS - ARQUIVOS PAREADOS:")
             try:
-                train_loader = LLMsDataset(
-                    path=cfg["dataset_train_path"],
-                    prompt_col=cfg.get("train_prompt_col"),
-                    tokenizer=tokenizer,
-                    max_seq_length=cfg["max_seq_length"]
-                )
-                train_stats = train_loader.get_stats()
-                print(f"\n📊 DATASET DE TREINO:")
-                print(f"  - Registros: {train_stats['total_registros']}")
-                print(f"  - Colunas: {train_stats['colunas']}")
-                print(f"  - Formato: {train_stats['formato_arquivo']}")
-                print(f"  - Caminho: {train_stats['caminho']}")
-                print(f"  - Formato detectado: {train_stats['formato_dataset']}")
-
-                print(f"\n>> DADOS ANTES DO PROCESSAMENTO:")
-                # Mostra dados originais (primeiro registro)
-                raw_sample = train_loader.dataset[0]
-                print(f"  - Tipo: {type(raw_sample)}")
-                print(f"  - Chaves: {list(raw_sample.keys()) if isinstance(raw_sample, dict) else 'N/A'}")
-                if isinstance(raw_sample, dict):
-                    for key, value in raw_sample.items():
-                        if isinstance(value, str) and len(value) > 100:
-                            print(f"  - {key}: {repr(value[:100])}... (truncado)")
-                        else:
-                            print(f"  - {key}: {repr(value)}")
-
-                print(f"\n🔄 PROCESSANDO DATASET...")
-                ds_processado = train_loader.get_processed_dataset()
+                pares = yaml_config.dataset_manager.parear_arquivos()
+                print(f"  - Total de pares: {len(pares)}")
+                if pares:
+                    print(f"  - Primeiros 3 pares:")
+                    for par in pares[:3]:
+                        print(f"    * {par.get('id', 'N/A')}")
                 
-                print(f"\n>> DADOS APÓS PROCESSAMENTO:")
-                try:
-                    sample = train_loader.get_sample(1)
-                    print(f"  - Input IDs length: {len(sample['input_ids'])}")
-                    print(f"  - Input IDs type: {type(sample['input_ids'])}")
-                    print(f"  - Primeiros 10 tokens: {sample['input_ids'][:10]}")
-                    print(f"  - Attention mask sum: {sum(sample['attention_mask'])}")
-                    print(f"  - Labels com -100: {sum(1 for x in sample['labels'] if x == -100)}")
-                    print(f"  - Labels válidos: {sum(1 for x in sample['labels'] if x != -100)}")
-                    print(f"  - Todos input_ids são int: {all(isinstance(x, int) for x in sample['input_ids'])}")
+                # Carrega divisão se existir
+                divisao = yaml_config.dataset_manager.carregar_ou_criar_divisao()
+                if not divisao.empty:
+                    contagem = divisao['alvo'].value_counts()
+                    total = len(divisao)
+                    print(f"\n  📊 Divisão de dados (total = {total}):")
+                    for alvo, qtd in contagem.items():
+                        print(f"    - {alvo}: {qtd}")
+                
+                # Testa carregamento de mensagens
+                print(f"\n  🔄 Carregando amostras de mensagens...")
+                
+                msgs_treino = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+                print(f"    - Mensagens de treino: {len(msgs_treino)}")
+                yaml_config.dataset_manager.mostrar_exemplo("Amostra Treino", msgs_treino)
+
+                # Mostra também teste e validação se existirem
+                if not yaml_config.dataset_manager.carregar_ou_criar_divisao().empty:
+                    msgs_teste = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="teste")
+                    if msgs_teste:
+                        print(f"    - Mensagens de teste: {len(msgs_teste)}")
+                        yaml_config.dataset_manager.mostrar_exemplo("Amostra Teste", msgs_teste)
                     
-                    print(f"\n📄 TEXTO DECODIFICADO (primeiros 500 chars):")
-                    texto = sample.get('texto_decodificado', '')[:500]
-                    print(f"    {repr(texto)}...")
-                except Exception as e:
-                    print(f"  ❌ Erro ao processar exemplo: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    msgs_val = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="validacao")
+
+                    if msgs_val:
+                        print(f"    - Mensagens de validação: {len(msgs_val)}")
+                        yaml_config.dataset_manager.mostrar_exemplo("Amostra Validação", msgs_val)
+                    
+
             except Exception as e:
-                print(f"\n❌ Erro ao carregar dataset de treino: {e}")
+                print(f"  ❌ Erro ao processar pastas: {e}")
                 import traceback
                 traceback.print_exc()
-        
-        # dataset de avaliação
-        if cfg.get("dataset_eval_path"):
-            try:
-                eval_loader = LLMsDataset(
-                    path=cfg["dataset_eval_path"],
-                    prompt_col=cfg.get("eval_prompt_col", cfg.get("train_prompt_col")),
-                    tokenizer=tokenizer,
-                    max_seq_length=cfg["max_seq_length"]
-                )
-                eval_stats = eval_loader.get_stats()
-                print(f"\n📊 DATASET DE AVALIAÇÃO:")
-                print(f"  - Registros: {eval_stats['total_registros']}")
-                print(f"  - Colunas: {eval_stats['colunas']}")
-                print(f"  - Formato: {eval_stats['formato_arquivo']}")
-                print(f"  - Caminho: {eval_stats['caminho']}")
-            except Exception as e:
-                print(f"\n❌ Erro ao carregar dataset de avaliação: {e}")
+        else:
+            # Modo dataset: carrega de arquivo
+            if yaml_config.dataset and yaml_config.dataset.train_file:
+                try:
+                    train_loader = LLMsDataset(
+                        path=yaml_config.dataset.train_file,
+                        prompt_col=yaml_config.dataset.train_prompt_col,
+                        tokenizer=tokenizer,
+                        max_seq_length=yaml_config.treinamento.max_seq_length
+                    )
+                    train_stats = train_loader.get_stats()
+                    print(f"\n📊 DATASET DE TREINO:")
+                    print(f"  - Registros: {train_stats['total_registros']}")
+                    print(f"  - Colunas: {train_stats['colunas']}")
+                    print(f"  - Formato: {train_stats['formato_arquivo']}")
+                    print(f"  - Caminho: {train_stats['caminho']}")
+                except Exception as e:
+                    print(f"\n❌ Erro ao carregar dataset de treino: {e}")
         
         # informações de checkpoints
         print(f"\n💾 CHECKPOINT INFO:")
-        checkpoint_dir = os.path.join(cfg.get("output_dir", "./saida"), "chkpt")
-        resume_enabled = cfg.get("resume_from_checkpoint", True)
+        checkpoint_dir = os.path.join(yaml_config.modelo.saida, "chkpt")
+        resume_enabled = yaml_config.treinamento.resume_from_checkpoint
         print(f"  - Resume from checkpoint: {resume_enabled}")
         print(f"  - Checkpoint directory: {checkpoint_dir}")
         
@@ -454,102 +832,164 @@ class LLMsTrainer:
                 print(f"  - Checkpoints encontrados: {len(checkpoints)}")
                 for step, name in checkpoints[-3:]:  # mostra os 3 mais recentes
                     print(f"    * {name} (step {step})")
-                
-                latest_step, latest_name = max(checkpoints, key=lambda x: x[0])
-                latest_path = os.path.join(checkpoint_dir, latest_name)
-                required_files = ["pytorch_model.bin", "training_args.bin", "trainer_state.json"]
-                missing_files = [f for f in required_files if not os.path.exists(os.path.join(latest_path, f))]
-                
-                if missing_files:
-                    print(f"  - Último checkpoint incompleto (faltam: {missing_files})")
-                else:
-                    print(f"  - Último checkpoint válido: {latest_name}")
             else:
                 print(f"  - Nenhum checkpoint encontrado")
         else:
             print(f"  - Diretório de checkpoints não existe")
         
-        # informações de GPU
-        if torch.cuda.is_available():
-            print(f"\n🎮 GPU INFO:")
-            try:
-                _print_mem("DEBUG")
-            except Exception as e:
-                print(f"  ❌ Erro ao obter info da GPU: {e}")
-        else:
-            print(f"\n🎮 GPU INFO:")
-            print("  - CUDA não disponível")
+        # informações de hardware (RAM e GPU)
+        print(f"\n🎮 HARDWARE INFO:")
+        try:
+            hardware = _print_mem("DEBUG")
+        except Exception as e:
+            print(f"  ❌ Erro ao obter info de hardware: {e}")
+            hardware = {}
+        
+        gerador = GeradorRelatorio(yaml_config)
+        gerador.gerar_relatorio(
+            dataset_stats=None, 
+            train_stats=None,
+            hardware_info=hardware,
+            print_only=True
+        )
         
         print("\n" + "="*80)
         print("✅ DEBUG COMPLETO - CONFIGURAÇÃO E DATASETS VALIDADOS")
         print("="*80)
 
+
     # ------------------------- trainer -----------------------------------
     def _build_trainer(self) -> SFTTrainer:
         print("[3/6] Configurando trainer…")
+        
+        # === Formatação do Dataset (garante coluna 'text') ===
+        # Define num_proc seguro
+        import os
+        n_proc = max(1, (os.cpu_count() or 2) // 2)
+
+        if "text" not in self.train_ds.column_names:
+            self.train_ds = self.chat_handler.formatar_dataset_coluna_text(self.train_ds, num_proc=n_proc)
+            
+        if self.eval_ds and "text" not in self.eval_ds.column_names:
+            self.eval_ds = self.chat_handler.formatar_dataset_coluna_text(self.eval_ds, num_proc=n_proc)
+            
+        # Verifica a integridade da formatação para DEBUG
+        self.chat_handler.verificar_dataset_formatado(self.train_ds)
+        # =====================================================
+
         total_examples = len(self.train_ds)
-        cfg = self.cfg
-        eval_steps = cfg.get("eval_steps")
-        n_gpus = max(torch.cuda.device_count(),1)
+        # cfg = self.cfg (removido)
+        
+        treino_cfg = self._yaml_config.treinamento
+        
+        eval_steps = treino_cfg.eval_steps
+        n_gpus = max(torch.cuda.device_count(), 1)
+        
         # percentual do dataset
-        if self.eval_ds and isinstance(eval_steps,str) and eval_steps.endswith('%'):
+        if self.eval_ds and isinstance(eval_steps, str) and eval_steps.endswith('%'):
             try:
-                eval_steps = int(eval_steps.replace('%','').strip())
-                if eval_steps >= 1:
-                   _st =  cfg["grad_batch_size"] * cfg["batch_size"] * n_gpus
-                   eval_steps = int((eval_steps/100) * (total_examples / _st))
+                eval_steps_val = int(eval_steps.replace('%', '').strip())
+                if eval_steps_val >= 1:
+                   _st = treino_cfg.grad_batch_size * treino_cfg.batch_size * n_gpus
+                   eval_steps = int((eval_steps_val/100) * (total_examples / _st))
                 else:
                    eval_steps = None
             except:
                 eval_steps = None
-        if eval_steps is None:
-           eval_steps = max(
-                1, int((total_examples / 100) / (cfg["grad_batch_size"] * cfg["batch_size"])*n_gpus)
-            )
-        if self.eval_ds:
-           print(f' - avaliando a cada {eval_steps} steps (1 step = {cfg["grad_batch_size"]} * {cfg["batch_size"]} * {n_gpus} = {cfg["grad_batch_size"] * cfg["batch_size"]*n_gpus}) ...')
-        if isinstance(eval_steps, int) and eval_steps == 0:
-            eval_steps = 1
-        log_steps = eval_steps if isinstance(eval_steps, int) else 50
+        
+        if eval_steps is None or not self.eval_ds:
+            eval_steps = 0  
+            
+        if eval_steps == 0 and self.eval_ds:
+             # Fallback cálculo automático se não definido
+             _st = treino_cfg.grad_batch_size * treino_cfg.batch_size * n_gpus
+             eval_steps = max(1, int((total_examples / 100) / _st))
+
+        if self.eval_ds and eval_steps > 0:
+           print(f' - avaliando a cada {eval_steps} steps...')
+        
+        log_steps = eval_steps if isinstance(eval_steps, int) and eval_steps > 0 else 50
+        
         if self.save_checkpoints:
             print(f' - gravando checkpoints a cada {log_steps} steps')
+        
+        # Log train_on_responses_only
+        if treino_cfg.train_on_responses_only:
+            print(f' - train_on_responses_only ATIVADO (treina apenas nas respostas do assistant)')
+
+        # Configuração de argumentos de treino
+        # Nota: Usamos TrainingArguments padrão ou SFTConfig se disponível no unsloth
+        # Para garantir compatibilidade, usamos TrainingArguments que é base
+        from trl import SFTConfig
+        
+        args = SFTConfig(
+            per_device_train_batch_size=treino_cfg.batch_size,
+            gradient_accumulation_steps=treino_cfg.grad_batch_size,
+            warmup_steps=treino_cfg.warmup_steps,
+            num_train_epochs=treino_cfg.epochs,
+            learning_rate=treino_cfg.learning_rate,
+            fp16=not torch.cuda.is_bf16_supported(),
+            bf16=torch.cuda.is_bf16_supported(),
+            logging_steps=1,
+            optim="adamw_8bit",
+            weight_decay=0.01,
+            lr_scheduler_type="linear",
+            seed=treino_cfg.seed,
+            output_dir=self._yaml_config.modelo.saida,
+            save_strategy="steps" if self.save_checkpoints else "no",
+            save_steps=log_steps if self.save_checkpoints else 0,
+            eval_strategy="steps" if self.eval_ds and eval_steps > 0 else "no",
+            eval_steps=eval_steps if self.eval_ds and eval_steps > 0 else None,
+            load_best_model_at_end=True if self.eval_ds and eval_steps > 0 else False,
+            report_to="none", 
+            gradient_checkpointing="unsloth", 
+            remove_unused_columns=False,
+            dataloader_drop_last=False,
+            dataset_text_field="text", # usamos a coluna 'text' formatada
+            max_seq_length=treino_cfg.max_seq_length, 
+            dataset_num_proc=2,
+            packing=False,
+            per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
+            eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
+        )
+
         trainer = SFTTrainer(
             model=self.model,
-            tokenizer=self.tokenizer,  # reativado para dados já tokenizados
+            tokenizer=self.tokenizer,
             train_dataset=self.train_ds,
             eval_dataset=self.eval_ds,
-            args=SFTConfig(
-                # não usar dataset_text_field para dados já tokenizados
-                per_device_train_batch_size=cfg["batch_size"],  # já validado
-                gradient_accumulation_steps=cfg["grad_batch_size"],  # já validado
-                warmup_steps=cfg.get("warmup_steps", 5),  # já validado
-                num_train_epochs=cfg["num_train_epochs"],  # já validado
-                eval_strategy="steps" if self.eval_ds else "no",
-                eval_steps=eval_steps if self.eval_ds else None,
-                save_strategy="steps" if self.save_checkpoints else 'no',
-                save_steps=log_steps,
-                output_dir=os.path.join(cfg["output_dir"], "chkpt") if self.save_checkpoints else None,
-                save_total_limit=1000,
-                learning_rate=float(cfg.get("learning_rate", 2e-4)) ,
-                logging_dir=os.path.join(cfg["output_dir"], "tb_logs"),
-                logging_strategy="steps",
-                logging_first_step=True,
-                logging_steps=log_steps,
-                report_to=[], #["tensorboard"],
-                optim="adamw_8bit",
-                weight_decay=0.01,
-                lr_scheduler_type="linear",
-                seed=3407,
-                gradient_checkpointing="unsloth", # True or "unsloth" for very long context
-                remove_unused_columns=False,  # importante: preserva colunas tokenizadas
-                dataloader_drop_last=False,   # não descarta último batch incompleto
-            ),
+            args=args,
         )
-        os.makedirs(self.cfg["output_dir"], exist_ok=True)
-        jsonl = os.path.join(self.cfg["output_dir"], "metrics_stream.jsonl")
+        
+        # Aplica train_on_responses_only se configurado
+        # Aplica train_on_responses_only se configurado
+        if treino_cfg.train_on_responses_only:
+            self.trainer = self.chat_handler.aplicar_train_on_responses_only(self.trainer)
+        
+        # Configura diretório de saída
+        output_dir = self._yaml_config.modelo.saida
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # === CALLBACKS DE MÉTRICAS ===
+        
+        # 1. JsonLogger (métricas brutas em metrics_stream.jsonl)
+        jsonl = os.path.join(output_dir, "metrics_stream.jsonl")
         if os.path.isfile(jsonl):
             os.remove(jsonl)
         trainer.add_callback(JsonLoggerCallback(jsonl))
+        
+        # 2. HardwareMetricsCallback (métricas de RAM, GPU, CPU, Disco)
+        # Registra a cada 10 steps para não sobrecarregar
+        trainer.add_callback(HardwareMetricsCallback(output_dir, intervalo_steps=10))
+        
+        # 3. MetricsLoggerCallback (métricas detalhadas de treinamento/validação)
+        trainer.add_callback(MetricsLoggerCallback(output_dir))
+        
+        print(f' - callbacks de métricas configurados:')
+        print(f'   • metrics_stream.jsonl (métricas brutas)')
+        print(f'   • treinamento/hardware_metrics.jsonl (RAM, GPU, CPU, Disco)')
+        print(f'   • treinamento/training_metrics.jsonl (loss, lr, eval_loss)')
+        
         trainer.model.config.use_cache = False
         
         return trainer
@@ -562,14 +1002,14 @@ class LLMsTrainer:
             str: Caminho para o checkpoint mais recente ou None se não houver
         """
         # verifica se o resume está habilitado na configuração
-        if not self.cfg.get("resume_from_checkpoint", True):
-            print("📋 Resume from checkpoint desabilitado na configuração")
+        if not self._yaml_config.treinamento.resume_from_checkpoint:
+            print("⚠️ Checkpoint ignorado por configuração (resume_from_checkpoint=False)")
             return None
             
         if not self.save_checkpoints:
             return None
             
-        checkpoint_dir = os.path.join(self.cfg["output_dir"], "chkpt")
+        checkpoint_dir = os.path.join(self._yaml_config.modelo.saida, "chkpt")
         if not os.path.exists(checkpoint_dir):
             return None
         
@@ -608,6 +1048,10 @@ class LLMsTrainer:
 
     # ------------------------- execução ----------------------------------
     def train(self):
+        # Inicializa o trainer se necessário (lazy init)
+        if self.trainer is None:
+            self.trainer = self._build_trainer()
+            
         antes = _print_mem("ANTES")
         print("[4/6] Iniciando treinamento…")
         
@@ -656,11 +1100,24 @@ class LLMsTrainer:
             "training_loss":     train_stats.training_loss,
             "mem_gpu_before":    antes,
             "mem_gpu_after":     depois,
-            "config": dict(self.cfg),
             "ds_train_len" : len(self.train_ds),
             "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
             "modelo_info": info_modelo,  # adiciona informações do modelo
         }
+        
+        # Gera relatório .md na pasta 'treinamento'
+        try:
+             hardware = Util.dados_hardware()
+        except:
+             hardware = {}
+             
+        gerador = GeradorRelatorio(self._yaml_config)
+        gerador.gerar_relatorio(
+            dataset_stats=self._dataset_stats,
+            train_stats=stats,
+            hardware_info=hardware
+        )
+
         # grava o modelo antes do ultimo eval, pode dar erro de memória no eval    
         self._save_model(stats=stats)
         # 3) garante um eval FINAL mesmo que já tenha havido evals em steps
@@ -670,7 +1127,7 @@ class LLMsTrainer:
         
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
-        out_dir = self.cfg["output_dir"]
+        out_dir = self._yaml_config.modelo.saida
         os.makedirs(out_dir, exist_ok=True)
         print(f"[6/6] Salvando modelo em {out_dir}…")
         
@@ -699,7 +1156,7 @@ class LLMsTrainer:
         self.log_processamento(f"Arquivos salvos em {out_dir}: {files_saved}", "MODEL_SAVED")
         
         if stats is not None:
-            with open(os.path.join(self.cfg["output_dir"], "metrics_summary.json"), "w") as fp:
+            with open(os.path.join(self._yaml_config.modelo.saida, "metrics_summary.json"), "w") as fp:
                  json.dump(stats, fp, indent=2)
         print(r"Modelo salvo com sucesso \o/")
 
@@ -707,7 +1164,7 @@ class LLMsTrainer:
         ''' grava no arquivo de log com o nome _log_processamento_.txt dados importantes
             do processamento do treino como data, hora, parâmetros, dataset, etc
         '''
-        arquivo = os.path.join(self.cfg["output_dir"], f"_log_processamento_.txt")
+        arquivo = os.path.join(self._yaml_config.modelo.saida, f"_log_processamento_.txt")
         with open(arquivo, "a") as f:
             _msg = f"{msg}" if isinstance(msg,str) else json.dumps(msg, indent=2, ensure_ascii=False)
             if titulo:
@@ -744,7 +1201,7 @@ class LLMsTrainer:
             )
             inputs = dataset_loader._process_single_message(messages=texto, 
                                                             inferencia=True, 
-                                                            max_length=self.cfg["max_seq_length"])
+                                                            max_length=self._yaml_config.treinamento.max_seq_length)
         _temperatura = temperatura if isinstance(temperatura, (float, int)) else 0.2
         _temperatura = min(max(_temperatura,0.000001),1.0)
         #print(f'########### temperatura: {_temperatura}')
@@ -769,93 +1226,190 @@ class LLMsTrainer:
         res = self.tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True)       
         return {'texto': res, 'prompt_tokens': input_length, 'completion_tokens': len(outputs[0]) - input_length}
 
-    def testar_predicoes(self, n_exemplos: int = 1, temperatura: float = 0.0, max_new_tokens: int = 2048) -> None:
-        """Testa o modelo com exemplos do dataset de treino e exibe as predições."""
-        print(f"\n{'='*80}")
-        print(f"🧪 TESTANDO MODELO COM {n_exemplos} EXEMPLO(S)")
-        print(f"{'='*80}")
+    def testar_predicoes(self, n_exemplos: int = 1, temperatura: float = 0.0, max_new_tokens: int = 2048, monitorar_memoria: bool = True) -> Dict[str, Any]:
+        """
+        Testa o modelo com exemplos do dataset de treino e exibe as predições.
+        
+        Args:
+            n_exemplos: Número de exemplos para testar
+            temperatura: Temperatura para geração
+            max_new_tokens: Número máximo de tokens a gerar
+            monitorar_memoria: Se True, monitora RAM/GPU e gera gráfico
+            
+        Returns:
+            Dict com resultados e métricas de memória (se monitorar_memoria=True)
+        """
+        logger.info(f"\n{'='*80}")
+        logger.info(f"🧪 TESTANDO MODELO COM {n_exemplos} EXEMPLO(S)")
+        logger.info(f"{'='*80}")
         
         # Primeiro valida o status do modelo
         self.print_modelo_status()
         
         # verifica se há dataset disponível
         if not hasattr(self, 'train_ds') or len(self.train_ds) == 0:
-            print("❌ Nenhum dataset de treino disponível para teste")
-            return
+            logger.error("❌ Nenhum dataset de treino disponível para teste")
+            return {"erro": "Nenhum dataset disponível"}
         
         # limita o número de exemplos ao tamanho do dataset
         n_exemplos = min(n_exemplos, len(self.train_ds))
         
-        for i in range(n_exemplos):
-            print(f"\n{'-'*60}")
-            print(f">> EXEMPLO {i+1}/{n_exemplos}")
-            print(f"{'-'*60}")
-            
-            # pega o registro original do dataset
-            # precisa acessar o dataset original através do LLMsDataset
-            dataset_loader = LLMsDataset(
-                path=self.cfg["dataset_train_path"],
-                prompt_col=self.cfg.get("train_prompt_col"),
-                tokenizer=self.tokenizer,
-                max_seq_length=self.cfg["max_seq_length"]
+        # Inicia monitoramento de memória se solicitado
+        monitor = None
+        if monitorar_memoria:
+            monitor = MonitorRecursos(
+                output_dir=self._yaml_config.modelo.saida,
+                intervalo_segundos=0.5,
+                nome_arquivo="memoria_predicao"
             )
-            sample_row = dataset_loader.dataset[i]
-            processador = lambda x: dataset_loader._process_single_message(x, max_length=self.cfg["max_seq_length"], inferencia=True)
-
-            # detecta o formato e extrai prompt/completion esperado
-            try:
-                if "messages" in sample_row:
-                    messages = sample_row["messages"]
-                    if isinstance(messages, list) and len(messages) >= 2:
-                        user_msg = messages[0].get("content", "")
-                        assistant_msg = messages[1].get("content", "")
-                        if isinstance(user_msg, list):
-                            user_msg = user_msg[0].get("text", "") if user_msg else ""
-                        if isinstance(assistant_msg, list):
-                            assistant_msg = assistant_msg[0].get("text", "") if assistant_msg else ""
-                        prompt = user_msg
-                        resposta_esperada = assistant_msg
-                    else:
-                        prompt = str(messages)
-                        resposta_esperada = "N/A"
-                elif "prompt" in sample_row and "completion" in sample_row:
-                    prompt = sample_row["prompt"]
-                    resposta_esperada = sample_row["completion"]
-                else:
-                    print(f"❌ Formato de dados não reconhecido para exemplo {i+1}")
-                    continue
-                
-                print(f">> PROMPT:")
-                print(f"   {prompt[:200]}{'...' if len(prompt) > 200 else ''}")
-                
-                print(f"\n>> RESPOSTA ESPERADA:")
-                print(f"   {resposta_esperada[:200]}{'...' if len(resposta_esperada) > 200 else ''}")
-                
-                # gera predição do modelo
-                try:
-                    resultado = self.prompt(prompt, 
-                                            temperatura=temperatura, 
-                                            max_new_tokens=max_new_tokens,
-                                            processador = processador)
-                    resposta_modelo = resultado['texto']
-                    
-                    print(f"\n>> RESPOSTA DO MODELO:")
-                    print(f"   {resposta_modelo[:500]}{'...' if len(resposta_modelo) > 500 else ''}")
-                    
-                    print(f"\n>> ESTATÍSTICAS:")
-                    print(f"   - Tokens do prompt: {resultado.get('prompt_tokens', 'N/A')}")
-                    print(f"   - Tokens da resposta: {resultado.get('completion_tokens', 'N/A')}")
-                    print(f"   - Temperatura: {temperatura}")
-                    
-                except Exception as e:
-                    print(f"❌ Erro ao gerar predição: {str(e)}\n{traceback.format_exc()}")
-                    
-            except Exception as e:
-                print(f"❌ Erro ao processar exemplo {i+1}: {str(e)}")
+            monitor.iniciar()
         
-        print(f"\n{'='*80}")
-        print(">> TESTE DE PREDIÇÕES CONCLUÍDO")
-        print(f"{'='*80}")
+        resultados = []
+        
+        try:
+            for i in range(n_exemplos):
+                logger.info(f"\n{'-'*60}")
+                logger.info(f">> EXEMPLO {i+1}/{n_exemplos}")
+                logger.info(f"{'-'*60}")
+                
+                # pega o registro original do dataset
+                if self._yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+                    # Modo pastas: recarrega mensagens em memória
+                    mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+                    
+                    # Cria loader temporário com dados em memória
+                    dataset_loader = LLMsDataset(
+                        data=mensagens,
+                        tokenizer=self.tokenizer,
+                        max_seq_length=self._yaml_config.treinamento.max_seq_length
+                    )
+                else:
+                    # Modo dataset: recarrega do arquivo
+                    dataset_loader = LLMsDataset(
+                        path=self._yaml_config.dataset.train_file,
+                        prompt_col=self._yaml_config.dataset.train_prompt_col,
+                        tokenizer=self.tokenizer,
+                        max_seq_length=self._yaml_config.treinamento.max_seq_length
+                    )
+                
+                sample_row = dataset_loader.dataset[i]
+                processador = lambda x: dataset_loader._process_single_message(x, max_length=self._yaml_config.treinamento.max_seq_length, inferencia=True)
+
+                # detecta o formato e extrai prompt/completion esperado
+                try:
+                    if "messages" in sample_row:
+                        messages = sample_row["messages"]
+                        if isinstance(messages, list) and len(messages) >= 2:
+                            user_msg = messages[0].get("content", "")
+                            assistant_msg = messages[1].get("content", "")
+                            if isinstance(user_msg, list):
+                                user_msg = user_msg[0].get("text", "") if user_msg else ""
+                            if isinstance(assistant_msg, list):
+                                assistant_msg = assistant_msg[0].get("text", "") if assistant_msg else ""
+                            prompt = user_msg
+                            resposta_esperada = assistant_msg
+                        else:
+                            prompt = str(messages)
+                            resposta_esperada = "N/A"
+                    elif "prompt" in sample_row and "completion" in sample_row:
+                        prompt = sample_row["prompt"]
+                        resposta_esperada = sample_row["completion"]
+                    else:
+                        logger.error(f"❌ Formato de dados não reconhecido para exemplo {i+1}")
+                        continue
+                    
+                    logger.info(f">> PROMPT:")
+                    if len(prompt) > 500:
+                        logger.info(f"   {prompt[:250]} [...] {prompt[-250:]}")
+                    else:
+                        logger.info(f"   {prompt}")
+                    
+                    logger.info(f"\n>> RESPOSTA ESPERADA:")
+                    if len(resposta_esperada) > 500:
+                        logger.info(f"   {resposta_esperada[:250]} [...] {resposta_esperada[-250:]}")
+                    else:
+                        logger.info(f"   {resposta_esperada[:500]}{'...' if len(resposta_esperada) > 500 else ''}")
+                    
+                    # gera predição do modelo
+                    try:
+                        # Coleta métrica de memória antes da predição
+                        monitor_snapshot = monitor
+                        if not monitor_snapshot:
+                            # Cria instância temporária se monitoramento contínuo estiver desativado
+                            monitor_snapshot = MonitorRecursos(self._yaml_config.modelo.saida)
+                        
+                        mem_antes = monitor_snapshot.coletar_metricas()
+                        
+                        tempo_inicio = time.time()
+                        resultado = self.prompt(prompt, 
+                                                temperatura=temperatura, 
+                                                max_new_tokens=max_new_tokens,
+                                                processador = processador)
+                        tempo_predicao = time.time() - tempo_inicio
+                        
+                        # Coleta métrica de memória depois da predição
+                        mem_depois = monitor_snapshot.coletar_metricas()
+                        
+                        resposta_modelo = resultado['texto']
+                        
+                        logger.info(f"\n>> RESPOSTA DO MODELO:")
+
+                        if len(resposta_modelo) > 500:
+                            logger.info(f"   {resposta_modelo[:250]} [...] {resposta_modelo[-250:]}")
+                        else:
+                            logger.info(f"   {resposta_modelo}")
+                        
+                        logger.info(f"\n>> ESTATÍSTICAS:")
+                        logger.info(f"   - Tokens do prompt: {resultado.get('prompt_tokens', 'N/A')}")
+                        logger.info(f"   - Tokens da resposta: {resultado.get('completion_tokens', 'N/A')}")
+                        logger.info(f"   - Temperatura: {temperatura}")
+                        logger.info(f"   - Tempo de predição: {tempo_predicao:.2f}s")
+                        
+                        # Cálculo de Rouge-L
+                        metricas_rouge, erro_rouge = calcular_rouge_l(resposta_esperada, resposta_modelo)
+                        if metricas_rouge:
+                             logger.info(f"   - Rouge-L True vs Pred: P={metricas_rouge['P']:.4f} R={metricas_rouge['R']:.4f} F1={metricas_rouge['F1']:.4f}")
+                        elif erro_rouge:
+                             # Warning simplificado
+                             logger.warning(f"   - Rouge-L: {erro_rouge}")
+                        
+                        # Log de memória
+                        ram_diff = mem_depois.ram_usada_gb - mem_antes.ram_usada_gb
+                        gpu_diff = mem_depois.gpu_usada_gb - mem_antes.gpu_usada_gb
+                        logger.info(f"   - Memória RAM: {mem_antes.ram_usada_gb:.1f}GB -> {mem_depois.ram_usada_gb:.1f}GB (delta: {ram_diff:+.1f}GB)")
+                        logger.info(f"   - Memória GPU: {mem_antes.gpu_usada_gb:.1f}GB -> {mem_depois.gpu_usada_gb:.1f}GB (delta: {gpu_diff:+.1f}GB)")
+                        
+                        resultados.append({
+                            "exemplo": i + 1,
+                            "prompt_tokens": resultado.get('prompt_tokens'),
+                            "completion_tokens": resultado.get('completion_tokens'),
+                            "tempo_segundos": round(tempo_predicao, 2),
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Erro ao gerar predição: {str(e)}\n{traceback.format_exc()}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Erro ao processar exemplo {i+1}: {str(e)}")
+        
+        finally:
+            # Para monitoramento e gera gráfico
+            metricas_memoria = {}
+            if monitor:
+                metricas_memoria = monitor.parar()
+                grafico_path = monitor.gerar_grafico()
+                if grafico_path:
+                    logger.info(f"📈 Gráfico de uso de memória: {grafico_path}")
+        
+        logger.info(f"\n{'='*80}")
+        logger.info(">> TESTE DE PREDIÇÕES CONCLUÍDO")
+        logger.info(f"{'='*80}")
+        
+        return {
+            "resultados": resultados,
+            "n_exemplos": len(resultados),
+            "metricas_memoria": metricas_memoria,
+        }
 
     def validar_modelo_lora(self) -> dict:
         """Valida se o modelo LoRA está carregado corretamente e retorna informações detalhadas."""
@@ -915,7 +1469,12 @@ class LLMsTrainer:
             print(f"\n🔧 ADAPTADORES ATIVOS:")
             for adapter in info['adapters_ativos']:
                 print(f"  - {adapter['nome']}: r={adapter['r']}, alpha={adapter['alpha']}")
-                print(f"    Modules: {adapter['target_modules']}")
+                modules = adapter['target_modules']
+                if isinstance(modules, str) and len(modules) > 50 and modules.startswith("(?:"):
+                     modules_str = "Unsloth Default (Todos os módulos lineares)"
+                else:
+                     modules_str = str(modules)
+                print(f"    Modules: {modules_str}")
         else:
             print(f"\n⚠️  NENHUM ADAPTADOR ATIVO DETECTADO")
         
@@ -933,17 +1492,33 @@ class LLMsTrainer:
 class LLMsDataset:
     """Gerencia datasets para fine‑tuning de LLMs com Unsloth."""
 
-    def __init__(self, path: str, prompt_col: str, tokenizer, max_seq_length: int):
+    def __init__(self, path: str = None, prompt_col: str = None, tokenizer=None, 
+                 max_seq_length: int = 4096, data: list = None):
+        """
+        Inicializa o dataset a partir de arquivo ou dados em memória.
+        
+        Args:
+            path: Caminho do arquivo (parquet/json/jsonl/txt)
+            prompt_col: Nome da coluna com prompts (para parquet)
+            tokenizer: Tokenizer do modelo
+            max_seq_length: Tamanho máximo da sequência
+            data: Dados já carregados em memória (lista de dicts com 'messages')
+        """
         self.path = path
         self.prompt_col = prompt_col
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
-        self._template_com_type = self.template_com_type(tokenizer)
-        if os.path.isfile(self.path):
+        self._template_com_type = self.template_com_type(tokenizer) if tokenizer else False
+        
+        # Carrega de dados em memória ou de arquivo
+        if data is not None:
+            # Dados já carregados (do YamlTreinamento.carregar_mensagens_de_pastas)
+            self.dataset = Dataset.from_list(data)
+        elif path and os.path.isfile(path):
             self.dataset = self._load_dataset()
         else:
-            # serve para preparar apenas para predição
-            self.dataset = Dataset.from_list([])  # dataset vazio
+            # Dataset vazio (para preparar apenas para predição)
+            self.dataset = Dataset.from_list([])
 
     @staticmethod
     def template_com_type(tokenizer) -> bool:
@@ -1200,30 +1775,80 @@ class LLMsDataset:
 
 def _create_default_cfg(path: str) -> None:
     template = {
-        "dataset_train_path": "../dataset/data/dados_unificados_sm_treino.parquet",
-        "train_prompt_col": "messages",
-        "dataset_eval_path": "",
-        "eval_prompt_col": "",
-        "eval_steps": "15%",
-        "base_model_name": "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
-        "output_dir": "../modelos/gemma-3-12b-refleg20k-v01",
-        "batch_size": 2,
-        "grad_batch_size": 5,
-        "num_train_epochs": 1,
-        "max_seq_length": 4096,
-        "lora_r": 8,   # 0 ou None para full fine-tuning
-        "lora_alpha": 32,   # Opcional: por padrão usa lora_r
-        "lora_dropout": 0.05,   # Opcional: dropout para LoRA
-        "learning_rate": 2e-4,   # Opcional: taxa de aprendizado
-        "save_checkpoints": True,
-        "resume_from_checkpoint": True,   # Tenta continuar de checkpoint se existir
-        "warmup_steps": 5,
-        "nbits": 4,   # 4 ou 8 ou None
-        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj",
-                       "gate_proj", "up_proj", "down_proj",]
+        "formatos": {
+            "tipo_entrada": "dataset",
+            "formato_saida": "texto",
+        },
+        "misc": {
+            "log_level": "INFO",
+            "env_chave_criptografia": "",  # Nome da variável de ambiente com chave Fernet
+        },
+        "dataset": {
+            "train_file": "../dataset/data/dados_unificados_sm_treino.parquet",
+            "train_prompt_col": "messages",
+            "eval_file": "",
+            "eval_prompt_col": "",
+        },
+        "modelo": {
+            "base_model_name": "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
+            "saida": "../modelos/gemma-3-12b-refleg20k-v01",
+        },
+        "treinamento": {
+            "eval_steps": "15%",
+            "batch_size": 2,
+            "grad_batch_size": 5,
+            "num_train_epochs": 1,
+            "max_seq_length": 4096,
+            "learning_rate": 2e-4,
+            "save_checkpoints": True,
+            "resume_from_checkpoint": True,
+            "warmup_steps": 5,
+            "nbits": 4,
+            "train_on_responses_only": True,
+        },
+        "lora": {
+            "r": 8,
+            "alpha": 32,
+            "dropout": 0.05,
+            "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj",
+                           "gate_proj", "up_proj", "down_proj"],
+        }
     }
     with open(path, "w", encoding="utf-8") as fp:
         yaml.safe_dump(template, fp, sort_keys=False, allow_unicode=True)
+
+
+def _verificar_modelo_treinado(yaml_config: YamlTreinamento) -> bool:
+    """
+    Verifica se existe modelo LoRA treinado na pasta de saída.
+    
+    Returns:
+        True se existir modelo treinado, False caso contrário
+    """
+    output_dir = yaml_config.modelo.saida
+    arq_lora = os.path.join(output_dir, 'adapter_config.json')
+    arq_model = os.path.join(output_dir, 'adapter_model.safetensors')
+    arq_pytorch = os.path.join(output_dir, 'pytorch_model.bin')
+    
+    return os.path.exists(arq_lora) and (os.path.exists(arq_model) or os.path.exists(arq_pytorch))
+
+
+def _perguntar_usar_modelo_base() -> bool:
+    """
+    Pergunta ao usuário se deseja usar o modelo base para predição.
+    
+    Returns:
+        True para continuar com modelo base, False para cancelar
+    """
+    logger.warning("\n⚠️  ATENÇÃO: Não foi encontrado modelo LoRA treinado na pasta de saída.")
+    logger.info("O modelo base será carregado para predição (sem fine-tuning).\n")
+    
+    try:
+        resposta = input("Deseja continuar com o modelo base? [s/N]: ").strip().lower()
+        return resposta in ('s', 'sim', 'y', 'yes')
+    except (KeyboardInterrupt, EOFError):
+        logger.info("\nOperação cancelada pelo usuário.")
+        return False
 
 
 def _cli() -> None:
@@ -1232,19 +1857,37 @@ def _cli() -> None:
     )
     parser.add_argument("config", help="Arquivo YAML com as configurações.")
     parser.add_argument("--debug", action="store_true", help="Modo debug: exibe estrutura do dataset e configuração sem treinar")
-    parser.add_argument("--modelo", type=int, nargs='?', const=1, help="Modo debug: exibe exemplos de prompt e resposta do modelo treinado (padrão: 1 exemplo)")
+    parser.add_argument("--modelo", type=int, nargs='?', const=1, help="Modo teste: exibe exemplos de prompt e resposta do modelo treinado (padrão: 1 exemplo)")
+    parser.add_argument("--log-level", type=str, default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
+                        help="Nível de log (sobrescreve misc.log_level do YAML)")
     args = parser.parse_args()
+
+    cfg_path = args.config or "./exemplo.yaml"
+    
+    # Carrega configuração do YAML para determinar log_level padrão
+    log_level_padrao = "INFO"
+    if os.path.exists(cfg_path):
+        try:
+            yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
+            log_level_padrao = yaml_config.misc.log_level
+        except Exception:
+            pass  # Usa padrão INFO se falhar
+    
+    # Parâmetro CLI sobrescreve YAML
+    nivel_log = args.log_level if args.log_level else log_level_padrao
+    configurar_logging(nivel=nivel_log)
+    
+    logger.debug(f"Log level configurado: {nivel_log} (CLI: {args.log_level}, YAML: {log_level_padrao})")
 
     # informações sobre CUDA
     if torch.cuda.is_available():
-        print(f"CUDA disponível — {torch.cuda.device_count()} GPU(s) detectada(s)")
+        logger.info(f"CUDA disponível — {torch.cuda.device_count()} GPU(s) detectada(s)")
     else:
-        print("CUDA não disponível — treinamento será na CPU (muito mais lento)")
+        logger.warning("CUDA não disponível — treinamento será na CPU (muito mais lento)")
 
-    cfg_path = args.config or "./exemplo.yaml"
     if not os.path.exists(cfg_path):
         _create_default_cfg(cfg_path)
-        print(
+        logger.info(
             f"Arquivo de configuração criado em '{cfg_path}'.\n"
             "Revise os parâmetros e execute novamente para iniciar o treinamento."
         )
@@ -1253,20 +1896,47 @@ def _cli() -> None:
     if args.debug:
         # modo debug: apenas exibe informações sem treinar
         LLMsTrainer.debug_info(cfg_path)
-        print("\n>> Modo DEBUG ativado - treinamento não executado")
+        logger.info("\n>> Modo DEBUG ativado - treinamento não executado")
         sys.exit(0)
+
+    # Modo --modelo: verifica se existe modelo treinado antes de carregar
+    if args.modelo:
+        # Carrega apenas a configuração YAML para verificar modelo
+        yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
+        
+        if not _verificar_modelo_treinado(yaml_config):
+            if not _perguntar_usar_modelo_base():
+                logger.info("Operação cancelada. Execute um treinamento antes de testar o modelo.")
+                sys.exit(0)
+            else:
+                logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+        else:
+            logger.info(f"✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}")
 
     trainer = LLMsTrainer(cfg_path)
 
     if args.modelo:
         # modo teste: executa predições em exemplos do dataset
         n_exemplos = args.modelo if isinstance(args.modelo, int) else 1
-        trainer.testar_predicoes(n_exemplos=n_exemplos, temperatura=0.2, max_new_tokens=512)
+        resultado = trainer.testar_predicoes(n_exemplos=n_exemplos, temperatura=0.2, max_new_tokens=512)
+        
+        # Exibe resumo das métricas de memória
+        if resultado.get('metricas_memoria'):
+            metricas = resultado['metricas_memoria']
+            logger.info("\n📊 RESUMO DE USO DE MEMÓRIA:")
+            if 'ram' in metricas:
+                logger.info(f"   RAM: máx={metricas['ram'].get('max_gb', 0):.1f} GB, média={metricas['ram'].get('media_gb', 0):.1f} GB")
+            if 'gpu' in metricas and metricas['gpu'].get('num_gpus', 0) > 0:
+                logger.info(f"   GPU: máx={metricas['gpu'].get('max_gb', 0):.1f} GB, média={metricas['gpu'].get('media_gb', 0):.1f} GB ({metricas['gpu'].get('num_gpus', 0)} GPU(s))")
+        
         sys.exit(0)
+    
     # modo normal: executa treinamento
     trainer.train()
 
 
 
 if __name__ == "__main__":
+    # Carrega .env do diretório src (funciona de qualquer pasta)
+    UtilEnv.carregar_env(pastas=[_SRC_DIR, './', '../', '../src/'])
     _cli()

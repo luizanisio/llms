@@ -1,0 +1,67 @@
+formatos:
+  tipo_entrada: pastas
+  formato_saida: json
+
+misc:
+  log_level: DEBUG
+  env_chave_criptografia: CHAVE_CRIPT
+
+pastas:
+  predicao:
+    pasta: ./saidas/ext_qwen235b_11
+    mascara: "*.txt"
+  entrada:
+    #pasta: ./saidas/acordaos_raw
+    #mascara: "*.txt"
+    dataframe: ./saidas/pecas_exportadas_textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+    prompt_template: './saidas/prompt_summa_raw.txt'
+    tag_texto: '<<--TEXTO-->>'
+  divisao:
+    arquivo: ./saidas/ext_qwen235b_11_divisao.csv
+    validar_ids: false
+    proporcao:
+      - treino: 0.70
+      - validacao: 0.10
+      - teste: 0.20
+    seed: 42
+  validacao:
+    exigir_json_valido: true
+    skip_invalidos: false
+
+dataset:
+  train_prompt_col: messages
+  eval_prompt_col: ''
+  train_file: ./saidas/ext_qwen235b_11_train.parquet
+  eval_file: ./saidas/ext_qwen235b_11_eval.parquet
+  test_file: ./saidas/ext_qwen235b_11_test.parquet
+modelo:
+  base_model_name: Qwen/Qwen2.5-1.5B-Instruct
+  saida: ./treinados/Qwen2.5-1.5B-Instruct_summa_qualifica_full
+treinamento:
+  eval_steps: 15%
+  batch_size: 2
+  grad_batch_size: 10
+  num_train_epochs: 1
+  max_seq_length: 4096
+  learning_rate: 0.0002
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  seed: 3407
+  nbits: 4
+  train_on_responses_only: true  # Treina apenas nas respostas do assistant (recomendado)
+
+lora:
+  r: 8
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
