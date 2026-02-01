@@ -1,3 +1,13 @@
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B
+# ==========================================================================
+# Ambiente atual: 1x RTX 3060 (12GB VRAM)
+# 
+# SUGESTÕES PARA ESCALONAMENTO:
+# - Máquina maior (2x H100 80GB): veja comentários com [H100]
+# - Modelo maior (Qwen 7B): veja comentários com [7B]
+# ==========================================================================
+
 formatos:
   tipo_entrada: pastas
   formato_saida: json
@@ -36,32 +46,139 @@ dataset:
   train_file: ./saidas/ext_qwen235b_11_train.parquet
   eval_file: ./saidas/ext_qwen235b_11_eval.parquet
   test_file: ./saidas/ext_qwen235b_11_test.parquet
+
+# ==========================================================================
+# MODELO
+# ==========================================================================
 modelo:
+  # Modelo atual: Qwen 2.5 1.5B (suporta GPU de 12GB com 4-bit)
+  # [7B] Para Qwen 7B, usar: Qwen/Qwen2.5-7B-Instruct
+  #      Requer mais VRAM (~24GB em 4-bit, ~40GB em 8-bit)
+  # [H100] Com 2x H100, pode usar modelos 14B ou 32B tranquilamente
   base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   saida: ./treinados/Qwen2.5-1.5B-Instruct_summa_qualifica_full
+
+# ==========================================================================
+# TREINAMENTO
+# ==========================================================================
 treinamento:
+  # Frequência de avaliação: a cada 15% das steps totais
   eval_steps: 15%
+  
+  # --------------------------------------------------------------------------
+  # BATCH SIZE
+  # --------------------------------------------------------------------------
+  # batch_size: amostras processadas simultaneamente por GPU
+  # grad_batch_size: acumulação de gradiente (batch efetivo = batch_size * grad_batch_size)
+  #
+  # Atual (RTX 3060 12GB, modelo 1.5B 4-bit):
   batch_size: 2
   grad_batch_size: 10
-  num_train_epochs: 1
+  # Batch efetivo: 2 * 10 = 20
+  #
+  # [H100] Com 2x H100 80GB e modelo 1.5B:
+  #        batch_size: 8-16 por GPU
+  #        grad_batch_size: 4-8
+  #        Batch efetivo: 16 * 4 = 64 ou mais
+  #
+  # [7B] Com modelo 7B em 4-bit (RTX 3060):
+  #        batch_size: 1 (limite de VRAM)
+  #        grad_batch_size: 20-40 (para compensar)
+  #
+  # [7B + H100] Com modelo 7B em 2x H100:
+  #        batch_size: 4-8 por GPU
+  #        grad_batch_size: 4
+  #        Batch efetivo: 32-64
+  # --------------------------------------------------------------------------
+  
+  # Épocas de treinamento
+  # [7B] Modelos maiores convergem mais rápido; pode reduzir para 2-3 épocas
+  # [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10
+  num_train_epochs: 5
+  
+  # Comprimento máximo de sequência (tokens)
+  # 4096 é um bom padrão para Qwen; aumentar se textos forem muito longos
+  # [H100] Pode aumentar para 8192 se necessário
+  # [7B] Qwen 7B suporta até 128k, mas 4096-8192 é prático
   max_seq_length: 4096
-  learning_rate: 0.0002
+  
+  # --------------------------------------------------------------------------
+  # LEARNING RATE
+  # --------------------------------------------------------------------------
+  # Taxa de aprendizado: quanto o modelo ajusta pesos a cada step
+  # Valores típicos: 1e-4 a 5e-4 para LoRA, 1e-5 a 5e-5 para full finetune
+  #
+  # Atual (modelo 1.5B com LoRA r=8):
+  learning_rate: 0.0002  # = 2e-4
+  #
+  # [7B] Modelos maiores são mais sensíveis; reduzir para 1e-4 ou 5e-5
+  #      learning_rate: 0.0001  # = 1e-4
+  #
+  # [H100] Com batch maior, pode usar LR ligeiramente maior (escala linear)
+  #        Se dobrar batch efetivo, pode aumentar LR em ~40%
+  # --------------------------------------------------------------------------
+  
   save_checkpoints: true
   resume_from_checkpoint: true
+  
+  # Warmup: steps iniciais com LR crescente (estabiliza treino)
+  # [7B] Aumentar para 10-20 steps em modelos maiores
+  # [H100] Manter proporcional (ex: 1-2% do total de steps)
   warmup_steps: 5
+  
   seed: 3407
+  
+  # --------------------------------------------------------------------------
+  # QUANTIZAÇÃO
+  # --------------------------------------------------------------------------
+  # nbits: precisão dos pesos (4=4-bit, 8=8-bit, 16=16-bit/full precision)
+  # 4-bit economiza VRAM mas pode afetar qualidade marginalmente
+  #
+  # Atual (RTX 3060 12GB):
   nbits: 4
-  train_on_responses_only: true  # Treina apenas nas respostas do assistant (recomendado)
+  #
+  # [H100] Com 80GB por GPU, pode usar 8-bit ou 16-bit para maior qualidade:
+  #        nbits: 8   # Melhor qualidade, ~2x mais VRAM que 4-bit
+  #        nbits: 16  # Full precision, máxima qualidade
+  #
+  # [7B] Modelo 7B em 4-bit ~= 14GB; usar nbits: 4 em GPUs menores
+  #      Em H100, pode usar nbits: 8 para 7B tranquilamente (~28GB)
+  # --------------------------------------------------------------------------
+  
+  # Treina apenas nas respostas do assistant (recomendado)
+  train_on_responses_only: true
 
+# ==========================================================================
+# LoRA (Low-Rank Adaptation)
+# ==========================================================================
+# LoRA permite fine-tuning eficiente treinando apenas adaptadores pequenos
+# em vez de todos os pesos do modelo.
+#
+# r (rank): dimensão dos adaptadores. Maior = mais capacidade, mais VRAM
+# alpha: escala do LoRA (normalmente 2x a 4x o valor de r)
+# dropout: regularização (0.05-0.1 é comum)
+# --------------------------------------------------------------------------
 lora:
+  # Atual (modelo 1.5B):
   r: 8
-  alpha: 32
+  alpha: 32   # ratio alpha/r = 4 (padrão recomendado)
   dropout: 0.05
+  
+  # [7B] Modelos maiores podem se beneficiar de rank maior:
+  #      r: 16 ou 32
+  #      alpha: 64 ou 128 (manter ratio ~4)
+  #      dropout: 0.05-0.1
+  #
+  # [H100] Com mais VRAM, pode aumentar rank para maior capacidade:
+  #        r: 32 ou 64
+  #        alpha: 128 ou 256
+  #
+  # Módulos alvo (padrão para Qwen/LLaMA-like):
   target_modules:
-  - q_proj
-  - k_proj
-  - v_proj
-  - o_proj
-  - gate_proj
-  - up_proj
-  - down_proj
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
