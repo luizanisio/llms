@@ -237,6 +237,7 @@ class ConfigDivisao:
     proporcao: List[float] = field(default_factory=lambda: PROPORCAO_PADRAO.copy())
     seed: int = SEED_PADRAO
     validar_ids: bool = True
+    proporcao_reais: Optional[List[float]] = None # Campo para armazenar distribuição real do arquivo
     
     def __post_init__(self):
         # Valida proporções
@@ -632,8 +633,12 @@ class YamlTreinamento:
                 f"  Predição: {self.pastas.predicao.pasta}",
                 f"  Divisão: {self.pastas.divisao.arquivo or '(será criado)'}",
                 f"  Validar IDs: {self.pastas.divisao.validar_ids}",
-                f"  Proporções: treino={self.pastas.divisao.proporcao[0]}, validacao={self.pastas.divisao.proporcao[1]}, teste={self.pastas.divisao.proporcao[2]}",
+                f"  Proporções (yaml): treino={self.pastas.divisao.proporcao[0]}, validacao={self.pastas.divisao.proporcao[1]}, teste={self.pastas.divisao.proporcao[2]}",
             ])
+            
+            if self.pastas.divisao.proporcao_reais:
+                 pr = self.pastas.divisao.proporcao_reais
+                 lines.append(f"  Proporções (efetivas): treino={pr[0]:.2f}, validacao={pr[1]:.2f}, teste={pr[2]:.2f}")
         else:
             lines.extend([
                 "",

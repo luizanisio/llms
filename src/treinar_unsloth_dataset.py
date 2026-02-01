@@ -240,6 +240,15 @@ class DatasetTreinamento:
             # Validação de consistência entre divisão e arquivos pareados
             self._validar_consistencia_divisao()
             
+            # Calcula proporções efetivas
+            contagem = self._dados_divisao["alvo"].value_counts(normalize=True).to_dict()
+            total_reais = [
+                contagem.get('treino', 0.0),
+                contagem.get('validacao', 0.0), # normalize=True já retorna float 0.0-1.0
+                contagem.get('teste', 0.0)
+            ]
+            self.pastas.divisao.proporcao_reais = total_reais
+            
             return self._dados_divisao
         
         # Cria nova divisão
@@ -276,8 +285,18 @@ class DatasetTreinamento:
             self._dados_divisao.to_csv(arquivo_divisao, index=False)
             print(f"💾 Divisão salva em: {arquivo_divisao}")
         
-        contagem = self._dados_divisao["alvo"].value_counts()
-        print(f"   Treino: {contagem.get('treino', 0)} | Validação: {contagem.get('validacao', 0)} | Teste: {contagem.get('teste', 0)}")
+        contagem_abs = self._dados_divisao["alvo"].value_counts()
+        contagem_rel = self._dados_divisao["alvo"].value_counts(normalize=True).to_dict()
+        
+        print(f"   Treino: {contagem_abs.get('treino', 0)} ({contagem_rel.get('treino', 0):.2%}) | Validação: {contagem_abs.get('validacao', 0)} ({contagem_rel.get('validacao', 0):.2%}) | Teste: {contagem_abs.get('teste', 0)} ({contagem_rel.get('teste', 0):.2%})")
+        
+        # Salva proporções reais no config
+        total_reais = [
+                contagem_rel.get('treino', 0.0),
+                contagem_rel.get('validacao', 0.0),
+                contagem_rel.get('teste', 0.0)
+            ]
+        self.pastas.divisao.proporcao_reais = total_reais
         
         return self._dados_divisao
     
