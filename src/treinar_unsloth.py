@@ -433,9 +433,11 @@ class LLMsTrainer:
     # Chaves obrigatórias no formato flat (para compatibilidade do método para_config_flat)
     # REQUIRED_KEYS removido pois validação é feita nos dataclasses
 
-    def __init__(self, cfg_path: str):
+    def __init__(self, cfg_path: str, force_base: bool = False):
         # Carrega configuração YAML
         self._yaml_config = YamlTreinamento(cfg_path)
+        
+        self.force_base = force_base
         
         # Cria a pasta de saída se não existir
         os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
@@ -554,41 +556,45 @@ class LLMsTrainer:
         # Carrega configuração de bits
         nbits = self._yaml_config.treinamento.nbits
         
-        # Verifica se existe modelo LoRA já treinado
-        lora_model_path = self._yaml_config.modelo.saida
-        arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
-        arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
-        
-        # Verifica se é um modelo LoRA completo (não apenas um checkpoint)
-        is_trained_lora = (os.path.exists(arq_lora) and 
-                          (os.path.exists(arq_model) or 
-                           os.path.exists(os.path.join(lora_model_path, 'pytorch_model.bin'))))
-        
         lora_ok = False
-        if is_trained_lora:
-            print(f'🔄 Carregando modelo LoRA já treinado de {lora_model_path}...')
-            try:
-                # Carrega o modelo LoRA já treinado diretamente
-                model, tokenizer = FastModel.from_pretrained(
-                    model_name=lora_model_path,  # Carrega da pasta do modelo treinado
-                    max_seq_length=self._yaml_config.treinamento.max_seq_length,
-                    load_in_4bit=nbits == 4,
-                    load_in_8bit=nbits == 8,
-                    device_map="auto",
-                )
-                print(f'✅ Modelo LoRA treinado carregado com sucesso!')
-                lora_ok = True
-                
-                # Log de informações do modelo carregado
-                self.log_processamento(f"Modelo LoRA carregado de: {lora_model_path}", "LORA_LOADED")
-                
-            except Exception as e:
-                print(f'❌ Erro ao carregar modelo LoRA treinado: {e}')
-                traceback.print_exc()
-                print('Tentando carregar modelo base e aplicar LoRA...')
-                time.sleep(2)
         
-        # Se não conseguiu carregar o LoRA ou não existe, carrega modelo base
+        if not self.force_base:
+            # Verifica se existe modelo LoRA já treinado
+            lora_model_path = self._yaml_config.modelo.saida
+            arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
+            arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
+            
+            # Verifica se é um modelo LoRA completo (não apenas um checkpoint)
+            is_trained_lora = (os.path.exists(arq_lora) and 
+                            (os.path.exists(arq_model) or 
+                            os.path.exists(os.path.join(lora_model_path, 'pytorch_model.bin'))))
+            
+            if is_trained_lora:
+                print(f'🔄 Carregando modelo LoRA já treinado de {lora_model_path}...')
+                try:
+                    # Carrega o modelo LoRA já treinado diretamente
+                    model, tokenizer = FastModel.from_pretrained(
+                        model_name=lora_model_path,  # Carrega da pasta do modelo treinado
+                        max_seq_length=self._yaml_config.treinamento.max_seq_length,
+                        load_in_4bit=nbits == 4,
+                        load_in_8bit=nbits == 8,
+                        device_map="auto",
+                    )
+                    print(f'✅ Modelo LoRA treinado carregado com sucesso!')
+                    lora_ok = True
+                    
+                    # Log de informações do modelo carregado
+                    self.log_processamento(f"Modelo LoRA carregado de: {lora_model_path}", "LORA_LOADED")
+                    
+                except Exception as e:
+                    print(f'❌ Erro ao carregar modelo LoRA treinado: {e}')
+                    traceback.print_exc()
+                    print('Tentando carregar modelo base e aplicar LoRA...')
+                    time.sleep(2)
+        else:
+             print(f'ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.')
+        
+        # Se não conseguiu carregar o LoRA ou não existe ou force_base=True, carrega modelo base
         if not lora_ok:
             print(f'🔄 Carregando modelo base: {self._yaml_config.modelo.base}...')
             model, tokenizer = FastModel.from_pretrained(
@@ -596,11 +602,11 @@ class LLMsTrainer:
                 max_seq_length=self._yaml_config.treinamento.max_seq_length,
                 load_in_4bit=nbits == 4,
                 load_in_8bit=nbits == 8,
-                full_finetuning=self._yaml_config.lora.r in (0,None,False)
+                full_finetuning=self._yaml_config.lora.r in (0,None,False) or self.force_base # Se force_base, não prepara para finetuning
             )
             
-            # Se usar LoRA, aplica as configurações
-            if self._yaml_config.lora.r not in (0,None,False):
+            # Se usar LoRA, aplica as configurações (Exceto se force_base=True)
+            if not self.force_base and self._yaml_config.lora.r not in (0,None,False):
                 print(f'🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...')
                 model = FastModel.get_peft_model(
                     model,
@@ -615,6 +621,8 @@ class LLMsTrainer:
                     random_state=3407,
                     device_map="auto",
                 )
+            elif self.force_base:
+                print(f'ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.')
         # Template agora é aplicado pelo TreinarChatTemplate após o carregamento
         model.print_trainable_parameters()
         
@@ -668,7 +676,7 @@ class LLMsTrainer:
     def debug_info(cls, cfg_path: str):
         """Exibe informações detalhadas de debug sobre configuração e datasets."""
         print("="*80)
-        print(">> MODO DEBUG - INFORMAÇÕES DE CONFIGURAÇÃO E DATASET")
+        print(">> MODO INFO / DEBUG - INFORMAÇÕES DE CONFIGURAÇÃO E DATASET")
         print("="*80)
         
         # Carrega configuração usando YamlTreinamento
@@ -854,7 +862,7 @@ class LLMsTrainer:
         )
         
         print("\n" + "="*80)
-        print("✅ DEBUG COMPLETO - CONFIGURAÇÃO E DATASETS VALIDADOS")
+        print("✅ INFO / DEBUG COMPLETO - CONFIGURAÇÃO E DATASETS VALIDADOS")
         print("="*80)
 
 
@@ -1853,13 +1861,67 @@ def _perguntar_usar_modelo_base() -> bool:
 
 def _cli() -> None:
     parser = argparse.ArgumentParser(
-        description="Fine‑tune Gemma‑3 com opções de YAML e debug. Se o YAML não existir, um template será criado."
+        description="Fine-tune LLMs (Gemma, Qwen, Llama, DeepSeek) com configuração YAML.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Ações disponíveis:
+  --info            Informações gerais do treinamento e modelo
+  --stats           Relatório estatístico com tokens de entrada/saída e boxplots
+  --treinar         Inicia ou reinicia o treinamento
+  --reset           Limpa o treinamento atual (com confirmação)
+  --predict         Gera predições para todos os subsets (treino, validacao, teste)
+  --predict-treino  Gera predições apenas do subset de treino
+  --predict-validacao  Gera predições apenas do subset de validação
+  --predict-teste   Gera predições apenas do subset de teste
+  
+Sem ação: modo interativo que pergunta qual ação executar.
+
+Exemplos:
+  %(prog)s config.yaml              # Modo interativo
+  %(prog)s config.yaml --info       # Informações detalhadas
+  %(prog)s config.yaml --treinar    # Inicia treinamento
+  %(prog)s config.yaml --reset --treinar  # Limpa e treina
+  %(prog)s config.yaml --predict    # Gera predições de todos os subsets
+  %(prog)s config.yaml --modelo 5   # Testa 5 predições interativas
+"""
     )
     parser.add_argument("config", help="Arquivo YAML com as configurações.")
-    parser.add_argument("--debug", action="store_true", help="Modo debug: exibe estrutura do dataset e configuração sem treinar")
-    parser.add_argument("--modelo", type=int, nargs='?', const=1, help="Modo teste: exibe exemplos de prompt e resposta do modelo treinado (padrão: 1 exemplo)")
-    parser.add_argument("--log-level", type=str, default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
+    
+    # Grupo de ações (mutuamente exclusivas, exceto reset+treinar)
+    parser.add_argument("--info", action="store_true", 
+                        help="Modo info: exibe estrutura do dataset e configuração sem treinar")
+    parser.add_argument("--stats", action="store_true",
+                        help="Gera relatório estatístico de tokens com boxplots")
+    parser.add_argument("--treinar", action="store_true",
+                        help="Inicia ou continua o treinamento")
+    parser.add_argument("--reset", action="store_true",
+                        help="Limpa treinamento atual (checkpoints e modelo LoRA)")
+    
+    # Ações de predição
+    parser.add_argument("--predict", action="store_true",
+                        help="Gera predições para todos os subsets (treino, validacao, teste)")
+    parser.add_argument("--predict-treino", action="store_true",
+                        help="Gera predições apenas do subset de treino")
+    parser.add_argument("--predict-validacao", action="store_true",
+                        help="Gera predições apenas do subset de validação")
+    parser.add_argument("--predict-teste", action="store_true",
+                        help="Gera predições apenas do subset de teste")
+    
+    # Opções modificadoras
+    parser.add_argument("--base", action="store_true",
+                        help="Força o uso do modelo base (ignora LoRA treinado) para info e predict")
+    
+    # Opções extras (mantidas do CLI anterior)
+    parser.add_argument("--modelo", type=int, nargs='?', const=1, 
+                        help="Modo teste: exibe exemplos de prompt e resposta do modelo treinado (padrão: 1 exemplo)")
+    parser.add_argument("--log-level", type=str, default=None, 
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
                         help="Nível de log (sobrescreve misc.log_level do YAML)")
+    
+    # Retrocompatibilidade: mantém --debug como alias para --info
+    parser.add_argument("--debug", action="store_true", 
+                        help=argparse.SUPPRESS)  # Oculto, usa --info
+    
     args = parser.parse_args()
 
     cfg_path = args.config or "./exemplo.yaml"
@@ -1885,6 +1947,7 @@ def _cli() -> None:
     else:
         logger.warning("CUDA não disponível — treinamento será na CPU (muito mais lento)")
 
+    # Cria YAML template se não existir
     if not os.path.exists(cfg_path):
         _create_default_cfg(cfg_path)
         logger.info(
@@ -1893,30 +1956,38 @@ def _cli() -> None:
         )
         sys.exit(0)
 
+    # Importa módulo de ações
+    from treinar_unsloth_actions import (
+        executar_info, executar_stats, executar_treinar, 
+        executar_reset, executar_predict, modo_interativo, executar_acao
+    )
+    
+    # Retrocompatibilidade: --debug -> --info
     if args.debug:
-        # modo debug: apenas exibe informações sem treinar
-        LLMsTrainer.debug_info(cfg_path)
-        logger.info("\n>> Modo DEBUG ativado - treinamento não executado")
-        sys.exit(0)
+        args.info = True
+        logger.warning("⚠️  O parâmetro --debug está deprecado. Use --info.")
 
-    # Modo --modelo: verifica se existe modelo treinado antes de carregar
+    # Modo --modelo: teste de predições (fluxo separado)
     if args.modelo:
         # Carrega apenas a configuração YAML para verificar modelo
         yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
         
-        if not _verificar_modelo_treinado(yaml_config):
-            if not _perguntar_usar_modelo_base():
-                logger.info("Operação cancelada. Execute um treinamento antes de testar o modelo.")
-                sys.exit(0)
+        usar_base = getattr(args, 'base', False)
+        
+        if not usar_base:
+            if not _verificar_modelo_treinado(yaml_config):
+                if not _perguntar_usar_modelo_base():
+                    logger.info("Operação cancelada. Execute um treinamento antes de testar o modelo.")
+                    sys.exit(0)
+                else:
+                    logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+                    usar_base = True # Usuário confirmou usar base na pergunta
             else:
-                logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+                logger.info(f"✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}")
         else:
-            logger.info(f"✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}")
+            logger.info("ℹ️  Opção --base ativada: Forçando uso do modelo base.")
 
-    trainer = LLMsTrainer(cfg_path)
-
-    if args.modelo:
-        # modo teste: executa predições em exemplos do dataset
+        trainer = LLMsTrainer(cfg_path, force_base=usar_base)
         n_exemplos = args.modelo if isinstance(args.modelo, int) else 1
         resultado = trainer.testar_predicoes(n_exemplos=n_exemplos, temperatura=0.2, max_new_tokens=512)
         
@@ -1930,9 +2001,46 @@ def _cli() -> None:
                 logger.info(f"   GPU: máx={metricas['gpu'].get('max_gb', 0):.1f} GB, média={metricas['gpu'].get('media_gb', 0):.1f} GB ({metricas['gpu'].get('num_gpus', 0)} GPU(s))")
         
         sys.exit(0)
+
+    # Determina subsets para predict (se houver)
+    predict_subsets = None
+    has_predict = False
     
-    # modo normal: executa treinamento
-    trainer.train()
+    if getattr(args, 'predict_treino', False):
+        predict_subsets = predict_subsets or []
+        predict_subsets.append('treino')
+        has_predict = True
+    if getattr(args, 'predict_validacao', False):
+        predict_subsets = predict_subsets or []
+        predict_subsets.append('validacao')
+        has_predict = True
+    if getattr(args, 'predict_teste', False):
+        predict_subsets = predict_subsets or []
+        predict_subsets.append('teste')
+        has_predict = True
+    if args.predict:
+        has_predict = True
+        # predict_subsets = None significa todos
+    
+    # Determina ação a executar
+    if args.info:
+        executar_info(cfg_path)
+    elif args.stats:
+        executar_stats(cfg_path)
+    elif args.reset and args.treinar:
+        # Reset + Treinar combinados
+        executar_treinar(cfg_path, reset=True)
+    elif args.reset:
+        executar_reset(cfg_path, confirmar=True)
+    elif args.treinar:
+        executar_treinar(cfg_path, reset=False)
+    elif has_predict:
+        executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
+    else:
+        # Modo interativo: pergunta qual ação
+        acao = modo_interativo(cfg_path)
+        if acao:
+            executar_acao(acao, cfg_path)
 
 
 
@@ -1940,3 +2048,4 @@ if __name__ == "__main__":
     # Carrega .env do diretório src (funciona de qualquer pasta)
     UtilEnv.carregar_env(pastas=[_SRC_DIR, './', '../', '../src/'])
     _cli()
+

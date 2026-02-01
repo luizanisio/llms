@@ -10,14 +10,14 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 
 | Arquivo | Descrição |
 |---------|-----------|
-| `treinar_unsloth.py` | Script principal de treinamento |
-| `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`) e CLI interativa |
-| `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, validação e preparação (`DatasetTreinamento`) |
+| `treinar_unsloth.py` | Script principal de treinamento e CLI (`LLMsTrainer`) |
+| `treinar_unsloth_actions.py` | Implementação das ações da CLI (`executar_treinar`, `executar_stats`, etc.) |
+| `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`) e helpers |
+| `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, divisão, validação (`DatasetTreinamento`) |
 | `treinar_unsloth_logging.py` | Sistema centralizado de logging com níveis configuráveis |
-| `treinar_unsloth_monitor.py` | Monitoramento contínuo de RAM/GPU com geração de gráficos |
+| `treinar_unsloth_monitor.py` | Monitoramento contínuo de RAM/GPU |
 | `treinar_unsloth_report.py` | Geração de relatórios em Markdown |
 | `treinar_unsloth.md` | Esta documentação |
-| `util.py` | Utilitários gerais (Util.mensagem_to_json, etc.) |
 
 ---
 
@@ -30,260 +30,154 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Detecção e continuação de modelos LoRA já treinados
 - [x] Gerenciamento automático de checkpoints
 - [x] Suporte a múltiplas GPUs (via CUDA_VISIBLE_DEVICES)
-- [x] Modo debug detalhado para inspeção de datasets e configurações (`--debug`)
-- [x] Modo teste para validar predições do modelo (`--modelo N`)
-- [x] Log detalhado de processamento com métricas de memória GPU
-- [x] Suporte a datasets em formato parquet, json, jsonl e txt
-- [x] Detecção automática de formato do dataset (messages ou prompt/completion)
-- [x] Chat template automático baseado no modelo (gemma, qwen, llama)
-- [x] Criptografia de dados sensíveis em dataframes (via chave Fernet)
-- [x] Validação interativa de configurações ausentes ou incorretas
-
----
-
-## Nova Estrutura de Configuração YAML
-
-O sistema utiliza uma estrutura hierárquica dividida em seções lógicas (`formatos`, `misc`, `pastas`/`dataset`, `modelo`, `treinamento`, `lora`).
-
-### Seção misc (Configurações Gerais)
-
-A seção `misc` contém configurações diversas do projeto:
-
-```yaml
-misc:
-  log_level: INFO          # Nível de log: DEBUG, INFO, WARNING, ERROR
-  env_chave_criptografia: CHAVE_CRIPT  # Variável de ambiente com chave Fernet
-```
-
-**Parâmetros:**
-- `log_level`: Define o nível de log padrão. Pode ser sobrescrito pelo parâmetro `--log-level` da CLI
-- `env_chave_criptografia`: Nome da variável de ambiente que contém a chave de criptografia Fernet para decriptografar dados
-
-### Modos de Entrada
-
-1.  **Modo "pastas"**:
-    *   Carrega dados de arquivos de texto/JSON organizados em diretórios.
-    *   Parea automaticamente arquivos de entrada (prompts) com arquivos de predição (respostas esperadas) pelo nome base.
-    *   Permite definir um template de prompt.
-    *   Permite leitura de input a partir de colunas de um DataFrame Parquet (com flag `dataframe: true` e `dataframe_col`).
-
-2.  **Modo "dataset"**:
-    *   Carrega dados de arquivos Parquet prontos com colunas formatadas (como `messages`).
-
-### Configuração de Divisão (proporcao)
-
-A chave `proporcao` dentro de `pastas.divisao` define a proporção de dados para cada subset. **O formato recomendado é usar chaves nomeadas**:
-
-```yaml
-proporcao:
-  - treino: 0.7      # Usado para aprendizado dos pesos (backpropagation)
-  - validacao: 0.1   # Monitorar métricas durante treino e early stopping
-  - teste: 0.2       # Avaliação final imparcial APÓS o treinamento
-```
-
-**Regras:**
-- A soma dos valores deve ser igual a 1.0
-- Valores devem ser entre 0 e 1
-- Os nomes aceitos são: `treino`/`train`, `validacao`/`validação`/`validation`, `teste`/`test`
-
-### Configuração de Treinamento (train_on_responses_only)
-
-A opção `train_on_responses_only` permite treinar o modelo apenas nas respostas do assistant, mascarando as instruções do usuário. Isso é recomendado para melhorar a qualidade do fine-tuning:
-
-```yaml
-treinamento:
-  train_on_responses_only: true  # Recomendado (padrão: true)
-```
-
-**Como funciona:**
-- Detecta automaticamente as tags de instrução e resposta baseado no modelo (Gemma, Qwen, Llama, DeepSeek)
-- Mascara tudo exceto as respostas do assistant durante o cálculo do loss
-- Resulta em modelos mais focados em gerar respostas de alta qualidade
-
-### Arquivos de Métricas Gerados
-
-Durante o treinamento, são gerados três arquivos de métricas na pasta do modelo:
-
-| Arquivo | Localização | Conteúdo |
-|---------|-------------|----------|
-| `metrics_stream.jsonl` | `{output_dir}/` | Métricas brutas do trainer (loss, lr, etc) |
-| `hardware_metrics.jsonl` | `{output_dir}/treinamento/` | Uso de CPU, RAM, Disco e GPU a cada 10 steps |
-| `training_metrics.jsonl` | `{output_dir}/treinamento/` | Métricas detalhadas com médias móveis e progresso |
-
-**Exemplo de hardware_metrics.jsonl:**
-```json
-{"timestamp": 1706789999.0, "step": 10, "epoch": 0.1, "fase": "train", 
- "cpu_uso_%": 45.2, "ram_usada_gb": 12.5, "gpu0_alocada_gb": 8.2}
-```
-
-**Exemplo de training_metrics.jsonl:**
-```json
-{"event": "log", "step": 10, "train_loss": 2.345, "learning_rate": 0.0001, 
- "train_loss_avg_10": 2.456, "progress_%": 5.0}
-```
+- [x] Modo infos detalhado (`--info`)
+- [x] Modo de estatísticas de tokens com gráficos (`--stats`)
+- [x] Modo teste para validar predições (`--modelo N`) com opção `--base`
+- [x] Geração de predições em massa (`--predict`) com opção `--base`
+- [x] Suporte a datasets em formado de pastas (pares .txt) e arquivos únicos (csv/parquet)
+- [x] Divisão automática de datasets (treino, validação, teste) via YAML ou CSV
+- [x] Chat template automático baseado no modelo
+- [x] Criptografia de dados sensíveis (Fernet)
+- [x] Validação automática de consistência de dados (IDs e arquivos pareados)
 
 ---
 
 ## Uso via Linha de Comando
 
-### treinar_unsloth.py (Treinamento)
-
 ```bash
-# Treinar modelo
-python treinar_unsloth.py CONFIG.yaml
-
-# Modo debug (super recomendado antes do treino)
-# Mostra resumo da configuração, status dos arquivos e exibe exemplos reais do dataset (começo/fim)
-python treinar_unsloth.py CONFIG.yaml --debug
-
-# Testar predições/inferência com o modelo (treinado ou base) em N exemplos
-# Gera gráfico de uso de memória (RAM e GPU) durante as predições
-python treinar_unsloth.py CONFIG.yaml --modelo 5
-
-# Definir nível de log (DEBUG mostra mais detalhes)
-python treinar_unsloth.py CONFIG.yaml --log-level DEBUG
-
-# Definir GPUs específicas
-export CUDA_VISIBLE_DEVICES=0,1 python treinar_unsloth.py CONFIG.yaml
+# Formato geral
+python treinar_unsloth.py CONFIG.yaml [AÇÃO] [OPÇÕES]
 ```
 
-### treinar_unsloth_util.py (Validação e Helpers)
+### Ações Principais
 
-TODO: revisar se está funcionando
+| Ação | Descrição |
+|------|-----------|
+| **(nenhuma)** | Modo interativo: exibe menu para escolher ação |
+| `--info` | Exibe informações detalhadas sobre configuração e dataset (substitui `--debug`) |
+| `--stats` | Gera relatório estatístico de tokens com gráficos boxplot por subset |
+| `--treinar` | Inicia ou continua o treinamento |
+| `--predict` | Gera predições para todos os subsets (treino, validação, teste) |
+| `--reset` | Limpa o treinamento atual (checkpoints e modelo LoRA) -- *Requer confirmação* |
+
+### Opções Modificadoras
+
+| Opção | Descrição |
+|-------|-----------|
+| `--base` | **Força o uso do modelo base**. <br>- Em `--predict`: salva em `predict_base/` ignorando LoRA.<br>- Em `--modelo`: testa o modelo base ignorando LoRA treinado. |
+| `--predict-treino` | Gera predições apenas para o subset de treino |
+| `--predict-validacao`| Gera predições apenas para o subset de validação |
+| `--predict-teste` | Gera predições apenas para o subset de teste |
+| `--modelo N` | Testa inferência interativa com N exemplos (default: 1). Exibe métricas de memória. |
+| `--log-level LEVEL` | Define nível de log (DEBUG, INFO, WARNING, ERROR) |
+
+### Exemplos de Uso
+
 ```bash
-# Validar YAML e exibir configurações
-python treinar_unsloth_util.py CONFIG.yaml
+# Ver informações do setup
+python treinar_unsloth.py config.yaml --info
 
-# Modo interativo: corrige problemas de configuração perguntando ao usuário
-python treinar_unsloth_util.py CONFIG.yaml --interativo
+# Gerar estatísticas do dataset (tabelas e gráficos)
+python treinar_unsloth.py config.yaml --stats
 
-# Listar arquivos que serão usados no treino (modo pastas)
-python treinar_unsloth_util.py CONFIG.yaml --listar-arquivos
+# Treinar (continuando de checkpoint se existir)
+python treinar_unsloth.py config.yaml --treinar
 
+# Limpar tudo e treinar do zero
+python treinar_unsloth.py config.yaml --treinar --reset
+
+# Gerar predições com modelo treinado (LoRA)
+# Saída: {output_dir}/predict/{subset}/{id}.txt e {id}.json
+python treinar_unsloth.py config.yaml --predict
+
+# Gerar predições com modelo BASE (ignorando treino)
+# Saída: {output_dir}/predict_base/...
+python treinar_unsloth.py config.yaml --predict --base
+
+# Testar inferência com 3 exemplos usando modelo treinado
+python treinar_unsloth.py config.yaml --modelo 3
+
+# Testar inferência com modelo BASE
+python treinar_unsloth.py config.yaml --modelo 1 --base
 ```
 
 ---
 
-## Arquitetura e Classes
-TODO: complementar classes e métodos mais importantes relacionados ao treinamento
+## Detalhes das Funcionalidades
 
-### `DatasetTreinamento` (src/treinar_unsloth_dataset.py)
-Responsável por toda a manipulação de dados.
-*   **Carregamento**: Lê arquivos de texto, JSON ou DataFrames Parquet.
-*   **Decriptografia**: Lida com dados cifrados se configurado.
-*   **Preparação**: Parea arquivos de entrada/saída, aplica templates de prompt.
-*   **Divisão**: Gerencia splits de treino/teste/validação (cria/lê CSV).
-*   **Validação de Consistência**: Verifica se IDs do CSV de divisão e arquivos pareados estão sincronizados (método `_validar_consistencia_divisao`).
-*   **Visualização**: Gera previews detalhados dos dados para debug.
+### Relatório de Estatísticas (`--stats`)
+Gera análise detalhada do consumo de tokens (entrada e saída) por subset.
+*   **Saída**: `{output_dir}/treinamento/relatorio_estatistico.md`
+*   **Gráficos**: Gera `stats_tokens_boxplot.png` contendo boxplots comparativos de todos os subsets (Entrada e Saída).
+*   **Tabelas**: No relatório MD, apresenta tabelas com Min, Max, Média, Mediana, Desvio Padrão e Total por subset.
 
-### `YamlTreinamento` (src/treinar_unsloth_util.py)
-Gerencia a configuração.
-*   **Validação**: Garante que o YAML segue a estrutura correta.
-*   **Delegação**: Encapsula uma instância de `DatasetTreinamento` e expõe métodos de conveniência.
-*   **Compatibilidade**: Provê acesso estruturado (`.modelo`, `.treinamento`) e mapeamentos legados se necessário.
+### Predição em Massa (`--predict`)
+Gera respostas do modelo para os datasets configurados.
+*   **Limpeza Segura**: Antes de iniciar, remove apenas arquivos `.json` e `.txt` da pasta de destino do subset, preservando outros arquivos.
+*   **Arquivos Gerados**:
+    *   `{id}.txt`: O texto da resposta gerada.
+    *   `{id}.json`: Metadados (tempo, tokens, preview do prompt).
+    *   `resumo.json`: Estatísticas consolidadas da execução.
 
-### `LLMsTrainer` (src/treinar_unsloth.py)
-Orquestra o treinamento.
-*   Setup do modelo Unsloth e Tokenizer.
-*   Integração com TRL (`SFTTrainer`).
-*   Configuração de callbacks e logging.
-*   Execução de inferência para testes.
+### Configuração YAML
 
----
+A configuração é centralizada em arquivo YAML. Principais seções:
 
-### Concluídas Recentemente ✅
-- [x] Padronização de nomes de subsets: `treino`, `validacao`, `teste` (em vez de avaliação)
-- [x] Migração automática de arquivos de divisão antigos
-- [x] Chave `proporcao` suporta dicionário nomeado e lista de dicts (ex: `- treino: 0.8`)
-- [x] Padronização de informações de treino na pasta `treinamento`
-- [x] Geração automática de relatório `.md` com estatísticas e config
-- [x] **Opção `train_on_responses_only`** do unsloth (treina apenas nas respostas do assistant)
-- [x] **Registro contínuo de métricas de hardware** (RAM, GPU, CPU, disco em `hardware_metrics.jsonl`)
-- [x] **Registro contínuo de métricas de treinamento/validação** (loss, lr em `training_metrics.jsonl`)
-- [x] **Sistema de logging padronizado** com biblioteca `logging` e níveis configuráveis (DEBUG, INFO, WARNING, ERROR)
-- [x] **Monitoramento de memória em modo --modelo** com gráfico de linha RAM/GPU (`memoria_predicao.png`)
-- [x] **Verificação de modelo treinado** em modo --modelo com opção de usar modelo base
+#### Proporção e Divisão
+Define como os dados são divididos se não houver arquivo CSV de divisão prévio.
+```yaml
+pastas:
+  divisao:
+    arquivo: "caminho/para/divisao.csv" # Opcional: fixa a divisão
+    proporcao:
+      - treino: 0.7
+      - validacao: 0.1
+      - teste: 0.2
+```
 
-## Pendências de Integração (Próximos Passos)
-
-### Funcionalidades de Configuração
-- [x] ~~incluir no método Util.dados_hardware(...) informações sobre o uso de memória RAM e GPU~~ (Concluído: método agora retorna RAM usada/disponível e informações detalhadas de GPU via torch.cuda)
-
-### Validações Adicionais
-- [x] ~~Validar se todos os IDs do CSV de divisão existem nos arquivos pareados (retornar erro se falhar)~~ (Concluído: método `_validar_consistencia_divisao` em `DatasetTreinamento`)
-- [x] ~~Validar se todos os arquivos pareados estão no arquivo de divisão (retornar erro se falhar)~~ (Concluído: validação bidirecional com mensagens de erro detalhadas) 
+#### Train on Responses Only
+Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário.
+```yaml
+treinamento:
+  train_on_responses_only: true
+```
 
 ---
 
-## Pendências de Novas Funcionalidades
+## Arquivos de Saída e Métricas
 
-### Dataset e Pré-processamento
-- [ ] Suporte a HuggingFace datasets (carregar direto do Hub)
-- [ ] Filtro de registros por comprimento máximo de tokens
-- [ ] Estatísticas mais detalhadas de tokens (histograma, etc)
+Durante o treinamento e testes, diversos arquivos são gerados na pasta de saída (`modelo.saida`):
 
-### Treinamento
-- [x] ~~Opção de usar `train_on_responses_only` do unsloth~~ (Concluído: detecta automaticamente as tags baseado no modelo)
-- [x] ~~Registro contínuo de métricas de uso de memória RAM e GPU, processador e disco~~ (Concluído: `hardware_metrics.jsonl`)
-- [x] ~~Registro contínuo de métricas de treinamento e validação~~ (Concluído: `training_metrics.jsonl`)
-- [ ] Gerar gráficos de métricas de treinamento e validação ao final, na pasta treinamento com prefixo `grafico_` ... (apagando gráficos antes de nova geração)
-- [ ] Suporte a early stopping com patience configurável (exmplicar e perguntar antes de implementar)
-- [ ] Suporte a gradient clipping configurável (exmplicar e perguntar antes de implementar)
-- [ ] Suporte a mixed precision training explícito (fp16/bf16) (exmplicar e perguntar antes de implementar)
-- [ ] Integração com Weights & Biases (wandb) opcional (exmplicar e perguntar antes de implementar)
-
-### Monitoramento e Logs
-- [x] ~~Registrar uso de memória RAM antes/depois do treinamento~~ (Concluído: incluído no relatório e hardware_metrics.jsonl)
-- [x] ~~Registrar uso de memória (RAM e GPU) durante teste (modo `--modelo`)~~ (Concluído: `treinar_unsloth_monitor.py` com gráfico em `memoria_predicao.png`)
-- [x] ~~Caso seja usado o parâmetro --modelo e não existir modelo treinado ainda, perguntar se deseja realizar a predição no modelo base~~ (Concluído: verificação automática com prompt interativo)
-
-### Checkpoints
-- [ ] Opção para limpar checkpoints antigos ao finalizar com sucesso
-
-### Inferência/Predição
-- [ ] Suporte a batch inference (múltiplos prompts em paralelo)
-- [ ] Exportar resultados de predição para arquivo JSON
-
-### Exportação de Modelo
-- [ ] Exportar modelo para GGUF (llama.cpp)
-- [ ] Exportar modelo merged (LoRA + base)
-- [ ] Exportar para ONNX
+| Pasta/Arquivo | Conteúdo |
+|---------------|----------|
+| `adapter_model.safetensors` | Pesos do LoRA treinado |
+| `treinamento/training_metrics.jsonl` | Métricas de treino (loss, learning rate, epoch) a cada step |
+| `treinamento/hardware_metrics.jsonl` | Uso de recursos (CPU, RAM, GPU, Disco) coletado periodicamente |
+| `treinamento/memoria_predicao.png` | Gráfico de uso de memória gerado durante teste (`--modelo`) |
+| `predict/` | Resultados da predição com modelo treinado |
+| `predict_base/` | Resultados da predição com modelo base (`--base`) |
 
 ---
 
-## Pendências de Refatoração
+## Monitoramento
 
-### Concluídas ✅
-1. Nova classe `YamlTreinamento` em arquivo separado
-2. Dataclasses para estruturação tipada de configurações
-3. Parâmetro `seed` configurável no YAML
-4. Validador interativo para correção de configurações
-5. Separação de `DatasetTreinamento` em módulo próprio
-
-### Pendentes
-1. ~~**Padronizar logging**~~ ✅ (Concluído em `treinar_unsloth_logging.py`)
-   - Usar biblioteca `logging` ao invés de `print`
-   - Níveis de log configuráveis (DEBUG, INFO, WARNING, ERROR)
-   - Parâmetro CLI `--log-level` adicionado
-
-2. **Testes unitários**
-   - Criar testes para YamlTreinamento
-   - Criar testes para ValidadorInterativo
-   - Criar testes para DatasetTreinamento
+O sistema inclui monitoramento de recursos em background (`treinar_unsloth_monitor.py`):
+1.  **Durante Treino**: Registra em `hardware_metrics.jsonl`.
+2.  **Durante Teste (`--modelo`)**: Coleta dados em tempo real e gera gráfico ao final.
+3.  **Logs**: Exibe consumo de VRAM e RAM nos logs de execução.
 
 ---
 
-## Arquivos de Saída (modo --modelo)
+## Desenvolvimento e Manutenção
 
-Quando usado o modo de teste `--modelo`, são gerados:
+### Pendências Concluídas Recentemente ✅
+1.  **Refatoração de Ações**: Lógica CLI movida para `treinar_unsloth_actions.py`.
+2.  **Separação de Dataset**: Lógica complexa movida para `treinar_unsloth_dataset.py`.
+3.  **Segurança**: Limpeza seletiva em `--predict`.
+4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
+5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
 
-| Arquivo | Localização | Descrição |
-|---------|-------------|----------|
-| `memoria_predicao.jsonl` | `{output_dir}/treinamento/` | Métricas de RAM e GPU coletadas durante predições |
-| `memoria_predicao.png` | `{output_dir}/treinamento/` | Gráfico de linha mostrando uso de memória ao longo do tempo |
-
-**Exemplo de gráfico gerado:**
-- Eixo X: Tempo em segundos
-- Eixo Y: Memória em GB
-- Linha azul: RAM usada
-- Linha vermelha: GPU usada (soma de todas as GPUs)
+### Próximos Passos (Backlog)
+- [ ] Implementar exportação de modelo (GGUF, Merge).
+- [ ] Adicionar suporte a Early Stopping configurável.
+- [ ] Gerar gráficos de evolução de Loss (treino vs validação) ao final do treino.
