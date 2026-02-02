@@ -1954,6 +1954,12 @@ Exemplos:
     parser.add_argument("--predict-teste", action="store_true",
                         help="Gera predições apenas do subset de teste")
     
+    # Ação de merge
+    parser.add_argument("--merge", action="store_true",
+                        help="Exporta e realiza merge do modelo treinado com o base")
+    parser.add_argument("--quant", type=str, default=None,
+                        help="Método de quantização para merge: 16bit, 4bit, q4_k_m, q8_0, f16 (padrão: interativo ou 16bit)")
+    
     # Opções modificadoras
     parser.add_argument("--base", action="store_true",
                         help="Força o uso do modelo base (ignora LoRA treinado) para info e predict")
@@ -2006,13 +2012,15 @@ Exemplos:
     # Importa módulo de ações
     from treinar_unsloth_actions import (
         executar_info, executar_stats, executar_treinar, 
-        executar_reset, executar_predict, modo_interativo, executar_acao
+        executar_reset, executar_predict, executar_merge, modo_interativo, executar_acao
     )
     
     # Retrocompatibilidade: --debug -> --info
     if args.debug:
         args.info = True
         logger.warning("⚠️  O parâmetro --debug está deprecado. Use --info.")
+
+
 
     # Modo --modelo: teste de predições (fluxo separado)
     if args.modelo:
@@ -2081,6 +2089,8 @@ Exemplos:
         executar_reset(cfg_path, confirmar=True)
     elif args.treinar:
         executar_treinar(cfg_path, reset=False)
+    elif args.merge:
+        executar_merge(cfg_path, quantizacao=args.quant)
     elif has_predict:
         executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
     else:

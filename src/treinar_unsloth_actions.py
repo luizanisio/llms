@@ -775,6 +775,134 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
 
 
 
+def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
+    """
+    Realiza merge do modelo treinado com o base.
+    Salva em {output_dir}(merged)/ ou {output_dir}(merged_FORMATO)/
+    
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        quantizacao: Opcional. '16bit', '4bit', 'q4_k_m', 'q8_0', 'f16'.
+    """
+    from treinar_unsloth_util import YamlTreinamento
+    from unsloth import FastLanguageModel
+    import torch
+    import sys
+    
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info(">> MODO MERGE - INTEGRANDO LORA ADAPTERS")
+    log_separador(caractere="=", largura=80)
+    
+    # Carrega configuração
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    _exibir_cabecalho_modelo(yaml_config)
+    
+    output_dir = yaml_config.modelo.saida
+    
+    # Verifica modelo
+    if not _verificar_modelo_treinado(yaml_config):
+        logger.error(f"❌ Erro: Não foi encontrado modelo treinado em {output_dir}")
+        return
+    
+    # Determina formato
+    mapa_quant = {
+        '1': '16bit',
+        '2': '4bit',
+        '3': 'q4_k_m',
+        '4': 'q8_0',
+        '5': 'f16'
+    }
+    
+    if not quantizacao:
+        # Se for terminal interativo, pergunta
+        if sys.stdin.isatty():
+            logger.info("\n� Escolha o formato de Exportação/Merge:")
+            print("   1) ☁️  16-bit .safetensors (Padrão - vLLM/HF)")
+            print("   2) 📉 4-bit  .safetensors (Compacto - vLLM/HF)")
+            print("   3) 🦙 GGUF Q4_K_M (Ollama - Balanceado)")
+            print("   4) 🦙 GGUF Q8_0   (Ollama - Alta Qualidade)")
+            print("   5) 🦙 GGUF F16    (Ollama - Full Precision)")
+            
+            try:
+                escolha = input("\nOpção [1]: ").strip()
+                if not escolha: escolha = '1'
+                quantizacao = mapa_quant.get(escolha, '16bit')
+            except:
+                quantizacao = '16bit'
+        else:
+            quantizacao = '16bit'
+            logger.info(f"Iniciando merge padrão ({quantizacao})")
+
+    quantizacao = quantizacao.lower()
+    
+    # Define diretório de saída
+    dirname = f"{output_dir}(merged_{quantizacao})"
+        
+    logger.info(f"\n📂 Diretório de destino: {dirname}")
+    logger.info(f"⚙️  Formato: {quantizacao}")
+
+    # Força stats
+    logger.info("\n📊 Verificando estatísticas...")
+    try:
+        executar_stats(yaml_path)
+    except Exception as e:
+        logger.warning(f"⚠️  Erro ao gerar estatísticas (o merge continuará): {e}")
+
+    # Verifica diretório existente
+    if os.path.exists(dirname):
+        logger.warning(f"⚠️  O diretório já existe.")
+        msg_confirm = "Deseja sobrescrever (isso apagará o conteúdo atual)?"
+        if not _perguntar_confirmacao(msg_confirm, padrao=False):
+            logger.info("Operação cancelada.")
+            return
+        try:
+            shutil.rmtree(dirname)
+            logger.info("   Diretório antigo removido.")
+        except Exception as e:
+            logger.error(f"Erro ao remover diretório: {e}")
+            return
+            
+    # Carrega modelo
+    logger.info(f"\n🔄 Carregando modelo LoRA de: {output_dir}")
+    logger.info("   Isso pode levar alguns instantes...")
+    
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=output_dir,
+            max_seq_length=yaml_config.treinamento.max_seq_length,
+            dtype=None,
+            load_in_4bit=yaml_config.treinamento.nbits == 4,
+        )
+        
+        # Executa salvamento
+        is_gguf = quantizacao in ['q4_k_m', 'q8_0', 'f16'] or 'gguf' in quantizacao
+        
+        if is_gguf:
+            logger.info(f"💾 Convertendo para GGUF ({quantizacao})...")
+            logger.warning("   ⚠️  Isso pode demorar e consumir memória significativa.")
+            model.save_pretrained_gguf(dirname, tokenizer, quantization_method=quantizacao)
+        else:
+            # Unsloth exige _forced para 4bit para confirmar ciência da perda de precisão
+            method = "merged_4bit_forced" if quantizacao == '4bit' else "merged_16bit"
+            logger.info(f"💾 Salvando merge ({method})...")
+            model.save_pretrained_merged(dirname, tokenizer, save_method=method)
+        
+        # Copia stats
+        src_treinamento = os.path.join(output_dir, "treinamento")
+        dst_treinamento = os.path.join(dirname, "treinamento")
+        
+        if os.path.exists(src_treinamento):
+            logger.info("📋 Copiando relatórios e gráficos...")
+            shutil.copytree(src_treinamento, dst_treinamento, dirs_exist_ok=True)
+        
+        logger.info("✅ Merge concluído com sucesso!")
+        logger.info(f"   Modelo pronto em: {dirname}")
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao realizar merge/exportação: {e}")
+
+
 def modo_interativo(yaml_path: str) -> Optional[str]:
     """
     Modo interativo: exibe informações do modelo e pergunta qual ação executar.
@@ -814,7 +942,8 @@ def modo_interativo(yaml_path: str) -> Optional[str]:
     logger.info("   2. stats   - Relatório estatístico de tokens com gráficos")
     logger.info("   3. treinar - Iniciar ou continuar treinamento")
     logger.info("   4. predict - Gerar predições para todos os subsets")
-    logger.info("   5. reset   - Limpar treinamento atual")
+    logger.info("   5. merge   - Merge LoRA + Base (exportar 16bit)")
+    logger.info("   6. reset   - Limpar treinamento atual")
     logger.info("   0. sair    - Cancelar e sair")
     
     try:
@@ -825,7 +954,8 @@ def modo_interativo(yaml_path: str) -> Optional[str]:
             '2': 'stats', 'stats': 'stats',
             '3': 'treinar', 'treinar': 'treinar', 'train': 'treinar',
             '4': 'predict', 'predict': 'predict',
-            '5': 'reset', 'reset': 'reset',
+            '5': 'merge', 'merge': 'merge', 'export': 'merge',
+            '6': 'reset', 'reset': 'reset',
             '0': None, 'sair': None, 'exit': None, 'quit': None,
         }
         
@@ -847,7 +977,7 @@ def executar_acao(acao: str, yaml_path: str, reset: bool = False, predict_subset
     Executa a ação especificada.
     
     Args:
-        acao: Nome da ação ('info', 'stats', 'treinar', 'reset', 'predict')
+        acao: Nome da ação ('info', 'stats', 'treinar', 'reset', 'predict', 'merge')
         yaml_path: Caminho para o arquivo YAML
         reset: Se True e acao='treinar', limpa antes de treinar
         predict_subsets: Lista de subsets para predict (None = todos)
@@ -860,6 +990,8 @@ def executar_acao(acao: str, yaml_path: str, reset: bool = False, predict_subset
         executar_treinar(yaml_path, reset=reset)
     elif acao == 'predict':
         executar_predict(yaml_path, subsets=predict_subsets)
+    elif acao == 'merge':
+        executar_merge(yaml_path)
     elif acao == 'reset':
         executar_reset(yaml_path, confirmar=True)
     else:

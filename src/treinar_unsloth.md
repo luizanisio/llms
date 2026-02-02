@@ -58,8 +58,8 @@ python treinar_unsloth.py CONFIG.yaml [AÇÃO] [OPÇÕES]
 | `--stats` | Gera relatório estatístico de tokens com gráficos boxplot por subset |
 | `--treinar` | Inicia ou continua o treinamento |
 | `--predict` | Gera predições para todos os subsets (treino, validação, teste) |
-| `--reset` | Limpa o treinamento atual (checkpoints e modelo LoRA) -- *Requer confirmação* |
-
+| `--merge`   | Merge LoRA + Base. Exporta em 16-bit (padrão) ou outro formato via `--quant`. |
+| `--reset`   | Limpa o treinamento atual (checkpoints e adaptador) para reiniciar do zero |
 ### Opções Modificadoras
 
 | Opção | Descrição |
@@ -69,6 +69,7 @@ python treinar_unsloth.py CONFIG.yaml [AÇÃO] [OPÇÕES]
 | `--predict-validacao`| Gera predições apenas para o subset de validação |
 | `--predict-teste` | Gera predições apenas para o subset de teste |
 | `--modelo N` | Testa inferência interativa com N exemplos (default: 1). Exibe métricas de memória. |
+| `--quant METODO` | Define método de quantização p/ merge (`16bit`, `4bit`, `q4_k_m`, `q8_0`). |
 | `--log-level LEVEL` | Define nível de log (DEBUG, INFO, WARNING, ERROR) |
 
 ### Exemplos de Uso
