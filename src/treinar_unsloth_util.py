@@ -143,6 +143,9 @@ class ConfigTreinamento:
     nbits: int = 4
     seed: int = 3407
     train_on_responses_only: bool = True  # Treina apenas nas respostas do assistant (recomendado)
+    weight_decay: float = 0.01
+    optim: str = "adamw_8bit"
+    lr_scheduler_type: str = "linear"
     
     def __post_init__(self):
         # Validações de valores
@@ -660,6 +663,17 @@ class YamlTreinamento:
 # Funções auxiliares
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Dicas e Comentários para os Templates YAML
+# ---------------------------------------------------------------------------
+# (Código movido para treinar_unsloth_dicas.py)
+
+from treinar_unsloth_dicas import injetar_dicas_yaml, DICAS_YAML
+
+
+
+
 def criar_yaml_exemplo_pastas(caminho: str) -> None:
     """Cria um arquivo YAML de exemplo para modo 'pastas'."""
     template = {
@@ -702,20 +716,29 @@ def criar_yaml_exemplo_pastas(caminho: str) -> None:
             "grad_batch_size": 5,
             "num_train_epochs": 1,
             "max_seq_length": 4096,
-            "lora_r": 8,
-            "lora_alpha": 32,
-            "lora_dropout": 0.05,
             "learning_rate": 0.0002,
             "save_checkpoints": True,
             "resume_from_checkpoint": True,
             "warmup_steps": 5,
             "nbits": 4,
             "train_on_responses_only": True
+        },
+        "lora": {
+            "r": 8,
+            "alpha": 32,
+            "dropout": 0.05,
+            "target_modules": [
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj"
+            ]
         }
     }
     
+    yaml_str = yaml.safe_dump(template, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    yaml_com_dicas = _injetar_dicas_yaml(yaml_str, DICAS_YAML)
+    
     with open(caminho, "w", encoding="utf-8") as fp:
-        yaml.safe_dump(template, fp, sort_keys=False, allow_unicode=True, default_flow_style=False)
+        fp.write(yaml_com_dicas)
 
 
 def criar_yaml_exemplo_dataset(caminho: str) -> None:
@@ -742,20 +765,29 @@ def criar_yaml_exemplo_dataset(caminho: str) -> None:
             "grad_batch_size": 5,
             "num_train_epochs": 1,
             "max_seq_length": 4096,
-            "lora_r": 8,
-            "lora_alpha": 32,
-            "lora_dropout": 0.05,
             "learning_rate": 0.0002,
             "save_checkpoints": True,
             "resume_from_checkpoint": True,
             "warmup_steps": 5,
             "nbits": 4,
             "train_on_responses_only": True
+        },
+        "lora": {
+            "r": 8,
+            "alpha": 32,
+            "dropout": 0.05,
+            "target_modules": [
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj"
+            ]
         }
     }
     
+    yaml_str = yaml.safe_dump(template, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    yaml_com_dicas = _injetar_dicas_yaml(yaml_str, DICAS_YAML)
+    
     with open(caminho, "w", encoding="utf-8") as fp:
-        yaml.safe_dump(template, fp, sort_keys=False, allow_unicode=True, default_flow_style=False)
+        fp.write(yaml_com_dicas)
 
 
 # ---------------------------------------------------------------------------

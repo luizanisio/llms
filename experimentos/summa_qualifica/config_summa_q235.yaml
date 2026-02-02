@@ -14,7 +14,7 @@ execucao:
   gerar_graficos: true 
   llm_as_a_judge: false
   analise_estatistica: true
-  ignorar_erro_extracao: false
+  ignorar_erro_extracao: true
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
@@ -26,6 +26,10 @@ modelo_base:
 modelos_comparacao:
   - pasta: "./saidas/ext_qwen-1.5B_11_u"
     rotulo: "qwen-1.5B_11_u"
+    familia: "Qwen-1.5B"
+
+  - pasta: "./saidas/qwen-1.5B(ft-train)"
+    rotulo: "qwen-1.5B(ft-train)"
     familia: "Qwen-1.5B"
 
   - pasta: "./saidas/ext_qwen-7b_11"

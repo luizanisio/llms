@@ -978,9 +978,9 @@ class LLMsTrainer:
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
             logging_steps=1,
-            optim="adamw_8bit",
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
+            optim=treino_cfg.optim,
+            weight_decay=treino_cfg.weight_decay,
+            lr_scheduler_type=treino_cfg.lr_scheduler_type,
             seed=treino_cfg.seed,
             output_dir=os.path.join(self._yaml_config.modelo.saida, "chkpt"),  # checkpoints em subpasta
             save_strategy="steps" if self.save_checkpoints else "no",
@@ -1971,9 +1971,15 @@ Exemplos:
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
                         help="Nível de log (sobrescreve misc.log_level do YAML)")
     
+
     # Retrocompatibilidade: mantém --debug como alias para --info
     parser.add_argument("--debug", action="store_true", 
                         help=argparse.SUPPRESS)  # Oculto, usa --info
+
+    # Injeção de dicas
+    parser.add_argument("--dicas", action="store_true", 
+                        help="Injeta comentários de dicas no YAML de configuração")
+
     
     args = parser.parse_args()
 
@@ -1988,13 +1994,21 @@ Exemplos:
         except Exception:
             pass  # Usa padrão INFO se falhar
     
-    # Parâmetro CLI sobrescreve YAML
+
+    # Log level configuration...
     nivel_log = args.log_level if args.log_level else log_level_padrao
     configurar_logging(nivel=nivel_log)
     
     logger.debug(f"Log level configurado: {nivel_log} (CLI: {args.log_level}, YAML: {log_level_padrao})")
 
+
+    # Injeção de dicas antes de qualquer validação de CUDA ou criação de template
+    if args.dicas:
+        from treinar_unsloth_actions import executar_injetar_dicas
+        executar_injetar_dicas(cfg_path)
+
     # informações sobre CUDA
+
     if torch.cuda.is_available():
         logger.info(f"CUDA disponível — {torch.cuda.device_count()} GPU(s) detectada(s)")
     else:

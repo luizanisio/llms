@@ -106,6 +106,39 @@ def _perguntar_confirmacao(mensagem: str, padrao: bool = False) -> bool:
 # Ações Principais
 # ---------------------------------------------------------------------------
 
+
+def executar_injetar_dicas(cfg_path: str) -> None:
+    """
+    Injeta comentários de dicas no YAML de configuração.
+    
+    Args:
+        cfg_path: Caminho para o arquivo YAML de configuração
+    """
+    if not os.path.exists(cfg_path):
+        logger.error(f"Arquivo '{cfg_path}' não encontrado para injetar dicas.")
+        sys.exit(1)
+        
+    logger.info(f"ℹ️  Injetando dicas no arquivo: {cfg_path}")
+    from treinar_unsloth_dicas import injetar_dicas_yaml, DICAS_YAML
+    
+    try:
+        with open(cfg_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        new_content = injetar_dicas_yaml(content, DICAS_YAML)
+        
+        with open(cfg_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+            
+        logger.info(f"✅ Dicas injetadas com sucesso em '{cfg_path}'.")
+    except Exception as e:
+        logger.error(f"❌ Erro ao injetar dicas: {e}")
+        import traceback
+        traceback.print_exc()
+        
+    sys.exit(0)
+
+
 def executar_info(yaml_path: str) -> None:
     """
     Exibe informações detalhadas sobre configuração e datasets.
