@@ -521,6 +521,126 @@ class UtilGraficos:
         )
 
     @classmethod
+    def gerar_grafico_linhas(cls, series: dict, titulo: str,
+                              ylabel: str = '', xlabel: str = '',
+                              arquivo_saida: str = None,
+                              marcadores_verticais: list = None,
+                              marcadores_epoca: list = None,
+                              preencher_area: bool = False,
+                              figsize: tuple = (12, 6),
+                              dpi: int = 150,
+                              info_text: str = None):
+        """
+        Gera um gráfico de linhas para séries temporais ou evolução de métricas.
+        
+        Args:
+            series: dict {nome_serie: {'x': [valores_x], 'y': [valores_y], 'cor': 'blue', 'estilo': '-'}}
+                   Exemplo: {'Train Loss': {'x': [1,2,3], 'y': [0.5, 0.3, 0.2], 'cor': 'blue'}}
+            titulo: Título do gráfico
+            ylabel: Rótulo do eixo Y
+            xlabel: Rótulo do eixo X
+            arquivo_saida: Caminho para salvar o arquivo (opcional)
+            marcadores_verticais: Lista de {'x': valor, 'cor': 'gray', 'estilo': ':', 'alpha': 0.4}
+            marcadores_epoca: Lista de {'x': valor, 'label': 'Época 1', 'cor': 'green'}
+            preencher_area: Se True, preenche área abaixo das linhas
+            figsize: Tamanho da figura (largura, altura)
+            dpi: DPI para salvar imagem
+            info_text: Texto informativo para exibir no canto superior esquerdo
+        
+        Returns:
+            str: Caminho do arquivo salvo, ou None se erro/exibição
+        
+        Exemplo:
+            >>> series = {
+            ...     'Train Loss': {'x': steps, 'y': train_loss, 'cor': 'blue', 'marcador': 'o'},
+            ...     'Eval Loss': {'x': steps, 'y': eval_loss, 'cor': 'red', 'marcador': 's'}
+            ... }
+            >>> UtilGraficos.gerar_grafico_linhas(series, 'Evolução do Loss', 'Loss', 'Step')
+        """
+        if not series:
+            print("⚠️  Aviso: Sem dados para gerar gráfico de linhas")
+            return None
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Plotar séries
+        for nome, config in series.items():
+            x = config.get('x', [])
+            y = config.get('y', [])
+            cor = config.get('cor', 'blue')
+            estilo = config.get('estilo', '-')
+            marcador = config.get('marcador', None)
+            tamanho_marcador = config.get('tamanho_marcador', 4)
+            largura = config.get('largura', 2)
+            alpha = config.get('alpha', 0.8)
+            
+            if x and y:
+                ax.plot(x, y, color=cor, linestyle=estilo, linewidth=largura,
+                       label=nome, marker=marcador, markersize=tamanho_marcador, alpha=alpha)
+                
+                if preencher_area:
+                    ax.fill_between(x, y, alpha=0.2, color=cor)
+        
+        # Marcadores de época (linhas verticais destacadas com label)
+        if marcadores_epoca:
+            for m in marcadores_epoca:
+                x_pos = m.get('x', 0)
+                label = m.get('label', '')
+                cor = m.get('cor', 'green')
+                alpha = m.get('alpha', 0.7)
+                
+                ax.axvline(x=x_pos, color=cor, linestyle='--', alpha=alpha, linewidth=1.5)
+                if label:
+                    ax.text(x_pos, ax.get_ylim()[1] * 0.95, label,
+                           rotation=90, va='top', ha='right', fontsize=9, color=cor)
+        
+        # Marcadores verticais genéricos (checkpoints, eval, etc)
+        # O primeiro marcador com label será adicionado à legenda
+        if marcadores_verticais:
+            label_usado = False
+            for m in marcadores_verticais:
+                x_pos = m.get('x', 0)
+                cor = m.get('cor', 'gray')
+                estilo = m.get('estilo', ':')
+                alpha = m.get('alpha', 0.4)
+                largura = m.get('largura', 1)
+                label = m.get('label', '') if not label_usado else ''
+                texto = m.get('texto', '')
+                cor_texto = m.get('cor_texto', cor)
+                
+                ax.axvline(x=x_pos, color=cor, linestyle=estilo, alpha=alpha, 
+                          linewidth=largura, label=label if label else None)
+                
+                if texto:
+                    ax.text(x_pos, ax.get_ylim()[1] * 0.95, texto,
+                           rotation=90, va='top', ha='right', fontsize=9, color=cor_texto)
+                
+                if label:
+                    label_usado = True
+        
+        # Configurações do gráfico
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(titulo, fontsize=14, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        
+        # Texto informativo
+        if info_text:
+            ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
+                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
+        plt.tight_layout()
+        
+        if not arquivo_saida:
+            plt.show()
+            return None
+        else:
+            plt.savefig(arquivo_saida, dpi=dpi, bbox_inches='tight')
+            plt.close(fig)
+            return arquivo_saida
+
+    @classmethod
     def _corrige_rotulos(cls, r):
         if r.startswith('ext_'):
            r = r.replace('ext_', '')

@@ -424,6 +424,45 @@ class MetricsLoggerCallback(TrainerCallback):
         self._registrar(registro)
 
 # ---------------------------------------------------------------------------
+# Callback para renomear checkpoints com zero-padding
+# ---------------------------------------------------------------------------
+
+class CheckpointRenameCallback(TrainerCallback):
+    """
+    Callback para renomear checkpoints com zero-padding.
+    
+    Transforma: checkpoint-8 -> checkpoint-00008
+    Isso permite ordenação alfabética correta e evita confusão.
+    """
+    
+    def __init__(self, checkpoint_base_dir: str, padding: int = 5):
+        self.checkpoint_base_dir = checkpoint_base_dir
+        self.padding = padding
+    
+    def on_save(self, args, state, control, **kwargs):
+        """Renomeia o checkpoint salvo para usar zero-padding."""
+        if not state.global_step:
+            return
+            
+        # Caminho esperado do checkpoint original
+        original_name = f"checkpoint-{state.global_step}"
+        padded_name = f"checkpoint-{state.global_step:0{self.padding}d}"
+        
+        original_path = os.path.join(self.checkpoint_base_dir, original_name)
+        padded_path = os.path.join(self.checkpoint_base_dir, padded_name)
+        
+        # Se o diretório original existe e o padded não existe, renomeia
+        if os.path.exists(original_path) and not os.path.exists(padded_path):
+            try:
+                os.rename(original_path, padded_path)
+                logger.debug(f"Checkpoint renomeado: {original_name} -> {padded_name}")
+            except Exception as e:
+                logger.warning(f"Erro ao renomear checkpoint: {e}")
+        elif os.path.exists(padded_path):
+            # Já existe com zero-padding, provavelmente foi renomeado anteriormente
+            logger.warning(f"Erro ao renomear checkpoint: já existe com zero-padding {padded_name}")
+
+# ---------------------------------------------------------------------------
 # classe principal
 # ---------------------------------------------------------------------------
 
@@ -943,7 +982,7 @@ class LLMsTrainer:
             weight_decay=0.01,
             lr_scheduler_type="linear",
             seed=treino_cfg.seed,
-            output_dir=self._yaml_config.modelo.saida,
+            output_dir=os.path.join(self._yaml_config.modelo.saida, "chkpt"),  # checkpoints em subpasta
             save_strategy="steps" if self.save_checkpoints else "no",
             save_steps=log_steps if self.save_checkpoints else 0,
             eval_strategy="steps" if self.eval_ds and eval_steps > 0 else "no",
@@ -993,10 +1032,18 @@ class LLMsTrainer:
         # 3. MetricsLoggerCallback (métricas detalhadas de treinamento/validação)
         trainer.add_callback(MetricsLoggerCallback(output_dir))
         
+        # 4. CheckpointRenameCallback (renomeia checkpoints com zero-padding)
+        if self.save_checkpoints:
+            chkpt_dir = os.path.join(self._yaml_config.modelo.saida, "chkpt")
+            os.makedirs(chkpt_dir, exist_ok=True)
+            trainer.add_callback(CheckpointRenameCallback(chkpt_dir))
+        
         print(f' - callbacks de métricas configurados:')
         print(f'   • metrics_stream.jsonl (métricas brutas)')
         print(f'   • treinamento/hardware_metrics.jsonl (RAM, GPU, CPU, Disco)')
         print(f'   • treinamento/training_metrics.jsonl (loss, lr, eval_loss)')
+        if self.save_checkpoints:
+            print(f'   • checkpoint renaming (zero-padding: checkpoint-00001)')
         
         trainer.model.config.use_cache = False
         

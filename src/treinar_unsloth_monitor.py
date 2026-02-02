@@ -252,63 +252,37 @@ class MonitorRecursos:
             return ""
         
         try:
-            import matplotlib
-            matplotlib.use('Agg')  # Backend não-interativo
-            import matplotlib.pyplot as plt
-        except ImportError:
-            print("⚠️  Matplotlib não disponível - gráfico não gerado")
-            return ""
-        
-        # Prepara dados
-        tempos = [(m.timestamp - self._tempo_inicio) for m in self._metricas]
-        ram_usadas = [m.ram_usada_gb for m in self._metricas]
-        gpu_usadas = [m.gpu_usada_gb for m in self._metricas]
-        
-        # Cria figura
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        # Linhas de memória
-        ax.plot(tempos, ram_usadas, 'b-', linewidth=2, label='RAM (GB)', alpha=0.8)
-        
-        # GPU só se tiver dados
-        if any(g > 0 for g in gpu_usadas):
-            ax.plot(tempos, gpu_usadas, 'r-', linewidth=2, label='GPU (GB)', alpha=0.8)
+            from treinar_unsloth_graficos import GraficoMonitor
             
-            # Área sombreada para GPU
-            ax.fill_between(tempos, gpu_usadas, alpha=0.2, color='red')
-        
-        # Área sombreada para RAM
-        ax.fill_between(tempos, ram_usadas, alpha=0.2, color='blue')
-        
-        # Configurações do gráfico
-        ax.set_xlabel('Tempo (segundos)', fontsize=12)
-        ax.set_ylabel('Memória (GB)', fontsize=12)
-        ax.set_title('Uso de Memória Durante Predições', fontsize=14, fontweight='bold')
-        ax.legend(loc='upper right', fontsize=11)
-        ax.grid(True, alpha=0.3)
-        ax.set_xlim(0, max(tempos) if tempos else 1)
-        ax.set_ylim(0, None)
-        
-        # Adiciona informações de resumo
-        ram_max = max(ram_usadas)
-        gpu_max = max(gpu_usadas) if gpu_usadas else 0
-        num_gpus = self._metricas[-1].num_gpus if self._metricas else 0
-        
-        info_text = f"RAM máx: {ram_max:.1f} GB"
-        if num_gpus > 0:
-            info_text += f" | GPU máx: {gpu_max:.1f} GB ({num_gpus} GPU{'s' if num_gpus > 1 else ''})"
-        
-        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
-                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
-        # Salva figura
-        plt.tight_layout()
-        plt.savefig(self._arquivo_grafico, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-        
-        print(f"📈 Gráfico de memória salvo em: {self._arquivo_grafico}")
-        
-        return self._arquivo_grafico
+            # Prepara dados
+            tempos = [(m.timestamp - self._tempo_inicio) for m in self._metricas]
+            ram_usadas = [m.ram_usada_gb for m in self._metricas]
+            gpu_usadas = [m.gpu_usada_gb for m in self._metricas]
+            num_gpus = self._metricas[-1].num_gpus if self._metricas else 0
+            
+            # Gera gráfico usando classe centralizada
+            sucesso = GraficoMonitor.uso_memoria(
+                tempos=tempos,
+                ram_usadas=ram_usadas,
+                gpu_usadas=gpu_usadas,
+                output_path=self._arquivo_grafico,
+                titulo='Uso de Memória Durante Predições',
+                num_gpus=num_gpus
+            )
+            
+            if sucesso:
+                print(f"📈 Gráfico de memória salvo em: {self._arquivo_grafico}")
+                return self._arquivo_grafico
+            else:
+                print("⚠️  Erro ao gerar gráfico de memória")
+                return ""
+                
+        except ImportError as e:
+            print(f"⚠️  Módulo de gráficos não disponível: {e}")
+            return ""
+        except Exception as e:
+            print(f"⚠️  Erro ao gerar gráfico: {e}")
+            return ""
     
     @property
     def metricas(self) -> List[MetricaInstante]:

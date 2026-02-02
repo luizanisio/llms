@@ -100,7 +100,7 @@ treinamento:
   # 4096 é um bom padrão para Qwen; aumentar se textos forem muito longos
   # [H100] Pode aumentar para 8192 se necessário
   # [7B] Qwen 7B suporta até 128k, mas 4096-8192 é prático
-  max_seq_length: 4096
+  max_seq_length: 2048
   
   # --------------------------------------------------------------------------
   # LEARNING RATE

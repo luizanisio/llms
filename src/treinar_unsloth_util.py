@@ -566,7 +566,7 @@ class YamlTreinamento:
             eval_steps=treino_raw.get("eval_steps", "15%"),
             batch_size=int(treino_raw.get("batch_size", 2)),
             grad_batch_size=int(treino_raw.get("grad_batch_size", 5)),
-            epochs=int(treino_raw.get("epochs", 1) or treino_raw.get("num_train_epochs", 1)),
+            epochs=int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1),
             max_seq_length=int(treino_raw.get("max_seq_length", 4096)),
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
             save_checkpoints=treino_raw.get("save_checkpoints", True) in {True, "true", "True", 1, "1", "sim"},

@@ -131,7 +131,6 @@ def executar_stats(yaml_path: str) -> None:
     """
     from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS
     from treinar_unsloth_report import GeradorRelatorio
-    from util_graficos import UtilGraficos
     import json
     import statistics
     from datetime import datetime
@@ -257,23 +256,100 @@ def executar_stats(yaml_path: str) -> None:
         stats_report.append(_tabela_stats(entrada, "Tokens de Entrada (User)"))
         stats_report.append(_tabela_stats(saida, "Tokens de Saída (Assistant)"))
 
-    # Gera Gráfico Único
+    # Gera Gráfico de Tokens (usando classe refatorada)
     if dados_grafico:
-        try:
-            nome_arquivo_grafico = "stats_tokens_boxplot.png"
-            boxplot_path = os.path.join(report_dir, nome_arquivo_grafico)
-            
-            UtilGraficos.gerar_boxplot(
-                dados=dados_grafico,
-                titulo="Distribuição de Tokens por Subset",
-                ylabel="Quantidade de Tokens",
-                arquivo_saida=boxplot_path
-            )
+        from treinar_unsloth_graficos import GraficoTokens
+        
+        nome_arquivo_grafico = "stats_tokens_boxplot.png"
+        boxplot_path = os.path.join(report_dir, nome_arquivo_grafico)
+        
+        if GraficoTokens.boxplot_comparativo(dados_grafico, boxplot_path):
             logger.info(f"   ✅ Gráfico consolidado salvo: {nome_arquivo_grafico}")
             stats_report.append(f"\n## Gráfico Comparativo\n")
             stats_report.append(f"![Boxplot Comparativo]({nome_arquivo_grafico})\n")
-        except Exception as e:
-            logger.warning(f"   ⚠️ Erro ao gerar gráfico consolidado: {e}")
+        else:
+            logger.warning("   ⚠️ Erro ao gerar gráfico de tokens.")
+
+    # ==========================================================================
+    # MÉTRICAS DE TREINAMENTO (se houver checkpoints)
+    # ==========================================================================
+    from treinar_unsloth_graficos import GraficoTreinamento
+    
+    # Tenta encontrar checkpoints em chkpt/ ou no diretório raiz do modelo
+    chkpt_dir = os.path.join(yaml_config.modelo.saida, "chkpt")
+    if not os.path.exists(chkpt_dir) or not any(d.startswith("checkpoint-") for d in os.listdir(chkpt_dir) if os.path.isdir(os.path.join(chkpt_dir, d))):
+        # Fallback: checkpoints no diretório raiz do modelo
+        chkpt_dir = yaml_config.modelo.saida
+    
+    trainer_state = GraficoTreinamento.carregar_trainer_state(chkpt_dir)
+    
+    if trainer_state:
+        logger.info("\n📈 Processando métricas de treinamento...")
+        
+        # Extrai métricas
+        train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
+        checkpoints = GraficoTreinamento.listar_checkpoints(chkpt_dir)
+        
+        if train_data or eval_data:
+            # Adiciona seção ao relatório
+            stats_report.append("\n## Métricas de Treinamento\n")
+            stats_report.append(f"**Checkpoints encontrados:** {len(checkpoints)}\n")
+            stats_report.append(f"**Épocas treinadas:** {trainer_state.get('epoch', 0)}\n")
+            stats_report.append(f"**Steps totais:** {trainer_state.get('global_step', 0)}\n")
+            
+            # Tabela de Loss por Step
+            stats_report.append("\n### Evolução do Loss\n")
+            tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data)
+            stats_report.extend(tabela_loss)
+            
+            # Gera gráfico de Loss
+            logger.info("   📊 Gerando gráfico de loss...")
+            loss_graph_path = os.path.join(report_dir, "treinamento_loss.png")
+            
+            if GraficoTreinamento.evolucao_loss(train_data, eval_data, checkpoints, loss_graph_path):
+                logger.info("   ✅ Gráfico de loss salvo: treinamento_loss.png")
+                stats_report.append(f"\n### Gráfico de Evolução do Loss\n")
+                stats_report.append(f"![Loss de Treinamento](treinamento_loss.png)\n")
+                stats_report.append("*Linhas verdes tracejadas: fim de época | Linhas cinzas pontilhadas: checkpoints*\n")
+            else:
+                logger.warning("   ⚠️ Erro ao gerar gráfico de loss.")
+        else:
+            logger.info("   ℹ️ Nenhum dado de loss encontrado nos checkpoints.")
+    else:
+        logger.info("\n📊 Nenhum treinamento realizado ainda (pasta chkpt não encontrada ou sem trainer_state).")
+
+    # ==========================================================================
+    # MÉTRICAS DE HARDWARE (RAM, GPU, CPU)
+    # ==========================================================================
+    from treinar_unsloth_graficos import GraficoHardware
+    
+    treinamento_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
+    hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)
+    
+    if hardware_metricas:
+        logger.info("\n📊 Processando métricas de hardware...")
+        
+        # Adiciona seção ao relatório
+        stats_report.append("\n## Métricas de Hardware\n")
+        stats_report.append(f"**Amostras coletadas:** {len(hardware_metricas)}\n")
+        
+        # Tabela resumo
+        stats_report.append("\n### Resumo de Uso de Recursos\n")
+        tabela_hw = GraficoHardware.tabela_resumo_markdown(hardware_metricas)
+        stats_report.extend(tabela_hw)
+        
+        # Gera gráfico de memória
+        logger.info("   📊 Gerando gráfico de memória...")
+        mem_graph_path = os.path.join(report_dir, "hardware_memoria.png")
+        
+        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path):
+            logger.info("   ✅ Gráfico de memória salvo: hardware_memoria.png")
+            stats_report.append(f"\n### Gráfico de Uso de Memória\n")
+            stats_report.append(f"![Uso de Memória](hardware_memoria.png)\n")
+        else:
+            logger.warning("   ⚠️ Erro ao gerar gráfico de memória.")
+    else:
+        logger.info("\n📊 Nenhuma métrica de hardware disponível (arquivo hardware_metrics.jsonl não encontrado).")
 
     # Salva relatório
     report_path = os.path.join(report_dir, "relatorio_estatistico.md")
