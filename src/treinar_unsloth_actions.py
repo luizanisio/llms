@@ -20,6 +20,8 @@ import os
 import sys
 import shutil
 from typing import Optional
+import gc
+import torch
 
 # Configuração de path para permitir execução de qualquer diretório
 _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -508,6 +510,12 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
     trainer = LLMsTrainer(yaml_path)
     trainer.train()
     
+    # Libera memória para permitir execução subsequente (ex: predict)
+    del trainer
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
     log_separador(caractere="=", largura=80)
     logger.info("✅ TREINAMENTO COMPLETO")
     log_separador(caractere="=", largura=80)
@@ -977,6 +985,7 @@ def modo_interativo(yaml_path: str) -> Optional[str]:
     logger.info("   4. predict - Gerar predições para todos os subsets")
     logger.info("   5. merge   - Merge LoRA + Base (exportar 16bit)")
     logger.info("   6. reset   - Limpar treinamento atual")
+    logger.info("   7. treinar+predict - Treinar, Predizer e Estatísticas")
     logger.info("   0. sair    - Cancelar e sair")
     
     try:
@@ -989,6 +998,7 @@ def modo_interativo(yaml_path: str) -> Optional[str]:
             '4': 'predict', 'predict': 'predict',
             '5': 'merge', 'merge': 'merge', 'export': 'merge',
             '6': 'reset', 'reset': 'reset',
+            '7': 'treinar+predict',
             '0': None, 'sair': None, 'exit': None, 'quit': None,
         }
         
@@ -1027,6 +1037,10 @@ def executar_acao(acao: str, yaml_path: str, reset: bool = False, predict_subset
         executar_merge(yaml_path)
     elif acao == 'reset':
         executar_reset(yaml_path, confirmar=True)
+    elif acao == 'treinar+predict':
+        executar_treinar(yaml_path, reset=reset)
+        executar_predict(yaml_path, subsets=predict_subsets)
+        executar_stats(yaml_path)
     else:
         logger.error(f"Ação desconhecida: '{acao}'")
 

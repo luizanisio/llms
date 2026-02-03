@@ -2096,22 +2096,30 @@ Exemplos:
         executar_info(cfg_path)
     elif args.stats:
         executar_stats(cfg_path)
-    elif args.reset and args.treinar:
-        # Reset + Treinar combinados
-        executar_treinar(cfg_path, reset=True)
-    elif args.reset:
-        executar_reset(cfg_path, confirmar=True)
-    elif args.treinar:
-        executar_treinar(cfg_path, reset=False)
     elif args.merge:
         executar_merge(cfg_path, quantizacao=args.quant)
-    elif has_predict:
-        executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
     else:
-        # Modo interativo: pergunta qual ação
-        acao = modo_interativo(cfg_path)
-        if acao:
-            executar_acao(acao, cfg_path)
+        executed_action = False
+        
+        # 1. Executa Treinamento (com ou sem Reset)
+        if args.treinar:
+            executar_treinar(cfg_path, reset=args.reset)
+            executed_action = True
+        # 2. Se não treinou mas pediu reset
+        elif args.reset:
+            executar_reset(cfg_path, confirmar=True)
+            executed_action = True
+            
+        # 3. Executa Predição (pode ser executado após treino ou reset)
+        if has_predict:
+            executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
+            executed_action = True
+            
+        # 4. Se nenhuma ação foi executada via CLI, entra no modo interativo
+        if not executed_action:
+            acao = modo_interativo(cfg_path)
+            if acao:
+                executar_acao(acao, cfg_path)
 
 
 
