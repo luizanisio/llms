@@ -2,6 +2,8 @@
 import unittest
 import numpy as np
 import sys
+import threading
+import concurrent.futures
 from unittest.mock import MagicMock, patch
 from util_sbert import BERTScoreLike
 
@@ -222,6 +224,238 @@ class TestBERTScoreLike(unittest.TestCase):
         res_json = self.bs.comparar_json({}, {"a": "A"})
         self.assertEqual(res_json['P'], 0.0)
         self.assertEqual(res_json['R'], 0.0)
+
+
+class TestBERTScoreLikeGetInstance(unittest.TestCase):
+    """
+    Testes para o método get_instance (singleton thread-safe).
+    Verifica que a mesma instância é retornada e que funciona em ambiente multi-threaded.
+    """
+    
+    @classmethod
+    def setUpClass(cls):
+        """Limpa o cache de instâncias antes dos testes."""
+        BERTScoreLike.clear_instances()
+        
+        if MOCK_TEST:
+            cls.patcher = patch('util_sbert.SentenceTransformer')
+            cls.MockSentenceTransformer = cls.patcher.start()
+            cls.mock_model_instance = MagicMock()
+            cls.MockSentenceTransformer.return_value = cls.mock_model_instance
+            cls.mock_model_instance.encode.side_effect = TestBERTScoreLike._mock_encode
+    
+    @classmethod
+    def tearDownClass(cls):
+        """Limpa o cache após os testes."""
+        BERTScoreLike.clear_instances()
+        if MOCK_TEST:
+            cls.patcher.stop()
+    
+    def setUp(self):
+        """Limpa o cache antes de cada teste."""
+        BERTScoreLike.clear_instances()
+    
+    def test_get_instance_singleton(self):
+        """Verifica que get_instance retorna a mesma instância para o mesmo modelo."""
+        print("\n[Singleton] Testando se get_instance retorna mesma instância...")
+        
+        inst1 = BERTScoreLike.get_instance(MODELO)
+        inst2 = BERTScoreLike.get_instance(MODELO)
+        
+        self.assertIs(inst1, inst2, "get_instance deve retornar a mesma instância")
+        print(f"[Singleton] OK - Mesma instância: {id(inst1)} == {id(inst2)}")
+    
+    def test_get_instance_different_models(self):
+        """Verifica que modelos diferentes têm instâncias diferentes."""
+        print("\n[Modelos Diferentes] Testando instâncias separadas por modelo...")
+        
+        inst_pequeno = BERTScoreLike.get_instance("pequeno")
+        inst_medio = BERTScoreLike.get_instance("medio")
+        
+        self.assertIsNot(inst_pequeno, inst_medio, 
+                         "Modelos diferentes devem ter instâncias diferentes")
+        print(f"[Modelos Diferentes] OK - pequeno: {id(inst_pequeno)}, medio: {id(inst_medio)}")
+    
+    def test_get_instance_thread_safety(self):
+        """
+        Verifica thread-safety: múltiplas threads chamando get_instance
+        simultaneamente devem obter a mesma instância.
+        """
+        print("\n[Thread-Safety] Testando acesso concorrente ao get_instance...")
+        
+        instancias = []
+        erros = []
+        num_threads = 10
+        barrier = threading.Barrier(num_threads)
+        
+        def worker():
+            try:
+                barrier.wait()  # Sincroniza todas as threads para começar juntas
+                inst = BERTScoreLike.get_instance(MODELO)
+                instancias.append(inst)
+            except Exception as e:
+                erros.append(str(e))
+        
+        threads = [threading.Thread(target=worker) for _ in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        
+        self.assertEqual(len(erros), 0, f"Não deve haver erros: {erros}")
+        self.assertEqual(len(instancias), num_threads)
+        
+        # Todas as instâncias devem ser a mesma
+        primeira = instancias[0]
+        for i, inst in enumerate(instancias[1:], start=2):
+            self.assertIs(inst, primeira, 
+                         f"Thread {i} obteve instância diferente!")
+        
+        print(f"[Thread-Safety] OK - {num_threads} threads obtiveram a mesma instância: {id(primeira)}")
+    
+    def test_comparar_textos_com_threads(self):
+        """
+        Executa comparações de texto em paralelo usando get_instance.
+        Verifica que os resultados são consistentes.
+        """
+        print("\n[Threads - Textos] Testando comparar_textos em paralelo...")
+        
+        if MOCK_TEST:
+            textos = [
+                ("TOKEN_A. TOKEN_A.", "TOKEN_A. TOKEN_A."),
+                ("TOKEN_A", "TOKEN_A. TOKEN_B"),
+                ("TOKEN_A. TOKEN_B", "TOKEN_A"),
+            ]
+        else:
+            textos = [
+                ("O processo foi deferido.", "O processo foi deferido."),
+                ("LEI", "LEI. BOLO"),
+                ("LEI. BOLO", "LEI"),
+            ]
+        
+        def comparar_worker(cand, ref):
+            bs = BERTScoreLike.get_instance(MODELO)
+            return bs.comparar_textos(cand, ref, unitizador="sentencas")
+        
+        # Executa em paralelo
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            # Submete cada par várias vezes
+            for _ in range(3):
+                for cand, ref in textos:
+                    futures.append(executor.submit(comparar_worker, cand, ref))
+            
+            resultados = [f.result() for f in futures]
+        
+        # Verifica que todos têm as chaves esperadas
+        for res in resultados:
+            self.assertIn('P', res)
+            self.assertIn('R', res)
+            self.assertIn('F1', res)
+        
+        # Verifica consistência: mesmos inputs devem dar mesmos outputs
+        resultados_por_par = {}
+        idx = 0
+        for _ in range(3):
+            for cand, ref in textos:
+                chave = (cand, ref)
+                if chave not in resultados_por_par:
+                    resultados_por_par[chave] = []
+                resultados_por_par[chave].append(resultados[idx])
+                idx += 1
+        
+        for chave, lista_res in resultados_por_par.items():
+            primeiro_f1 = lista_res[0]['F1']
+            for res in lista_res[1:]:
+                self.assertAlmostEqual(res['F1'], primeiro_f1, places=6,
+                    msg=f"Resultados inconsistentes para {chave[:30]}...")
+        
+        print(f"[Threads - Textos] OK - {len(resultados)} comparações em paralelo com resultados consistentes")
+    
+    def test_comparar_json_com_threads(self):
+        """
+        Executa comparações de JSON em paralelo usando get_instance.
+        """
+        print("\n[Threads - JSON] Testando comparar_json em paralelo...")
+        
+        if MOCK_TEST:
+            jsons = [
+                ({"chave1": "TOKEN_A"}, {"chave1": "TOKEN_A", "chave2": "TOKEN_B"}),
+                ({"a": "TOKEN_A", "b": "TOKEN_B"}, {"a": "TOKEN_A", "b": "TOKEN_B"}),
+                ({"x": "TOKEN_C"}, {"y": "TOKEN_A"}),
+            ]
+        else:
+            jsons = [
+                ({"area": "juridica"}, {"area": "juridica", "sobremesa": "pudim"}),
+                ({"nome": "teste", "valor": "abc"}, {"nome": "teste", "valor": "abc"}),
+                ({"campo1": "valor diferente"}, {"campo2": "outro valor"}),
+            ]
+        
+        def comparar_json_worker(j1, j2):
+            bs = BERTScoreLike.get_instance(MODELO)
+            return bs.comparar_json(j1, j2, include_key_ctx=True)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for _ in range(3):
+                for j1, j2 in jsons:
+                    futures.append(executor.submit(comparar_json_worker, j1, j2))
+            
+            resultados = [f.result() for f in futures]
+        
+        for res in resultados:
+            self.assertIn('P', res)
+            self.assertIn('R', res)
+            self.assertIn('F1', res)
+            self.assertIn('detalhes', res)
+        
+        print(f"[Threads - JSON] OK - {len(resultados)} comparações JSON em paralelo")
+    
+    def test_stress_threads(self):
+        """
+        Teste de stress: muitas threads fazendo muitas comparações.
+        """
+        print("\n[Stress] Testando carga alta com múltiplas threads...")
+        
+        num_threads = 20
+        comparacoes_por_thread = 5
+        
+        if MOCK_TEST:
+            texto_base = "TOKEN_A. TOKEN_B."
+        else:
+            texto_base = "O recurso foi provido parcialmente. A decisão foi reformada."
+        
+        resultados = []
+        erros = []
+        
+        def stress_worker(thread_id):
+            try:
+                bs = BERTScoreLike.get_instance(MODELO)
+                for i in range(comparacoes_por_thread):
+                    res = bs.comparar_textos(texto_base, texto_base)
+                    resultados.append((thread_id, i, res['F1']))
+            except Exception as e:
+                erros.append((thread_id, str(e)))
+        
+        threads = [threading.Thread(target=stress_worker, args=(i,)) for i in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        
+        self.assertEqual(len(erros), 0, f"Erros no teste de stress: {erros}")
+        
+        total_esperado = num_threads * comparacoes_por_thread
+        self.assertEqual(len(resultados), total_esperado,
+            f"Esperado {total_esperado} resultados, obteve {len(resultados)}")
+        
+        # Todos os F1 devem ser iguais (texto idêntico -> 1.0)
+        f1_values = [r[2] for r in resultados]
+        for f1 in f1_values:
+            self.assertAlmostEqual(f1, 1.0, places=4,
+                msg="Texto idêntico deve ter F1=1.0")
+        
+        print(f"[Stress] OK - {total_esperado} comparações em {num_threads} threads sem erros")
 
 
 if __name__ == '__main__':

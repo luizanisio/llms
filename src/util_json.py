@@ -9,16 +9,20 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Descrição:
 -----------
-Utiliza técnicas de Levenshtein, ROUGE e BERTScore para alinhamento e cálculo de similaridade.
+Utiliza técnicas de Levenshtein, ROUGE, BERTScore e SBERT para alinhamento e cálculo de similaridade.
 Realiza comparação campo a campo de acordo com as configurações fornecidas.
 
 FILOSOFIA DE SELEÇÃO DE MÉTRICAS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. BERTScore → Textos longos com nuances semânticas
-2. ROUGE-L   → Estruturas/sequências ordenadas (padrão para (global))
-3. ROUGE-2   → Frases médias, precisão de bigramas
-4. ROUGE-1   → Termos individuais, palavras-chave (padrão para (estrutura))
-5. Levenshtein → Textos curtos exatos (nomes, IDs, valores numéricos)
+1. BERTScore → Textos longos com nuances semânticas (token-level)
+2. SBERT     → Similaridade semântica sentence-level (mais rápido que BERTScore)
+   - sbert/sbert_pequeno: paraphrase-multilingual-MiniLM-L12-v2 (rápido)
+   - sbert_medio: paraphrase-multilingual-mpnet-base-v2 (balanceado)
+   - sbert_grande: intfloat/multilingual-e5-large (mais preciso)
+3. ROUGE-L   → Estruturas/sequências ordenadas (padrão para (global))
+4. ROUGE-2   → Frases médias, precisão de bigramas
+5. ROUGE-1   → Termos individuais, palavras-chave (padrão para (estrutura))
+6. Levenshtein → Textos curtos exatos (nomes, IDs, valores numéricos)
 '''
 
 # Só emite um aviso se a dependência não estiver instalada
@@ -326,11 +330,15 @@ class JsonAnalise:
         PARÂMETROS DE MÉTRICAS MÚLTIPLAS:
         Um campo pode participar de múltiplas listas de métricas, gerando análises independentes.
         
-        - campos_bertscore: list - campos analisados com BERTScore (similaridade semântica)
+        - campos_bertscore: list - campos analisados com BERTScore (similaridade semântica token-level)
         - campos_rouge: list - campos analisados com ROUGE-L (coerência geral)
         - campos_rouge1: list - campos analisados com ROUGE-1 (overlap de unigramas)
         - campos_rouge2: list - campos analisados com ROUGE-2 (overlap de bigramas)
         - campos_levenshtein: list - campos analisados com Levenshtein (distância de edição)
+        - campos_sbert: list - campos analisados com SBERT modelo pequeno (padrão)
+        - campos_sbert_pequeno: list - SBERT modelo pequeno (paraphrase-multilingual-MiniLM-L12-v2)
+        - campos_sbert_medio: list - SBERT modelo médio (paraphrase-multilingual-mpnet-base-v2)
+        - campos_sbert_grande: list - SBERT modelo grande (intfloat/multilingual-e5-large)
         
         Campos especiais: 
         - '(global)' - se não estiver em nenhuma lista, é adicionado automaticamente em campos_bertscore
@@ -347,8 +355,10 @@ class JsonAnalise:
             - (global)_rouge2_F1: 0.85       # padrão para (global)
             - (estrutura)_rouge1_F1: 0.90    # padrão para (estrutura)
             - (global)_bertscore_F1: 0.80    # se (global) em campos_bertscore
+            - (global)_sbert_F1: 0.82        # se (global) em campos_sbert
             - resumo_bertscore_F1: 0.90
             - descricao_rouge_F1: 0.88
+            - descricao_sbert_grande_F1: 0.85 # SBERT modelo grande
         
         Exemplo completo:
         {
@@ -356,12 +366,14 @@ class JsonAnalise:
             'campos_bertscore': ['(global)', 'resumo'],
             'campos_rouge': ['fatos'],
             'campos_rouge2': ['texto_longo'],  # (global) será adicionado aqui automaticamente
+            'campos_sbert_pequeno': ['(global)', 'resumo'],  # SBERT modelo pequeno
+            'campos_sbert_grande': ['fundamentacao'],  # SBERT modelo grande
             'padronizar_simbolos': True
         }
     '''
     RE_UNE_ESPACO = re.compile(r"\s+")
     RE_UNE_ENTER = re.compile(r"\n+")
-    METRICAS_VALIDAS = {'bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein'}
+    METRICAS_VALIDAS = {'bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein', 'sbert', 'sbert_pequeno', 'sbert_medio', 'sbert_grande'}
 
     @classmethod
     def padronizar_simbolos(cls, texto: Union[str, dict]) -> str:
@@ -567,7 +579,9 @@ class JsonAnalise:
                 config[nome_correto] = config.pop(alias)
         
         # Valida campos como lista (agora permite múltiplas métricas por campo)
-        campos_lista_type = ['campos_rouge', 'campos_rouge1', 'campos_rouge2', 'campos_bertscore', 'campos_levenshtein']
+        # Inclui suporte para métricas SBERT (sbert, sbert_pequeno, sbert_medio, sbert_grande)
+        campos_lista_type = ['campos_rouge', 'campos_rouge1', 'campos_rouge2', 'campos_bertscore', 'campos_levenshtein',
+                            'campos_sbert', 'campos_sbert_pequeno', 'campos_sbert_medio', 'campos_sbert_grande']
         for campo in campos_lista_type:
             config[campo] = list(config[campo]) if isinstance(config.get(campo), (set, tuple, list)) else []
         
@@ -662,6 +676,15 @@ class JsonAnalise:
             metricas.append('rouge2')
         if campo in config.get('campos_levenshtein', []):
             metricas.append('levenshtein')
+        # Métricas SBERT (Sentence-BERT) - similaridade semântica
+        if campo in config.get('campos_sbert', []):
+            metricas.append('sbert')
+        if campo in config.get('campos_sbert_pequeno', []):
+            metricas.append('sbert_pequeno')
+        if campo in config.get('campos_sbert_medio', []):
+            metricas.append('sbert_medio')
+        if campo in config.get('campos_sbert_grande', []):
+            metricas.append('sbert_grande')
         
         return metricas
 
@@ -874,6 +897,43 @@ class JsonAnalise:
                 'SIM': round(similaridade, 3)
             }
         
+        elif metrica.startswith('sbert'):
+            # ═════════════════════════════════════════════════════════════════════════
+            # MÉTRICAS SBERT (Sentence-BERT) - Similaridade semântica com SBERT
+            # ═════════════════════════════════════════════════════════════════════════
+            # sbert ou sbert_pequeno → modelo pequeno (paraphrase-multilingual-MiniLM-L12-v2)
+            # sbert_medio → modelo médio (paraphrase-multilingual-mpnet-base-v2)
+            # sbert_grande → modelo grande (intfloat/multilingual-e5-large)
+            
+            # Mapeia nome da métrica para tamanho do modelo
+            mapeamento_modelo = {
+                'sbert': 'pequeno',
+                'sbert_pequeno': 'pequeno',
+                'sbert_medio': 'medio',
+                'sbert_grande': 'grande'
+            }
+            tamanho_modelo = mapeamento_modelo.get(metrica, 'pequeno')
+            
+            # Obtém instância singleton thread-safe via BERTScoreLike.get_instance()
+            from util_sbert import BERTScoreLike
+            sbert = BERTScoreLike.get_instance(tamanho_modelo)
+            
+            # Usa método bertscore_like para calcular P, R, F1
+            resultado = sbert.comparar_textos(
+                texto_pred, 
+                texto_true, 
+                metodo='bertscore_like',
+                unitizador='sentencas',
+                threshold=None,
+                detalhes_nivel='nenhum'
+            )
+            
+            return {
+                'P': round(resultado['P'], 3),
+                'R': round(resultado['R'], 3),
+                'F1': round(resultado['F1'], 3)
+            }
+        
         else:
             raise ValueError(f"Métrica '{metrica}' não suportada")
 
@@ -1006,8 +1066,9 @@ class JsonAnalise:
         """Obtém lista de campos na ordem definida na configuração."""
         campos = []
         seen = set()
-        # Prioridade de métricas
-        for key in ['campos_bertscore', 'campos_rouge', 'campos_rouge2', 'campos_rouge1', 'campos_levenshtein']:
+        # Prioridade de métricas (inclui SBERT)
+        for key in ['campos_bertscore', 'campos_rouge', 'campos_rouge2', 'campos_rouge1', 'campos_levenshtein',
+                    'campos_sbert', 'campos_sbert_pequeno', 'campos_sbert_medio', 'campos_sbert_grande']:
             for c in config.get(key, []):
                 if c not in seen:
                     seen.add(c)
@@ -2447,7 +2508,8 @@ class JsonAnaliseDataFrame():
                 continue  # Pula coluna ID
             # Extrai técnica do nome: busca padrão _tecnica_ entre campo e métrica
             # Ex: GPT4_(global)_rouge2_F1 -> rouge2
-            match = re.search(r'_(bertscore|rouge2|rouge1|rouge|levenshtein)_', col)
+            # Inclui SBERT: GPT4_(global)_sbert_pequeno_F1 -> sbert_pequeno
+            match = re.search(r'_(bertscore|rouge2|rouge1|rouge|levenshtein|sbert_grande|sbert_medio|sbert_pequeno|sbert)_', col)
             if match:
                 tecnicas_encontradas.add(match.group(1))
         
@@ -2457,7 +2519,11 @@ class JsonAnaliseDataFrame():
             'rouge2': 'ROUGE-2',
             'rouge1': 'ROUGE-1',
             'rouge': 'ROUGE-L',
-            'levenshtein': 'Levenshtein'
+            'levenshtein': 'Levenshtein',
+            'sbert': 'SBERT',
+            'sbert_pequeno': 'SBERT-Pequeno',
+            'sbert_medio': 'SBERT-Medio',
+            'sbert_grande': 'SBERT-Grande'
         }
         
         # Para cada técnica, cria uma aba separada
@@ -3029,7 +3095,9 @@ class JsonAnaliseDataFrame():
                 
                 # Extrai técnica do nome da aba (ex: Resultados_BERTScore -> bertscore)
                 if '_' in aba:
-                    tecnica_nome = aba.split('_', 1)[1].lower().replace('-', '')
+                    # Converte hífen para underscore para manter consistência
+                    # Ex: SBERT-Pequeno -> sbert_pequeno
+                    tecnica_nome = aba.split('_', 1)[1].lower().replace('-', '_')
                 else:
                     tecnica_nome = 'geral'
                 
@@ -3395,7 +3463,9 @@ class JsonAnaliseDataFrame():
                     ]
                     
                     for col in colunas_score_campos:
-                        for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein']:
+                        # Técnicas conhecidas (ordem importa: sbert_* antes de sbert para match correto)
+                        for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein', 
+                                  'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']:
                             # Verifica se coluna termina com _{tecnica}_{sufixo}
                             # Ex: _bertscore_F1 ou _levenshtein_SIM
                             match = False
@@ -4282,7 +4352,9 @@ class JsonAnaliseDataFrame():
         # Formato das colunas: Modelo_campo_[tecnica_]metrica
         # Precisamos identificar todos os modelos únicos
         modelos_unicos = set()
-        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein']
+        # Técnicas conhecidas (ordem importa: sbert_grande antes de sbert para match correto)
+        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein', 
+                               'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
         metricas_validas = ['F1', 'P', 'R', 'LS', 'SIM']
         
         # Primeira passagem: identifica todos os modelos únicos
@@ -4402,8 +4474,9 @@ class JsonAnaliseDataFrame():
         estrutura = {}
         col_id = df.columns[0]
         
-        # Técnicas e métricas conhecidas
-        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein']
+        # Técnicas e métricas conhecidas (ordem importa: sbert_* antes de sbert)
+        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein',
+                               'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
         metricas_validas = ['F1', 'P', 'R', 'LS', 'SIM']
         
         for col in df.columns[1:]:
@@ -4442,7 +4515,8 @@ class JsonAnaliseDataFrame():
                 # Modelo é tudo antes do campo
                 campo = partes[-2] if len(partes) >= 2 else ''
                 modelo = '_'.join(partes[:-2]) if len(partes) > 2 else partes[0]
-                tecnica = tecnica_aba.lower().replace('-', '') if tecnica_aba else 'geral'
+                # Converte hífen para underscore para manter consistência
+                tecnica = tecnica_aba.lower().replace('-', '_') if tecnica_aba else 'geral'
             
             # Adiciona à estrutura
             if campo not in estrutura:
@@ -4612,7 +4686,8 @@ class JsonAnaliseDataFrame():
                     resto = partes[0]
                     # Remove penúltima parte se for técnica conhecida
                     partes2 = resto.rsplit('_', 1)
-                    tecnicas_conhecidas = ['bertscore', 'rouge', 'rouge1', 'rouge2', 'rougel', 'levenshtein']
+                    tecnicas_conhecidas = ['bertscore', 'rouge', 'rouge1', 'rouge2', 'rougel', 'levenshtein',
+                                           'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
                     if len(partes2) >= 2 and partes2[1] in tecnicas_conhecidas:
                         resto = partes2[0]
                     # Remove campo (antepenúltima parte)
@@ -4737,8 +4812,9 @@ class JsonAnaliseDataFrame():
                         partes = col.split('_')
                         # Remove métrica
                         partes = partes[:-1]
-                        # Remove técnica se existir
-                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein']
+                        # Remove técnica se existir (ordem importa: sbert_* antes de sbert)
+                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein',
+                                               'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
                         if partes and partes[-1] in tecnicas_conhecidas:
                             partes = partes[:-1]
                         # Remove campo
@@ -4838,8 +4914,9 @@ class JsonAnaliseDataFrame():
                         partes = col.split('_')
                         # Remove métrica
                         partes = partes[:-1]
-                        # Remove técnica se existir
-                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein']
+                        # Remove técnica se existir (ordem importa: sbert_* antes de sbert)
+                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein',
+                                               'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
                         if partes and partes[-1] in tecnicas_conhecidas:
                             partes = partes[:-1]
                         # Remove campo

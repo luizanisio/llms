@@ -142,19 +142,30 @@ def configurar_metricas(config_yaml):
         'campos_rouge': campos.get('rouge_l') or [],
         'campos_rouge2': campos.get('rouge_2') or [],
         'campos_rouge1': campos.get('rouge_1') or [],
-        'campos_levenshtein': campos.get('levenshtein') or []
+        'campos_levenshtein': campos.get('levenshtein') or [],
+        # Métricas SBERT (Sentence-BERT)
+        'campos_sbert': campos.get('sbert') or [],
+        'campos_sbert_pequeno': campos.get('sbert_pequeno') or [],
+        'campos_sbert_medio': campos.get('sbert_medio') or [],
+        'campos_sbert_grande': campos.get('sbert_grande') or []
     }
     
-    # Ajuste para teste rápido (desativa BERTScore)
-    # Ajuste para teste rápido (desativa BERTScore)
+    # Ajuste para teste rápido (desativa BERTScore e SBERT grande)
     if config_yaml.get('execucao', {}).get('teste_rapido', False):
-        print("⚠️  Modo TESTE RÁPIDO: Desabilitando BERTScore e movendo campos para ROUGE-L.")
+        print("⚠️  Modo TESTE RÁPIDO: Desabilitando BERTScore/SBERT e movendo campos para ROUGE-L.")
+        # Move campos BERTScore para ROUGE-L
         campos_removidos = config_final['campos_bertscore']
         config_final['campos_bertscore'] = []
-        # Adiciona ao ROUGE-L se ainda não estiver lá
         for c in campos_removidos:
             if c not in config_final['campos_rouge']:
                 config_final['campos_rouge'].append(c)
+        # Move campos SBERT para ROUGE-L
+        for sbert_key in ['campos_sbert', 'campos_sbert_pequeno', 'campos_sbert_medio', 'campos_sbert_grande']:
+            campos_sbert = config_final[sbert_key]
+            config_final[sbert_key] = []
+            for c in campos_sbert:
+                if c not in config_final['campos_rouge']:
+                    config_final['campos_rouge'].append(c)
                 
     return config_final
 
@@ -163,8 +174,9 @@ def extrair_campos_unicos(config_metricas):
     todos_campos = []
     seen = set()
     
-    # Ordem de prioridade na visualização/processamento
-    metricas_ordem = ['campos_bertscore', 'campos_rouge', 'campos_rouge2', 'campos_rouge1', 'campos_levenshtein']
+    # Ordem de prioridade na visualização/processamento (inclui SBERT)
+    metricas_ordem = ['campos_bertscore', 'campos_rouge', 'campos_rouge2', 'campos_rouge1', 'campos_levenshtein',
+                      'campos_sbert', 'campos_sbert_pequeno', 'campos_sbert_medio', 'campos_sbert_grande']
     
     for chave in metricas_ordem:
         campos = config_metricas.get(chave, [])

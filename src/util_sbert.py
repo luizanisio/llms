@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -14,6 +15,12 @@ class BERTScoreLike:
 
     Implementa um "BERTScore-like" trocando token-level matching por
     matching de unidades textuais (sentenças/linhas/campos) com embeddings SBERT.
+    
+    Uso thread-safe (recomendado para processamento paralelo):
+        sbert = BERTScoreLike.get_instance("pequeno")  # Singleton por modelo
+    
+    Uso direto (instância independente):
+        sbert = BERTScoreLike(modelo="medio")
     """
 
     MODELOS = {
@@ -21,6 +28,51 @@ class BERTScoreLike:
         "medio": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
         "grande": "intfloat/multilingual-e5-large",
     }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CACHE GLOBAL THREAD-SAFE (Singleton por modelo)
+    # ═══════════════════════════════════════════════════════════════════════════
+    _instances: Dict[str, "BERTScoreLike"] = {}
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, modelo: str = "medio") -> "BERTScoreLike":
+        """
+        Obtém uma instância singleton do modelo SBERT (thread-safe).
+        
+        Este método garante que cada modelo seja carregado apenas uma vez,
+        mesmo em ambiente multi-threaded. Ideal para processamento paralelo.
+        
+        Args:
+            modelo: Nome do modelo ou alias ("pequeno", "medio", "grande").
+        
+        Returns:
+            Instância compartilhada de BERTScoreLike para o modelo especificado.
+        
+        Example:
+            # Em múltiplas threads, todas usarão a mesma instância:
+            sbert = BERTScoreLike.get_instance("pequeno")
+            resultado = sbert.comparar_textos(texto1, texto2)
+        """
+        modelo_key = modelo.lower()
+        
+        # Double-checked locking para performance
+        if modelo_key not in cls._instances:
+            with cls._lock:
+                # Verifica novamente dentro do lock
+                if modelo_key not in cls._instances:
+                    cls._instances[modelo_key] = cls(modelo=modelo_key)
+        
+        return cls._instances[modelo_key]
+    
+    @classmethod
+    def clear_instances(cls):
+        """
+        Limpa o cache de instâncias (útil para testes ou liberar memória).
+        Thread-safe.
+        """
+        with cls._lock:
+            cls._instances.clear()
 
     def __init__(self, modelo: str = "medio"):
         """
