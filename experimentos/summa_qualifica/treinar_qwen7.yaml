@@ -1,0 +1,165 @@
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B
+# ==========================================================================
+# Ambiente atual: 1x RTX 3060 (12GB VRAM)
+# 
+# SUGESTÕES PARA ESCALONAMENTO:
+# - Máquina maior (2x H100 80GB): veja comentários com [H100]
+# - Modelo maior (Qwen 7B): veja comentários com [7B]
+# ==========================================================================
+
+#| =========================================================================
+#| FORMATOS
+#| =========================================================================
+#| Configuração dos formatos de entrada e saída de dados.
+formatos:
+  tipo_entrada: pastas
+  formato_saida: json
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  log_level: DEBUG
+  env_chave_criptografia: CHAVE_CRIPT
+
+#| =========================================================================
+#| DATASET (PASTAS)
+#| =========================================================================
+#| Configuração para carregamento de dados via estrutura de pastas (arquivos txt/json).
+pastas:
+  predicao:
+    pasta: ./saidas/ext_qwen235b_11
+    mascara: "*.txt"
+  entrada:
+    #pasta: ./saidas/acordaos_raw
+    #mascara: "*.txt"
+    dataframe: ./saidas/pecas_exportadas_textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+    prompt_template: './saidas/prompt_summa_raw.txt'
+    tag_texto: '<<--TEXTO-->>'
+  divisao:
+    arquivo: ./saidas/ext_qwen235b_11_divisao.csv
+    validar_ids: false
+    proporcao:
+      - treino: 0.70
+      - validacao: 0.10
+      - teste: 0.20
+    seed: 42
+  validacao:
+    exigir_json_valido: true
+    skip_invalidos: false
+
+#| =========================================================================
+#| DATASET (PARQUET)
+#| =========================================================================
+#| Configuração para carregamento de dados via arquivos parquet.
+dataset:
+  train_prompt_col: messages
+  eval_prompt_col: ''
+  train_file: ./saidas/ext_qwen235b_11_train.parquet
+  eval_file: ./saidas/ext_qwen235b_11_eval.parquet
+  test_file: ./saidas/ext_qwen235b_11_test.parquet
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+#| Configurações do modelo base e diretório de saída.
+modelo:
+  # Modelo atual: Qwen 2.5 1.5B (suporta GPU de 12GB com 4-bit)
+  #| Slug HuggingFace ou caminho local.
+  #| [7B] Ex: Qwen/Qwen2.5-7B-Instruct (requer ~24GB VRAM em 4-bit)
+  base_model_name: Qwen/Qwen2.5-7B-Instruct
+  #| Diretório de saída para o adaptador LoRA.
+  saida: ./treinados/Qwen2.5-7B-Instruct_summa_qualifica_full
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+#| Configurações de hiperparâmetros. Defaults do Unsloth são otimizados.
+#| Guia: https://unsloth.ai/docs/get-started/fine-tuning-llms-guide/lora-hyperparameters-guide
+treinamento:
+  #| Frequência de avaliação (ex: '15%' das steps ou número inteiro).
+  eval_steps: 20%
+  
+  #| Amostras por GPU. Menor gasta menos VRAM.
+  #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
+  #| [7B] Com 4-bit (RTX 3060): use 1.
+  #| [H100] Pode usar 8-16.
+  batch_size: 2
+  #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
+  #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
+  #| [7B] Aumente para 20-40 se batch_size=1.
+  grad_batch_size: 8
+  # Batch efetivo: 2 * 10 = 20
+  
+  #| Passadas no dataset. Recomendado: 1-3 épocas.
+  #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
+  #| [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10.
+  num_train_epochs: 3
+  
+  #| Contexto máximo. Qwen/Llama suportam long context, mas 2048-4096 é comum.
+  #| Valor maior consome mais VRAM.
+  #| [7B] Suporta até 128k, mas 4096-8192 é prático.
+  max_seq_length: 2048
+  
+  #| Taxa de aprendizado. QLoRA/LoRA: start 2e-4. RL (DPO): 5e-6.
+  #| Se overfitting/loss < 0.2: Reduzir. Se underfitting: Aumentar.
+  #| [7B] Modelos maiores são mais sensíveis; force 1e-4.
+  learning_rate: 0.0002  # = 2e-4
+  
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  
+  #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
+  #| [7B] Aumentar para 10-20 steps em modelos maiores.
+  warmup_steps: 30
+  
+  #| Decaimento de peso (regularização). Padrão 0.01.
+  weight_decay: 0.01
+  
+  #| Otimizador. Padrão Unsloth: 'adamw_8bit'.
+  #| Outras opções: 'adamw_torch', 'paged_adamw_8bit'.
+  optim: adamw_8bit
+  
+  #| Scheduler. 'linear': decaimento constante (estável).
+  #| 'cosine': decaimento suave (melhor convergência final em >1 época).
+  lr_scheduler_type: cosine
+  
+  seed: 3407
+  
+  #| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
+  #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.
+  nbits: 4
+  
+  #| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configurações do adaptador LoRA. QLoRA (4-bit) economiza 75% VRAM vs LoRA (16-bit).
+lora:
+  #| Rank: 8, 16, 32, 64, 128. Recomendado: 16 ou 32.
+  #| Maior rank = mais capacidade, mas usa mais VRAM e pode overfitar.
+  #| [7B/H100] Pode aumentar para 32, 64 ou 128.
+  r: 16
+  #| Alpha: Escala do ajuste. Recomendado: igual a r ou 2*r.
+  #| Ex: r=16 -> alpha=32.
+  alpha: 32   # ratio alpha/r = 2 (padrão recomendado)
+  #| Regularização. Unsloth otimizado para 0, mas use 0.1 se notar overfitting.
+  dropout: 0.05
+  
+  #| Módulos alvo. Recomendado: todos os lineares (q,k,v,o,gate,up,down) para melhor qualidade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+

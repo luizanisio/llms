@@ -63,17 +63,17 @@ configuracao_comparacao:
       - "Materia"
       - "Resumo"
       - "Dispositivo"
+      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
-      - "Temas.Decisao"
       - "Temas.Explicacao"
-      - "Temas.Normas"
       - "Temas.Jurisprudencia"
-      - "Temas"
 
     rouge_1:
 
     rouge_2:
+      - "Tipo"
+      - "DataJulgamento"
       - "Partes"
       - "Partes.Tipo"
       - "Partes.Nome"
@@ -84,6 +84,8 @@ configuracao_comparacao:
       - "Resumo"
       - "DataJulgamento"
       - "Partes"
+      - "Temas.Normas"
+      - "Temas.Decisao"
 
     levenshtein:
       - "Tipo"
@@ -93,22 +95,31 @@ configuracao_comparacao:
       - "(global)"
       - "Materia"
       - "Resumo"
+      - "Dispositivo"
+      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
-      - "Temas.Decisao"
       - "Temas.Explicacao"
-      - "Temas.Normas"
       - "Temas.Jurisprudencia"
-      - "Temas"
 
     sbert_medio:
       - "(global)"
       - "Materia"
       - "Resumo"
+      - "Dispositivo"
+      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
-      - "Temas.Decisao"
       - "Temas.Explicacao"
-      - "Temas.Normas"
       - "Temas.Jurisprudencia"
+
+    sbert_grande:
+      - "(global)"
+      - "Materia"
+      - "Resumo"
+      - "Dispositivo"
       - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Explicacao"
+      - "Temas.Jurisprudencia"

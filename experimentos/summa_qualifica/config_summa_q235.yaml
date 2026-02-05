@@ -116,11 +116,17 @@ configuracao_comparacao:
     sbert_pequeno:
       - "(global)"
       - "Dispositivo"
-      - "Fundamentacao"
-      - "Conclusao"
+      - "Materia"
+      - "Resumo"      
+      - "Temas"
+      - "Partes"
+      - "Temas.Explicacao"
 
     sbert_grande:
       - "(global)"
       - "Dispositivo"
-      - "Fundamentacao"
-      - "Conclusao"      
+      - "Materia"
+      - "Resumo"      
+      - "Temas"
+      - "Partes"
+      - "Temas.Explicacao"
