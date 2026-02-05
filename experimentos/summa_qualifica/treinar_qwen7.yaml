@@ -89,11 +89,11 @@ treinamento:
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
   #| [7B] Com 4-bit (RTX 3060): use 1.
   #| [H100] Pode usar 8-16.
-  batch_size: 2
+  batch_size: 5
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
   #| [7B] Aumente para 20-40 se batch_size=1.
-  grad_batch_size: 8
+  grad_batch_size: 10
   # Batch efetivo: 2 * 10 = 20
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
@@ -109,7 +109,7 @@ treinamento:
   #| Taxa de aprendizado. QLoRA/LoRA: start 2e-4. RL (DPO): 5e-6.
   #| Se overfitting/loss < 0.2: Reduzir. Se underfitting: Aumentar.
   #| [7B] Modelos maiores são mais sensíveis; force 1e-4.
-  learning_rate: 0.0002  # = 2e-4
+  learning_rate: 0.0001  # = 2e-4
   
   save_checkpoints: true
   resume_from_checkpoint: true
@@ -133,7 +133,7 @@ treinamento:
   
   #| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
   #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.
-  nbits: 4
+  nbits: 8
   
   #| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.
   train_on_responses_only: true
@@ -146,10 +146,10 @@ lora:
   #| Rank: 8, 16, 32, 64, 128. Recomendado: 16 ou 32.
   #| Maior rank = mais capacidade, mas usa mais VRAM e pode overfitar.
   #| [7B/H100] Pode aumentar para 32, 64 ou 128.
-  r: 16
+  r: 32
   #| Alpha: Escala do ajuste. Recomendado: igual a r ou 2*r.
   #| Ex: r=16 -> alpha=32.
-  alpha: 32   # ratio alpha/r = 2 (padrão recomendado)
+  alpha: 64   # ratio alpha/r = 2 (padrão recomendado)
   #| Regularização. Unsloth otimizado para 0, mas use 0.1 se notar overfitting.
   dropout: 0.05
   
