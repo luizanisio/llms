@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 Módulo dedicado à manipulação de datasets para treinamento.
 Encapsula lógica de carregamento, validação e preparação de dados.
 """

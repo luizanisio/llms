@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 """
-Autor: Luiz Anisio 01/2026
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Utilitários para o pacote treinar_unsloth.py
 Inclui a classe YamlTreinamento para validação e carregamento de configurações YAML.

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
+
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 Módulo de monitoramento de recursos para teste de modelos.
 
 Fornece:

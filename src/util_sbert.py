@@ -1,3 +1,10 @@
+
+"""
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
+"""
+
 from __future__ import annotations
 
 import re

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 
 '''
- Autor Luiz Anísio 10/05/2025
- Utilitários simples para facilitar alguns códigos comuns
+ Autor: Luiz Anísio
  Fonte: https://github.com/luizanisio/llms/tree/main/src
+
+ Utilitários simples para facilitar alguns códigos comuns
  '''
 
 from glob import glob

@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
+
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 Classe para análise estatística de resultados de avaliação LLM-as-a-Judge.
 Realiza testes de normalidade (Shapiro-Wilk), testes de hipótese (Wilcoxon)
 e análises de eficiência de custo.

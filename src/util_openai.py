@@ -1,3 +1,4 @@
+
 from time import time
 try:
     from openai import OpenAI, RateLimitError, APIConnectionError, AuthenticationError
@@ -10,8 +11,9 @@ import traceback
 from threading import Lock
 LOCK_ARQUIVO_BRUTO = Lock()
 '''
- Autor Luiz Anísio 17/10/2025
+ Autor: Luiz Anísio
  Fonte: https://github.com/luizanisio/llms/tree/main/src
+
  Utilitários para acionar apis generativas da openai ou openrouter
  Realiza tratamento de erros comuns e padroniza retorno json ou texto
  Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento

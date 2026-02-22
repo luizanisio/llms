@@ -1,3 +1,6 @@
+# Autor: Luiz Anísio
+# Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 import os
 import json
 from typing import Dict, Any, Optional

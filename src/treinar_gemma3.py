@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 """
-Autor: Luiz Anisio 05/2025 v004
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Treinar Gemma‑3 usando Unsloth + TRL‑SFTTrainer de forma configurável.
 
@@ -284,7 +286,7 @@ class Gemma3Trainer:
         if stats is not None:
             with open(os.path.join(self.cfg["output_dir"], "metrics_summary.json"), "w") as fp:
                  json.dump(stats, fp, indent=2)
-        print("Modelo salvo com sucesso \o/")
+        print("Modelo salvo com sucesso \\o/")
 
 
 # ---------------------------------------------------------------------------

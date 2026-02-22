@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 """
-Autor: Luiz Anisio 05/2025 v005
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Treinar Gemma‑3, Deepseek, Llhama, Qwen usando Unsloth 
         + TRL‑SFTTrainer de forma configurável por yaml.

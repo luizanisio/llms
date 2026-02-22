@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 """
-Autor: Luiz Anisio 02/2026
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Módulo de ações para o pacote treinar_unsloth.py
 

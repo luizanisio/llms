@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
+
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 Módulo de gráficos para treinamento Unsloth.
 
 Contém classes especializadas para geração de gráficos de:

@@ -1,5 +1,8 @@
 
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 Módulo dedicado ao gerenciamento de templates de chat para treinamento com Unsloth.
 Centraliza a lógica de aplicação de templates, formatação de datasets e configuração
 de treinamento em apenas respostas (train_on_responses_only).
