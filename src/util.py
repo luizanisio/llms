@@ -721,6 +721,18 @@ class UtilArquivos(object):
         with open(arquivo, encoding='latin1', errors='ignore') as f:
             return json.load(f)
 
+    @staticmethod
+    def carregar_arquivo(arquivo):
+        tipos = ['utf8', 'ascii', 'latin1']
+        for tp in tipos:
+            try:
+                with open(arquivo, encoding=tp) as f:
+                    return json.load(f)
+            except UnicodeError:
+                continue
+        with open(arquivo, encoding='latin1', errors='ignore') as f:
+            return f.read()
+
     @classmethod
     def encontrar_arquivo(cls, arquivo, pastas = None, incluir_subpastas = False):
         ''' pastas = None ele volta até 5 pastas procurando a pasta ou o arquivo informado
