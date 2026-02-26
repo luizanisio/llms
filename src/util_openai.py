@@ -130,7 +130,7 @@ def get_resposta(prompt:str, papel:str='',
         
         # Remove parâmetros incompatíveis com reasoning models
         if tipo_api == 'openai' or 'gpt-5' in modelo.lower():
-            print(f'\n===============\nModelo reasoning em uso {modelo}, removendo parâmetros inválidos...\n===============\n')
+            print(f'\n===============\nModelo reasoning em uso {modelo}, removendo parâmetros desnecessários...\n===============\n')
             args = {k: v for k, v in parametros.items() 
                    if k not in {'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'}}
         
