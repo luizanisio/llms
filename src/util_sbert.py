@@ -12,8 +12,11 @@ import threading
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
-from sentence_transformers import SentenceTransformer, util
 
+try:
+    from sentence_transformers import SentenceTransformer, util
+except ImportError:
+    raise ImportError('Módulo sentence_transformers não instalado. Instale com: pip install sentence-transformers')
 
 class BERTScoreLike:
     """

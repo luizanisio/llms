@@ -70,6 +70,7 @@ class JsonAnaliseDados:
     def __init__(self,
                  dados: List[Dict[str, Any]],
                  rotulos: List[str],
+                 dados_completos: List[Dict[str, Any]] = None,
                  tokens: List[Dict[str, Any]] = None,
                  avaliacao_llm: List[Dict[str, Any]] = None,
                  observabilidade: List[Dict[str, Any]] = None,
@@ -112,6 +113,7 @@ class JsonAnaliseDados:
         
         # Atributos principais
         self.dados = dados
+        self.dados_completos = dados_completos if dados_completos is not None else dados
         self.rotulos = rotulos
         self.tokens = tokens if tokens is not None else []
         self.avaliacao_llm = avaliacao_llm if avaliacao_llm is not None else []

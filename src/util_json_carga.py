@@ -118,6 +118,7 @@ class CargaDadosComparacao():
             mascara_tokens: Regex para arquivos de tokens (grupo 1 deve ser o ID)
             mascara_avaliacao: Regex para arquivos de avaliação (grupo 1 deve ser o ID)
             mascara_observabilidade: Regex para arquivos de observabilidade (grupo 1 deve ser o ID)
+            ignorar_erro_extracao: Se True, ignora erros de extração e contabiliza apenas extrações completas nos cálculos de métricas
         """
         assert len(pastas_destinos) == len(rotulos_destinos), \
             "Número de pastas_destinos deve ser igual ao número de rotulos_destinos"
@@ -139,6 +140,7 @@ class CargaDadosComparacao():
         
         # Atributos públicos
         self.dados = None
+        self.dados_completos = None
         self.rotulos = None
         self.tokens = None
         self.avaliacao_llm = None
@@ -386,13 +388,19 @@ class CargaDadosComparacao():
         dados_original = self._ler_arquivo(caminho_arquivo)
         if not dados_original:
             return None
+            
+        if self.ignorar_erro_extracao and isinstance(dados_original, dict) and 'erro' in dados_original:
+            return None
+
+        # Suporte para formato onde as métricas estão dentro de "resposta"
+        root_data = dados_original.get('resposta', dados_original) if isinstance(dados_original, dict) else dados_original
 
         # ===== MÉTRICAS GLOBAIS =====
-        p = dados_original.get('precision', 0)
-        r = dados_original.get('recall', 0)
-        f1 = dados_original.get('f1', 0) or (harmonic_mean([p, r]) if (p + r) > 0 else 0)
-        nota = dados_original.get('nota', 0)
-        exp = dados_original.get('explicacao', '')
+        p = root_data.get('precision', 0)
+        r = root_data.get('recall', 0)
+        f1 = root_data.get('f1', 0) or (harmonic_mean([p, r]) if (p + r) > 0 else 0)
+        nota = root_data.get('nota', 0)
+        exp = root_data.get('explicacao', '')
         
         dados = {
             f'{rotulo}_P': p,
@@ -403,7 +411,7 @@ class CargaDadosComparacao():
         }
         
         # ===== MÉTRICAS POR CAMPO =====
-        metricas_por_campo = dados_original.get('metricas_por_campo', {})
+        metricas_por_campo = root_data.get('metricas_por_campo', {})
         if metricas_por_campo and isinstance(metricas_por_campo, dict):
             for campo, metricas in metricas_por_campo.items():
                 if not isinstance(metricas, dict):
@@ -542,6 +550,7 @@ class CargaDadosComparacao():
         
         # Inicializa containers
         self.dados = []
+        self.dados_completos = []
         tokens_dict = {}     # {id: {chave: valor}}
         avaliacoes_dict = {} # {id: {chave: valor}}
         obs_dict = {}        # {id: {chave: valor}}
@@ -636,6 +645,9 @@ class CargaDadosComparacao():
             for i, jd in enumerate(jsons_destinos):
                 linha[self.rotulos[2+i]] = jd
             
+            # mesnmo ignorando erros, guarda um conjunto com todos os dados para o gráfico de status ficar completo
+            self.dados_completos.append(linha)
+            
             # Se ignorar_erro_extracao=True, ignora documentos com erro
             if self.ignorar_erro_extracao and tem_erro:
                 continue
@@ -653,6 +665,7 @@ class CargaDadosComparacao():
         return JsonAnaliseDados(
             dados=self.dados,
             rotulos=self.rotulos,
+            dados_completos=self.dados_completos,
             tokens=self.tokens,
             avaliacao_llm=self.avaliacao_llm,
             observabilidade=self.observabilidade,

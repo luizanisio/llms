@@ -2795,16 +2795,18 @@ class JsonAnaliseDataFrame():
         # ABA DE CONFIGURAÇÃO (para regenerar gráficos posteriormente)
         # ═══════════════════════════════════════════════════════════════════════
         config_data = {
-            'parametro': ['nome_campo_id', 'rotulo_campo_id', 'rotulo_origem'],
+            'parametro': ['nome_campo_id', 'rotulo_campo_id', 'rotulo_origem', 'rotulos_modelos'],
             'valor': [
                 self.dados_analise.config.nome_campo_id,
                 self.dados_analise.config.rotulo_campo_id,
-                self.dados_analise.config.rotulo_origem
+                self.dados_analise.config.rotulo_origem,
+                ','.join([self.dados_analise.rotulo_true] + self.dados_analise.rotulos_modelos) if hasattr(self.dados_analise, 'rotulos_modelos') else ''
             ],
             'descricao': [
                 'Nome interno do campo ID (usado em DataFrames)',
                 'Rótulo de exibição do campo ID',
-                'Rótulo do modelo de referência/ground truth'
+                'Rótulo do modelo de referência/ground truth',
+                'Ordem original dos modelos a serem comparados'
             ]
         }
         df_config = pd.DataFrame(config_data)
@@ -2980,6 +2982,8 @@ class JsonAnaliseDataFrame():
         # Define pasta de saída
         if pasta_saida is None:
             pasta_saida = self.pasta_analises or '.'
+        if os.path.basename(os.path.normpath(pasta_saida)) != 'graficos':
+            pasta_saida = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_saida, exist_ok=True)
         
         # Carrega DataFrame
@@ -3040,6 +3044,8 @@ class JsonAnaliseDataFrame():
         # Define pasta de saída
         if pasta_saida is None:
             pasta_saida = os.path.dirname(arquivo_excel) or '.'
+        if os.path.basename(os.path.normpath(pasta_saida)) != 'graficos':
+            pasta_saida = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_saida, exist_ok=True)
         
         # Limpa gráficos antigos
@@ -3064,6 +3070,7 @@ class JsonAnaliseDataFrame():
             
             # Tenta ler aba Config para obter configurações
             nome_campo_id = None
+            rotulos_modelos_ordenados = []
             if 'Config' in xl_file.sheet_names:
                 df_config = pd.read_excel(arquivo_excel, sheet_name='Config')
                 # Busca o valor de nome_campo_id
@@ -3071,6 +3078,14 @@ class JsonAnaliseDataFrame():
                 if not row_nome_campo_id.empty:
                     nome_campo_id = row_nome_campo_id.iloc[0]['valor']
                     print(f"   📋 Configuração carregada: nome_campo_id='{nome_campo_id}'")
+                
+                # Busca a ordem dos modelos para manter o padrao YAML
+                row_rotulos_modelos = df_config[df_config['parametro'] == 'rotulos_modelos']
+                if not row_rotulos_modelos.empty:
+                    rotulos_csv = row_rotulos_modelos.iloc[0]['valor']
+                    if pd.notna(rotulos_csv) and str(rotulos_csv).strip():
+                        rotulos_modelos_ordenados = [r.strip() for r in str(rotulos_csv).split(',')]
+                        print(f"   📋 Ordem dos modelos carregada: {rotulos_modelos_ordenados}")
             
             # ═══════════════════════════════════════════════════════════════════════
             # CONSOLIDA TODAS AS ABAS EM UM ÚNICO DATAFRAME
@@ -3136,11 +3151,11 @@ class JsonAnaliseDataFrame():
                 return []
             
             # Extrai estrutura do DataFrame consolidado
-            estrutura = cls._extrair_estrutura_metricas_estatico(df_consolidado, tecnica_aba='')
+            estrutura = cls._extrair_estrutura_metricas_estatico(df_consolidado, tecnica_aba='', rotulos_modelos_ordenados=rotulos_modelos_ordenados)
             
             # Gera gráficos com TODOS os modelos
             arquivos_gerados = cls._gerar_boxplots_por_campo_metrica_estatico(
-                df_consolidado, estrutura, pasta_saida, paleta, tecnica_aba=''
+                df_consolidado, estrutura, pasta_saida, paleta, tecnica_aba='', rotulos_modelos_ordenados=rotulos_modelos_ordenados
             )
             
             # ═══════════════════════════════════════════════════════════════════════
@@ -3178,10 +3193,22 @@ class JsonAnaliseDataFrame():
                             if len(colunas_tipo) == 0:
                                 continue
                             
-                            # Prepara dados
+                            # Prepara dados mantendo a ordem YAML
                             dados_grafico = {}
-                            for col in colunas_tipo:
-                                modelo = col.rsplit('_', 1)[0]
+                            modelos_col = {col.rsplit('_', 1)[0]: col for col in colunas_tipo}
+                            
+                            # Usa a ordem preferencial
+                            if rotulos_modelos_ordenados:
+                                for modelo in rotulos_modelos_ordenados:
+                                    if modelo in modelos_col:
+                                        col = modelos_col[modelo]
+                                        valores = df_tokens[col].dropna().tolist()
+                                        if len(valores) > 0:
+                                            dados_grafico[modelo] = valores
+                                        del modelos_col[modelo]
+                            
+                            # Fallback para os restantes na ordem em que aparecem no df
+                            for modelo, col in modelos_col.items():
                                 valores = df_tokens[col].dropna().tolist()
                                 if len(valores) > 0:
                                     dados_grafico[modelo] = valores
@@ -3257,10 +3284,22 @@ class JsonAnaliseDataFrame():
                             if len(colunas_metrica) == 0:
                                 continue
                             
-                            # Prepara dados
+                            # Prepara dados mantendo a ordem YAML
                             dados_grafico = {}
-                            for col in colunas_metrica:
-                                modelo = col.rsplit('_', 1)[0]
+                            modelos_col = {col.rsplit('_', 1)[0]: col for col in colunas_metrica}
+                            
+                            # Usa a ordem preferencial
+                            if rotulos_modelos_ordenados:
+                                for modelo in rotulos_modelos_ordenados:
+                                    if modelo in modelos_col:
+                                        col = modelos_col[modelo]
+                                        valores = df_avaliacao[col].dropna().tolist()
+                                        if len(valores) > 0:
+                                            dados_grafico[modelo] = valores
+                                        del modelos_col[modelo]
+                            
+                            # Fallback para os restantes
+                            for modelo, col in modelos_col.items():
                                 valores = df_avaliacao[col].dropna().tolist()
                                 if len(valores) > 0:
                                     dados_grafico[modelo] = valores
@@ -3343,8 +3382,26 @@ class JsonAnaliseDataFrame():
                             for col in colunas_sufixo:
                                 df_plot[col] = pd.to_numeric(df_plot[col], errors='coerce')
                         
-                        # Extrai aliases (nomes das colunas sem sufixo)
-                        aliases = [col.rsplit('_', 1)[0] for col in colunas_sufixo]
+                        # Extrai aliases preservando ordem no df
+                        aliases = []
+                        colunas_sufixo_ordenadas = []
+                        
+                        # Usa a ordem preferencial
+                        if rotulos_modelos_ordenados:
+                           for rotulo in rotulos_modelos_ordenados:
+                               for col in colunas_sufixo:
+                                   if col.startswith(rotulo + '_'):
+                                       colunas_sufixo_ordenadas.append(col)
+                                       aliases.append(col.rsplit('_', 1)[0])
+                                       break
+                        
+                        # Fallback
+                        for col in colunas_sufixo:
+                           if col not in colunas_sufixo_ordenadas:
+                               colunas_sufixo_ordenadas.append(col)
+                               aliases.append(col.rsplit('_', 1)[0])
+                               
+                        colunas_sufixo = colunas_sufixo_ordenadas
                         
                         # Gera gráfico
                         arquivo_grafico = os.path.join(pasta_saida, f'observabilidade_{sufixo}.png')
@@ -3392,10 +3449,9 @@ class JsonAnaliseDataFrame():
                     except KeyError:
                         paleta_enum_score = Cores.Cividis
 
-                    # Identifica modelos a partir das colunas globais (mais seguro)
+                    # Identifica modelos a partir das colunas globais e preserva ordem
                     # Coluna Global: <modelo>_(global)_<tecnica>_F1 ou _SIM
-                    
-                    known_models = set()
+                    known_models = list(rotulos_modelos_ordenados)
                     # Suporta F1 (para BERT/ROUGE) e SIM (para Levenshtein)
                     sufixos_validos = ['_F1', '_SIM']
                     
@@ -3411,7 +3467,8 @@ class JsonAnaliseDataFrame():
                         partes = col.split('_(global)_')
                         if len(partes) == 2:
                             modelo = partes[0]
-                            known_models.add(modelo)
+                            if modelo not in known_models:
+                                known_models.append(modelo)
                             
                             resto = partes[1] # tecnica_F1 ou tecnica_SIM
                             
@@ -3436,6 +3493,7 @@ class JsonAnaliseDataFrame():
                         df_global = pd.DataFrame(dados_global)
                         # Pivot: Index=Modelo, Columns=Técnica
                         df_pivot = df_global.pivot(index='Modelo', columns='Técnica', values='Score')
+                        df_pivot = df_pivot.reindex(index=[m for m in known_models if m in df_pivot.index])
                         
                         arquivo_global = os.path.join(pasta_saida, 'comparativo_global_score.png')
                         
@@ -3512,6 +3570,15 @@ class JsonAnaliseDataFrame():
                             # Pivot: Index=Campo, Columns=Modelo, Values=Score
                             df_pivot = df_tec.pivot(index='Campo', columns='Modelo', values='Score')
                             
+                            # Mantém a ordem dos modelos e campos
+                            df_pivot = df_pivot.reindex(columns=[m for m in known_models if m in df_pivot.columns])
+                            
+                            campos_ordem = []
+                            for item in dados_tecnica:
+                                if item['Campo'] not in campos_ordem:
+                                    campos_ordem.append(item['Campo'])
+                            df_pivot = df_pivot.reindex(index=campos_ordem)
+                            
                             arquivo_tec = os.path.join(pasta_saida, f'comparativo_campos_{tecnica.lower()}_score.png')
                             
                             tipo_score = 'Similaridade' if tecnica == 'levenshtein' else 'F1 Score'
@@ -3572,6 +3639,8 @@ class JsonAnaliseDataFrame():
         # Define pasta de saída
         if pasta_saida is None:
             pasta_saida = self.pasta_analises or '.'
+        if os.path.basename(os.path.normpath(pasta_saida)) != 'graficos':
+            pasta_saida = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_saida, exist_ok=True)
         
         # Carrega DataFrame de tokens
@@ -3630,9 +3699,30 @@ class JsonAnaliseDataFrame():
             }
             titulo = titulos_tipos.get(tipo, f'Tokens ({tipo})')
             
-            # Extrai aliases (nomes dos modelos sem sufixo)
-            aliases = [col.rsplit('_', 1)[0] for col in colunas_tipo]
+            # Extrai aliases (nomes dos modelos sem sufixo) presevando ordem no df
+            aliases = []
+            colunas_tipo_ordenadas = []
             
+            # Pega lista de modelos inteira incluindo origem, mas só usa os que tem colunas
+            rotulos = None
+            if hasattr(self.dados_analise, 'rotulos_modelos'):
+                rotulos = [self.dados_analise.rotulo_true] + self.dados_analise.rotulos_modelos
+                
+            if rotulos:
+                for rotulo in rotulos:
+                    for col in colunas_tipo:
+                        if col.startswith(rotulo + '_'):
+                            colunas_tipo_ordenadas.append(col)
+                            aliases.append(col.rsplit('_', 1)[0])
+                            break
+            
+            # Fallback para colunas restantes/todas caso rotulos falhe
+            for col in colunas_tipo:
+                if col not in colunas_tipo_ordenadas:
+                    colunas_tipo_ordenadas.append(col)
+                    aliases.append(col.rsplit('_', 1)[0])
+
+            colunas_tipo = colunas_tipo_ordenadas
             # Configura gráfico boxplot usando grafico_multi_colunas
             configuracao = {
                 titulo: {
@@ -3903,6 +3993,8 @@ class JsonAnaliseDataFrame():
         # Define pasta de saída
         if pasta_saida is None:
             pasta_saida = self.pasta_analises or '.'
+        if os.path.basename(os.path.normpath(pasta_saida)) != 'graficos':
+            pasta_saida = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_saida, exist_ok=True)
         
         # Carrega DataFrames de avaliação LLM (agora são dois: global e campos)
@@ -4165,6 +4257,10 @@ class JsonAnaliseDataFrame():
         # Define pasta de saída
         if pasta_saida is None:
             pasta_saida = self.pasta_analises
+            if pasta_saida is None:
+                pasta_saida = '.'
+        if os.path.basename(os.path.normpath(pasta_saida)) != 'graficos':
+            pasta_saida = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_saida, exist_ok=True)
         
         # Mapeia string de paleta para enum
@@ -4269,8 +4365,30 @@ class JsonAnaliseDataFrame():
                 for col in colunas_sufixo:
                     df_plot[col] = pd.to_numeric(df_plot[col], errors='coerce')
             
-            # Extrai aliases (nomes das colunas sem sufixo)
-            aliases = [col.rsplit('_', 1)[0] for col in colunas_sufixo]
+            # Extrai aliases preservando ordem no df
+            aliases = []
+            colunas_sufixo_ordenadas = []
+            
+            # Pega lista de modelos do _rotulos_modelos e usa como base de ordenacao
+            rotulos = None
+            if hasattr(self.dados_analise, 'rotulos_modelos'):
+                rotulos = [self.dados_analise.rotulo_true] + self.dados_analise.rotulos_modelos
+                
+            if rotulos:
+               for rotulo in rotulos:
+                   for col in colunas_sufixo:
+                       if col.startswith(rotulo + '_'):
+                           colunas_sufixo_ordenadas.append(col)
+                           aliases.append(col.rsplit('_', 1)[0])
+                           break
+            
+            # Fallback
+            for col in colunas_sufixo:
+               if col not in colunas_sufixo_ordenadas:
+                   colunas_sufixo_ordenadas.append(col)
+                   aliases.append(col.rsplit('_', 1)[0])
+                   
+            colunas_sufixo = colunas_sufixo_ordenadas
             
             # Gera boxplot usando UtilGraficos
             titulo = f"Observabilidade: {info['titulo']}"
@@ -4351,7 +4469,7 @@ class JsonAnaliseDataFrame():
         # Extrai modelos diretamente das colunas do DataFrame
         # Formato das colunas: Modelo_campo_[tecnica_]metrica
         # Precisamos identificar todos os modelos únicos
-        modelos_unicos = set()
+        modelos_unicos = []
         # Técnicas conhecidas (ordem importa: sbert_grande antes de sbert para match correto)
         tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein', 
                                'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
@@ -4387,11 +4505,11 @@ class JsonAnaliseDataFrame():
                     # Fallback: pega apenas a primeira parte
                     modelo = partes[0]
             
-            if modelo:
-                modelos_unicos.add(modelo)
+            if modelo and modelo not in modelos_unicos:
+                modelos_unicos.append(modelo)
         
-        # Ordena modelos para manter consistência
-        rotulos_modelos = sorted(modelos_unicos)
+        # Mantém a mesma ordem em que os modelos apareceram
+        rotulos_modelos = modelos_unicos
         
         # Padrão: Modelo_campo_tecnica_metrica (ex: GPT4_(global)_rouge2_F1)
         
@@ -4460,7 +4578,7 @@ class JsonAnaliseDataFrame():
         return estrutura
     
     @staticmethod
-    def _extrair_estrutura_metricas_estatico(df, tecnica_aba: str = '') -> dict:
+    def _extrair_estrutura_metricas_estatico(df, tecnica_aba: str = '', rotulos_modelos_ordenados: list = None) -> dict:
         """
         Versão estática de _extrair_estrutura_metricas.
         Extrai estrutura mesmo quando há ou não técnica nos nomes das colunas.
@@ -4641,7 +4759,7 @@ class JsonAnaliseDataFrame():
     @staticmethod
     def _gerar_boxplots_por_campo_metrica_estatico(df, estrutura: dict, 
                                                    pasta_saida: str, paleta: str,
-                                                   tecnica_aba: str = '') -> List[str]:
+                                                   tecnica_aba: str = '', rotulos_modelos_ordenados: list = None) -> List[str]:
         """
         Versão estática - Gera boxplots agrupando todos os modelos para cada campo.
         
@@ -4660,7 +4778,7 @@ class JsonAnaliseDataFrame():
         
         # Extrai lista de modelos únicos de todas as colunas do DataFrame
         # Formato das colunas: <modelo>_<campo>_<tecnica>_<metrica>
-        modelos_unicos = set()
+        modelos_unicos = []
         col_id = df.columns[0]  # Primeira coluna é ID
         
         for col in df.columns[1:]:  # Pula coluna ID
@@ -4700,10 +4818,17 @@ class JsonAnaliseDataFrame():
                     # Fallback: pega primeira parte
                     modelo = col.split('_')[0]
             
-            modelos_unicos.add(modelo)
+            if modelo and modelo not in modelos_unicos:
+                modelos_unicos.append(modelo)
         
-        # Ordena modelos para manter consistência visual
-        modelos_ordenados = sorted(modelos_unicos)
+        # Mantém a ordem original do DataFrame ou do YAML se fornecida
+        if rotulos_modelos_ordenados:
+            modelos_ordenados = [m for m in rotulos_modelos_ordenados if m in modelos_unicos]
+            for m in modelos_unicos:
+                if m not in modelos_ordenados:
+                    modelos_ordenados.append(m)
+        else:
+            modelos_ordenados = modelos_unicos
         
         for campo, tecnicas in estrutura.items():
             for tecnica, metricas in tecnicas.items():
