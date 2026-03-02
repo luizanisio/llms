@@ -338,7 +338,8 @@ class UtilGraficos:
                                 mostrar_valores: bool = True,
                                 rotacao_labels: int = 0,
                                 stacked: bool = False,
-                                ylim: tuple = None):
+                                ylim: tuple = None,
+                                lang: str = 'pt'):
         """
         Gera um gráfico de barras (agrupadas ou empilhadas) a partir de um DataFrame.
         
@@ -378,9 +379,9 @@ class UtilGraficos:
                 # Se for stacked, mostra valores no centro. Se agrupado, acima da barra.
                 # Para agrupado, bar_label funciona bem.
                 # Filtrando 0 para limpar viz
-                labels = [cls._formata_numero(v, 'float') if v > 0.01 else '' for v in c.datavalues]
+                labels = [cls._formata_numero(v, 'float', lang=lang) if v > 0.01 else '' for v in c.datavalues]
                 ax.bar_label(c, labels=labels, label_type='center' if stacked else 'edge', 
-                             fontsize=8, color='black' if not stacked else 'white', 
+                             fontsize=6, color='black' if not stacked else 'white', 
                              fontweight='bold', padding=3)
 
         # Rotação de labels
@@ -649,13 +650,17 @@ class UtilGraficos:
         return r
 
     @classmethod
-    def _formata_numero(cls, v, fmt:str):
+    def _formata_numero(cls, v, fmt:str, lang:str = 'pt'):
         if fmt == 'int':
             s = f"{int(v):,}"
-            return s.replace(",", ".")
+            if lang == 'pt':
+                return s.replace(",", ".")
+            return s  # en: 1,000
         else:
             s = f"{v:,.2f}"
-            return s.replace(",", "|").replace(".", ",").replace("|", ".")
+            if lang == 'pt':
+                return s.replace(",", "|").replace(".", ",").replace("|", ".")
+            return s  # en: 1,000.50
             
 if __name__ == '__main__':
     # Exemplo de uso
