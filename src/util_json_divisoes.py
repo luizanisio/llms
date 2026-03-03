@@ -19,7 +19,7 @@ Cria uma tabela (em csv) com os seguintes campos:
 - métricas dinâmicas de F1 ((global)_*_F1 e (estrutura)_*_F1)
 - dificuldade (fácil, médio, difícil)
 - dificuldade_int (valor de 1 a 10 calculado com 1- normalização da soma das pontuações)
-- grupo (treino, teste, validação)
+- alvo (treino, teste, validação)
 
 Para cada rótulo de dificuldade, separa os documentos em treino, teste e validação com proporção de 70%, 20% e 10% respectivamente.
 Grava a tabela csv na pasta do modelo, ordenada pela pontuação mais baixa (fácil) para a mais alta (difícil).
@@ -38,6 +38,9 @@ import shutil
 import argparse
 from tqdm import tqdm
 
+from util_pandas import UtilPandasExcel
+from xlsxwriter.utility import xl_col_to_name
+
 class UtilJsonDivisoes:
     def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1)):
         self.pasta_analises = pasta_analises
@@ -52,7 +55,7 @@ class UtilJsonDivisoes:
     def limpar_saida(self):
         """Remove apenas os arquivos de divisões antigos (divisao_*.csv)."""
         os.makedirs(self.pasta_saida, exist_ok=True)
-        arquivos_antigos = glob.glob(os.path.join(self.pasta_saida, 'divisao_*.csv'))
+        arquivos_antigos = glob.glob(os.path.join(self.pasta_saida, 'divisao_*.csv')) + glob.glob(os.path.join(self.pasta_saida, 'divisao_*.xlsx'))
         for f in arquivos_antigos:
             try:
                 os.remove(f)
@@ -214,7 +217,7 @@ class UtilJsonDivisoes:
             
             # Associa grupos às partições embaralhadas
             grupos = ['treino'] * n_treino + ['teste'] * n_teste + ['validacao'] * n_val
-            df_sub['grupo'] = grupos
+            df_sub['alvo'] = grupos
             
             dfs_finais.append(df_sub)
 
@@ -236,6 +239,29 @@ class UtilJsonDivisoes:
         
         df_final.to_csv(caminho_csv, index=False, encoding='utf-8')
         print(f"   ✓ Divisões para [{nome_modelo}]: {len(df_final)} registros -> {caminho_csv}")
+
+        # 7. Salvar na formatação correta do Excel com mapa de calor (util_pandas)
+        caminho_xlsx = os.path.join(self.pasta_saida, f'divisao_{nome_arquivo_seguro}.xlsx')
+        try:
+            upd = UtilPandasExcel(caminho_xlsx)
+            upd.write_df(df_final, 'Divisões', auto_width_colums_list=True)
+            
+            # Aplica mapa de calor nas métricas F1 (colunas_alvo)
+            qtd_linhas = len(df_final)
+            colunas_df = df_final.columns.tolist()
+            
+            for col in colunas_alvo:
+                if col in colunas_df:
+                    idx_col = colunas_df.index(col)
+                    letra_col = xl_col_to_name(idx_col)
+                    range_celulas = f"{letra_col}2:{letra_col}{qtd_linhas + 1}"
+                    # Usa o conditional_color da UtilPandasExcel
+                    upd.conditional_color(sheet_name='Divisões', cells=range_celulas)
+                    
+            upd.save()
+        except Exception as e:
+            print(f"   ⚠️ Erro ao gerar excel para [{nome_modelo}]: {e}")
+
 
 if __name__ == '__main__':
     ''' Recebe como parâmetro da linha de comando o nome da pasta de análise criada pela classe JsonAnaliseDataFrame
