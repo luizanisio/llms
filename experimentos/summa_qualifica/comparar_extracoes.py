@@ -4,6 +4,8 @@ Comparação de extrações de espelhos usando múltiplas métricas de similarid
 
 Autor: Luiz Anísio
 Refatorado: 25/01/2026
+A versão em evolução está em: https://github.com/luizanisio/llms 
+
 Descrição:
 -----------
 Compara dados extraídos por diferentes abordagens e modelos baseados em um arquivo de configuração YAML.
@@ -25,7 +27,7 @@ import pandas as pd
 # PROTEÇÃO E SETUP INICIAL
 # ============================================================================
 # Adiciona paths de utilitários
-sys.path.extend(['./utils', './src', '../../src'])
+sys.path.extend(['../src', './src','../../src'])
 
 # Verificação para multiprocessing (BERTScore safe)
 _IS_MAIN_PROCESS = __name__ == '__main__' or not hasattr(sys.modules.get('__mp_main__', None), '__file__')
@@ -76,7 +78,6 @@ def processar_analise_estatistica(dados_analise, pasta_saida, config):
     rotulo_base = config['modelo_base']['rotulo']
     familia_base = config['modelo_base'].get('familia', 'Base')
     
-    # Itera sobre os modelos de comparação definidos no YAML
     # Itera sobre os modelos de comparação definidos no YAML (respeitando flag ativo)
     modelos_ativos = [m for m in config.get('modelos_comparacao', []) if m.get('ativo', True)]
     
@@ -127,6 +128,55 @@ def processar_analise_estatistica(dados_analise, pasta_saida, config):
     analise.processar_analise()
     analise.salvar_relatorio()
     print(f"\n✅ Análise Estatística concluída e salva em: {arquivo_saida}")
+
+def calcular_divisao_grupos(config):
+    """
+    Calcula os percentuais de divisão de grupos baseado no yaml e aplica regras
+    de distribuição de valores não informados. Retorna tupla (treino, teste, validacao).
+    """
+    divisao = config.get('execucao', {}).get('divisao')
+    if not isinstance(divisao, dict):
+        divisao = config.get('execucao-divisao')
+        
+    if not isinstance(divisao, dict):
+        return (0.7, 0.2, 0.1) # treino, teste, validacao
+
+    treino = divisao.get('treino')
+    teste = divisao.get('teste')
+    validacao = divisao.get('validacao')
+
+    valores = []
+    for v in [treino, teste, validacao]:
+        if v is not None:
+            valores.append(float(v))
+        else:
+            valores.append(None)
+            
+    treino, teste, validacao = valores
+
+    usando_porcentagem = any(v > 1.0 for v in [treino, teste, validacao] if v is not None)
+    if usando_porcentagem:
+        treino = treino / 100.0 if treino is not None else None
+        teste = teste / 100.0 if teste is not None else None
+        validacao = validacao / 100.0 if validacao is not None else None
+
+    soma_atual = sum(v for v in [treino, teste, validacao] if v is not None)
+    num_faltantes = sum(1 for v in [treino, teste, validacao] if v is None)
+
+    if num_faltantes > 0:
+        restante = max(0.0, 1.0 - soma_atual)
+        parte = restante / num_faltantes
+        if treino is None: treino = parte
+        if teste is None: teste = parte
+        if validacao is None: validacao = parte
+
+    soma_final = round(treino + teste + validacao, 4)
+    if soma_final > 0 and soma_final != 1.0:
+        treino /= soma_final
+        teste /= soma_final
+        validacao /= soma_final
+
+    return (treino, teste, validacao)
 
 def configurar_metricas(config_yaml):
     """Converte a configuração YAML para o formato esperado pelo JsonAnalise."""
@@ -189,6 +239,86 @@ def extrair_campos_unicos(config_metricas):
     return [c for c in todos_campos if not c.startswith('(')]
 
 # ============================================================================
+# Utilitários
+# ============================================================================
+
+import glob
+
+def listar_arquivos_compativeis( pasta = None, limite = 5) -> list[str]:
+    ''' lista na pasta informada, ou a pasta de execução do código, até "limite" arquivos yaml compatíveis
+        para mostrar opções para o usuário selecionar.
+    '''
+    pasta = pasta or '.'
+    arquivos = []
+    # Busca por .yaml e .yml
+    for ext in ['*.yaml', '*.yml']:
+        arquivos.extend(glob.glob(os.path.join(pasta, ext)))
+    
+    # Remove duplicatas e garante que são arquivos
+    arquivos = [f for f in set(arquivos) if os.path.isfile(f)]
+    
+    # Ordena alfabeticamente
+    arquivos = sorted(arquivos)
+    
+    # Retorna até o limite
+    return arquivos[:limite]
+
+def criar_menu_opcoes_de_configuracao() -> str:
+    ''' lista até 5 arquivos yaml, em ordem alfabética, e permite ao usuário selecionar um deles.
+        Retorna o caminho do arquivo selecionado.
+    '''
+    arquivos = listar_arquivos_compativeis(limite=5)
+    
+    if not arquivos:
+        print("\nNenhum arquivo YAML de configuração encontrado.")
+    else:
+        print("\nArquivos de configuração encontrados:")
+    
+    import datetime
+    idx_mais_recente = -1
+    if arquivos:
+        idx_mais_recente = max(range(len(arquivos)), key=lambda i: os.path.getmtime(arquivos[i]))
+    
+    for i, arq in enumerate(arquivos):
+        tempo_mod = os.path.getmtime(arq)
+        data_hora_str = datetime.datetime.fromtimestamp(tempo_mod).strftime('%Y-%m-%d %H:%M:%S')
+        
+        sufixo = ""
+        if i == idx_mais_recente:
+            sufixo = " \033[93m<<< último alterado\033[0m"
+            
+        print(f"[{i+1}] {os.path.basename(arq)} ({data_hora_str}){sufixo}")
+        
+    idx_criar_novo = len(arquivos) + 1
+    idx_sair = len(arquivos) + 2
+    
+    print(f"[{idx_criar_novo}] Criar um novo arquivo de configuração")
+    print(f"[{idx_sair}] Sair sem escolher")
+    
+    escolha_padrao = idx_mais_recente + 1 if arquivos else idx_sair
+    
+    while True:
+        try:
+            msg = f"\nEscolha uma opção (padrão {escolha_padrao}): "
+            escolha = input(msg).strip()
+            
+            if not escolha:
+                opcao = escolha_padrao
+            else:
+                opcao = int(escolha)
+                
+            if 1 <= opcao <= len(arquivos):
+                return arquivos[opcao - 1]
+            elif opcao == idx_criar_novo:
+                return "CRIAR_NOVO"
+            elif opcao == idx_sair:
+                return None
+            else:
+                print("⚠️  Opção inválida.")
+        except ValueError:
+            print("⚠️  Entrada inválida. Digite um número.")
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -198,15 +328,18 @@ def resolver_caminho(caminho_relativo, base_dir):
         return caminho_relativo
     return os.path.normpath(os.path.join(base_dir, caminho_relativo))
 
-def _gerar_grafico_erros(dados_analise, pasta_saida):
+def _gerar_grafico_erros(dados_analise, pasta_saida, lang='pt'):
     """Gera gráfico de barras empilhadas com status dos documentos por modelo."""
     from util_graficos import UtilGraficos, Cores
+    from util_json_graficos import traduzir_rotulos
     import pandas as pd
     
-    rotulos_modelos = dados_analise.rotulos_modelos
+    # Usa rotulos[1:] para incluir também o modelo de origem (base) mantendo a mesma ordem do YAML
+    rotulos_modelos = dados_analise.rotulos[1:] if len(dados_analise.rotulos) > 1 else []
+    # Chaves internas em português para processamento
     stats = {m: {'Sucesso': 0, 'Erro': 0, 'Inexistente': 0} for m in rotulos_modelos}
     
-    for linha in dados_analise.dados:
+    for linha in dados_analise.dados_completos:
         for modelo in rotulos_modelos:
             val = linha.get(modelo)
             # Verifica status baseado no valor
@@ -228,22 +361,31 @@ def _gerar_grafico_erros(dados_analise, pasta_saida):
     # 2. Erro (Yellow/Orange)
     # 3. Sucesso (Green)
     cols_ordem = ['Inexistente', 'Erro', 'Sucesso']
-    # Garante que as colunas existem no DF
-    cols_existentes = [c for c in cols_ordem] # Sempre cria as 3 para consistência de cor?
-    
+
     # Garante que todas as colunas existem
     for c in cols_ordem:
         if c not in df_stats.columns:
             df_stats[c] = 0
             
+    pasta_graficos = os.path.join(pasta_saida, 'graficos')
+    os.makedirs(pasta_graficos, exist_ok=True)
+            
     df_stats = df_stats[cols_ordem]
     
-    arquivo = os.path.join(pasta_saida, 'status_modelos.png')
+    # Traduz nomes de colunas para exibição no gráfico
+    cols_traduzidas = {
+        'Inexistente': traduzir_rotulos('status_inexistente', lang),
+        'Erro': traduzir_rotulos('status_erro', lang),
+        'Sucesso': traduzir_rotulos('status_sucesso', lang)
+    }
+    df_stats = df_stats.rename(columns=cols_traduzidas)
+    
+    arquivo = os.path.join(pasta_graficos, 'status_modelos.png')
     UtilGraficos.gerar_grafico_empilhado(
         df_stats, 
-        titulo='Status das Extrações por Modelo',
-        ylabel='Quantidade de Documentos',
-        xlabel='Modelo',
+        titulo=traduzir_rotulos('status_titulo', lang),
+        ylabel=traduzir_rotulos('status_ylabel', lang),
+        xlabel=traduzir_rotulos('modelo_xlabel', lang),
         arquivo_saida=arquivo,
         paleta_cores=Cores.RdYlGn
     )
@@ -255,11 +397,45 @@ def _gerar_grafico_erros(dados_analise, pasta_saida):
 
 def main():
     parser = argparse.ArgumentParser(description="Comparador de Extrações JSON via YAML")
-    parser.add_argument('config_file', help="Caminho do arquivo de configuração YAML")
+    parser.add_argument('config_file', nargs='?', default=None, help="Caminho do arquivo de configuração YAML")
     args = parser.parse_args()
 
     # 1. Carregar configuração
-    caminho_yaml_abs = os.path.abspath(args.config_file)
+    caminho_yaml_abs = ""
+    if args.config_file:
+        caminho_yaml_abs = os.path.abspath(args.config_file)
+    else:
+        escolha = criar_menu_opcoes_de_configuracao()
+        if escolha is None:
+            print("\nSaindo sem escolher...")
+            sys.exit(0)
+        elif escolha == "CRIAR_NOVO":
+            nome = input("\nNome do novo arquivo (ex: config_novo.yaml): ").strip()
+            if not nome:
+                print("Nome não fornecido. Saindo...")
+                sys.exit(0)
+            if not nome.endswith(('.yaml', '.yml')):
+                nome += '.yaml'
+            caminho_yaml_abs = os.path.abspath(nome)
+            if os.path.exists(caminho_yaml_abs):
+                print(f"⚠️  O arquivo {nome} já existe. Edite-o e execute novamente.")
+                sys.exit(0)
+            
+            # Tentar copiar de um existente para facilitar
+            if os.path.exists('config_espelho.yaml'):
+                import shutil
+                shutil.copy('config_espelho.yaml', caminho_yaml_abs)
+                print(f"✅ Arquivo {nome} criado a partir de config_espelho.yaml!")
+            else:
+                with open(caminho_yaml_abs, 'w', encoding='utf-8') as f:
+                    f.write("# Novo arquivo de configuração YAML\n")
+                print(f"✅ Arquivo {nome} criado!")
+                
+            print(f"Edite-o e execute o script novamente com: python comparar_extracoes.py {nome}")
+            sys.exit(0)
+        else:
+            caminho_yaml_abs = os.path.abspath(escolha)
+
     base_dir_yaml = os.path.dirname(caminho_yaml_abs)
     config = ler_configuracao(caminho_yaml_abs)
     
@@ -374,6 +550,9 @@ def main():
     # Define flags de execução
     flag_graficos = config['execucao'].get('gerar_graficos', False)
     flag_llm = config['execucao'].get('llm_as_a_judge', False)
+    lang_graficos = config['saida'].get('linguagem_graficos', '').strip().lower()
+    if lang_graficos not in ('pt', 'en'):
+        lang_graficos = 'en'
     
     # Lógica Principal de Execução ou Reuso
     if os.path.isfile(arquivo_excel) and not regerar:
@@ -393,7 +572,8 @@ def main():
                 max_workers=max_workers,
                 incluir_valores_analise=True,
                 gerar_exemplos_md=False,
-                gerar_relatorio=False
+                gerar_relatorio=False,
+                lang=lang_graficos
             )
             analisador_instanciado = True
     else:
@@ -409,7 +589,8 @@ def main():
             incluir_valores_analise=True,
             gerar_exemplos_md=True,
             max_exemplos_md_por_metrica=5,
-            gerar_relatorio=True
+            gerar_relatorio=True,
+            lang=lang_graficos
         )
         analisador_instanciado = True
         
@@ -448,7 +629,7 @@ def main():
     if flag_graficos and analisador_instanciado:
         print("\n📈 Gerando/Atualizando Gráficos no Excel...")
         # Gera gráfico de status/erros
-        _gerar_grafico_erros(dados_analise, pasta_saida)
+        _gerar_grafico_erros(dados_analise, pasta_saida, lang=lang_graficos)
         
         if os.path.isfile(arquivo_excel):
             analisador.gerar_graficos_de_excel(arquivo_excel, pasta_saida=pasta_saida)
@@ -456,12 +637,23 @@ def main():
     if flag_llm and analisador_instanciado:
         print("\n⚖️  Executando LLM-as-a-Judge (atualização do Excel)...")
         if os.path.isfile(arquivo_excel):
-            analisador.atualizar_avaliacao_llm_no_excel(arquivo_excel, gerar_graficos=True)
+            analisador.atualizar_avaliacao_llm_no_excel(arquivo_excel, gerar_graficos=True, pasta_saida=pasta_saida)
 
     if config['execucao'].get('analise_estatistica', False):
         processar_analise_estatistica(dados_analise, pasta_saida, config)
 
-    # 8. Estatísticas Finais no Console
+    # 8. Divisão dos Dados (Treino/Teste/Validação)
+    print("\n🗂️  Gerando divisões de dados (Treino/Teste/Validação)...")
+    try:
+        from util_json_divisoes import UtilJsonDivisoes
+        divisao_grupos = calcular_divisao_grupos(config)
+        print(f"   Configuração de divisão: Treino={divisao_grupos[0]:.2f}, Teste={divisao_grupos[1]:.2f}, Validação={divisao_grupos[2]:.2f}")
+        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos)
+        util_divisoes.processar()
+    except Exception as e:
+        print(f"❌ Erro ao gerar divisões: {e}")
+
+    # 9. Estatísticas Finais no Console
     if analisador_instanciado:
         print("\n📈 Estatísticas Globais (Resumo):")
         stats = analisador.estatisticas_globais()
