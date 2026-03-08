@@ -3,9 +3,10 @@
 
 # Configuração Global de Saída
 saida:
-  pasta: "./analises_comparacao_summa_q235"
+  pasta: "./analises/analises_comparacao_summa_q235_leve"
   arquivo_base: "comparacao_summa"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
+  linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
 
 # Configurações de Execução
 execucao:
@@ -18,46 +19,24 @@ execucao:
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  pasta: "./saidas/ext_qwen235b_11"
+  pasta: "./saidas_300/ext_qwen235b_11"
   rotulo: "qwen235b_11"
   familia: "Qwen-235B"
 
 # Modelos Comparados
 modelos_comparacao:
-  - pasta: "./saidas/ext_qwen-1.5B_11_u"
+  - pasta: "./saidas_300/ext_qwen-1.5B_11_u"
     rotulo: "qwen-1.5B_11_u"
     familia: "Qwen-1.5B"
 
-  - pasta: "./saidas/qwen-1.5B(ft-train-a)"
+  - pasta: "./saidas_300/qwen-1.5B(ft-train-a)"
     rotulo: "qwen-1.5B(ft-train-a)"
     familia: "Qwen-1.5B"
 
-  - pasta: "./saidas/qwen-1.5B(ft-train-b)"
+  - pasta: "./saidas_300/qwen-1.5B(ft-train-b)"
     rotulo: "qwen-1.5B(ft-train-b)"
     familia: "Qwen-1.5B"
 
-  # - pasta: "./saidas/ext_qwen-7b_11"
-  #   rotulo: "qwen-7b_11"
-  #   familia: "Qwen-7B"
-  
-  # - pasta: "./saidas/ext_jurema-7b_11"
-  #   rotulo: "jurema-7b_11"
-  #   familia: "Jurema-7B"
-  #   ativo: false
-
-  - pasta: "./saidas/ext_gpt5r_11"
-    rotulo: "gpt5r_11"
-    familia: "GPT-5"
-
-  - pasta: "./saidas/ext_gemma3-27_11"
-    rotulo: "gemma3-27_11"
-    familia: "Gemma-3"
-    ativo: true
-
-  - pasta: "./saidas/ext_gptoss-120b_11"
-    rotulo: "gptoss-120b_11"
-    familia: "GPT-OSS-120B"
-    ativo: true
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
@@ -85,19 +64,17 @@ configuracao_comparacao:
       - "Materia"
       - "Resumo"
       - "Dispositivo"
+      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
-      - "Temas.Decisao"
       - "Temas.Explicacao"
-      - "Temas.Normas"
       - "Temas.Jurisprudencia"
-      - "Temas"
-
-    todo:
 
     rouge_1:
 
     rouge_2:
+      - "Tipo"
+      - "DataJulgamento"
       - "Partes"
       - "Partes.Tipo"
       - "Partes.Nome"
@@ -108,6 +85,8 @@ configuracao_comparacao:
       - "Resumo"
       - "DataJulgamento"
       - "Partes"
+      - "Temas.Normas"
+      - "Temas.Decisao"
 
     levenshtein:
       - "Tipo"
@@ -115,18 +94,33 @@ configuracao_comparacao:
 
     sbert_pequeno:
       - "(global)"
-      - "Dispositivo"
       - "Materia"
-      - "Resumo"      
+      - "Resumo"
+      - "Dispositivo"
       - "Temas"
-      - "Partes"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
       - "Temas.Explicacao"
+      - "Temas.Jurisprudencia"
+
+    sbert_medio:
+      - "(global)"
+      - "Materia"
+      - "Resumo"
+      - "Dispositivo"
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Explicacao"
+      - "Temas.Jurisprudencia"
 
     sbert_grande:
       - "(global)"
-      - "Dispositivo"
       - "Materia"
-      - "Resumo"      
+      - "Resumo"
+      - "Dispositivo"
       - "Temas"
-      - "Partes"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
       - "Temas.Explicacao"
+      - "Temas.Jurisprudencia"

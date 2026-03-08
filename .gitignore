@@ -185,6 +185,7 @@ experimentos/agentes-esp-acordao/saidas**
 .github/agents/Documentação.agent.md
 experimentos/agentes-esp-acordao/log_openai_resposta_bruta.txt
 experimentos/agentes-esp-acordao/_bertmodels*
+experimentos/agentes-esp-acordao (preprint)**
 **_bertmodels*
 **_models*
 analises_json*
@@ -198,3 +199,4 @@ experimentos/agentes-esp-acordao/prompt_espelho_base.py
 **/analises_comparacao_**
 experimentos/summa_qualifica/treinados**
 .agent**
+experimentos/summa_qualifica/saidas_300**
