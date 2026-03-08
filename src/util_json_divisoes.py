@@ -146,6 +146,7 @@ class UtilJsonDivisoes:
                 # Se não houver nenhum valor válido na série toda
                 df[col] = df[col].fillna(0.0)
             else:
+                # TODO: está ok, mas precisa ser revista a estratégia de preenchimento dos valores nulos
                 df[col] = df[col].fillna(media_coluna)
 
         # Para distribuir bem as notas de dificuldade, usamos posições dos itens (ranking)
