@@ -78,6 +78,8 @@ def processar_analise_estatistica(dados_analise, pasta_saida, config):
     rotulo_base = config['modelo_base']['rotulo']
     familia_base = config['modelo_base'].get('familia', 'Base')
     
+    ignorar_erro = config.get('execucao', {}).get('ignorar_erro_extracao', False)
+    
     # Itera sobre os modelos de comparação definidos no YAML (respeitando flag ativo)
     modelos_ativos = [m for m in config.get('modelos_comparacao', []) if m.get('ativo', True)]
     
@@ -91,9 +93,17 @@ def processar_analise_estatistica(dados_analise, pasta_saida, config):
             print(f"      ⚠️  Saltando: Rótulos {rotulo_base} ou {rotulo_agente} não encontrados nos dados.")
             continue
 
-        for item in dados_analise.dados:
+        for item in dados_analise.dados_completos:
             id_peca = item.get(pk)
             if not id_peca: continue
+            
+            if ignorar_erro:
+                d1 = item.get(rotulo_base)
+                d2 = item.get(rotulo_agente)
+                if d1 is None or (isinstance(d1, dict) and 'erro' in d1):
+                    continue
+                if d2 is None or (isinstance(d2, dict) and 'erro' in d2):
+                    continue
             
             tokens = dados_analise.get_tokens(id_peca)
             evals = dados_analise.get_avaliacao(id_peca)
@@ -106,11 +116,13 @@ def processar_analise_estatistica(dados_analise, pasta_saida, config):
             
             if v1 is not None and v2 is not None:
                 lista_dados.append({
+                    'id_doc': id_peca,
                     'valor1': v1,
                     'valor2': v2,
                     'custo1': c1,
                     'custo2': c2,
-                    'familia': nome_familia
+                    'familia': nome_familia,
+                    'rotulo_modelo': rotulo_agente
                 })
     
     if not lista_dados:
@@ -121,8 +133,8 @@ def processar_analise_estatistica(dados_analise, pasta_saida, config):
     arquivo_saida = os.path.join(pasta_saida, 'relatorio_analise_estatistica.md')
     
     analise = AnaliseEstatistica(df_stat, config={
-        'rotulo1': 'Base',
-        'rotulo2': 'Agente',
+        'rotulo_base': rotulo_base,
+        'familia_base': familia_base,
         'arquivo_saida': arquivo_saida
     })
     analise.processar_analise()
@@ -200,18 +212,20 @@ def configurar_metricas(config_yaml):
         'campos_sbert_grande': campos.get('sbert_grande') or []
     }
     
-    # Ajuste para teste rápido (desativa BERTScore e SBERT grande)
+    # Ajuste para teste rápido (desativa BERTScore e SBERT)
     if config_yaml.get('execucao', {}).get('teste_rapido', False):
         print("⚠️  Modo TESTE RÁPIDO: Desabilitando BERTScore/SBERT e movendo campos para ROUGE-L.")
+        
         # Move campos BERTScore para ROUGE-L
-        campos_removidos = config_final['campos_bertscore']
+        campos_removidos = config_final['campos_bertscore'].copy()
         config_final['campos_bertscore'] = []
         for c in campos_removidos:
             if c not in config_final['campos_rouge']:
                 config_final['campos_rouge'].append(c)
+                
         # Move campos SBERT para ROUGE-L
         for sbert_key in ['campos_sbert', 'campos_sbert_pequeno', 'campos_sbert_medio', 'campos_sbert_grande']:
-            campos_sbert = config_final[sbert_key]
+            campos_sbert = config_final[sbert_key].copy()
             config_final[sbert_key] = []
             for c in campos_sbert:
                 if c not in config_final['campos_rouge']:
