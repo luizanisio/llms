@@ -41,6 +41,7 @@ def get_resposta(prompt:str, papel:str='',
                  as_json=True,
                  temperature=0.01,
                  max_tokens=None,
+                 max_ctx=None,
                  max_retry=5,
                  timeout=300,
                  api_key=None,
@@ -54,6 +55,9 @@ def get_resposta(prompt:str, papel:str='',
         * modelo iniciado com or: vai usar o openrouter api
         * modelo iniciado com ol: vai usar o ollama local via UtilOllama (http://localhost:11434/api)
         * raw: se True, retorna o dict bruto da API (sem padronização), apenas com 'tempo' adicionado
+        * max_ctx: tamanho máximo da janela de contexto (entrada + saída) em tokens
+                   - Para Ollama: define o num_ctx (padrão do método: 49152 = 48k)
+                   - Para outras APIs: ignorado no momento
         * think: mi/low/medium/high para modelos com reasoning
                  :low/medium/high para definir verbosity
         Ex. think = 'high:medium' significa reasoning high e verbosity medium
@@ -147,12 +151,15 @@ def get_resposta(prompt:str, papel:str='',
     # ── Ollama: delega para UtilOllama e retorna ──
     if tipo_api == 'ollama':
         if not silencioso: print(f'get_resposta: Ollama local - modelo {modelo}')
-        return UtilOllama.chat_completion_padronizado(
+        ollama_kwargs = dict(
             messages=messages, modelo=modelo,
             temperature=temperature, max_tokens=max_tokens,
             as_json=as_json, raw=raw, timeout=timeout,
             tempo_inicio=tempo
         )
+        if isinstance(max_ctx, int) and max_ctx > 0:
+            ollama_kwargs['num_ctx'] = max_ctx
+        return UtilOllama.chat_completion_padronizado(**ollama_kwargs)
 
     # ── Demais APIs (OpenAI, OpenRouter, Together): monta args ──
     parametros = {
@@ -305,7 +312,7 @@ def get_resposta(prompt:str, papel:str='',
         import time as time_module
         time_module.sleep(2)
         return get_resposta(prompt=prompt, papel=papel, modelo=modelo, think=think, as_json=as_json,
-                           temperature=temperature, max_tokens=max_tokens,
+                           temperature=temperature, max_tokens=max_tokens, max_ctx=max_ctx,
                            max_retry=max_retry - 1, timeout=timeout, api_key=api_key, raw=raw)
     
     except RateLimitError as r:
@@ -314,7 +321,7 @@ def get_resposta(prompt:str, papel:str='',
             return {'erro': 'rate limit alcançado, sem mais tentativas', 'model': modelo}
         print(f'Tentando novamente... (tentativas restantes: {max_retry})')
         return get_resposta(prompt=prompt, papel=papel, modelo=modelo, think=think, as_json=as_json,
-                           temperature=temperature, max_tokens=max_tokens,
+                           temperature=temperature, max_tokens=max_tokens, max_ctx=max_ctx,
                            max_retry=max_retry - 1, timeout=timeout, api_key=api_key, raw=raw, silencioso=silencioso)
     
     except Exception as e:
@@ -473,6 +480,7 @@ class UtilOllama:
 
     @classmethod
     def chat_completion(cls, messages:list, modelo:str, options:dict=None,
+                        num_ctx:int=16*1024,
                         format:str=None, timeout:int=300, api_url:str=None):
         ''' Envia uma requisição de chat para a API nativa do Ollama.
             POST /api/chat
@@ -480,19 +488,23 @@ class UtilOllama:
                 messages: lista de mensagens no formato [{"role": "...", "content": "..."}]
                 modelo: nome do modelo (ex: "llama3", "qwen2.5:1.5b")
                 options: dict com opções do modelo (ex: {"temperature": 0.7, "num_predict": 1024})
+                num_ctx: tamanho da janela de contexto em tokens (padrão: 16384 = 16k)
                 format: "json" para forçar resposta em JSON, ou None
                 timeout: timeout da requisição em segundos
                 api_url: sobrepõe cls.API_URL se informado
             Retorna o dict nativo do Ollama (ver documentação /api/chat).
         '''
         url = f'{api_url or cls.API_URL}/chat'
+        # Monta options com num_ctx como base, permitindo override via options
+        _options = {'num_ctx': num_ctx}
+        if options:
+            _options.update(options)
         payload = {
             'model': modelo,
             'messages': messages,
-            'stream': False
+            'stream': False,
+            'options': _options
         }
-        if options:
-            payload['options'] = options
         if format:
             payload['format'] = format
         response = requests.post(url, json=payload, timeout=timeout)
@@ -578,6 +590,7 @@ class UtilOllama:
     @classmethod
     def chat_completion_padronizado(cls, messages:list, modelo:str,
                                     temperature:float=0.01, max_tokens:int=None,
+                                    num_ctx:int=16*1024,
                                     as_json:bool=True, raw:bool=False,
                                     timeout:int=300, api_url:str=None,
                                     tempo_inicio:float=None):
@@ -586,7 +599,9 @@ class UtilOllama:
                 messages: lista de mensagens [{"role": "...", "content": "..."}]
                 modelo: nome do modelo (ex: "llama3", "qwen2.5:1.5b")
                 temperature: temperatura do modelo
-                max_tokens: número máximo de tokens na resposta
+                max_tokens: número máximo de tokens na resposta (num_predict do Ollama)
+                num_ctx: tamanho da janela de contexto em tokens (padrão: 49152 = 48k)
+                         Deve comportar entrada + saída. Ex: 32k entrada + 16k saída = 48k
                 as_json: se True, tenta converter a resposta em JSON
                 raw: se True, retorna o dict bruto do Ollama + tempo
                 timeout: timeout da requisição em segundos
@@ -597,7 +612,7 @@ class UtilOllama:
         tempo = tempo_inicio or time()
 
         # Monta options e format
-        options = {'temperature': temperature}
+        options = {'temperature': temperature, 'num_ctx': num_ctx}
         if isinstance(max_tokens, int):
             options['num_predict'] = max_tokens
         fmt = 'json' if as_json else None

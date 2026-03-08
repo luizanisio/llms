@@ -200,3 +200,4 @@ experimentos/agentes-esp-acordao/prompt_espelho_base.py
 experimentos/summa_qualifica/treinados**
 .agent**
 experimentos/summa_qualifica/saidas_300**
+experimentos/summa_qualifica/saidas_fold11**
