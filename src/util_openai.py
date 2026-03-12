@@ -16,7 +16,7 @@ import requests
 
 from threading import Lock
 LOCK_ARQUIVO_BRUTO = Lock()
-
+LOG_BRUTO = os.getenv('LOG_BRUTO','').lower()
 
 '''
  Autor Luiz Anísio 17/10/2025
@@ -230,7 +230,7 @@ def get_resposta(prompt:str, papel:str='',
         resultado = {}
         #print(json.dumps(res_dict, ensure_ascii=False, indent=2))
 
-        if True:
+        if tipo_api in LOG_BRUTO:
             with LOCK_ARQUIVO_BRUTO:
                 # grava a resposta no arquivo de log bruto
                 with open('log_openai_resposta_bruta.txt', 'a', encoding='utf-8') as f:
@@ -334,7 +334,7 @@ def get_resposta(prompt:str, papel:str='',
 
 class UtilJson():
     @classmethod
-    def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True ):
+    def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True):
         ''' O objetivo é receber uma resposta de um modelo LLM e identificar o json dentro dela
         '''
         if isinstance(mensagem, dict):
@@ -488,7 +488,7 @@ class UtilOllama:
                 messages: lista de mensagens no formato [{"role": "...", "content": "..."}]
                 modelo: nome do modelo (ex: "llama3", "qwen2.5:1.5b")
                 options: dict com opções do modelo (ex: {"temperature": 0.7, "num_predict": 1024})
-                num_ctx: tamanho da janela de contexto em tokens (padrão: 16384 = 16k)
+                num_ctx: tamanho da janela de contexto em tokens (padrão: 16384 = 16k, 32768 = 32k)
                 format: "json" para forçar resposta em JSON, ou None
                 timeout: timeout da requisição em segundos
                 api_url: sobrepõe cls.API_URL se informado
