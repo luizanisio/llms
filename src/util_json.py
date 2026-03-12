@@ -23,6 +23,8 @@ FILOSOFIA DE SELEÇÃO DE MÉTRICAS:
 4. ROUGE-2   → Frases médias, precisão de bigramas
 5. ROUGE-1   → Termos individuais, palavras-chave (padrão para (estrutura))
 6. Levenshtein → Textos curtos exatos (nomes, IDs, valores numéricos)
+
+* Ao criar novas métricas, é necessário revisar _converter_para_texto_cached(..)
 '''
 
 # Só emite um aviso se a dependência não estiver instalada
@@ -290,6 +292,32 @@ def _executar_alinhamento(lista_pred: list, lista_true: list, metrica_alinhament
     
     return (pred_alinhada, true_alinhada)
 
+def _resolver_json_embutido(valor):
+    """
+    Resolve strings que contêm JSON embutido, recursivamente.
+    Detecta e parseia strings como '{"campo": "valor"}' ou '[1, 2, 3]'
+    dentro de estruturas complexas (dict/list).
+    
+    Isso resolve o problema de campos cujos valores são strings contendo JSON
+    serializado (double-encoding), que seriam tratados como texto puro em vez
+    de serem planificados como texto legível pelas métricas de similaridade.
+    """
+    if isinstance(valor, str):
+        valor_stripped = valor.strip()
+        if valor_stripped and valor_stripped[0] in ('{', '['):
+            try:
+                parsed = json.loads(valor_stripped)
+                if isinstance(parsed, (dict, list)):
+                    return _resolver_json_embutido(parsed)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return valor
+    elif isinstance(valor, dict):
+        return {k: _resolver_json_embutido(v) for k, v in valor.items()}
+    elif isinstance(valor, list):
+        return [_resolver_json_embutido(item) for item in valor]
+    return valor
+
 @cachetools.cached(cache=_cache_conversao, lock=_lock_conversao)
 def _converter_para_texto_cached(metrica: str, normalize_ws: bool, valor_json: str) -> str:
     """
@@ -310,6 +338,11 @@ def _converter_para_texto_cached(metrica: str, normalize_ws: bool, valor_json: s
     # Desserializa o valor
     valor = json.loads(valor_json)
     
+    # Resolve JSON strings embutidos recursivamente (double-encoding)
+    # Ex: listas com strings JSON como '["{ ... }"]' ou dicts com valores JSON string
+    # TODO avaliar se resolver na origem é melhor.
+    valor = _resolver_json_embutido(valor)
+    
     # Garante que é um dict para Json2Texto
     if not isinstance(valor, dict):
         valor_dict = {'_valor': valor}
@@ -317,7 +350,14 @@ def _converter_para_texto_cached(metrica: str, normalize_ws: bool, valor_json: s
         valor_dict = valor
     
     if metrica == 'bertscore':
+        # BERTScore: texto linearizado chave:valor - ideal para matching token-level
         texto = Json2Texto.to_linear_text(valor_dict, normalize_whitespace=normalize_ws)
+    elif metrica.startswith('sbert'):
+        # SBERT: texto natural em parágrafos - sentence transformers são treinados
+        # em texto natural, não markdown. to_natural_text preserva chaves como parte
+        # de frases naturais ("Argumentos contém X, Y e Z.") gerando sentenças
+        # com embeddings de melhor qualidade do que headings markdown.
+        texto = Json2Texto.to_natural_text(valor_dict, normalize_whitespace=normalize_ws)
     else:
         # rouge, rouge1, rouge2, levenshtein
         texto = Json2Texto.to_natural_text(valor_dict, normalize_whitespace=normalize_ws)
@@ -717,8 +757,18 @@ class JsonAnalise:
         # CASOS RÁPIDOS: String e escalares (não usam cache - conversão trivial)
         # ═════════════════════════════════════════════════════════════════════════
         
-        # Se já é string, apenas padroniza
+        # Se já é string, verifica se contém JSON embutido antes de padronizar
         if isinstance(valor, str):
+            # Detecta strings com JSON embutido (double-encoding)
+            # Ex: '{"Argumentos": [...]}' deve ser parseado e planificado como texto
+            valor_stripped = valor.strip()
+            if valor_stripped and valor_stripped[0] in ('{', '['):
+                try:
+                    valor_parsed = json.loads(valor_stripped)
+                    if isinstance(valor_parsed, (dict, list)):
+                        return cls._converter_para_texto(valor_parsed, metrica, config)
+                except (json.JSONDecodeError, ValueError):
+                    pass  # Não é JSON válido, trata como string normal
             if config.get('padronizar_simbolos', True):
                 return cls.padronizar_simbolos(valor)
             return valor
@@ -757,6 +807,8 @@ class JsonAnalise:
             
             if metrica == 'bertscore':
                 texto = Json2Texto.to_linear_text(valor_dict, normalize_whitespace=normalize_ws)
+            elif metrica.startswith('sbert'):
+                texto = Json2Texto.to_natural_text(valor_dict, normalize_whitespace=normalize_ws)
             else:
                 texto = Json2Texto.to_natural_text(valor_dict, normalize_whitespace=normalize_ws)
             
