@@ -40,6 +40,21 @@ def ler_configuracao(caminho_yaml):
     with open(caminho_yaml, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     print(f"📖 Configuração carregada de: {caminho_yaml}")
+    
+    # Validação de rótulos únicos
+    rotulo_base = config.get('modelo_base', {}).get('rotulo')
+    if rotulo_base:
+        rotulos_comp = [m.get('rotulo') for m in config.get('modelos_comparacao', []) if m.get('ativo', True)]
+        if rotulo_base in rotulos_comp:
+            raise ValueError(f"ERRO DE CONFIGURAÇÃO: O rótulo do modelo base ('{rotulo_base}') é igual a um dos rótulos de comparação. Altere para torná-los únicos (ex: '{rotulo_base}(Base)').")
+            
+        rotulos_vistos = set()
+        for r in rotulos_comp:
+            if not r: continue
+            if r in rotulos_vistos:
+                raise ValueError(f"ERRO DE CONFIGURAÇÃO: O rótulo '{r}' aparece duplicado em 'modelos_comparacao'. Cada rótulo deve ser único.")
+            rotulos_vistos.add(r)
+            
     return config
 
 def _inicializar_ambiente():
@@ -659,10 +674,21 @@ def main():
     # 8. Divisão dos Dados (Treino/Teste/Validação)
     print("\n🗂️  Gerando divisões de dados (Treino/Teste/Validação)...")
     try:
-        from util_json_divisoes import UtilJsonDivisoes
+        from util_json_divisoes import UtilJsonDivisoes, contar_chaves_recursivo
         divisao_grupos = calcular_divisao_grupos(config)
         print(f"   Configuração de divisão: Treino={divisao_grupos[0]:.2f}, Teste={divisao_grupos[1]:.2f}, Validação={divisao_grupos[2]:.2f}")
-        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos)
+        
+        # Constrói mapa de chaves do ground truth para classificação de complexidade
+        mapa_chaves = {}
+        rotulo_true = dados_analise.rotulo_true
+        rotulo_id_key = dados_analise.rotulo_id
+        for item in dados_analise.dados:
+            id_doc = item.get(rotulo_id_key)
+            json_true = item.get(rotulo_true)
+            if id_doc is not None and isinstance(json_true, dict):
+                mapa_chaves[str(id_doc)] = contar_chaves_recursivo(json_true)
+        
+        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos, mapa_chaves=mapa_chaves)
         util_divisoes.processar()
     except Exception as e:
         print(f"❌ Erro ao gerar divisões: {e}")
