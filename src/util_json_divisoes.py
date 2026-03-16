@@ -41,12 +41,32 @@ from tqdm import tqdm
 from util_pandas import UtilPandasExcel
 from xlsxwriter.utility import xl_col_to_name
 
+
+def contar_chaves_recursivo(obj) -> int:
+    """Conta o número total de chaves em um dict, incluindo subchaves recursivamente.
+    Percorre dicts aninhados e dicts dentro de listas."""
+    if not isinstance(obj, dict):
+        return 0
+    total = 0
+    for key, value in obj.items():
+        total += 1
+        if isinstance(value, dict):
+            total += contar_chaves_recursivo(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    total += contar_chaves_recursivo(item)
+    return total
+
+
 class UtilJsonDivisoes:
-    def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1)):
+    def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1), mapa_chaves: dict = None):
         self.pasta_analises = pasta_analises
         self.divisao_grupos = divisao_grupos
         self.pasta_jsons = os.path.join(self.pasta_analises, 'jsons')
         self.pasta_saida = os.path.join(self.pasta_analises, 'divisoes')
+        # Mapa {id_doc: num_chaves} com contagem de chaves do ground truth
+        self.mapa_chaves = mapa_chaves or {}
         
         # Regex para identificar as colunas de métricas que entram no cálculo
         # "(global)_*_F1" ou "(estrutura)_*_F1"
@@ -146,9 +166,19 @@ class UtilJsonDivisoes:
                 # Se não houver nenhum valor válido na série toda
                 df[col] = df[col].fillna(0.0)
             else:
-                # TODO: está ok, mas precisa ser revista a estratégia de preenchimento dos valores nulos
+                # TODO: está ok, mas pode ser revista a estratégia de preenchimento dos valores nulos
                 df[col] = df[col].fillna(media_coluna)
 
+        # 3b. Adiciona contagem de chaves do ground truth (se disponível)
+        if self.mapa_chaves:
+            df['chaves'] = df['id'].apply(lambda x: self.mapa_chaves.get(str(x), 0))
+            chaves_min = df['chaves'].min()
+            chaves_max = df['chaves'].max()
+            if chaves_max > chaves_min:
+                df['chaves_peso'] = (df['chaves'] - chaves_min) / (chaves_max - chaves_min)
+            else:
+                df['chaves_peso'] = 0.5
+        
         # Para distribuir bem as notas de dificuldade, usamos posições dos itens (ranking)
         # em vez dos valores absolutos (min-max que concentra nos extremos).
         # Garantimos as proporções: 30% dificil, 40% medio e 30% facil
@@ -159,6 +189,10 @@ class UtilJsonDivisoes:
             df['soma_pontuacoes'] = df[colunas_alvo].sum(axis=1)
         else:
             df['soma_pontuacoes'] = 0.0
+        
+        # Subtrai chaves_peso: mais chaves = mais complexo | menor score = mais difícil
+        if 'chaves_peso' in df.columns:
+            df['soma_pontuacoes'] = df['soma_pontuacoes'] - df['chaves_peso']
 
         # Ordena pelo desempenho (ascendente: menor nota = pior = mais difícil)
         df = df.sort_values(by=['soma_pontuacoes']).copy()
@@ -234,6 +268,18 @@ class UtilJsonDivisoes:
         # Limpeza da coluna temporária
         df_final = df_final.drop(columns=['soma_pontuacoes'])
         
+        # Reordena colunas: chaves e chaves_peso logo após familia_modelo
+        if 'chaves' in df_final.columns:
+            colunas_ordem = list(df_final.columns)
+            for col_mover in ['chaves_peso', 'chaves']:
+                if col_mover in colunas_ordem:
+                    colunas_ordem.remove(col_mover)
+            idx_familia = colunas_ordem.index('familia_modelo') if 'familia_modelo' in colunas_ordem else 2
+            colunas_ordem.insert(idx_familia + 1, 'chaves')
+            if 'chaves_peso' in df_final.columns:
+                colunas_ordem.insert(idx_familia + 2, 'chaves_peso')
+            df_final = df_final[colunas_ordem]
+        
         # 6. Salvar na formatação correta do CSV
         nome_arquivo_seguro = re.sub(r'[^a-zA-Z0-9_\-()]', '_', nome_modelo)
         caminho_csv = os.path.join(self.pasta_saida, f'divisao_{nome_arquivo_seguro}.csv')
@@ -258,6 +304,13 @@ class UtilJsonDivisoes:
                     range_celulas = f"{letra_col}2:{letra_col}{qtd_linhas + 1}"
                     # Usa o conditional_color da UtilPandasExcel
                     upd.conditional_color(sheet_name='Divisões', cells=range_celulas)
+            
+            # Aplica mapa de calor invertido em chaves_peso (mais chaves = mais complexo = vermelho)
+            if 'chaves_peso' in colunas_df:
+                idx_cp = colunas_df.index('chaves_peso')
+                letra_cp = xl_col_to_name(idx_cp)
+                range_cp = f"{letra_cp}2:{letra_cp}{qtd_linhas + 1}"
+                upd.conditional_color(sheet_name='Divisões', cells=range_cp, min_value=1, max_value=0)
                     
             upd.save()
         except Exception as e:
