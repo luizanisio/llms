@@ -39,6 +39,8 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Chat template automático baseado no modelo
 - [x] Criptografia de dados sensíveis (Fernet)
 - [x] Validação automática de consistência de dados (IDs e arquivos pareados)
+- [x] Implementar exportação de modelo (GGUF, Merge).
+- [x] Gerar gráficos de evolução de Loss (treino vs validação) ao final do treino.
 
 ---
 
@@ -125,19 +127,23 @@ Gera respostas do modelo para os datasets configurados.
 A configuração é centralizada em arquivo YAML. Principais seções:
 
 #### Proporção e Divisão
-Define como os dados são divididos se não houver arquivo CSV de divisão prévio.
+Define como os dados são divididos em subconjuntos para treinamento se não houver um arquivo CSV de divisão prévia.
+- **`validar_ids`**: Quando `true`, levanta um erro fatal caso existam arquivos nas pastas (pareados) que não estejam mapeados no arquivo CSV de divisão prévio. Quando `false`, processa normalmente e apenas emite um aviso sobre os arquivos ignorados – excelente para usar apenas uma amostra do conjunto total de arquivos em disco.
+
 ```yaml
 pastas:
   divisao:
-    arquivo: "caminho/para/divisao.csv" # Opcional: fixa a divisão
-    proporcao:
+    arquivo: "caminho/para/divisao.csv" # Opcional: Caminho para fixar/ler a divisão. Se não existir, será criado.
+    proporcao: # Lista com a proporção de divisão de cada conjunto (deve somar 1.0)
       - treino: 0.7
       - validacao: 0.1
       - teste: 0.2
+    seed: 42 # Opcional: Semente aleatória (Padrão: 42)
+    validar_ids: true # Opcional: Verifica a integridade dos IDs (Padrão: true)
 ```
 
 #### Train on Responses Only
-Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário.
+Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário. (sugerido no unsloth)
 ```yaml
 treinamento:
   train_on_responses_only: true
@@ -178,7 +184,73 @@ O sistema inclui monitoramento de recursos em background (`treinar_unsloth_monit
 4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
 5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
 
-### Próximos Passos (Backlog)
-- [ ] Implementar exportação de modelo (GGUF, Merge).
-- [ ] Adicionar suporte a Early Stopping configurável.
-- [ ] Gerar gráficos de evolução de Loss (treino vs validação) ao final do treino.
+### Próximo Passo - pace de treinamento (Curriculum Learning) e simplificação do código
+
+**Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace).
+
+**Proposta de Estrutura YAML:**
+A melhor abordagem de engenharia de software seria instituir `curriculum` como um terceiro e oficial `tipo_entrada` (junto de `dataset` e `pastas`). Se a pessoa desejar as etapas dinâmicas, basta declarar esse modo e listar as etapas de forma explícita, mantendo retrocompatibilidade, validação rígida via `dataclasses` (ou Pydantic) e altíssima legibilidade.
+
+```yaml
+formatos:
+  tipo_entrada: curriculum # Opções: dataset, pastas, curriculum
+
+curriculum:
+  - arquivo: "./saidas/ext_qwen_11_facil.csv"
+    alias: "fácil"
+    tipo: "full"       # "full" ou "lora" (Se "lora", obedece os sub-parâmetros baseados em `lora` raíz)
+    pace_epochs: 1     # (Padrão) Transita após 1 época. Sem `pace_loss`, o loss não causa parada precoce
+    max_seq_length: 512 # [Opcional] Pode sobrepor config geral. Sequências curtas gastam menos VRAM na 1ª fase!
+    learning_rate: 0.0003 # [Opcional] Pode forçar um LR independente para esta etapa do curriculum
+  - arquivo: "./saidas/ext_qwen_11_medio.csv"
+    alias: "médio"
+    tipo: "lora"
+    pace_loss: 0.015   # Transita se eval_loss <= 0.015
+    pace_epochs: 2     # Limite de segurança. Se pace_loss e pace_epochs forem omitidos, pace_epochs=1 implicitamente.
+```
+
+**Mecânica de Transição, Modelos e Checkpoints:**
+1. **Roteamento de Modelos Intermediários:**
+   - Onde salvamos? Sempre que um passo encerra, seu modelo consolidado deve ser gravado numa subpasta controlada: ex. `{modelo.saida}/curriculum/01_facil`.
+   - *Dica Arquitetural:* Ao iniciar a etapa de `médio` logo na sequência, o instanciador do Unsloth reconfigura seu `modelo.base` subitamente apontando para o diretório físico `{modelo.saida}/curriculum/01_facil` como nova base e assim por diante.
+2. **Processamento LoRA vs Full Fine-Tuning:**
+   - No Unsloth, treinar `full` equivale a **NÃO** fazer wrap do modelo primário via `FastLanguageModel.get_peft_model()`. Ele treinará os pesos absolutos.
+   - **Transição `[LoRA -> Full]`:** Se um passo `LoRA` preceder um `Full` (ex: passo 1: LoRA, passo 2: Full), ao encerrar o passo `LoRA`, o adaptador DEVE ser "merged" (consolidado nativamente) em `{modelo.saida}/curriculum/01_medio` para gerar uma base fundida e limpa, que então será adotada pelo processo nativo (Full) a seguir.
+   - **Transição `[Full -> LoRA]` (Cuidado Especial):** O fluxo contrário é mais natural, porém exige um cuidado: o output do treinamento `Full` será um modelo massivo com pesos absolutos modificados (geralmente salvo em FP16 ou BF16 nativamente pelo `save_pretrained`). Ao resgatá-lo como "modelo base" no passo `LoRA` seguinte, verifique se a quantização (`nbits`, ex: 4-bits) está efetivamente ligada na inicialização do Unsloth associada a ele. O Unsloth cuidará de re-quantizar dinamicamente para inflar os adaptadores PEFT.
+3. **Pace (Critério de Continuação e Valores Padrão):**
+   - Transita caso o alvo de épocas do passo OU o *target loss* seja batido (early pacing).
+   - **Padrões (Defaults):** Caso `pace_loss` e `pace_epochs` não sejam definidos explicitamente em uma etapa, o sistema deve assumir `pace_epochs: 1` intrinsecamente, e ignorar o monitoramento antecipado por sinal de loss.
+   - *Dica Arquitetural:* Construa um callback herdando da classe padrão `TrainerCallback` que execute a avaliação de Pace em todo gatilho `on_evaluate()`. Lá, resgate `metrics.get("eval_loss")` e se `<= pace_loss`, aplique forçadamente `control.should_training_stop = True`.
+4. **Sobrevivendo às Paradas e Checkpoints:**
+   - Ao longo dos dias, para dar "Resume", o pipeline deve gravar um arquivo vivo em `curriculum_state.json` constando `{"current_step": 0, "status": "running"}`.
+   - Reiniciar (`--treinar`) lê esse log e aciona apenas o `step` respectivo resgatando os últimos `.bin` e subpasta do seu correspondente em `chkpt/`. Cada curriculum poderá ter uma segregação de seus checkpoints (`chkpt/01_facil/checkpoint-N`).
+5. **Divisão Dinâmica ("Fail Fast"):**
+   - Se o YAML cita `arquivo1_facil.csv` que inexiste, a divisão "automática" descrita no ticket pode não saber gerar subgrupos perfeitamente dosados para facilitar um curriculum, visto que necessita categorização externa de "dificuldade". O ideal é assumir um modelo "*Fail-Fast*", onde se usar "curriculum", o arquivo `.csv` referenciado é OBRIGATÓRIO (ou emitir Exception e abortar se a estrutura de amostragem não for auto-evidente).
+6. **Gráficos e Alias:**
+   - Ao trocar a etapa, a classe `treinar_unsloth_logging.py` grava meta-registros novos no log do loss.
+   - Na renderização `GraficoTreinamento.evolucao_loss()`, analise este log ou rastreando as divisas de "passo atual", inserindo linhas demarcatórias e legendas baseadas no atributo genérico `alias` (ou `ARQ01` se não houver um).
+7. **Métricas e Logs de Eficiência (Comparativo de Pipelines):**
+   - Para analisar de modo preciso se um Pipeline de Curriculum foi mais eficiente que outro, um log de rastreio independente deve ser gerado ou estendido (`curriculum_metrics.jsonl`). A cada quebra de passo, o log de treinamento deve selar **categoricamente**:
+     - *Utilização Real de Dados:* Quantidade absoluta de instâncias ingeridas, divididas explicitamente nas amostras alocadas (Treino / Validação / Teste).
+     - *Custo-Benefício de Iteração:* O `eval_loss` exato da barreira batida.
+     - *Uso de Tempo:* Duração daquela fase (`clock_time`) e estimativas de `tokens/segundo`.
+     - *Consumo e Steps:* O teto máximo de VRAM atingido durante a fase, os tamanhos do dataset, e a quantidade de `global_steps` efetivamente consumidos para furar o `target_loss`.
+
+### Simplificação e Manutenibilidade (Visão Unificada)
+
+Para garantir que o código seja limpo, modular e de altíssima manutenibilidade (tanto para humanos testando quanto para LLMs escrevendo), devemos purgar complexidades desnecessárias e unificar o processamento na raiz do sistema antes de codificar o Curriculum:
+
+1. **O "Pipeline Universal" (Tratar Pastas e Datasets como Curriculuns de 1 Passo):**
+   - Não escreveremos lógicas de log/checkpoint apartadas para os 3 modos. Se a entrada no YAML for somente do tipo `dataset` ou `pastas`, o instanciador interno converterá isso em uma lista `curriculum` de tamanho 1, definindo o `alias` padrão como "Principal". 
+   - Com isso, a engine central de registros (Logs, `.jsonl` de performance, marcações de gráficos de loss, resume via `curriculum_state.json`) usa **uma única e idêntica base de código estrita**, independentemente de quão complexo o pipeline seja.
+2. **Padrão Rígido de Métricas e Gráficos:**
+   - Todos os treinamentos vão despachar as métricas de VRAM, Loss, Tokens processados e Tempo de Execução para a raiz do formato. As análises e o PDF de gráficos (`GraficoTreinamento.evolucao_loss`, estatísticas) farão parser e visualização de um mesmo layout, quebrando por `alias`.
+3. **Remover a Engenharia de Inferência do Módulo de Treino (Separação de Preocupações):**
+   - A complexidade central hoje é que o *Script de Treinamento* também serve de *Script de Inferência*.
+   - **Remoção de Código:** Devemos extratir definitivamente as funções de `--predict` (Predição em massa do dataset inteiro) e `--modelo N` (Teste da inferência simulada) de dentro de `treinar_unsloth.py` e `treinar_unsloth_actions.py`.
+   - *Por quê?* Porque acopla severamente e eleva a mil a quantidade de linhas focadas em instanciar inferências limpas, parsing de formatação em "respostas json" das avaliações do `user/assistant` e tratamentos de métricas da predição em si. Para que o motor de Treinamento seja limpo, blindado a bugs, e perfeitamente gerenciado, ele deve **apenas Treinar e dar Merge**. 
+   - A inferência e testes devem/serão transferidas para script próprio externo `treinar_unsloth_avaliar.py` focado apenas em avaliação e teste do modelo, aproveitando estruturas compartilhadas para carga dos dados, modelo e checkpoints. Um CLI próprio será feito para permitir exportar o modelo para outros formatos, realizar merge ou gerar predições em massa
+
+### Ajustes finos
+- [ ] **Ajuste Dinâmico de `max_seq_length`:** Antes de dar início ao processo, analisar a extensão máxima de tokens efetivamente presente no dataset atual da "fase". Caso os dados ultrapassem o valor configurado, deve ser levantada uma exceção, caso o valor se max_seq_length seja omitido ou seja 0, deve-se readequar o limite automaticamente utilizando aproximação por margens (arredondando o teto máximo para múltiplos de 256 ou 512 tokens). Ex: se uma etapa atinge um teto de 1.830 tokens nas análises prévias, arredondaremos o respectivo `max_seq_length` estritamente para 2.048. Deve sempre ser definido um valor com margem mínima de 512 de folga para o maior volume de tokens encontrado. Essa é uma estratégia importante por dois motivos: garante que todo treino caiba ileso (sem truncamento agressivo da resposta do assistente) e enxuga VRAM severa e precisamente.
+- [ ] Adicionar suporte a Early Stopping configurável, seguindo a lógica de transição de etapas do curriculum.
