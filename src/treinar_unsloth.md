@@ -184,7 +184,8 @@ O sistema inclui monitoramento de recursos em background (`treinar_unsloth_monit
 4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
 5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
 
-### Próximo Passo - pace de treinamento (Curriculum Learning) e simplificação do código
+### Próximo Passo de Desenvolvimento
+> pace de treinamento (Curriculum Learning) e simplificação do código
 
 **Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace).
 
@@ -200,7 +201,7 @@ curriculum:
     alias: "fácil"
     tipo: "full"       # "full" ou "lora" (Se "lora", obedece os sub-parâmetros baseados em `lora` raíz)
     pace_epochs: 1     # (Padrão) Transita após 1 época. Sem `pace_loss`, o loss não causa parada precoce
-    max_seq_length: 512 # [Opcional] Pode sobrepor config geral. Sequências curtas gastam menos VRAM na 1ª fase!
+    max_seq_length: 512 # [Opcional] Pode sobrepor config geral. Sequências curtas gastam menos VRAM na 1ª fase! se omitido ou 0 calcula automaticamente pelos dados
     learning_rate: 0.0003 # [Opcional] Pode forçar um LR independente para esta etapa do curriculum
   - arquivo: "./saidas/ext_qwen_11_medio.csv"
     alias: "médio"
@@ -254,3 +255,6 @@ Para garantir que o código seja limpo, modular e de altíssima manutenibilidade
 ### Ajustes finos
 - [ ] **Ajuste Dinâmico de `max_seq_length`:** Antes de dar início ao processo, analisar a extensão máxima de tokens efetivamente presente no dataset atual da "fase". Caso os dados ultrapassem o valor configurado, deve ser levantada uma exceção, caso o valor se max_seq_length seja omitido ou seja 0, deve-se readequar o limite automaticamente utilizando aproximação por margens (arredondando o teto máximo para múltiplos de 256 ou 512 tokens). Ex: se uma etapa atinge um teto de 1.830 tokens nas análises prévias, arredondaremos o respectivo `max_seq_length` estritamente para 2.048. Deve sempre ser definido um valor com margem mínima de 512 de folga para o maior volume de tokens encontrado. Essa é uma estratégia importante por dois motivos: garante que todo treino caiba ileso (sem truncamento agressivo da resposta do assistente) e enxuga VRAM severa e precisamente.
 - [ ] Adicionar suporte a Early Stopping configurável, seguindo a lógica de transição de etapas do curriculum.
+- [ ] Melhorar o CLI de treinamento e avaliação, listando os arquivos yaml compatíveis para escolha se não for passado como parâmetro. Criando um menu com opções para escolher
+ - treino: Treinar, info para imprimir parãmetros / módulos do modelo para análise ou gerar o yaml padrão
+ - avaliacao: Avaliar, Exportar ou Gerar Predições em Massa.
