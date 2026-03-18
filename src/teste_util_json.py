@@ -16,14 +16,7 @@ Cobre casos básicos, métricas específicas, estruturas aninhadas e casos extre
 import unittest
 import sys
 import os
-
-# Adiciona o diretório do script ao path para imports funcionarem
-script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
-
-# Também adiciona caminhos relativos para quando executado da pasta anterior
-sys.path.extend(['./utils', './src'])
+import util  # garante que a pasta src está no sys.path
 
 from util_json import JsonAnalise, JsonAnaliseDataFrame, Json2Texto
 from util_json_dados import JsonAnaliseDados

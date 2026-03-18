@@ -36,9 +36,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 
 # Configuração de path
-_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
+import util  # garante que a pasta src está no sys.path
 
 
 # ---------------------------------------------------------------------------

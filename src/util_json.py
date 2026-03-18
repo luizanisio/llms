@@ -83,7 +83,7 @@ from copy import deepcopy
 from datetime import datetime
 import threading
 import pandas as pd
-sys.path.extend(['./utils','./src'])
+import util  # garante que a pasta src está no sys.path
 from util import Util
 from util_json_exemplos import JsonAnaliseExemplos
 from util_pandas import UtilPandasExcel

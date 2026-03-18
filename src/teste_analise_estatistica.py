@@ -5,8 +5,7 @@ import pandas as pd
 import numpy as np
 import sys
 import os
-# Ensure we can import from the same directory whether run from root or src
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import util  # garante que a pasta src está no sys.path
 from util_analise_estatistica import AnaliseEstatistica
 
 def test_analise():

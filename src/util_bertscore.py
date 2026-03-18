@@ -58,6 +58,7 @@ import hashlib
 import json
 import gc
 
+import util  # garante que a pasta src está no sys.path
 from util import UtilEnv
 if UtilEnv.carregar_env('.env', pastas=['../','./']):
    pass

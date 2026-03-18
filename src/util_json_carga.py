@@ -24,7 +24,7 @@ import regex as re
 from statistics import harmonic_mean
 
 # Importa JsonAnaliseDados para retornar objeto completo
-sys.path.extend(['./utils', './src'])
+import util  # garante que a pasta src está no sys.path
 from util_json_dados import JsonAnaliseDados
 from util import Util, UtilTextos
 

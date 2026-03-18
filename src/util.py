@@ -28,6 +28,12 @@ try:
     PSUTIL_OK = True
 except:
     PSUTIL_OK = False
+
+# Garante que a pasta src (onde este arquivo reside) está no sys.path,
+# independente do diretório de execução.
+_UTIL_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if _UTIL_SRC_DIR not in sys.path:
+    sys.path.insert(0, _UTIL_SRC_DIR)
 try:
     from dotenv import load_dotenv
     DOTENV_OK = True
@@ -671,9 +677,12 @@ class UtilEnv():
         print(f'{msg_final}>> {msg}', flush=True)
 
     @classmethod
-    def carregar_env(cls, arquivo = '.env', pastas = None):
+    def carregar_env(cls, arquivo = '.env', pastas = None, incluir_pasta_src = True):
         assert DOTENV_OK, 'Instale o pacote: pip install python-dotenv'
-        arq_env = UtilArquivos.encontrar_arquivo(arquivo=arquivo, pastas=pastas)
+        _pastas = list(pastas) if pastas else []
+        if incluir_pasta_src and _UTIL_SRC_DIR not in _pastas:
+            _pastas.append(_UTIL_SRC_DIR)
+        arq_env = UtilArquivos.encontrar_arquivo(arquivo=arquivo, pastas=_pastas or None)
         if arq_env:
             print(f'Env encontrado em {arq_env}')
             from dotenv import load_dotenv

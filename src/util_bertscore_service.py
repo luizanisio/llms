@@ -50,6 +50,7 @@ try:
 except RuntimeError:
     pass  # Já foi definido
 
+import util  # garante que a pasta src está no sys.path
 from util import UtilEnv
 if UtilEnv.carregar_env('.env', pastas=['../','./']):
    pass

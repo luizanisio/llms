@@ -685,9 +685,8 @@ class UtilOllama:
 
 
 if __name__ == '__main__':
-    import sys 
-    sys.path.insert(0, os.path.abspath('..'))
-    sys.path.extend(['../src','./src'])
+    import sys
+    import util  # garante que a pasta src está no sys.path
     from util import UtilEnv
     UtilEnv.carregar_env('.env', pastas=['../', './'])
     # Exemplos de uso:
