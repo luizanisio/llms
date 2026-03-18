@@ -26,8 +26,7 @@ import pandas as pd
 # ============================================================================
 # PROTEÇÃO E SETUP INICIAL
 # ============================================================================
-# Adiciona paths de utilitários
-sys.path.extend(['../src', './src','../../src'])
+import util  # garante que a pasta src está no sys.path (via _UTIL_SRC_DIR em util.py)
 
 # Verificação para multiprocessing (BERTScore safe)
 _IS_MAIN_PROCESS = __name__ == '__main__' or not hasattr(sys.modules.get('__mp_main__', None), '__file__')
@@ -268,84 +267,8 @@ def extrair_campos_unicos(config_metricas):
     return [c for c in todos_campos if not c.startswith('(')]
 
 # ============================================================================
-# Utilitários
+# Utilitários  →  centralizados em util_menu_opcoes.py
 # ============================================================================
-
-import glob
-
-def listar_arquivos_compativeis( pasta = None, limite = 5) -> list[str]:
-    ''' lista na pasta informada, ou a pasta de execução do código, até "limite" arquivos yaml compatíveis
-        para mostrar opções para o usuário selecionar.
-    '''
-    pasta = pasta or '.'
-    arquivos = []
-    # Busca por .yaml e .yml
-    for ext in ['*.yaml', '*.yml']:
-        arquivos.extend(glob.glob(os.path.join(pasta, ext)))
-    
-    # Remove duplicatas e garante que são arquivos
-    arquivos = [f for f in set(arquivos) if os.path.isfile(f)]
-    
-    # Ordena alfabeticamente
-    arquivos = sorted(arquivos)
-    
-    # Retorna até o limite
-    return arquivos[:limite]
-
-def criar_menu_opcoes_de_configuracao() -> str:
-    ''' lista até 5 arquivos yaml, em ordem alfabética, e permite ao usuário selecionar um deles.
-        Retorna o caminho do arquivo selecionado.
-    '''
-    arquivos = listar_arquivos_compativeis(limite=5)
-    
-    if not arquivos:
-        print("\nNenhum arquivo YAML de configuração encontrado.")
-    else:
-        print("\nArquivos de configuração encontrados:")
-    
-    import datetime
-    idx_mais_recente = -1
-    if arquivos:
-        idx_mais_recente = max(range(len(arquivos)), key=lambda i: os.path.getmtime(arquivos[i]))
-    
-    for i, arq in enumerate(arquivos):
-        tempo_mod = os.path.getmtime(arq)
-        data_hora_str = datetime.datetime.fromtimestamp(tempo_mod).strftime('%Y-%m-%d %H:%M:%S')
-        
-        sufixo = ""
-        if i == idx_mais_recente:
-            sufixo = " \033[93m<<< último alterado\033[0m"
-            
-        print(f"[{i+1}] {os.path.basename(arq)} ({data_hora_str}){sufixo}")
-        
-    idx_criar_novo = len(arquivos) + 1
-    idx_sair = len(arquivos) + 2
-    
-    print(f"[{idx_criar_novo}] Criar um novo arquivo de configuração")
-    print(f"[{idx_sair}] Sair sem escolher")
-    
-    escolha_padrao = idx_mais_recente + 1 if arquivos else idx_sair
-    
-    while True:
-        try:
-            msg = f"\nEscolha uma opção (padrão {escolha_padrao}): "
-            escolha = input(msg).strip()
-            
-            if not escolha:
-                opcao = escolha_padrao
-            else:
-                opcao = int(escolha)
-                
-            if 1 <= opcao <= len(arquivos):
-                return arquivos[opcao - 1]
-            elif opcao == idx_criar_novo:
-                return "CRIAR_NOVO"
-            elif opcao == idx_sair:
-                return None
-            else:
-                print("⚠️  Opção inválida.")
-        except ValueError:
-            print("⚠️  Entrada inválida. Digite um número.")
 
 # ============================================================================
 # MAIN
@@ -434,7 +357,18 @@ def main():
     if args.config_file:
         caminho_yaml_abs = os.path.abspath(args.config_file)
     else:
-        escolha = criar_menu_opcoes_de_configuracao()
+        from util_menu_opcoes import escolher_yaml
+        escolha = escolher_yaml(
+            pasta='.',
+            chave_obrigatoria=['modelo_base', 'modelos_comparacao'],
+            titulo="Arquivos de configuração encontrados:",
+            padrao_recente=True,
+            limite=5,
+            opcoes_extras=[
+                ("Criar um novo arquivo de configuração", "CRIAR_NOVO"),
+                ("Sair sem escolher", None)
+            ]
+        )
         if escolha is None:
             print("\nSaindo sem escolher...")
             sys.exit(0)
@@ -463,7 +397,7 @@ def main():
             print(f"Edite-o e execute o script novamente com: python comparar_extracoes.py {nome}")
             sys.exit(0)
         else:
-            caminho_yaml_abs = os.path.abspath(escolha)
+            caminho_yaml_abs = escolha  # já é caminho absoluto retornado por escolher_yaml
 
     base_dir_yaml = os.path.dirname(caminho_yaml_abs)
     config = ler_configuracao(caminho_yaml_abs)
