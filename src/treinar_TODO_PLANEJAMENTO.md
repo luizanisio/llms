@@ -35,18 +35,21 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
 2. **Log de Rastreiamento Unificado e Resumo:** Implementar que todo salvamento utilize métricas gravadas no esquema universal (`curriculum_state.json` constando `{"current_step": 0, "status": "running"}` e `curriculum_metrics.jsonl`), abandonando outros tipos de lógicas divergentes.
 3. **Ajuste Dinâmico de `max_seq_length` e Cache:** Antes de dar início ao processo, codificar a análise da extensão máxima de tokens, considerando que o cálculo deve abranger a **janela de contexto total (entrada + saída gerada)**.
+    * **Conferência de Cache:** Iniciar o treinamento verificando se existe um cache em `{modelo.saida}/_dados_automaticos.json`. O sistema deve conferir se o cache está atualizado e consiste aos dados alvo (por ex. validando a data, tamanho ou hash do dataset) antes de confiar no seu conteúdo (como o `max_seq_length`).
     * O controle respeitará a flag global `treinamento.validar_max_seq_length` (presente em qualquer YAML). Se ela for `false` e o `max_seq_length > 0`, o sistema pula inteiramente o recálculo dos tokens para poupar tempo (confiança estrita no valor passado pelo yaml global ou pelas sobreposições dos aliases no Curriculum).
-    * Caso contrário, ou caso explicitamente `max_seq_length = 0`, varre-se o dataset. Caso os tokens ultrapassem o teto fornecido pelo LLM ou YAML, levanta `Exception`. Se a limitação não engessar, o sistema arredonda para cima com margem teto (múltiplos de 256 com no mínimo 256 de folga entre o máximo identificado e o valor final).
-    * O cálculo pode variar conforme o modelo base. Gravar os valores descobertos em `{modelo.saida}/dados_automaticos.json` para evitar recálculos nas próximas execuções. Exemplo de chaves:
+    * Caso contrário, ou caso explicitamente `max_seq_length = 0` (e o cache esteja desatualizado ou inexistente), varre-se o dataset. Caso os tokens ultrapassem o teto fornecido pelo LLM ou YAML, levanta `Exception`. Se a limitação não engessar, o sistema arredonda para cima com margem teto (múltiplos de 256 com no mínimo 256 de folga entre o máximo identificado e o valor final).
+    * O cálculo pode variar conforme o modelo base. Gravar os valores descobertos em `{modelo.saida}/_dados_automaticos.json` para evitar recálculos nas próximas execuções. Exemplo de chaves:
       ```json
       {
-        "max_seq_length_auto": 4096,
+        "max_seq_length": 4096,
         "yaml_hash": "abcdef...",
         "yaml_atualizacao": "2026-03-18T20:00:00",
-        "alias_facil": {"max_seq_length": 1024}
+        "alias_facil": {"max_seq_length": 1024},
+        "alias_medio": {"max_seq_length": 2048},
+        "alias_dificil": {"max_seq_length": 4096}
       }
       ```
-* **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) a partir do zero com `max_seq_length: 0`. As métricas exportadas e a folga no arquivo `dados_automaticos.json` devem atuar perfeitamente. No teste estressado usando valor absoluto com flag _false_, certificar o "bypass" de CPU/GPU logado.
+* **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) a partir do zero com `max_seq_length: 0`. As métricas exportadas e a folga no arquivo `_dados_automaticos.json` devem atuar perfeitamente. No teste estressado usando valor absoluto com flag _false_, certificar o "bypass" de CPU/GPU logado.
 
 #### Passo 3: Motor Multietapas do Curriculum Learning
 **Objetivo:** Adicionar interpretador do YAML para Curriculum, transições e regras de `LoRA` \leftrightarrow `Full`.
@@ -76,7 +79,9 @@ curriculum:
 4. **Mixando Modelos (LoRA vs Full):**
     * *Transição `[LoRA -> Full]`*: Mesclar base + lora via instanciador e usar o Merge como "o novo `FastLanguageModel` pleno" da segunda fase.
     * *Transição `[Full -> LoRA]`*: A requantização p/ nbits deve ser estritamente reacendida e embutida na modelagem ` FastLanguageModel.get_peft_model()` que sucede a transição.
-* **⏱️ Teste Intermediário:** Simular um YAML com duas etapas restritas em LoRA. Processar passo 1 e pausar; retomar usando reexecução do script pelo CLI, e observar se os modelos são salvos nos seus compartimentos próprios no HD, e o passo 2 continua usando as raízes geradas. 
+5. **Validação de `max_seq_length` por Estágio:**
+    * Quando for treinamento por currículo, o pipeline deve obrigatoriamente realizar a validação e o cálculo do `max_seq_length` em **todas** as etapas sequencialmente. Isso ocorre a menos que a verificação global (`treinamento.validar_max_seq_length`) esteja desativada, sendo indispensável para assegurar que os datasets iterativos de cada fase não ultrapassem a memória antes da execução e mantendo o cache coerente por alias.
+* **⏱️ Teste Intermediário:** Simular um YAML com duas etapas restritas em LoRA. Processar passo 1 e pausar; retomar usando reexecução do script pelo CLI, e observar se os modelos são salvos nos seus compartimentos próprios no HD, e o passo 2 continua usando as raízes geradas. Adicionalmente, verificar se os logs exibem explicitamente a validação (ou leitura do cache) de `max_seq_length` ao assumir a transição da etapa 2.
 
 #### Passo 4: Pace Dinâmico e Ajustes Visuais de Controle
 **Objetivo:** Interpolação analítica final garantindo eficiência via parada prematura baseada no desempenho e legibilidade de análise das métricas via Gráficos evolutivos de múltiplas fases.
