@@ -8,10 +8,11 @@ Treinar Gemma‑3, Deepseek, Llhama, Qwen usando Unsloth
         + TRL‑SFTTrainer de forma configurável por yaml.
 
 Uso:
-    python treinar_unsloth.py CONFIG.yaml [--debug]
+    python treinar_unsloth.py [CONFIG.yaml] [--treinar] [--reset]
 
-* Se o YAML indicado não existir, um template é criado e o script
-  termina — você revisa os valores e executa novamente.
+* Se CONFIG.yaml for omitido, exibe menu interativo para seleção do arquivo.
+* Se nenhuma ação for informada, exibe menu interativo de ações de treinamento.
+* Para avaliação, predição e exportação, use: treinar_unsloth_avaliar.py
 * O código utilizará automaticamente todas as GPUs disponíveis,
   sendo gerenciado pelo ambiente do sistema operacional.
   Para isolar as GPUs que serão usadas, defina a variável de ambiente para o tensorflow CUDA_VISIBLE_DEVICES = <IDs das GPUs>.
@@ -479,6 +480,9 @@ class LLMsTrainer:
         # Cria a pasta de saída se não existir
         os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
         
+        # Auto-calcula max_seq_length se necessário (antes de carregar modelo)
+        self._yaml_config.resolver_max_seq_length()
+        
         # Carrega modelo e tokenizer
         self.model, self.tokenizer = self._load_model()
         
@@ -661,7 +665,8 @@ class LLMsTrainer:
             elif self.force_base:
                 print(f'ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.')
         # Template agora é aplicado pelo TreinarChatTemplate após o carregamento
-        model.print_trainable_parameters()
+        if hasattr(model, 'print_trainable_parameters'):
+            model.print_trainable_parameters()
         
         # Log detalhado do modelo carregado
         model_type = type(model).__name__
@@ -1871,37 +1876,79 @@ def _create_default_cfg(path: str) -> None:
         yaml.safe_dump(template, fp, sort_keys=False, allow_unicode=True)
 
 
-def _verificar_modelo_treinado(yaml_config: YamlTreinamento) -> bool:
-    """
-    Verifica se existe modelo LoRA treinado na pasta de saída.
+def _selecionar_yaml_treino():
+    """Exibe menu de seleção de YAML na pasta atual com opções de treinamento."""
+    from util_menu_opcoes import escolher_yaml
     
-    Returns:
-        True se existir modelo treinado, False caso contrário
-    """
-    output_dir = yaml_config.modelo.saida
-    arq_lora = os.path.join(output_dir, 'adapter_config.json')
-    arq_model = os.path.join(output_dir, 'adapter_model.safetensors')
-    arq_pytorch = os.path.join(output_dir, 'pytorch_model.bin')
-    
-    return os.path.exists(arq_lora) and (os.path.exists(arq_model) or os.path.exists(arq_pytorch))
+    return escolher_yaml(
+        pasta='./',
+        chave_obrigatoria='modelo',
+        titulo='Selecione o arquivo de configuração para treinamento',
+        padrao_recente=True,
+        opcoes_extras=[
+            ("Gerar YAML padrão", "_CRIAR_NOVO"),
+            ("Sair", None),
+        ]
+    )
 
 
-def _perguntar_usar_modelo_base() -> bool:
+def _modo_interativo_treinar(yaml_path: str):
     """
-    Pergunta ao usuário se deseja usar o modelo base para predição.
+    Exibe menu interativo com ações de treinamento.
     
     Returns:
-        True para continuar com modelo base, False para cancelar
+        Nome da ação escolhida ou None se cancelou
     """
-    logger.warning("\n⚠️  ATENÇÃO: Não foi encontrado modelo LoRA treinado na pasta de saída.")
-    logger.info("O modelo base será carregado para predição (sem fine-tuning).\n")
+    from treinar_unsloth_actions import (
+        _exibir_cabecalho_modelo, _verificar_modelo_treinado, _verificar_checkpoints_existem
+    )
+    
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
+    _exibir_cabecalho_modelo(yaml_config)
+    
+    # Status atual
+    tem_modelo = _verificar_modelo_treinado(yaml_config)
+    tem_checkpoints, qtd_checkpoints = _verificar_checkpoints_existem(yaml_config)
+    
+    logger.info("\n📊 STATUS ATUAL:")
+    if tem_modelo:
+        logger.info(f"   ✅ Modelo LoRA treinado encontrado")
+    else:
+        logger.info(f"   ❌ Nenhum modelo treinado encontrado")
+    
+    if tem_checkpoints:
+        logger.info(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)")
+    else:
+        logger.info(f"   💾 Nenhum checkpoint encontrado")
+    
+    # Menu
+    logger.info("\n📋 AÇÕES DE TREINAMENTO:")
+    logger.info("   1. treinar       - Iniciar ou continuar treinamento")
+    logger.info("   2. reset+treinar - Limpar tudo e treinar do zero")
+    logger.info("   3. reset         - Limpar treinamento atual")
+    logger.info("   0. sair          - Cancelar e sair")
     
     try:
-        resposta = input("Deseja continuar com o modelo base? [s/N]: ").strip().lower()
-        return resposta in ('s', 'sim', 'y', 'yes')
+        escolha = input("\n❓ Digite o número ou nome da ação: ").strip().lower()
+        
+        mapa_acoes = {
+            '1': 'treinar', 'treinar': 'treinar', 'train': 'treinar',
+            '2': 'reset+treinar',
+            '3': 'reset', 'reset': 'reset',
+            '0': None, 'sair': None, 'exit': None, 'quit': None,
+        }
+        
+        acao = mapa_acoes.get(escolha)
+        
+        if escolha not in mapa_acoes:
+            logger.warning(f"Opção inválida: '{escolha}'")
+            return None
+        
+        return acao
+        
     except (KeyboardInterrupt, EOFError):
         logger.info("\nOperação cancelada pelo usuário.")
-        return False
+        return None
 
 
 def _cli() -> None:
@@ -1909,110 +1956,60 @@ def _cli() -> None:
         description="Fine-tune LLMs (Gemma, Qwen, Llama, DeepSeek) com configuração YAML.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Ações disponíveis:
-  --info            Informações gerais do treinamento e modelo
-  --stats           Relatório estatístico com tokens de entrada/saída e boxplots
-  --treinar         Inicia ou reinicia o treinamento
+Ações de treinamento:
+  --treinar         Inicia ou continua o treinamento
   --reset           Limpa o treinamento atual (com confirmação)
-  --predict         Gera predições para todos os subsets (treino, validacao, teste)
-  --predict-treino  Gera predições apenas do subset de treino
-  --predict-validacao  Gera predições apenas do subset de validação
-  --predict-teste   Gera predições apenas do subset de teste
+  --reset --treinar Limpa e inicia treinamento do zero
+  --dicas           Injeta comentários de dicas no YAML de configuração
   
-Sem ação: modo interativo que pergunta qual ação executar.
+Sem argumentos: modo interativo (seleciona YAML e ação via menu).
+
+Para avaliação, predição e exportação, use: treinar_unsloth_avaliar.py
 
 Exemplos:
-  %(prog)s config.yaml              # Modo interativo
-  %(prog)s config.yaml --info       # Informações detalhadas
-  %(prog)s config.yaml --treinar    # Inicia treinamento
-  %(prog)s config.yaml --reset --treinar  # Limpa e treina
-  %(prog)s config.yaml --predict    # Gera predições de todos os subsets
-  %(prog)s config.yaml --modelo 5   # Testa 5 predições interativas
+  %(prog)s                                 # Modo interativo completo
+  %(prog)s config.yaml                     # Seleciona ação via menu
+  %(prog)s config.yaml --treinar           # Inicia treinamento
+  %(prog)s config.yaml --reset --treinar   # Limpa e treina do zero
 """
     )
-    parser.add_argument("config", help="Arquivo YAML com as configurações.")
+    parser.add_argument("config", nargs='?', default=None,
+                        help="Arquivo YAML com as configurações (opcional: se omitido, exibe menu)")
     
-    # Grupo de ações (mutuamente exclusivas, exceto reset+treinar)
-    parser.add_argument("--info", action="store_true", 
-                        help="Modo info: exibe estrutura do dataset e configuração sem treinar")
-    parser.add_argument("--stats", action="store_true",
-                        help="Gera relatório estatístico de tokens com boxplots")
+    # Ações de treinamento
     parser.add_argument("--treinar", action="store_true",
                         help="Inicia ou continua o treinamento")
     parser.add_argument("--reset", action="store_true",
                         help="Limpa treinamento atual (checkpoints e modelo LoRA)")
     
-    # Ações de predição
-    parser.add_argument("--predict", action="store_true",
-                        help="Gera predições para todos os subsets (treino, validacao, teste)")
-    parser.add_argument("--predict-treino", action="store_true",
-                        help="Gera predições apenas do subset de treino")
-    parser.add_argument("--predict-validacao", action="store_true",
-                        help="Gera predições apenas do subset de validação")
-    parser.add_argument("--predict-teste", action="store_true",
-                        help="Gera predições apenas do subset de teste")
+    # Injeção de dicas
+    parser.add_argument("--dicas", action="store_true", 
+                        help="Injeta comentários de dicas no YAML de configuração")
     
-    # Ação de merge
-    parser.add_argument("--merge", action="store_true",
-                        help="Exporta e realiza merge do modelo treinado com o base")
-    parser.add_argument("--quant", type=str, default=None,
-                        help="Método de quantização para merge: 16bit, 4bit, q4_k_m, q8_0, f16 (padrão: interativo ou 16bit)")
-    
-    # Opções modificadoras
-    parser.add_argument("--base", action="store_true",
-                        help="Força o uso do modelo base (ignora LoRA treinado) para info e predict")
-    
-    # Opções extras (mantidas do CLI anterior)
-    parser.add_argument("--modelo", type=int, nargs='?', const=1, 
-                        help="Modo teste: exibe exemplos de prompt e resposta do modelo treinado (padrão: 1 exemplo)")
+    # Opções
     parser.add_argument("--log-level", type=str, default=None, 
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
                         help="Nível de log (sobrescreve misc.log_level do YAML)")
     
-
-    # Retrocompatibilidade: mantém --debug como alias para --info
-    parser.add_argument("--debug", action="store_true", 
-                        help=argparse.SUPPRESS)  # Oculto, usa --info
-
-    # Injeção de dicas
-    parser.add_argument("--dicas", action="store_true", 
-                        help="Injeta comentários de dicas no YAML de configuração")
-
-    
     args = parser.parse_args()
 
-    cfg_path = args.config or "./exemplo.yaml"
+    # --- Resolve YAML (menu se não fornecido) ---
+    cfg_path = args.config
     
-    # Carrega configuração do YAML para determinar log_level padrão
-    log_level_padrao = "INFO"
-    if os.path.exists(cfg_path):
-        try:
-            yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
-            log_level_padrao = yaml_config.misc.log_level
-        except Exception:
-            pass  # Usa padrão INFO se falhar
+    if cfg_path is None:
+        resultado = _selecionar_yaml_treino()
+        if resultado == "_CRIAR_NOVO":
+            nome = "novo_treinamento.yaml"
+            _create_default_cfg(nome)
+            logger.info(
+                f"✅ Arquivo de configuração criado: '{nome}'.\n"
+                "   Revise os parâmetros e execute novamente."
+            )
+            sys.exit(0)
+        if resultado is None:
+            sys.exit(0)
+        cfg_path = resultado
     
-
-    # Log level configuration...
-    nivel_log = args.log_level if args.log_level else log_level_padrao
-    configurar_logging(nivel=nivel_log)
-    
-    logger.debug(f"Log level configurado: {nivel_log} (CLI: {args.log_level}, YAML: {log_level_padrao})")
-
-
-    # Injeção de dicas antes de qualquer validação de CUDA ou criação de template
-    if args.dicas:
-        from treinar_unsloth_actions import executar_injetar_dicas
-        executar_injetar_dicas(cfg_path)
-
-    # informações sobre CUDA
-
-    if torch.cuda.is_available():
-        logger.info(f"CUDA disponível — {torch.cuda.device_count()} GPU(s) detectada(s)")
-    else:
-        logger.warning("CUDA não disponível — treinamento será na CPU (muito mais lento)")
-
-    # Cria YAML template se não existir
     if not os.path.exists(cfg_path):
         _create_default_cfg(cfg_path)
         logger.info(
@@ -2020,104 +2017,52 @@ Exemplos:
             "Revise os parâmetros e execute novamente para iniciar o treinamento."
         )
         sys.exit(0)
-
-    # Importa módulo de ações
-    from treinar_unsloth_actions import (
-        executar_info, executar_stats, executar_treinar, 
-        executar_reset, executar_predict, executar_merge, modo_interativo, executar_acao
-    )
     
-    # Retrocompatibilidade: --debug -> --info
-    if args.debug:
-        args.info = True
-        logger.warning("⚠️  O parâmetro --debug está deprecado. Use --info.")
-
-
-
-    # Modo --modelo: teste de predições (fluxo separado)
-    if args.modelo:
-        # Carrega apenas a configuração YAML para verificar modelo
+    # --- Configura logging ---
+    log_level_padrao = "INFO"
+    try:
         yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
-        
-        usar_base = getattr(args, 'base', False)
-        
-        if not usar_base:
-            if not _verificar_modelo_treinado(yaml_config):
-                if not _perguntar_usar_modelo_base():
-                    logger.info("Operação cancelada. Execute um treinamento antes de testar o modelo.")
-                    sys.exit(0)
-                else:
-                    logger.info("Continuando com modelo base (sem fine-tuning)...\n")
-                    usar_base = True # Usuário confirmou usar base na pergunta
-            else:
-                logger.info(f"✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}")
-        else:
-            logger.info("ℹ️  Opção --base ativada: Forçando uso do modelo base.")
+        log_level_padrao = yaml_config.misc.log_level
+    except Exception:
+        pass
 
-        trainer = LLMsTrainer(cfg_path, force_base=usar_base)
-        n_exemplos = args.modelo if isinstance(args.modelo, int) else 1
-        resultado = trainer.testar_predicoes(n_exemplos=n_exemplos, temperatura=0.2, max_new_tokens=512)
-        
-        # Exibe resumo das métricas de memória
-        if resultado.get('metricas_memoria'):
-            metricas = resultado['metricas_memoria']
-            logger.info("\n📊 RESUMO DE USO DE MEMÓRIA:")
-            if 'ram' in metricas:
-                logger.info(f"   RAM: máx={metricas['ram'].get('max_gb', 0):.1f} GB, média={metricas['ram'].get('media_gb', 0):.1f} GB")
-            if 'gpu' in metricas and metricas['gpu'].get('num_gpus', 0) > 0:
-                logger.info(f"   GPU: máx={metricas['gpu'].get('max_gb', 0):.1f} GB, média={metricas['gpu'].get('media_gb', 0):.1f} GB ({metricas['gpu'].get('num_gpus', 0)} GPU(s))")
-        
-        sys.exit(0)
+    nivel_log = args.log_level if args.log_level else log_level_padrao
+    configurar_logging(nivel=nivel_log)
+    
+    logger.debug(f"Log level configurado: {nivel_log} (CLI: {args.log_level}, YAML: {log_level_padrao})")
 
-    # Determina subsets para predict (se houver)
-    predict_subsets = None
-    has_predict = False
-    
-    if getattr(args, 'predict_treino', False):
-        predict_subsets = predict_subsets or []
-        predict_subsets.append('treino')
-        has_predict = True
-    if getattr(args, 'predict_validacao', False):
-        predict_subsets = predict_subsets or []
-        predict_subsets.append('validacao')
-        has_predict = True
-    if getattr(args, 'predict_teste', False):
-        predict_subsets = predict_subsets or []
-        predict_subsets.append('teste')
-        has_predict = True
-    if args.predict:
-        has_predict = True
-        # predict_subsets = None significa todos
-    
-    # Determina ação a executar
-    if args.info:
-        executar_info(cfg_path)
-    elif args.stats:
-        executar_stats(cfg_path)
-    elif args.merge:
-        executar_merge(cfg_path, quantizacao=args.quant)
+    # --- Injeção de dicas (antes de CUDA) ---
+    if args.dicas:
+        from treinar_unsloth_actions import executar_injetar_dicas
+        executar_injetar_dicas(cfg_path)
+
+    # --- Info CUDA ---
+    if torch.cuda.is_available():
+        logger.info(f"CUDA disponível — {torch.cuda.device_count()} GPU(s) detectada(s)")
     else:
-        executed_action = False
-        
-        # 1. Executa Treinamento (com ou sem Reset)
+        logger.warning("CUDA não disponível — treinamento será na CPU (muito mais lento)")
+
+    # --- Importa ações de treinamento ---
+    from treinar_unsloth_actions import executar_treinar, executar_reset
+    
+    # --- Identifica se há ação explícita ---
+    tem_acao_explicita = args.treinar or args.reset
+    
+    if not tem_acao_explicita:
+        # Modo interativo: menu de ações de treinamento
+        acao = _modo_interativo_treinar(cfg_path)
+        if acao == 'treinar':
+            executar_treinar(cfg_path, reset=False)
+        elif acao == 'reset+treinar':
+            executar_treinar(cfg_path, reset=True)
+        elif acao == 'reset':
+            executar_reset(cfg_path, confirmar=True)
+    else:
+        # Ação explícita via CLI
         if args.treinar:
             executar_treinar(cfg_path, reset=args.reset)
-            executed_action = True
-        # 2. Se não treinou mas pediu reset
         elif args.reset:
             executar_reset(cfg_path, confirmar=True)
-            executed_action = True
-            
-        # 3. Executa Predição (pode ser executado após treino ou reset)
-        if has_predict:
-            executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
-            executed_action = True
-            
-        # 4. Se nenhuma ação foi executada via CLI, entra no modo interativo
-        if not executed_action:
-            acao = modo_interativo(cfg_path)
-            if acao:
-                executar_acao(acao, cfg_path)
 
 
 

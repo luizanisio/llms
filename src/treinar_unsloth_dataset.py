@@ -80,7 +80,7 @@ class DatasetTreinamento:
     
     def parear_arquivos(self) -> List[Dict[str, Any]]:
         """
-        Parea arquivos de entrada com arquivos de predição pelo ID.
+        Parea arquivos de entrada com arquivos do gold dataset pelo ID.
         """
         if self.tipo_entrada != TIPO_ENTRADA_PASTAS or not self.pastas:
             raise ValueError("Método parear_arquivos só disponível para tipo_entrada='pastas'")
@@ -88,49 +88,49 @@ class DatasetTreinamento:
         if self._arquivos_pareados is not None:
             return self._arquivos_pareados
         
-        # Lista arquivos de predição
-        arquivos_predicao = self.listar_arquivos_por_mascara(
-            self.pastas.predicao.pasta,
-            self.pastas.predicao.mascara
+        # Lista arquivos do gold dataset (saídas esperadas)
+        arquivos_gold = self.listar_arquivos_por_mascara(
+            self.pastas.dataset.pasta,
+            self.pastas.dataset.mascara
         )
         
         # Verifica modo de entrada (dataframe ou pasta)
         usa_dataframe = bool(self.pastas.entrada.dataframe)
         
         if usa_dataframe:
-            ids_validos = set(arquivos_predicao.keys())
+            ids_validos = set(arquivos_gold.keys())
             
             self._arquivos_pareados = sorted([
                 {
                     "id": id_arq,
                     "entrada": None,  # Será carregado do dataframe
-                    "predicao": arquivos_predicao[id_arq]
+                    "predicao": arquivos_gold[id_arq]
                 }
                 for id_arq in ids_validos
             ], key=lambda x: x["id"])
             
-            print(f"✅ {len(self._arquivos_pareados)} arquivo(s) de predição encontrados (entrada via dataframe)")
+            print(f"✅ {len(self._arquivos_pareados)} arquivo(s) do gold dataset encontrados (entrada via dataframe)")
         else:
             arquivos_entrada = self.listar_arquivos_por_mascara(
                 self.pastas.entrada.pasta,
                 self.pastas.entrada.mascara
             )
             
-            ids_comum = set(arquivos_entrada.keys()) & set(arquivos_predicao.keys())
+            ids_comum = set(arquivos_entrada.keys()) & set(arquivos_gold.keys())
             
             ids_so_entrada = set(arquivos_entrada.keys()) - ids_comum
-            ids_so_predicao = set(arquivos_predicao.keys()) - ids_comum
+            ids_so_gold = set(arquivos_gold.keys()) - ids_comum
             
             if ids_so_entrada:
-                print(f"⚠️  {len(ids_so_entrada)} arquivo(s) de entrada sem par de predição")
-            if ids_so_predicao:
-                print(f"⚠️  {len(ids_so_predicao)} arquivo(s) de predição sem par de entrada")
+                print(f"⚠️  {len(ids_so_entrada)} arquivo(s) de entrada sem par no gold dataset")
+            if ids_so_gold:
+                print(f"⚠️  {len(ids_so_gold)} arquivo(s) do gold dataset sem par de entrada")
             
             self._arquivos_pareados = sorted([
                 {
                     "id": id_arq,
                     "entrada": arquivos_entrada[id_arq],
-                    "predicao": arquivos_predicao[id_arq]
+                    "predicao": arquivos_gold[id_arq]
                 }
                 for id_arq in ids_comum
             ], key=lambda x: x["id"])
@@ -225,9 +225,18 @@ class DatasetTreinamento:
         if arquivo_divisao and os.path.isfile(arquivo_divisao):
             print(f"📂 Carregando divisão de: {arquivo_divisao}")
             df = pd.read_csv(arquivo_divisao)
-            
+            # Migração automática de nomes de colunas antigos
+            if "id_arquivo" not in df.columns and "id" in df.columns:
+                print("🔄 Migrando coluna 'id' → 'id_arquivo'...")
+                df.rename(columns={"id": "id_arquivo"}, inplace=True)
+            if "alvo" not in df.columns:
+                for col_antiga in ("divisão", "divisao", "divisões", "divisoes", "grupo"):
+                    if col_antiga in df.columns:
+                        print(f"🔄 Migrando coluna '{col_antiga}' → 'alvo'...")
+                        df.rename(columns={col_antiga: "alvo"}, inplace=True)
+                        break
             if "id_arquivo" not in df.columns or "alvo" not in df.columns:
-                raise ValueError(f"Arquivo de divisão deve ter colunas 'id_arquivo' e 'alvo'")
+                raise ValueError(f"Arquivo de divisão deve ter colunas 'id_arquivo' e 'alvo', nenhuma opção de migração encontrada. Colunas atuais: {df.columns.tolist()}")
             
             self._dados_divisao = df
             

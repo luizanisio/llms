@@ -154,8 +154,8 @@ class ConfigTreinamento:
             raise ValueError(f"grad_batch_size deve ser > 0, recebido: {self.grad_batch_size}")
         if self.epochs <= 0:
             raise ValueError(f"epochs deve ser > 0, recebido: {self.epochs}")
-        if self.max_seq_length <= 0:
-            raise ValueError(f"max_seq_length deve ser > 0, recebido: {self.max_seq_length}")
+        if self.max_seq_length < 0:
+            raise ValueError(f"max_seq_length deve ser >= 0 (0 = automático), recebido: {self.max_seq_length}")
         if self.nbits not in {0, 4, 8, None}:
             raise ValueError(f"nbits deve ser 0, 4, 8 ou None, recebido: {self.nbits}")
 
@@ -188,14 +188,27 @@ class ConfigMisc:
 
 @dataclass
 class ConfigPredicao:
-    """Configuração da pasta de predição (saídas esperadas)."""
+    """Configuração da pasta de predições (saída gerada pelo modelo para avaliação)."""
+    pasta: str = ""
+    mascara: str = "*.txt"  # Padrão glob para filtrar arquivos
+    _validar_caminhos: bool = field(default=True, repr=False)
+    
+    def __post_init__(self):
+        # Pasta de predição é saída para avaliação — cria se não existir
+        if self._validar_caminhos and self.pasta and not os.path.isdir(self.pasta):
+            os.makedirs(self.pasta, exist_ok=True)
+
+
+@dataclass
+class ConfigGold:
+    """Configuração da pasta com o gold dataset (saídas esperadas para treino)."""
     pasta: str = ""
     mascara: str = "*.txt"  # Padrão glob para filtrar arquivos
     _validar_caminhos: bool = field(default=True, repr=False)
     
     def __post_init__(self):
         if self._validar_caminhos and self.pasta and not os.path.isdir(self.pasta):
-            raise ValueError(f"Pasta de predição não encontrada: '{self.pasta}'")
+            raise ValueError(f"Pasta do gold dataset não encontrada: '{self.pasta}'")
 
 
 @dataclass
@@ -263,6 +276,7 @@ class ConfigValidacao:
 class ConfigPastas:
     """Configuração completa para modo 'pastas'."""
     predicao: ConfigPredicao = field(default_factory=ConfigPredicao)
+    dataset: ConfigGold = field(default_factory=ConfigGold)
     entrada: ConfigEntrada = field(default_factory=ConfigEntrada)
     divisao: ConfigDivisao = field(default_factory=ConfigDivisao)
     validacao: ConfigValidacao = field(default_factory=ConfigValidacao)
@@ -321,6 +335,7 @@ class YamlTreinamento:
         self.yaml_path = yaml_path
         self.validar_caminhos = validar_caminhos
         self._yaml_dir = os.path.dirname(os.path.abspath(yaml_path))
+        self._max_seq_auto = False  # Flag: max_seq_length foi calculado automaticamente
         
         # Carrega YAML bruto
         self._raw_config = self._carregar_yaml()
@@ -432,12 +447,14 @@ class YamlTreinamento:
         
         # Processa subseções
         predicao_raw = pastas_raw.get("predicao", {})
+        dataset_gold_raw = pastas_raw.get("dataset", {})
         entrada_raw = pastas_raw.get("entrada", {})
         divisao_raw = pastas_raw.get("divisao", {})
         validacao_raw = pastas_raw.get("validacao", {})
         
         # Resolve caminhos (sempre resolve, validação é controlada pelo _validar_caminhos)
         pasta_predicao = self._resolver_caminho(predicao_raw.get("pasta", ""))
+        pasta_gold = self._resolver_caminho(dataset_gold_raw.get("pasta", ""))
         # Resolve caminhos de entrada (pasta ou dataframe)
         pasta_entrada = self._resolver_caminho(entrada_raw.get("pasta", ""))
         dataframe_path = self._resolver_caminho(entrada_raw.get("dataframe", ""))
@@ -450,6 +467,15 @@ class YamlTreinamento:
         predicao = ConfigPredicao(
             pasta=pasta_predicao,
             mascara=predicao_raw.get("mascara", r"^(.+)\.txt$"),
+            _validar_caminhos=self.validar_caminhos
+        )
+        
+        # Gold dataset (obrigatório)
+        if not pasta_gold:
+            raise ValueError("Seção 'pastas.dataset.pasta' é obrigatória (pasta com o gold dataset)")
+        gold = ConfigGold(
+            pasta=pasta_gold,
+            mascara=dataset_gold_raw.get("mascara", "*.txt"),
             _validar_caminhos=self.validar_caminhos
         )
         
@@ -506,6 +532,7 @@ class YamlTreinamento:
         
         return ConfigPastas(
             predicao=predicao,
+            dataset=gold,
             entrada=entrada,
             divisao=divisao,
             validacao=validacao
@@ -569,7 +596,7 @@ class YamlTreinamento:
             batch_size=int(treino_raw.get("batch_size", 2)),
             grad_batch_size=int(treino_raw.get("grad_batch_size", 5)),
             epochs=int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1),
-            max_seq_length=int(treino_raw.get("max_seq_length", 4096)),
+            max_seq_length=int(treino_raw.get("max_seq_length") or 0),
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
             save_checkpoints=treino_raw.get("save_checkpoints", True) in {True, "true", "True", 1, "1", "sim"},
             resume_from_checkpoint=treino_raw.get("resume_from_checkpoint", True) in {True, "true", "True", 1, "1", "sim"},
@@ -601,6 +628,82 @@ class YamlTreinamento:
     # Métodos Públicos
     # ---------------------------------------------------------------------------
 
+    @staticmethod
+    def _arredondar_seq_length(valor: int) -> int:
+        """
+        Arredonda um valor de tokens para o próximo 'range' padrão.
+        Ranges: 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, ...
+        """
+        ranges = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+        for r in ranges:
+            if valor <= r:
+                return r
+        # Acima do maior range, arredonda para o próximo múltiplo de 8192
+        return ((valor // 8192) + 1) * 8192
+
+    def calcular_max_seq_length(self) -> int:
+        """
+        Calcula max_seq_length automaticamente com base nos tokens das mensagens do dataset.
+        Usa o tokenizer do modelo base para contagem precisa.
+        Retorna o valor arredondado para o próximo range padrão.
+        """
+        print("🔄 max_seq_length=0: calculando automaticamente a partir do dataset...")
+        
+        # Coleta textos completos (user + assistant) de todos os alvos
+        todos_textos = []
+        
+        if self.tipo_entrada == TIPO_ENTRADA_PASTAS:
+            for alvo in ("treino", "validacao", "teste"):
+                try:
+                    mensagens = self.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
+                    for msg in mensagens:
+                        if isinstance(msg, dict) and "messages" in msg:
+                            texto_completo = " ".join(
+                                m.get("content", "") for m in msg["messages"]
+                            )
+                            todos_textos.append(texto_completo)
+                except Exception:
+                    continue
+        else:
+            # Modo dataset: não é possível calcular sem carregar o arquivo
+            print("   ⚠️ Cálculo automático não disponível para tipo_entrada='dataset'. Usando 4096.")
+            return 4096
+        
+        if not todos_textos:
+            print("   ⚠️ Nenhuma mensagem encontrada. Usando 4096.")
+            return 4096
+        
+        # Tenta usar tokenizer para contagem precisa
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(self.modelo.base, use_fast=True)
+            comprimentos = [len(tokenizer.encode(t)) for t in todos_textos]
+            metodo = "tokenizer"
+        except Exception:
+            # Fallback: estimativa por caracteres (1 token ≈ 4 chars)
+            comprimentos = [len(t) // 4 for t in todos_textos]
+            metodo = "estimativa (chars/4)"
+        
+        max_tokens = max(comprimentos)
+        media_tokens = sum(comprimentos) / len(comprimentos)
+        
+        # Usa o máximo encontrado como referência
+        valor_calculado = self._arredondar_seq_length(max_tokens)
+        
+        print(f"   📊 {len(comprimentos)} registros analisados ({metodo})")
+        print(f"   📊 Tokens: max={max_tokens}, média={media_tokens:.0f}")
+        print(f"   ✅ max_seq_length calculado: {max_tokens} → {valor_calculado}")
+        
+        return valor_calculado
+
+    def resolver_max_seq_length(self) -> None:
+        """
+        Se max_seq_length == 0, calcula automaticamente e atualiza a configuração.
+        Deve ser chamado antes de carregar o modelo.
+        """
+        if self.treinamento.max_seq_length == 0:
+            self.treinamento.max_seq_length = self.calcular_max_seq_length()
+            self._max_seq_auto = True
     
     
     def info(self) -> str:
@@ -621,7 +724,7 @@ class YamlTreinamento:
             f"  Batch size: {self.treinamento.batch_size}",
             f"  Grad batch size: {self.treinamento.grad_batch_size}",
             f"  Épocas: {self.treinamento.epochs}",
-            f"  Max seq length: {self.treinamento.max_seq_length}",
+            f"  Max seq length: {self.treinamento.max_seq_length}{' (automático)' if self._max_seq_auto else ''}",
             f"  LoRA r: {self.lora.r}",
             f"  Learning rate: {self.treinamento.learning_rate}",
             f"  Train on responses only: {self.treinamento.train_on_responses_only}",
@@ -632,7 +735,8 @@ class YamlTreinamento:
                 "",
                 "📁 PASTAS:",
                 f"  Entrada: {self.pastas.entrada.pasta}",
-                f"  Predição: {self.pastas.predicao.pasta}",
+                f"  Gold Dataset: {self.pastas.dataset.pasta}",
+                f"  Predição: {self.pastas.predicao.pasta or '(será criado)'}",
                 f"  Divisão: {self.pastas.divisao.arquivo or '(será criado)'}",
                 f"  Validar IDs: {self.pastas.divisao.validar_ids}",
                 f"  Proporções (yaml): treino={self.pastas.divisao.proporcao[0]}, validacao={self.pastas.divisao.proporcao[1]}, teste={self.pastas.divisao.proporcao[2]}",
@@ -684,6 +788,10 @@ def criar_yaml_exemplo_pastas(caminho: str) -> None:
             "predicao": {
                 "pasta": "./saidas/predicoes",
                 "mascara": r"^(.+)\.txt$"
+            },
+            "dataset": {
+                "pasta": "./saidas/gold",
+                "mascara": "*.txt"
             },
             "entrada": {
                 "pasta": "./saidas/textos",
@@ -964,7 +1072,7 @@ class ValidadorInterativo:
         return bool(saida)
     
     def validar_pastas_entrada(self) -> bool:
-        """Valida pastas de entrada/predição para modo pastas."""
+        """Valida pastas de entrada e gold dataset para modo pastas."""
         formatos = self._config.get("formatos", {})
         if formatos.get("tipo_entrada") != "pastas":
             return True
@@ -972,11 +1080,11 @@ class ValidadorInterativo:
         pastas = self._config.get("pastas", {})
         problemas = []
         
-        # Verifica pasta de predição
-        pred_pasta = pastas.get("predicao", {}).get("pasta", "")
-        pred_abs = self._resolver_caminho(pred_pasta) if pred_pasta else ""
-        if pred_pasta and not os.path.isdir(pred_abs):
-            problemas.append(("predição", pred_pasta, pred_abs, ["pastas", "predicao", "pasta"]))
+        # Verifica pasta do gold dataset (saídas esperadas para treino)
+        gold_pasta = pastas.get("dataset", {}).get("pasta", "")
+        gold_abs = self._resolver_caminho(gold_pasta) if gold_pasta else ""
+        if gold_pasta and not os.path.isdir(gold_abs):
+            problemas.append(("gold dataset", gold_pasta, gold_abs, ["pastas", "dataset", "pasta"]))
         
         # Verifica pasta de entrada
         ent_pasta = pastas.get("entrada", {}).get("pasta", "")

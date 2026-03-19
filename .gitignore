@@ -201,3 +201,6 @@ experimentos/summa_qualifica/treinados**
 .agent**
 experimentos/summa_qualifica/saidas_300**
 experimentos/summa_qualifica/saidas_fold11**
+experimentos/summa_qualifica/treino_simples**
+experimentos/summa_qualifica/summa_data/pecas_exportadas_textos.parquet
+experimentos/summa_qualifica/summa_data/prompt_summa_raw.txt

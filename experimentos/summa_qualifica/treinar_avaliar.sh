@@ -4,5 +4,5 @@ export PYTORCH_ALLOC_CONF=expandable_segments:True
 #if [ $# -eq 0 ]; then
 #    python ../../src/treinar_unsloth.py treinar_qwen15.yaml --info
 #else
-python ../../src/treinar_unsloth.py "$@"
+python ../../src/treinar_unsloth_avaliar.py "$@"
 #fi
