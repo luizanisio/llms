@@ -48,7 +48,10 @@ from util import UtilTextos as Util  # UtilTextos tem mensagem_to_json
 
 TIPO_ENTRADA_PASTAS = "pastas"
 TIPO_ENTRADA_DATASET = "dataset"
-TIPOS_ENTRADA_VALIDOS = {TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET}
+TIPO_ENTRADA_CURRICULUM = "curriculum"
+TIPOS_ENTRADA_VALIDOS = {TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPO_ENTRADA_CURRICULUM}
+# Tipos que usam infraestrutura de pastas (entrada, dataset, predicao, validacao)
+TIPOS_BASEADOS_EM_PASTAS = {TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_CURRICULUM}
 
 FORMATO_SAIDA_JSON = "json"
 FORMATO_SAIDA_TEXTO = "texto"
@@ -145,6 +148,7 @@ class ConfigTreinamento:
     weight_decay: float = 0.01
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "linear"
+    validar_max_seq_length: bool = True  # Se False e max_seq_length>0, pula recálculo de tokens
     
     def __post_init__(self):
         # Validações de valores
@@ -346,8 +350,11 @@ class YamlTreinamento:
         self.pastas: Optional[ConfigPastas] = None
         self.dataset: Optional[ConfigDataset] = None
         
-        if self.tipo_entrada == TIPO_ENTRADA_PASTAS:
-            self.pastas = self._processar_pastas()
+        if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+            if self.tipo_entrada == TIPO_ENTRADA_CURRICULUM:
+                self.pastas = self._processar_pastas(secao="curriculum")
+            else:
+                self.pastas = self._processar_pastas()
         else:
             self.dataset = self._processar_dataset()
             
@@ -365,6 +372,21 @@ class YamlTreinamento:
             config_formatos=self.formatos,
             config_misc=self.misc
         )
+        
+        # Pipeline Universal: normaliza configuração em lista de etapas
+        from treinar_unsloth_pipeline import construir_etapas
+        self._curriculum: list = construir_etapas(self)
+        
+        # Para curriculum: usa o arquivo da primeira etapa como divisao padrão
+        if self.tipo_entrada == TIPO_ENTRADA_CURRICULUM and self.pastas and self._curriculum:
+            primeira = self._curriculum[0]
+            if primeira.arquivo and not self.pastas.divisao.arquivo:
+                self.pastas.divisao.arquivo = self._resolver_caminho(primeira.arquivo)
+    
+    @property
+    def curriculum(self) -> list:
+        """Retorna lista de etapas do curriculum (sempre >= 1 elemento)."""
+        return self._curriculum
     
     @property
     def tipo_entrada(self) -> str:
@@ -439,17 +461,28 @@ class YamlTreinamento:
             env_chave_criptografia=misc_raw.get("env_chave_criptografia", "")
         )
     
-    def _processar_pastas(self) -> ConfigPastas:
-        """Processa a seção 'pastas' do YAML."""
-        pastas_raw = self._raw_config.get("pastas", {})
+    def _processar_pastas(self, secao: str = "pastas") -> ConfigPastas:
+        """Processa a seção 'pastas' (ou 'curriculum') do YAML.
+        
+        Para tipo_entrada='curriculum', a seção 'curriculum' tem a mesma
+        estrutura que 'pastas', mas 'divisao' é uma lista de etapas.
+        
+        Args:
+            secao: Nome da seção no YAML ('pastas' ou 'curriculum')
+        """
+        pastas_raw = self._raw_config.get(secao, {})
         if not isinstance(pastas_raw, dict):
-            raise ValueError("Seção 'pastas' deve ser um dicionário")
+            raise ValueError(f"Seção '{secao}' deve ser um dicionário")
         
         # Processa subseções
         predicao_raw = pastas_raw.get("predicao", {})
         dataset_gold_raw = pastas_raw.get("dataset", {})
         entrada_raw = pastas_raw.get("entrada", {})
+        # Para curriculum, divisao_raw é uma lista de etapas — extrair apenas campos de divisão
         divisao_raw = pastas_raw.get("divisao", {})
+        if isinstance(divisao_raw, list):
+            # Modo curriculum: divisao é a lista de etapas, não há arquivo único
+            divisao_raw = {}
         validacao_raw = pastas_raw.get("validacao", {})
         
         # Resolve caminhos (sempre resolve, validação é controlada pelo _validar_caminhos)
@@ -472,7 +505,7 @@ class YamlTreinamento:
         
         # Gold dataset (obrigatório)
         if not pasta_gold:
-            raise ValueError("Seção 'pastas.dataset.pasta' é obrigatória (pasta com o gold dataset)")
+            raise ValueError(f"Seção '{secao}.dataset.pasta' é obrigatória (pasta com o gold dataset)")
         gold = ConfigGold(
             pasta=pasta_gold,
             mascara=dataset_gold_raw.get("mascara", "*.txt"),
@@ -603,7 +636,8 @@ class YamlTreinamento:
             warmup_steps=int(treino_raw.get("warmup_steps", 5)),
             nbits=nbits,
             seed=int(treino_raw.get("seed", 3407)),
-            train_on_responses_only=treino_raw.get("train_on_responses_only", True) in {True, "true", "True", 1, "1", "sim"}
+            train_on_responses_only=treino_raw.get("train_on_responses_only", True) in {True, "true", "True", 1, "1", "sim"},
+            validar_max_seq_length=treino_raw.get("validar_max_seq_length", True) in {True, "true", "True", 1, "1", "sim"}
         )
 
     def _processar_lora(self) -> ConfigLora:
@@ -629,30 +663,52 @@ class YamlTreinamento:
     # ---------------------------------------------------------------------------
 
     @staticmethod
-    def _arredondar_seq_length(valor: int) -> int:
+    def _arredondar_seq_length(valor: int, margem_minima: int = 256) -> int:
         """
-        Arredonda um valor de tokens para o próximo 'range' padrão.
-        Ranges: 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, ...
+        Arredonda um valor de tokens para o próximo múltiplo de 256
+        garantindo margem mínima entre o valor original e o resultado.
+        
+        Args:
+            valor: Número máximo de tokens encontrado
+            margem_minima: Folga mínima entre valor e resultado (padrão: 256)
+        
+        Returns:
+            Próximo múltiplo de 256 com margem garantida
         """
-        ranges = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
-        for r in ranges:
-            if valor <= r:
-                return r
-        # Acima do maior range, arredonda para o próximo múltiplo de 8192
-        return ((valor // 8192) + 1) * 8192
+        from treinar_unsloth_pipeline import arredondar_seq_length
+        return arredondar_seq_length(valor, margem_minima)
 
-    def calcular_max_seq_length(self) -> int:
+    def calcular_max_seq_length(self, cache=None, alias: str = "Principal") -> int:
         """
         Calcula max_seq_length automaticamente com base nos tokens das mensagens do dataset.
+        Usa cache em _dados_automaticos.json para evitar recálculos.
         Usa o tokenizer do modelo base para contagem precisa.
-        Retorna o valor arredondado para o próximo range padrão.
+        
+        Args:
+            cache: Instância de CacheSeqLength (se None, cria automaticamente)
+            alias: Alias da etapa do curriculum para cache por etapa
+            
+        Returns:
+            Valor de max_seq_length arredondado com margem de segurança
         """
+        from treinar_unsloth_pipeline import CacheSeqLength, arredondar_seq_length
+        
+        # Inicializa cache se necessário
+        if cache is None:
+            cache = CacheSeqLength(self.modelo.saida, self.yaml_path)
+        
+        # Tenta usar cache válido
+        valor_cache = cache.obter_max_seq_length(alias)
+        if valor_cache is not None:
+            print(f"   💾 max_seq_length={valor_cache} (cache válido em {CacheSeqLength.NOME_ARQUIVO})")
+            return valor_cache
+        
         print("🔄 max_seq_length=0: calculando automaticamente a partir do dataset...")
         
         # Coleta textos completos (user + assistant) de todos os alvos
         todos_textos = []
         
-        if self.tipo_entrada == TIPO_ENTRADA_PASTAS:
+        if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
             for alvo in ("treino", "validacao", "teste"):
                 try:
                     mensagens = self.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
@@ -687,23 +743,62 @@ class YamlTreinamento:
         max_tokens = max(comprimentos)
         media_tokens = sum(comprimentos) / len(comprimentos)
         
-        # Usa o máximo encontrado como referência
-        valor_calculado = self._arredondar_seq_length(max_tokens)
+        # Arredonda com margem de segurança (mín 256 tokens de folga, múltiplo de 256)
+        valor_calculado = arredondar_seq_length(max_tokens)
         
         print(f"   📊 {len(comprimentos)} registros analisados ({metodo})")
         print(f"   📊 Tokens: max={max_tokens}, média={media_tokens:.0f}")
-        print(f"   ✅ max_seq_length calculado: {max_tokens} → {valor_calculado}")
+        print(f"   ✅ max_seq_length calculado: {max_tokens} → {valor_calculado} (margem: {valor_calculado - max_tokens})")
+        
+        # Salva no cache
+        try:
+            cache.salvar(
+                max_seq_length=valor_calculado,
+                alias=alias,
+                max_tokens_encontrado=max_tokens,
+                media_tokens=round(media_tokens, 1),
+                total_registros=len(comprimentos),
+                metodo=metodo
+            )
+        except Exception as e:
+            print(f"   ⚠️ Erro ao salvar cache: {e}")
         
         return valor_calculado
 
     def resolver_max_seq_length(self) -> None:
         """
-        Se max_seq_length == 0, calcula automaticamente e atualiza a configuração.
+        Resolve max_seq_length respeitando a flag validar_max_seq_length e o cache.
+        
+        Lógica:
+        - Se validar_max_seq_length=False e max_seq_length>0: usa o valor do YAML diretamente (bypass)
+        - Se max_seq_length==0: calcula automaticamente (com cache)
+        - Se validar_max_seq_length=True e max_seq_length>0: recalcula para validar
+        
         Deve ser chamado antes de carregar o modelo.
         """
-        if self.treinamento.max_seq_length == 0:
+        msl = self.treinamento.max_seq_length
+        validar = self.treinamento.validar_max_seq_length
+        
+        if not validar and msl > 0:
+            # Bypass: confia no valor do YAML sem recalcular
+            print(f"⏭️  max_seq_length={msl} (validar_max_seq_length=false, bypass)")
+            return
+        
+        if msl == 0:
+            # Precisa calcular
             self.treinamento.max_seq_length = self.calcular_max_seq_length()
             self._max_seq_auto = True
+        elif validar:
+            # Tem valor mas precisa validar — apenas verifica sem sobrescrever
+            # Calcula e avisa se o valor configurado é insuficiente
+            from treinar_unsloth_pipeline import CacheSeqLength
+            cache = CacheSeqLength(self.modelo.saida, self.yaml_path)
+            valor_cache = cache.obter_max_seq_length()
+            if valor_cache is not None:
+                if msl < valor_cache:
+                    print(f"⚠️  max_seq_length={msl} pode ser insuficiente (cache sugere {valor_cache})")
+                else:
+                    print(f"✅ max_seq_length={msl} validado (cache: {valor_cache})")
     
     
     def info(self) -> str:
@@ -725,12 +820,13 @@ class YamlTreinamento:
             f"  Grad batch size: {self.treinamento.grad_batch_size}",
             f"  Épocas: {self.treinamento.epochs}",
             f"  Max seq length: {self.treinamento.max_seq_length}{' (automático)' if self._max_seq_auto else ''}",
+            f"  Validar max seq length: {self.treinamento.validar_max_seq_length}",
             f"  LoRA r: {self.lora.r}",
             f"  Learning rate: {self.treinamento.learning_rate}",
             f"  Train on responses only: {self.treinamento.train_on_responses_only}",
         ]
         
-        if self.tipo_entrada == TIPO_ENTRADA_PASTAS:
+        if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
             lines.extend([
                 "",
                 "📁 PASTAS:",
@@ -753,6 +849,15 @@ class YamlTreinamento:
                 f"  Avaliação: {self.dataset.eval_file or '(não configurado)'}",
                 f"  Teste: {self.dataset.test_file or '(não configurado)'}",
             ])
+        
+        # Pipeline Universal: informações do curriculum
+        lines.extend([
+            "",
+            "🔄 PIPELINE:",
+            f"  Etapas: {len(self._curriculum)}",
+        ])
+        for i, etapa in enumerate(self._curriculum):
+            lines.append(f"  [{i}] alias='{etapa.alias}', tipo={etapa.tipo}")
         
         lines.append("=" * 60)
         
@@ -1072,12 +1177,15 @@ class ValidadorInterativo:
         return bool(saida)
     
     def validar_pastas_entrada(self) -> bool:
-        """Valida pastas de entrada e gold dataset para modo pastas."""
+        """Valida pastas de entrada e gold dataset para modo pastas/curriculum."""
         formatos = self._config.get("formatos", {})
-        if formatos.get("tipo_entrada") != "pastas":
+        tipo = formatos.get("tipo_entrada")
+        if tipo not in ("pastas", "curriculum"):
             return True
         
-        pastas = self._config.get("pastas", {})
+        # Para curriculum, lê da seção 'curriculum'; para pastas, lê de 'pastas'
+        secao = "curriculum" if tipo == "curriculum" else "pastas"
+        pastas = self._config.get(secao, {})
         problemas = []
         
         # Verifica pasta do gold dataset (saídas esperadas para treino)
@@ -1143,9 +1251,14 @@ class ValidadorInterativo:
         return True
     
     def validar_divisao(self) -> bool:
-        """Valida arquivo de divisão para modo pastas."""
+        """Valida arquivo de divisão para modo pastas/curriculum."""
         formatos = self._config.get("formatos", {})
-        if formatos.get("tipo_entrada") != "pastas":
+        tipo = formatos.get("tipo_entrada")
+        if tipo not in ("pastas", "curriculum"):
+            return True
+        
+        # Para curriculum, divisao é uma lista de etapas — validação será feita no pipeline
+        if tipo == "curriculum":
             return True
         
         pastas = self._config.get("pastas", {})

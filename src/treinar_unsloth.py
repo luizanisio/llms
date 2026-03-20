@@ -135,7 +135,7 @@ from datetime import datetime
 from copy import deepcopy
 
 # Import da nova classe de configuração YAML e Gerador de Relatório
-from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, calcular_rouge_l
+from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPOS_BASEADOS_EM_PASTAS, calcular_rouge_l
 from treinar_unsloth_report import GeradorRelatorio
 from treinar_unsloth_chat import TreinarChatTemplate
 from util import UtilEnv, Util
@@ -480,6 +480,11 @@ class LLMsTrainer:
         # Cria a pasta de saída se não existir
         os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
         
+        # Pipeline Universal: etapas e rastreamento unificado
+        from treinar_unsloth_pipeline import CurriculumTracker
+        self._etapas = self._yaml_config.curriculum
+        self._tracker = CurriculumTracker(self._yaml_config.modelo.saida)
+        
         # Auto-calcula max_seq_length se necessário (antes de carregar modelo)
         self._yaml_config.resolver_max_seq_length()
         
@@ -491,8 +496,8 @@ class LLMsTrainer:
         self.tokenizer = self.chat_handler.tokenizer
         
         # Carrega datasets baseado no tipo de entrada
-        if self._yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
-            # Modo pastas: carrega de arquivos pareados
+        if self._yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+            # Modo pastas/curriculum: carrega de arquivos pareados
             self.train_ds = self._load_from_pastas(alvo="treino")
             self.eval_ds = self._load_from_pastas(alvo="validacao")
         else:
@@ -589,7 +594,8 @@ class LLMsTrainer:
             max_seq_length=self._yaml_config.treinamento.max_seq_length
         )
         
-        return dataset_loader.dataset
+        ds = dataset_loader.dataset
+        return ds
         
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
@@ -715,20 +721,21 @@ class LLMsTrainer:
         return dataset_loader.dataset
 
     @classmethod
-    def debug_info(cls, cfg_path: str):
+    def debug_info(cls, cfg_path: str, yaml_config=None):
         """Exibe informações detalhadas de debug sobre configuração e datasets."""
         print("="*80)
         print(">> MODO INFO / DEBUG - INFORMAÇÕES DE CONFIGURAÇÃO E DATASET")
         print("="*80)
         
-        # Carrega configuração usando YamlTreinamento
-        try:
-            yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
-        except Exception as e:
-            print(f"\n❌ Erro ao carregar YAML: {e}")
-            import traceback
-            traceback.print_exc()
-            return
+        # Carrega configuração usando YamlTreinamento (se não recebeu uma instância pronta)
+        if yaml_config is None:
+            try:
+                yaml_config = YamlTreinamento(cfg_path, validar_caminhos=False)
+            except Exception as e:
+                print(f"\n❌ Erro ao carregar YAML: {e}")
+                import traceback
+                traceback.print_exc()
+                return
         
         # Mostra informações do YamlTreinamento
         print(f"\n{yaml_config.info()}")
@@ -795,8 +802,8 @@ class LLMsTrainer:
         else:
             print(f"  📄 Será usado modelo base sem LoRA")
         
-        # Modo pastas: mostra arquivos pareados
-        if yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+        # Modo pastas/curriculum: mostra arquivos pareados
+        if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
             print(f"\n📁 MODO PASTAS - ARQUIVOS PAREADOS:")
             try:
                 pares = yaml_config.dataset_manager.parear_arquivos()
@@ -1012,9 +1019,19 @@ class LLMsTrainer:
         )
         
         # Aplica train_on_responses_only se configurado
-        # Aplica train_on_responses_only se configurado
         if treino_cfg.train_on_responses_only:
-            self.trainer = self.chat_handler.aplicar_train_on_responses_only(self.trainer)
+            trainer = self.chat_handler.aplicar_train_on_responses_only(trainer)
+        
+        # Remove colunas string residuais dos datasets internos do trainer.
+        # O SFTTrainer tokeniza 'text' → input_ids/labels, mas mantém a coluna original.
+        # Com remove_unused_columns=False, o collator recebe 'text' (string) e falha.
+        _str_cols = {"text", "id", "messages", "prompt", "completion"}
+        if trainer.train_dataset is not None:
+            for col in _str_cols & set(trainer.train_dataset.column_names):
+                trainer.train_dataset = trainer.train_dataset.remove_columns(col)
+        if trainer.eval_dataset is not None:
+            for col in _str_cols & set(trainer.eval_dataset.column_names):
+                trainer.eval_dataset = trainer.eval_dataset.remove_columns(col)
         
         # Configura diretório de saída
         output_dir = self._yaml_config.modelo.saida
@@ -1104,84 +1121,161 @@ class LLMsTrainer:
             self.log_processamento(f"Checkpoint incompleto: {latest_path}", "CHECKPOINT_INCOMPLETE")
             return None
 
+    # ------------------------- curriculum: preparação por etapa -----------
+    def _aplicar_etapa_curriculum(self, step_index: int, etapa) -> None:
+        """Configura parâmetros e dados para uma etapa específica do curriculum.
+        
+        - Aplica pace_epochs, learning_rate e max_seq_length da etapa
+        - Para etapas > 0, troca o arquivo de divisão e recarrega os datasets
+        """
+        treino = self._yaml_config.treinamento
+
+        # Override de epochs com pace_epochs da etapa
+        if etapa.pace_epochs > 0:
+            treino.epochs = etapa.pace_epochs
+
+        # Override de learning_rate se especificado
+        if etapa.learning_rate > 0:
+            treino.learning_rate = etapa.learning_rate
+
+        # Override de max_seq_length se especificado
+        if etapa.max_seq_length > 0:
+            treino.max_seq_length = etapa.max_seq_length
+
+        # Para etapas além da primeira, recarrega dados com o arquivo de divisão da etapa
+        if step_index > 0 and etapa.arquivo:
+            self._yaml_config.pastas.divisao.arquivo = etapa.arquivo
+            # Limpa cache de divisão para forçar releitura
+            self._yaml_config.dataset_manager._dados_divisao = None
+
+            self.train_ds = self._load_from_pastas(alvo="treino")
+            self.eval_ds  = self._load_from_pastas(alvo="validacao")
+
+            # Atualiza estatísticas do dataset
+            ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino")
+            self._dataset_stats = {
+                "treino_len":    len(self.train_ds),
+                "validacao_len": len(self.eval_ds) if self.eval_ds else 0,
+                "token_stats":   ts,
+            }
+
     # ------------------------- execução ----------------------------------
     def train(self):
-        # Inicializa o trainer se necessário (lazy init)
-        if self.trainer is None:
-            self.trainer = self._build_trainer()
-            
         antes = _print_mem("ANTES")
-        print("[4/6] Iniciando treinamento…")
-        
-        # Valida o modelo antes do treinamento
-        print("\n🔍 STATUS DO MODELO ANTES DO TREINAMENTO:")
-        self.print_modelo_status()
-        
-        # verifica se existe checkpoint para continuar
-        checkpoint_path = self._find_latest_checkpoint()
-        resume_from_checkpoint = checkpoint_path is not None
-        
-        if resume_from_checkpoint:
-            print(f"🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}")
-            try:
-                train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
-                print("✅ Treinamento continuado com sucesso a partir do checkpoint")
-                self.log_processamento("Treinamento continuado com sucesso do checkpoint", "CHECKPOINT_SUCCESS")
-            except Exception as e:
-                error_msg = str(e)
-                print(f"❌ Erro ao continuar do checkpoint: {error_msg}")
-                print("🔄 Reiniciando treinamento do início...")
-                
-                # identifica tipos comuns de erro de checkpoint
-                if any(keyword in error_msg.lower() for keyword in ['config', 'parameter', 'mismatch', 'size']):
-                    self.log_processamento(f"Erro de configuração no checkpoint: {error_msg}", "CHECKPOINT_CONFIG_ERROR")
-                else:
-                    self.log_processamento(f"Erro geral no checkpoint: {error_msg}", "CHECKPOINT_ERROR")
-                
-                # reinicia o treinamento do zero
-                train_stats = self.trainer.train()
-        else:
-            print("🆕 Iniciando novo treinamento")
-            train_stats = self.trainer.train()
-            
-        depois = _print_mem("DEPOIS")
-        print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
-        
-        # Valida o modelo após o treinamento
-        print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
-        info_modelo = self.print_modelo_status()
-        
-        # 2) dicionário de tudo que interessa
-        stats = {
-            **train_stats.metrics,                  # train_loss, train_runtime, etc.
-            "global_step":       train_stats.global_step,
-            "training_loss":     train_stats.training_loss,
-            "mem_gpu_before":    antes,
-            "mem_gpu_after":     depois,
-            "ds_train_len" : len(self.train_ds),
-            "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
-            "modelo_info": info_modelo,  # adiciona informações do modelo
-        }
-        
-        # Gera relatório .md na pasta 'treinamento'
-        try:
-             hardware = Util.dados_hardware()
-        except:
-             hardware = {}
-             
-        gerador = GeradorRelatorio(self._yaml_config)
-        gerador.gerar_relatorio(
-            dataset_stats=self._dataset_stats,
-            train_stats=stats,
-            hardware_info=hardware
-        )
+        is_curriculum = len(self._etapas) > 1
+        total_etapas = len(self._etapas)
 
-        # grava o modelo antes do ultimo eval, pode dar erro de memória no eval    
-        self._save_model(stats=stats)
-        # 3) garante um eval FINAL mesmo que já tenha havido evals em steps
-        if self.eval_ds:
-            final_eval = self.trainer.evaluate()     # roda avaliação no eval_dataset
-            stats.update(final_eval)                 # adiciona eval_loss, eval_runtime …        self._save_model(stats = stats)
+        if is_curriculum:
+            print(f"[4/6] Iniciando treinamento com {total_etapas} etapas de curriculum…")
+        else:
+            print("[4/6] Iniciando treinamento…")
+
+        for step_index, etapa_atual in enumerate(self._etapas):
+            # --- Preparação da etapa ---
+            if is_curriculum:
+                logger.info(f"🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'")
+                self._aplicar_etapa_curriculum(step_index, etapa_atual)
+
+            # Constrói (ou reconstrói) o trainer para esta etapa
+            self.trainer = self._build_trainer()
+
+            # Pipeline Universal: marca início da etapa
+            self._tracker.iniciar_etapa(step_index=step_index, etapa=etapa_atual)
+            tempo_inicio = time.time()
+
+            # Valida o modelo antes do treinamento
+            print("\n🔍 STATUS DO MODELO ANTES DO TREINAMENTO:")
+            self.print_modelo_status()
+
+            # Checkpoint resume apenas na primeira etapa (retomada de treino interrompido)
+            checkpoint_path = self._find_latest_checkpoint() if step_index == 0 else None
+            resume_from_checkpoint = checkpoint_path is not None
+
+            try:
+                if resume_from_checkpoint:
+                    print(f"🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}")
+                    try:
+                        train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
+                        print("✅ Treinamento continuado com sucesso a partir do checkpoint")
+                        self.log_processamento("Treinamento continuado com sucesso do checkpoint", "CHECKPOINT_SUCCESS")
+                    except Exception as e:
+                        error_msg = str(e)
+                        print(f"❌ Erro ao continuar do checkpoint: {error_msg}")
+                        print("🔄 Reiniciando treinamento do início...")
+
+                        if any(keyword in error_msg.lower() for keyword in ['config', 'parameter', 'mismatch', 'size']):
+                            self.log_processamento(f"Erro de configuração no checkpoint: {error_msg}", "CHECKPOINT_CONFIG_ERROR")
+                        else:
+                            self.log_processamento(f"Erro geral no checkpoint: {error_msg}", "CHECKPOINT_ERROR")
+
+                        train_stats = self.trainer.train()
+                else:
+                    if step_index == 0:
+                        print("🆕 Iniciando novo treinamento")
+                    else:
+                        print(f"▶ Iniciando etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'")
+                    train_stats = self.trainer.train()
+            except Exception as e:
+                self._tracker.marcar_falha(step_index=step_index, alias=etapa_atual.alias, erro=str(e))
+                raise
+
+            depois = _print_mem("DEPOIS")
+            tempo_total = time.time() - tempo_inicio
+            print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
+
+            # Valida o modelo após o treinamento
+            print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
+            info_modelo = self.print_modelo_status()
+
+            stats = {
+                **train_stats.metrics,
+                "global_step":       train_stats.global_step,
+                "training_loss":     train_stats.training_loss,
+                "mem_gpu_before":    antes,
+                "mem_gpu_after":     depois,
+                "ds_train_len" : len(self.train_ds),
+                "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
+                "modelo_info": info_modelo,
+            }
+
+            # Gera relatório .md na pasta 'treinamento'
+            try:
+                 hardware = Util.dados_hardware()
+            except:
+                 hardware = {}
+
+            gerador = GeradorRelatorio(self._yaml_config)
+            gerador.gerar_relatorio(
+                dataset_stats=self._dataset_stats,
+                train_stats=stats,
+                hardware_info=hardware
+            )
+
+            # Grava o modelo antes do último eval (pode dar erro de memória no eval)
+            self._save_model(stats=stats)
+
+            # Garante um eval FINAL mesmo que já tenha havido evals em steps
+            eval_loss = None
+            if self.eval_ds:
+                final_eval = self.trainer.evaluate()
+                stats.update(final_eval)
+                eval_loss = final_eval.get("eval_loss")
+            self._save_model(stats=stats)
+
+            # Pipeline Universal: registra conclusão da etapa com métricas
+            self._tracker.finalizar_etapa(
+                step_index=step_index,
+                alias=etapa_atual.alias,
+                train_loss=stats.get("training_loss"),
+                eval_loss=eval_loss,
+                global_step=stats.get("global_step"),
+                tempo_segundos=round(tempo_total, 2),
+                ds_train_len=stats.get("ds_train_len"),
+                ds_eval_len=stats.get("ds_eval_len"),
+            )
+
+        if is_curriculum:
+            logger.info(f"✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas")
         
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
@@ -1331,7 +1425,7 @@ class LLMsTrainer:
                 logger.info(f"{'-'*60}")
                 
                 # pega o registro original do dataset
-                if self._yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+                if self._yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
                     # Modo pastas: recarrega mensagens em memória
                     mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
                     

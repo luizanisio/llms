@@ -76,6 +76,7 @@ DICAS_YAML = {
     "treinamento/nbits": """#| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
 #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.""",
     "treinamento/train_on_responses_only": "#| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.",
+    "treinamento/validar_max_seq_length": "#| Se false e max_seq_length>0, pula o recálculo de tokens (usa valor do YAML direto).",
     "treinamento/warmup_steps": """#| Passos de aquecimento. Recomendado: 5-10% do total de steps.
 #| [7B] Aumentar para 10-20 steps em modelos maiores.""",
     "treinamento/weight_decay": "#| Decaimento de peso (regularização). Padrão 0.01.",

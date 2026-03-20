@@ -45,7 +45,7 @@ import util  # garante que a pasta src está no sys.path
 from util import UtilEnv, Util
 from treinar_unsloth_logging import get_logger, configurar_logging, log_separador, log_bloco
 from treinar_unsloth_util import (
-    YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, FORMATO_SAIDA_JSON
+    YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPOS_BASEADOS_EM_PASTAS, FORMATO_SAIDA_JSON
 )
 from treinar_unsloth_actions import (
     _exibir_cabecalho_modelo,
@@ -64,6 +64,7 @@ logger = get_logger(__name__)
 def executar_info(yaml_path: str) -> None:
     """
     Exibe informações detalhadas sobre configuração, datasets e modelo.
+    Realiza verificação e, se necessário, recálculo de max_seq_length.
     Salva o resultado como info.md na pasta de treinamento.
     
     Args:
@@ -73,10 +74,23 @@ def executar_info(yaml_path: str) -> None:
     import contextlib
     from treinar_unsloth import LLMsTrainer
     
-    # Captura stdout para gravar em arquivo
+    # Carrega config com validação de caminhos para permitir resolver max_seq_length
+    try:
+        yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    except Exception:
+        # Fallback sem validação de caminhos (ex: pastas inexistentes)
+        yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
+    
+    # Verifica/recalcula max_seq_length antes de exibir info
+    try:
+        yaml_config.resolver_max_seq_length()
+    except Exception as e:
+        logger.warning(f"⚠️ Não foi possível resolver max_seq_length: {e}")
+    
+    # Captura stdout para gravar em arquivo (inclui saída do debug_info)
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        LLMsTrainer.debug_info(yaml_path)
+        LLMsTrainer.debug_info(yaml_path, yaml_config=yaml_config)
     
     conteudo = buffer.getvalue()
     
@@ -85,7 +99,6 @@ def executar_info(yaml_path: str) -> None:
     
     # Salva info.md na pasta de treinamento
     try:
-        yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
         report_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
         os.makedirs(report_dir, exist_ok=True)
         info_path = os.path.join(report_dir, "info.md")
@@ -129,8 +142,8 @@ def executar_stats(yaml_path: str) -> None:
     # Estrutura para armazenar dados por subset
     stats_por_subset = {}
     
-    if yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
-        # Modo pastas
+    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+        # Modo pastas/curriculum
         for alvo, nome in [("treino", "Treino"), ("validacao", "Validação"), ("teste", "Teste")]:
             try:
                 mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
@@ -403,7 +416,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
             logger.info(f"\n📂 Processando subset: {subset}")
             log_separador(caractere="-", largura=60)
             
-            if yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+            if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
                 try:
                     mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
                     if not mensagens:

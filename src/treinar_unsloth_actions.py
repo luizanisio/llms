@@ -152,7 +152,7 @@ def executar_injetar_dicas(cfg_path: str) -> None:
     Args:
         yaml_path: Caminho para o arquivo YAML de configuração
     """
-    from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS
+    from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPOS_BASEADOS_EM_PASTAS
     from treinar_unsloth_report import GeradorRelatorio
     import json
     import statistics
@@ -177,7 +177,7 @@ def executar_injetar_dicas(cfg_path: str) -> None:
     # Estrutura para armazenar dados por subset
     stats_por_subset = {}
     
-    if yaml_config.tipo_entrada == TIPO_ENTRADA_PASTAS:
+    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
         # Modo pastas
         for alvo, nome in [("treino", "Treino"), ("validacao", "Validação"), ("teste", "Teste")]:
             try:

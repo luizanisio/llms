@@ -29,7 +29,7 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigGold` para `pastas.dataset` (gold standard, obrigatório, validação de existência). `ConfigPredicao` agora é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `pastas.dataset` como fonte do gold.
 * **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.
 
-#### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum)
+#### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum) ✅ CONCLUÍDO
 **Objetivo:** Unificar a base de código do sistema atual antes de construir o Curriculum Learning multicamadas, assim o processo opera o mesmo sistema de logs (como se fosse de "apenas uma etapa").
 
 1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
@@ -49,28 +49,44 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
         "alias_dificil": {"max_seq_length": 4096}
       }
       ```
+      * conferir se tem a chave de cada alias do curriculum quando é esta opção.
 * **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) a partir do zero com `max_seq_length: 0`. As métricas exportadas e a folga no arquivo `_dados_automaticos.json` devem atuar perfeitamente. No teste estressado usando valor absoluto com flag _false_, certificar o "bypass" de CPU/GPU logado.
 
 #### Passo 3: Motor Multietapas do Curriculum Learning
 **Objetivo:** Adicionar interpretador do YAML para Curriculum, transições e regras de `LoRA` \leftrightarrow `Full`.
 
-1. **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo:
+1. **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo. A seção `curriculum` segue a mesma estrutura que `pastas` (predicao, dataset, entrada, validacao), mas a subchave `divisao` é uma lista de etapas do pipeline:
 ```yaml
 formatos:
   tipo_entrada: curriculum # Opções: dataset, pastas, curriculum
 
 curriculum:
-  - arquivo: "./saidas/ext_qwen_11_facil.csv"
-    alias: "fácil"
-    tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
-    pace_epochs: 1     # (Padrão) Transita após 1 época.
-    max_seq_length: 512 # [Opcional] Pode sobrepor config geral.
-    learning_rate: 0.0003 # [Opcional] Força LR independente para esta etapa
-  - arquivo: "./saidas/ext_qwen_11_medio.csv"
-    alias: "médio"
-    tipo: "lora"
-    pace_loss: 0.015   # Transita se eval_loss <= 0.015
-    pace_epochs: 2     # Limite de segurança. Padrão ao omitir = 1.
+  predicao:
+    pasta: ./predict/output
+  dataset:
+    pasta: ./saidas/gold
+    mascara: "*.txt"
+  entrada:
+    dataframe: ./dados/textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+    prompt_template: './dados/prompt.txt'
+    tag_texto: '<<--TEXTO-->>'
+  validacao:
+    exigir_json_valido: true
+    skip_invalidos: false
+  divisao:
+    - arquivo: "./saidas/divisao_facil.csv"
+      alias: "fácil"
+      tipo: "full"
+      pace_epochs: 1
+      max_seq_length: 512
+      learning_rate: 0.0003
+    - arquivo: "./saidas/divisao_medio.csv"
+      alias: "médio"
+      tipo: "lora"
+      pace_loss: 0.015
+      pace_epochs: 2
 ```
 2. **Divisão Dinâmica ("Fail Fast"):** Evitar a autogeração baseada em divisões randômicas complexas ao usar curriculum. O sistema deve abortar prevenindo bugs se os subarquivos parametrizados (ex. `{arquivo}_facil.csv`) não existirem perfeitamente.
 3. **Roteamento e Sobrevivência de Passos:**

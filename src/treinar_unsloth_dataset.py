@@ -17,6 +17,8 @@ from typing import Dict, List, Any, Optional
 from treinar_unsloth_util import (
     TIPO_ENTRADA_PASTAS, 
     TIPO_ENTRADA_DATASET,
+    TIPO_ENTRADA_CURRICULUM,
+    TIPOS_BASEADOS_EM_PASTAS,
     ConfigPastas,
     ConfigFormatos,
     ConfigDataset,
@@ -82,8 +84,8 @@ class DatasetTreinamento:
         """
         Parea arquivos de entrada com arquivos do gold dataset pelo ID.
         """
-        if self.tipo_entrada != TIPO_ENTRADA_PASTAS or not self.pastas:
-            raise ValueError("Método parear_arquivos só disponível para tipo_entrada='pastas'")
+        if self.tipo_entrada not in TIPOS_BASEADOS_EM_PASTAS or not self.pastas:
+            raise ValueError("Método parear_arquivos só disponível para tipo_entrada='pastas' ou 'curriculum'")
         
         if self._arquivos_pareados is not None:
             return self._arquivos_pareados
@@ -213,8 +215,8 @@ class DatasetTreinamento:
         """
         Carrega o arquivo de divisão se existir, ou cria um novo.
         """
-        if self.tipo_entrada != TIPO_ENTRADA_PASTAS or not self.pastas:
-            raise ValueError("Método carregar_ou_criar_divisao só disponível para tipo_entrada='pastas'")
+        if self.tipo_entrada not in TIPOS_BASEADOS_EM_PASTAS or not self.pastas:
+            raise ValueError("Método carregar_ou_criar_divisao só disponível para tipo_entrada='pastas' ou 'curriculum'")
         
         if self._dados_divisao is not None:
             return self._dados_divisao
@@ -250,7 +252,9 @@ class DatasetTreinamento:
                 print(f"💾 Arquivo de divisão atualizado: {arquivo_divisao}")
             
             # Validação de consistência entre divisão e arquivos pareados
-            self._validar_consistencia_divisao()
+            # Em curriculum, a divisão é um subconjunto do dataset global — não validar
+            if self.tipo_entrada != TIPO_ENTRADA_CURRICULUM:
+                self._validar_consistencia_divisao()
             
             # Calcula proporções efetivas
             contagem = self._dados_divisao["alvo"].value_counts(normalize=True).to_dict()
@@ -375,8 +379,8 @@ class DatasetTreinamento:
         return template + "\n\n" + conteudo_entrada
 
     def carregar_mensagens_de_pastas(self, alvo: str = "treino") -> List[Dict[str, Any]]:
-        if self.tipo_entrada != TIPO_ENTRADA_PASTAS or not self.pastas:
-             raise ValueError("Método disponível apenas para modo 'pastas'")
+        if self.tipo_entrada not in TIPOS_BASEADOS_EM_PASTAS or not self.pastas:
+             raise ValueError("Método disponível apenas para modo 'pastas' ou 'curriculum'")
             
         divisao = self.carregar_ou_criar_divisao()
         
