@@ -60,12 +60,122 @@ class GraficoTokens:
 
 
 class GraficoTreinamento:
-    """Gera gráficos de métricas de treinamento."""
+    """Gera gráficos de métricas de treinamento.
     
+    Suporta duas fontes de dados:
+    - training_metrics.jsonl (preferida): contém etapa do curriculum e instâncias acumuladas
+    - trainer_state.json (fallback): dados básicos de loss por step
+    """
+    
+    @staticmethod
+    def carregar_training_metrics(treinamento_dir: str) -> Optional[Dict[str, Any]]:
+        """
+        Carrega métricas enriquecidas de training_metrics.jsonl.
+        
+        Esta é a fonte preferida pois inclui:
+        - etapa_alias/etapa_index: identifica transições de curriculum
+        - step_global: step contínuo somando todas as etapas
+        - instancias_acumuladas: total de instâncias processadas
+        
+        Args:
+            treinamento_dir: Diretório 'treinamento/' contendo training_metrics.jsonl
+            
+        Returns:
+            Dict com chaves:
+            - train_data: [{step_global, epoch, loss, lr, etapa_alias, etapa_index, instancias_acumuladas}]
+            - eval_data: [{step_global, epoch, eval_loss, etapa_alias, etapa_index}]
+            - etapas: [{step_global, alias, index}] — transições entre etapas do curriculum
+            Ou None se arquivo não existir ou estiver vazio
+        """
+        arquivo = os.path.join(treinamento_dir, "training_metrics.jsonl")
+        if not os.path.exists(arquivo):
+            return None
+        
+        registros = []
+        try:
+            with open(arquivo, "r", encoding="utf-8") as f:
+                for linha in f:
+                    linha = linha.strip()
+                    if linha:
+                        try:
+                            registros.append(json.loads(linha))
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            logger.error(f"Erro ao carregar training_metrics.jsonl: {e}")
+            return None
+        
+        if not registros:
+            return None
+        
+        train_data = []
+        eval_data = []
+        etapas = []  # Transições de etapa detectadas pelo evento train_begin
+        
+        for r in registros:
+            evento = r.get("event", "")
+            # step_global garante eixo x contínuo entre etapas do curriculum
+            step_global = r.get("step_global", r.get("step", 0))
+            epoch = round(r.get("epoch", 0), 4)
+            etapa_alias = r.get("etapa_alias", "Principal")
+            etapa_index = r.get("etapa_index", 0)
+            
+            if evento == "train_begin":
+                # Marca início de uma nova etapa do curriculum
+                # train_begin grava step_offset (posição de início da etapa no eixo global)
+                etapa_step = r.get("step_offset", step_global)
+                etapas.append({
+                    "step_global": etapa_step,
+                    "alias": etapa_alias,
+                    "index": etapa_index,
+                })
+            
+            elif evento == "log":
+                entry = {
+                    "step": step_global,
+                    "epoch": epoch,
+                    "epoch_global": r.get("epoch_global", epoch),
+                    "etapa_alias": etapa_alias,
+                    "etapa_index": etapa_index,
+                    "instancias_acumuladas": r.get("instancias_acumuladas", 0),
+                }
+                if "train_loss" in r:
+                    entry["loss"] = round(r["train_loss"], 4)
+                    entry["lr"] = r.get("learning_rate", 0)
+                    train_data.append(entry)
+                if "eval_loss" in r:
+                    eval_entry = {
+                        "step": step_global,
+                        "epoch": epoch,
+                        "epoch_global": r.get("epoch_global", epoch),
+                        "eval_loss": round(r["eval_loss"], 4),
+                        "etapa_alias": etapa_alias,
+                        "etapa_index": etapa_index,
+                    }
+                    eval_data.append(eval_entry)
+            
+            elif evento == "evaluate":
+                eval_loss = r.get("eval_loss")
+                if eval_loss is not None:
+                    eval_data.append({
+                        "step": step_global,
+                        "epoch": epoch,
+                        "epoch_global": r.get("epoch_global", epoch),
+                        "eval_loss": round(eval_loss, 4),
+                        "etapa_alias": etapa_alias,
+                        "etapa_index": etapa_index,
+                    })
+        
+        return {
+            "train_data": train_data,
+            "eval_data": eval_data,
+            "etapas": etapas,
+        }
+
     @staticmethod
     def carregar_trainer_state(checkpoint_dir: str) -> Optional[Dict[str, Any]]:
         """
-        Carrega trainer_state.json do checkpoint mais recente.
+        Carrega trainer_state.json do checkpoint mais recente (fallback).
         
         Args:
             checkpoint_dir: Diretório contendo os checkpoints (ex: modelo/chkpt)
@@ -176,17 +286,23 @@ class GraficoTreinamento:
         eval_data: List[Dict],
         checkpoints: List[str],
         output_path: str,
-        titulo: str = "Evolução do Loss durante Treinamento"
+        titulo: str = "Evolução do Loss durante Treinamento",
+        etapas_curriculum: List[Dict] = None
     ) -> bool:
         """
-        Gera gráfico de evolução do loss com marcações de época e checkpoints.
+        Gera gráfico de evolução do loss com marcações de época, checkpoints e etapas.
+        
+        Se os dados contiverem 'instancias_acumuladas', um eixo secundário (topo)
+        exibirá a escala de instâncias treinadas.
+        Se houver etapas de curriculum, linhas verticais coloridas marcam as transições.
         
         Args:
-            train_data: Lista de dicts com {step, epoch, loss}
+            train_data: Lista de dicts com {step, epoch, loss} (step = step_global se disponível)
             eval_data: Lista de dicts com {step, epoch, eval_loss}
             checkpoints: Lista de nomes de checkpoints
             output_path: Caminho para salvar o gráfico
             titulo: Título do gráfico
+            etapas_curriculum: Lista de {step_global, alias, index} para marcar transições
             
         Returns:
             True se gerou com sucesso, False caso contrário
@@ -197,34 +313,46 @@ class GraficoTreinamento:
             
         try:
             from util_graficos import UtilGraficos
+            import math
             
-            # Prepara séries para o gráfico
+            def _is_valid(v):
+                return v is not None and isinstance(v, (int, float)) and not math.isnan(v)
+            
+            # Filtra NaN: séries só incluem pontos com loss válido
             series = {}
             
             if train_data:
-                series['Train Loss'] = {
-                    'x': [t["step"] for t in train_data],
-                    'y': [t["loss"] for t in train_data],
-                    'cor': 'blue',
-                    'marcador': 'o',
-                    'tamanho_marcador': 4
-                }
+                valid = [(t["step"], t["loss"]) for t in train_data if "loss" in t and _is_valid(t["loss"])]
+                if valid:
+                    series['Train Loss'] = {
+                        'x': [v[0] for v in valid],
+                        'y': [v[1] for v in valid],
+                        'cor': 'blue',
+                        'marcador': 'o',
+                        'tamanho_marcador': 4
+                    }
             
             if eval_data:
-                series['Eval Loss'] = {
-                    'x': [e["step"] for e in eval_data],
-                    'y': [e["eval_loss"] for e in eval_data],
-                    'cor': 'red',
-                    'marcador': 's',
-                    'tamanho_marcador': 4
-                }
+                valid = [(e["step"], e["eval_loss"]) for e in eval_data if "eval_loss" in e and _is_valid(e["eval_loss"])]
+                if valid:
+                    series['Eval Loss'] = {
+                        'x': [v[0] for v in valid],
+                        'y': [v[1] for v in valid],
+                        'cor': 'red',
+                        'marcador': 's',
+                        'tamanho_marcador': 4
+                    }
             
-            # Marcadores de época
+            # Coleta todos os step values para definir limites do eixo x
+            all_steps = [t["step"] for t in train_data] + [e["step"] for e in eval_data]
+            
+            # Marcadores de época — usa epoch_global para continuidade entre etapas
             marcadores_epoca = []
             epochs_seen = set()
             for t in train_data:
-                epoch_int = int(t["epoch"])
-                if epoch_int > 0 and epoch_int not in epochs_seen and t["epoch"] == epoch_int:
+                eg = t.get("epoch_global", t["epoch"])
+                epoch_int = int(eg)
+                if epoch_int > 0 and epoch_int not in epochs_seen and eg == epoch_int:
                     marcadores_epoca.append({
                         'x': t["step"],
                         'label': f'Época {epoch_int}',
@@ -247,15 +375,55 @@ class GraficoTreinamento:
                 except ValueError:
                     continue
             
+            # Marcadores de transição de etapa do curriculum (a partir da 2ª etapa)
+            if etapas_curriculum and len(etapas_curriculum) > 1:
+                for i, et in enumerate(etapas_curriculum[1:]):
+                    # Escalona posição vertical dos rótulos para evitar sobreposição
+                    y_frac = 0.92 - (i % 3) * 0.12
+                    marcadores_epoca.append({
+                        'x': et["step_global"],
+                        'label': f'Etapa: {et["alias"]}',
+                        'cor': 'darkviolet',
+                        'y_frac': y_frac,
+                    })
+                    all_steps.append(et["step_global"])
+            
+            # Info text com instâncias acumuladas (se disponível)
+            info_text = None
+            ultima_instancia = 0
+            if train_data and "instancias_acumuladas" in train_data[-1]:
+                ultima_instancia = train_data[-1]["instancias_acumuladas"]
+                info_text = f"Instâncias treinadas: {ultima_instancia:,}".replace(",", ".")
+            
+            # Adiciona info de etapas curriculum no texto informativo
+            if etapas_curriculum and len(etapas_curriculum) > 1:
+                nomes = [et["alias"] for et in etapas_curriculum]
+                prefixo = info_text + " | " if info_text else ""
+                info_text = prefixo + f"Etapas: {' → '.join(nomes)}"
+            
+            # Nota quando sem dados válidos de loss
+            if not series:
+                sufixo = "\n⚠ Sem dados de loss válidos para plotar"
+                info_text = (info_text + sufixo) if info_text else sufixo.strip()
+            
+            # Calcula limites do eixo x baseado em todos os steps conhecidos
+            xlim = None
+            if all_steps:
+                x_min, x_max = min(all_steps), max(all_steps)
+                margem = max(0.5, (x_max - x_min) * 0.05)
+                xlim = (x_min - margem, x_max + margem)
+            
             # Gera gráfico usando util_graficos
             resultado = UtilGraficos.gerar_grafico_linhas(
                 series=series,
                 titulo=titulo,
                 ylabel='Loss',
-                xlabel='Step',
+                xlabel='Step (global)',
                 arquivo_saida=output_path,
                 marcadores_verticais=marcadores_verticais,
-                marcadores_epoca=marcadores_epoca
+                marcadores_epoca=marcadores_epoca,
+                info_text=info_text,
+                xlim=xlim,
             )
             
             return resultado is not None
@@ -269,30 +437,64 @@ class GraficoTreinamento:
         """
         Gera tabela markdown com evolução do loss.
         
+        Se os dados contiverem 'etapa_alias' e 'instancias_acumuladas',
+        inclui colunas adicionais; caso contrário exibe tabela simplificada.
+        
         Args:
-            train_data: Lista de dicts com {step, epoch, loss}
+            train_data: Lista de dicts com {step, epoch, loss, [etapa_alias, instancias_acumuladas]}
             eval_data: Lista de dicts com {step, epoch, eval_loss}
             
         Returns:
             Lista de linhas markdown para a tabela
         """
         lines = []
-        lines.append("| Step | Época | Train Loss | Eval Loss |")
-        lines.append("|------|-------|------------|-----------|")
+        
+        # Detecta se há dados enriquecidos (curriculum/instâncias)
+        tem_etapa = any("etapa_alias" in t for t in train_data) if train_data else False
+        tem_instancias = any("instancias_acumuladas" in t for t in train_data) if train_data else False
+        
+        # Cabeçalho adaptado ao formato dos dados
+        if tem_etapa and tem_instancias:
+            lines.append("| Step | Época | Etapa | Train Loss | Eval Loss | Instâncias |")
+            lines.append("|------|-------|-------|------------|-----------|------------|")
+        elif tem_etapa:
+            lines.append("| Step | Época | Etapa | Train Loss | Eval Loss |")
+            lines.append("|------|-------|-------|------------|-----------|")
+        else:
+            lines.append("| Step | Época | Train Loss | Eval Loss |")
+            lines.append("|------|-------|------------|-----------|")
         
         # Combina por step
         steps_data = {}
         for t in train_data:
-            steps_data[t["step"]] = {"epoch": t["epoch"], "train": t["loss"], "eval": "-"}
+            steps_data[t["step"]] = {
+                "epoch": t.get("epoch_global", t["epoch"]),
+                "train": t["loss"],
+                "eval": "-",
+                "etapa": t.get("etapa_alias", ""),
+                "instancias": t.get("instancias_acumuladas", ""),
+            }
         for e in eval_data:
             if e["step"] in steps_data:
                 steps_data[e["step"]]["eval"] = e["eval_loss"]
             else:
-                steps_data[e["step"]] = {"epoch": e["epoch"], "train": "-", "eval": e["eval_loss"]}
+                steps_data[e["step"]] = {
+                    "epoch": e.get("epoch_global", e["epoch"]),
+                    "train": "-",
+                    "eval": e["eval_loss"],
+                    "etapa": e.get("etapa_alias", ""),
+                    "instancias": "",
+                }
         
         for step in sorted(steps_data.keys()):
             d = steps_data[step]
-            lines.append(f"| {step} | {d['epoch']} | {d['train']} | {d['eval']} |")
+            inst_fmt = f"{d['instancias']:,}".replace(",", ".") if isinstance(d['instancias'], int) and d['instancias'] > 0 else "-"
+            if tem_etapa and tem_instancias:
+                lines.append(f"| {step} | {d['epoch']} | {d['etapa']} | {d['train']} | {d['eval']} | {inst_fmt} |")
+            elif tem_etapa:
+                lines.append(f"| {step} | {d['epoch']} | {d['etapa']} | {d['train']} | {d['eval']} |")
+            else:
+                lines.append(f"| {step} | {d['epoch']} | {d['train']} | {d['eval']} |")
         
         return lines
 

@@ -302,16 +302,31 @@ class HardwareMetricsCallback(TrainerCallback):
 
 class MetricsLoggerCallback(TrainerCallback):
     """
-    Callback aprimorado para registrar métricas detalhadas de treinamento e validação.
+    Callback para registrar métricas detalhadas de treinamento e validação.
     
-    Registra: loss, learning_rate, grad_norm, e métricas de avaliação (eval_loss)
-    Salva em arquivo JSONL separado com informações adicionais de contexto.
+    Registra: loss, learning_rate, grad_norm, eval_loss, etapa do curriculum
+    e contagem acumulada de instâncias treinadas.
+    Salva em arquivo JSONL para análise posterior e geração de gráficos.
+    
+    Campos adicionais em cada registro:
+        - etapa_alias: nome da etapa do curriculum ("Principal" para treino simples)
+        - etapa_index: índice da etapa (0 para treino simples)
+        - step_global: step contínuo somando todas as etapas do curriculum
+        - epoch_global: época contínua somando épocas de todas as etapas
+        - instancias_acumuladas: total de instâncias processadas até o momento
     """
     
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, etapa_alias: str = "Principal",
+                 etapa_index: int = 0, instancias_previas: int = 0,
+                 step_offset: int = 0, epoch_offset: float = 0.0):
         """
         Args:
             output_dir: Diretório onde salvar o arquivo de métricas
+            etapa_alias: Nome da etapa do curriculum (ex: "fácil", "médio")
+            etapa_index: Índice da etapa no curriculum (0-based)
+            instancias_previas: Total de instâncias treinadas em etapas anteriores
+            step_offset: Total de steps acumulados de etapas anteriores (para step_global)
+            epoch_offset: Total de épocas acumuladas de etapas anteriores (para epoch_global)
         """
         self.output_dir = output_dir
         self.metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
@@ -319,9 +334,18 @@ class MetricsLoggerCallback(TrainerCallback):
         self._best_eval_loss = float('inf')
         self._train_losses = []  # Para calcular média móvel
         
-        # Cria diretório e arquivo
+        # Informações de curriculum e contagem acumulada
+        self._etapa_alias = etapa_alias
+        self._etapa_index = etapa_index
+        self._instancias_previas = instancias_previas
+        self._step_offset = step_offset
+        self._epoch_offset = epoch_offset
+        self._effective_batch_size = 1  # Calculado em on_train_begin
+        
+        # Cria diretório; trunca arquivo apenas na primeira etapa do curriculum
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
-        open(self.metrics_file, "w").close()  # Limpa arquivo anterior
+        if etapa_index == 0:
+            open(self.metrics_file, "w").close()
         
     def _registrar(self, registro: dict):
         """Salva registro no arquivo JSONL."""
@@ -332,8 +356,13 @@ class MetricsLoggerCallback(TrainerCallback):
             pass
     
     def on_train_begin(self, args, state, control, **kwargs):
-        """Marca início do treinamento."""
+        """Marca início do treinamento e calcula batch efetivo para contagem de instâncias."""
         self._train_start_time = time.time()
+        # Batch efetivo = per_device * grad_accum * n_gpus (para cálculo de instâncias)
+        n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
+        self._effective_batch_size = (
+            args.per_device_train_batch_size * args.gradient_accumulation_steps * n_gpus
+        )
         self._registrar({
             "event": "train_begin",
             "timestamp": self._train_start_time,
@@ -342,19 +371,40 @@ class MetricsLoggerCallback(TrainerCallback):
             "num_epochs": args.num_train_epochs,
             "batch_size": args.per_device_train_batch_size,
             "grad_accum_steps": args.gradient_accumulation_steps,
+            "etapa_alias": self._etapa_alias,
+            "etapa_index": self._etapa_index,
+            "step_offset": self._step_offset,
+            "epoch_offset": self._epoch_offset,
+            "instancias_previas": self._instancias_previas,
+            "effective_batch_size": self._effective_batch_size,
         })
     
     def on_log(self, args, state, control, logs=None, **kwargs):
-        """Registra métricas de treinamento a cada log."""
+        """Registra métricas de treinamento a cada log, incluindo etapa e instâncias acumuladas."""
         if not logs:
             return
-            
+        
+        # step_global: step contínuo que soma etapas anteriores do curriculum
+        step_global = self._step_offset + state.global_step
+        # instancias_acumuladas: total de instâncias processadas até este ponto
+        instancias_acumuladas = (
+            self._instancias_previas + state.global_step * self._effective_batch_size
+        )
+        
+        epoch_local = round(state.epoch, 4) if state.epoch else 0
+        epoch_global = round(self._epoch_offset + (state.epoch or 0), 4)
+        
         registro = {
             "event": "log",
             "timestamp": time.time(),
             "step": state.global_step,
-            "epoch": round(state.epoch, 4) if state.epoch else 0,
+            "step_global": step_global,
+            "epoch": epoch_local,
+            "epoch_global": epoch_global,
             "elapsed_seconds": time.time() - self._train_start_time if self._train_start_time else 0,
+            "etapa_alias": self._etapa_alias,
+            "etapa_index": self._etapa_index,
+            "instancias_acumuladas": instancias_acumuladas,
         }
         
         # Métricas de treinamento
@@ -385,16 +435,29 @@ class MetricsLoggerCallback(TrainerCallback):
         self._registrar(registro)
     
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
-        """Registra métricas completas de avaliação."""
+        """Registra métricas completas de avaliação com contexto de etapa."""
         if not metrics:
             return
-            
+        
+        step_global = self._step_offset + state.global_step
+        instancias_acumuladas = (
+            self._instancias_previas + state.global_step * self._effective_batch_size
+        )
+        
+        epoch_local = round(state.epoch, 4) if state.epoch else 0
+        epoch_global = round(self._epoch_offset + (state.epoch or 0), 4)
+        
         registro = {
             "event": "evaluate",
             "timestamp": time.time(),
             "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "step": state.global_step,
-            "epoch": round(state.epoch, 4) if state.epoch else 0,
+            "step_global": step_global,
+            "epoch": epoch_local,
+            "epoch_global": epoch_global,
+            "etapa_alias": self._etapa_alias,
+            "etapa_index": self._etapa_index,
+            "instancias_acumuladas": instancias_acumuladas,
         }
         
         # Copia todas as métricas de avaliação
@@ -405,19 +468,31 @@ class MetricsLoggerCallback(TrainerCallback):
         self._registrar(registro)
     
     def on_train_end(self, args, state, control, **kwargs):
-        """Registra resumo final do treinamento."""
+        """Registra resumo final da etapa com totais acumulados."""
         elapsed = time.time() - self._train_start_time if self._train_start_time else 0
+        step_global = self._step_offset + state.global_step
+        instancias_acumuladas = (
+            self._instancias_previas + state.global_step * self._effective_batch_size
+        )
+        
+        epoch_local = round(state.epoch, 4) if state.epoch else 0
+        epoch_global = round(self._epoch_offset + (state.epoch or 0), 4)
         
         registro = {
             "event": "train_end",
             "timestamp": time.time(),
             "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "total_steps": state.global_step,
-            "final_epoch": round(state.epoch, 4) if state.epoch else 0,
+            "step_global": step_global,
+            "final_epoch": epoch_local,
+            "final_epoch_global": epoch_global,
             "total_time_seconds": round(elapsed, 2),
             "total_time_formatted": f"{int(elapsed // 3600)}h {int((elapsed % 3600) // 60)}m {int(elapsed % 60)}s",
             "best_eval_loss": round(self._best_eval_loss, 6) if self._best_eval_loss != float('inf') else None,
             "final_train_loss_avg": round(sum(self._train_losses[-10:]) / len(self._train_losses[-10:]), 6) if self._train_losses else None,
+            "etapa_alias": self._etapa_alias,
+            "etapa_index": self._etapa_index,
+            "instancias_acumuladas": instancias_acumuladas,
         }
         
         self._registrar(registro)
@@ -428,29 +503,32 @@ class MetricsLoggerCallback(TrainerCallback):
 
 class CheckpointRenameCallback(TrainerCallback):
     """
-    Callback para renomear checkpoints com zero-padding.
+    Callback para renomear checkpoints com zero-padding e step global.
     
-    Transforma: checkpoint-8 -> checkpoint-00008
-    Isso permite ordenação alfabética correta e evita confusão.
+    Em modo curriculum, global_step reseta em cada etapa. Usa step_offset
+    para nomear checkpoints com step global contínuo:
+        checkpoint-1 (step_offset=2) -> checkpoint-00003
     """
     
-    def __init__(self, checkpoint_base_dir: str, padding: int = 5):
+    def __init__(self, checkpoint_base_dir: str, step_offset: int = 0, padding: int = 5):
         self.checkpoint_base_dir = checkpoint_base_dir
+        self.step_offset = step_offset
         self.padding = padding
     
     def on_save(self, args, state, control, **kwargs):
-        """Renomeia o checkpoint salvo para usar zero-padding."""
+        """Renomeia o checkpoint salvo para usar zero-padding com step global."""
         if not state.global_step:
             return
             
-        # Caminho esperado do checkpoint original
+        # Caminho original criado pelo Trainer (usa global_step da etapa)
         original_name = f"checkpoint-{state.global_step}"
-        padded_name = f"checkpoint-{state.global_step:0{self.padding}d}"
+        # Nome final com step global contínuo + zero-padding
+        step_global = self.step_offset + state.global_step
+        padded_name = f"checkpoint-{step_global:0{self.padding}d}"
         
         original_path = os.path.join(self.checkpoint_base_dir, original_name)
         padded_path = os.path.join(self.checkpoint_base_dir, padded_name)
         
-        # Se o diretório original existe e o padded não existe, renomeia
         if os.path.exists(original_path) and not os.path.exists(padded_path):
             try:
                 os.rename(original_path, padded_path)
@@ -458,8 +536,8 @@ class CheckpointRenameCallback(TrainerCallback):
             except Exception as e:
                 logger.warning(f"Erro ao renomear checkpoint: {e}")
         elif os.path.exists(padded_path):
-            # Já existe com zero-padding, provavelmente foi renomeado anteriormente
-            logger.warning(f"Erro ao renomear checkpoint: já existe com zero-padding {padded_name}")
+            # Esperado em resume_from_checkpoint (checkpoint já foi renomeado)
+            logger.debug(f"Checkpoint já existe com zero-padding: {padded_name}")
 
 # ---------------------------------------------------------------------------
 # classe principal
@@ -916,19 +994,42 @@ class LLMsTrainer:
 
 
     # ------------------------- trainer -----------------------------------
-    def _build_trainer(self) -> SFTTrainer:
+    def _build_trainer(self, etapa_index: int = 0, etapa_alias: str = "Principal",
+                       instancias_previas: int = 0, step_offset: int = 0,
+                       epoch_offset: float = 0.0) -> SFTTrainer:
+        """Constrói o SFTTrainer com callbacks de métricas.
+        
+        Args:
+            etapa_index: Índice da etapa do curriculum (0 para treino simples)
+            etapa_alias: Nome da etapa do curriculum ("Principal" para treino simples)
+            instancias_previas: Instâncias acumuladas de etapas anteriores
+            step_offset: Steps acumulados de etapas anteriores (para step_global contínuo)
+            epoch_offset: Épocas acumuladas de etapas anteriores (para epoch_global contínuo)
+        """
         print("[3/6] Configurando trainer…")
         
         # === Formatação do Dataset (garante coluna 'text') ===
-        # Define num_proc seguro
+        # num_proc não deve exceder o número de registros (causa falha silenciosa)
         import os
         n_proc = max(1, (os.cpu_count() or 2) // 2)
+        n_proc_train = min(n_proc, len(self.train_ds)) if len(self.train_ds) > 0 else 1
 
         if "text" not in self.train_ds.column_names:
-            self.train_ds = self.chat_handler.formatar_dataset_coluna_text(self.train_ds, num_proc=n_proc)
+            self.train_ds = self.chat_handler.formatar_dataset_coluna_text(self.train_ds, num_proc=n_proc_train)
             
         if self.eval_ds and "text" not in self.eval_ds.column_names:
-            self.eval_ds = self.chat_handler.formatar_dataset_coluna_text(self.eval_ds, num_proc=n_proc)
+            n_proc_eval = min(n_proc, len(self.eval_ds)) if len(self.eval_ds) > 0 else 1
+            self.eval_ds = self.chat_handler.formatar_dataset_coluna_text(self.eval_ds, num_proc=n_proc_eval)
+        
+        # Validação: interrompe se a formatação falhou (evita StopIteration em SFTTrainer)
+        if len(self.train_ds) == 0:
+            raise ValueError("Dataset de treino está vazio. Verifique o arquivo de divisão e as pastas de dados.")
+        if "text" not in self.train_ds.column_names:
+            raise ValueError(
+                f"Coluna 'text' ausente após formatação. "
+                f"Colunas disponíveis: {self.train_ds.column_names}. "
+                f"Verifique se o dataset contém 'messages' ou 'prompt'/'completion'."
+            )
             
         # Verifica a integridade da formatação para DEBUG
         self.chat_handler.verificar_dataset_formatado(self.train_ds)
@@ -1049,14 +1150,21 @@ class LLMsTrainer:
         # Registra a cada 10 steps para não sobrecarregar
         trainer.add_callback(HardwareMetricsCallback(output_dir, intervalo_steps=10))
         
-        # 3. MetricsLoggerCallback (métricas detalhadas de treinamento/validação)
-        trainer.add_callback(MetricsLoggerCallback(output_dir))
+        # 3. MetricsLoggerCallback (métricas detalhadas com etapa curriculum + instâncias)
+        trainer.add_callback(MetricsLoggerCallback(
+            output_dir,
+            etapa_alias=etapa_alias,
+            etapa_index=etapa_index,
+            instancias_previas=instancias_previas,
+            step_offset=step_offset,
+            epoch_offset=epoch_offset,
+        ))
         
         # 4. CheckpointRenameCallback (renomeia checkpoints com zero-padding)
         if self.save_checkpoints:
             chkpt_dir = os.path.join(self._yaml_config.modelo.saida, "chkpt")
             os.makedirs(chkpt_dir, exist_ok=True)
-            trainer.add_callback(CheckpointRenameCallback(chkpt_dir))
+            trainer.add_callback(CheckpointRenameCallback(chkpt_dir, step_offset=step_offset))
         
         print(f' - callbacks de métricas configurados:')
         print(f'   • metrics_stream.jsonl (métricas brutas)')
@@ -1170,14 +1278,25 @@ class LLMsTrainer:
         else:
             print("[4/6] Iniciando treinamento…")
 
+        # Contadores acumulados para métricas contínuas entre etapas do curriculum
+        instancias_acumuladas = 0
+        step_offset_global = 0
+        epoch_offset_global = 0.0
+
         for step_index, etapa_atual in enumerate(self._etapas):
             # --- Preparação da etapa ---
             if is_curriculum:
                 logger.info(f"🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'")
                 self._aplicar_etapa_curriculum(step_index, etapa_atual)
 
-            # Constrói (ou reconstrói) o trainer para esta etapa
-            self.trainer = self._build_trainer()
+            # Constrói (ou reconstrói) o trainer com contexto da etapa
+            self.trainer = self._build_trainer(
+                etapa_index=step_index,
+                etapa_alias=etapa_atual.alias,
+                instancias_previas=instancias_acumuladas,
+                step_offset=step_offset_global,
+                epoch_offset=epoch_offset_global,
+            )
 
             # Pipeline Universal: marca início da etapa
             self._tracker.iniciar_etapa(step_index=step_index, etapa=etapa_atual)
@@ -1273,6 +1392,25 @@ class LLMsTrainer:
                 ds_train_len=stats.get("ds_train_len"),
                 ds_eval_len=stats.get("ds_eval_len"),
             )
+
+            # Atualiza contadores acumulados para a próxima etapa do curriculum
+            n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
+            effective_batch = (
+                self._yaml_config.treinamento.batch_size
+                * self._yaml_config.treinamento.grad_batch_size
+                * n_gpus
+            )
+            step_offset_global += train_stats.global_step
+            instancias_acumuladas += train_stats.global_step * effective_batch
+            # Usa a época real do Trainer (não pace_epochs configurado) para robustez
+            # com early stopping ou datasets que não dividem exatamente em batches.
+            # ceil() garante que a próxima etapa inicia em fronteira inteira de época.
+            import math
+            epocas_reais = train_stats.metrics.get(
+                "epoch",
+                etapa_atual.pace_epochs if etapa_atual.pace_epochs > 0 else self._yaml_config.treinamento.epochs
+            )
+            epoch_offset_global = math.ceil(epoch_offset_global + epocas_reais)
 
         if is_curriculum:
             logger.info(f"✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas")

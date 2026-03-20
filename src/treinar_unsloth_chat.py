@@ -201,12 +201,14 @@ class TreinarChatTemplate:
                 
             return {"text": texts}
 
-        print(f"🔄 Formatando dataset com chat template (proc={num_proc})...")
+        # Garante que num_proc não exceda o número de registros (causa falha silenciosa)
+        safe_proc = min(num_proc, len(dataset)) if len(dataset) > 0 else 1
+        print(f"🔄 Formatando dataset com chat template (proc={safe_proc})...")
         try:
             return dataset.map(
                 _format_function,
                 batched=True,
-                num_proc=num_proc,
+                num_proc=safe_proc,
                 load_from_cache_file=False,
                 desc="Aplicando Chat Template"
             )

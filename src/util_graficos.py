@@ -530,7 +530,8 @@ class UtilGraficos:
                               preencher_area: bool = False,
                               figsize: tuple = (12, 6),
                               dpi: int = 150,
-                              info_text: str = None):
+                              info_text: str = None,
+                              xlim: tuple = None):
         """
         Gera um gráfico de linhas para séries temporais ou evolução de métricas.
         
@@ -558,7 +559,7 @@ class UtilGraficos:
             ... }
             >>> UtilGraficos.gerar_grafico_linhas(series, 'Evolução do Loss', 'Loss', 'Step')
         """
-        if not series:
+        if not series and not marcadores_verticais and not marcadores_epoca:
             print("⚠️  Aviso: Sem dados para gerar gráfico de linhas")
             return None
         
@@ -592,7 +593,10 @@ class UtilGraficos:
                 
                 ax.axvline(x=x_pos, color=cor, linestyle='--', alpha=alpha, linewidth=1.5)
                 if label:
-                    ax.text(x_pos, ax.get_ylim()[1] * 0.95, label,
+                    y_frac = m.get('y_frac', 0.95)
+                    y_min, y_max = ax.get_ylim()
+                    y_pos = y_min + (y_max - y_min) * y_frac
+                    ax.text(x_pos, y_pos, label,
                            rotation=90, va='top', ha='right', fontsize=9, color=cor)
         
         # Marcadores verticais genéricos (checkpoints, eval, etc)
@@ -623,8 +627,14 @@ class UtilGraficos:
         ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_title(titulo, fontsize=14, fontweight='bold')
-        ax.legend(loc='upper right', fontsize=11)
+        if series:
+            ax.legend(loc='upper right', fontsize=11)
         ax.grid(True, alpha=0.3)
+        
+        # Limites do eixo x (se fornecidos, expande para incluí-los)
+        if xlim:
+            cur = ax.get_xlim()
+            ax.set_xlim(min(cur[0], xlim[0]), max(cur[1], xlim[1]))
         
         # Texto informativo
         if info_text:

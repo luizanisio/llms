@@ -14,7 +14,7 @@
 #| =========================================================================
 #| Configuração dos formatos de entrada e saída de dados.
 formatos:
-  tipo_entrada: pastas
+  tipo_entrada: curriculum
   formato_saida: json
 
 #| =========================================================================
@@ -29,6 +29,8 @@ misc:
 #| DATASET (PASTAS)
 #| =========================================================================
 #| Configuração para carregamento de dados via estrutura de pastas (arquivos txt/json).
+#| Para tipo_entrada 'curriculum', as chaves predicao, dataset, entrada e validacao
+#| são compartilhadas entre todas as etapas. A divisão vem da seção 'curriculum'.
 pastas:
   predicao:
     #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
@@ -47,7 +49,7 @@ pastas:
     prompt_template: './summa_data/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
   divisao:
-    arquivo: ./treino_simples/divisao_medio.csv
+    arquivo: ./treino_simples/divisao_unica.csv
     validar_ids: false
     proporcao:
       - treino: 0.70
@@ -57,6 +59,48 @@ pastas:
   validacao:
     exigir_json_valido: true
     skip_invalidos: false
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
+  predicao:
+    #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
+    pasta: ./treino_simples/predict/ext_qwen1_5b_11
+  dataset:
+    #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
+    #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
+    pasta: ./saidas_fold11/ext_qwen235b_11
+    mascara: "*.txt"
+  entrada:
+    #pasta: ./saidas/acordaos_raw
+    #mascara: "*.txt"
+    dataframe: ./summa_data/pecas_exportadas_textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+    prompt_template: './summa_data/prompt_summa_raw.txt'
+    tag_texto: '<<--TEXTO-->>'
+  validacao:
+    exigir_json_valido: true
+    skip_invalidos: false
+  divisao:
+    - arquivo: ./treino_simples/divisao_facil.csv
+      alias: "fácil"
+      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      pace_epochs: 1     # (Padrão) Transita após 1 época.
+      #max_seq_length: 0  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/divisao_medio.csv
+      alias: "médio"
+      tipo: "lora"
+      pace_epochs: 1     # (Padrão) Transita após 1 época.
+      #max_seq_length: 0  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/divisao_dificil.csv
+      alias: "difícil"
+      tipo: "lora"
+      pace_epochs: 1     # (Padrão) Transita após 1 época.
+      #max_seq_length: 0 # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
 #| DATASET (PARQUET)
@@ -95,23 +139,24 @@ treinamento:
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
   #| [7B] Com 4-bit (RTX 3060): use 1.
   #| [H100] Pode usar 8-16.
-  batch_size: 2
+  batch_size: 1
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
   #| [7B] Aumente para 20-40 se batch_size=1.
-  grad_batch_size: 8
+  grad_batch_size: 1
   # Batch efetivo: 2 * 10 = 20
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
   #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
   #| [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10.
-  num_train_epochs: 2
+  num_train_epochs: 1
   
   #| Contexto máximo. Qwen/Llama suportam long context, mas 2048-4096 é comum.
   #| Valor maior consome mais VRAM.
   #| [7B] Suporta até 128k, mas 4096-8192 é prático.
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
-  max_seq_length: 0 
+  #| ⚠️ RTX 3060 12GB: use 2048-4096. Valores maiores causam OOM.
+  max_seq_length: 3072
   
   #| Validação de tokens segura. Recomendado: true.
   #| Se `false` e o max_seq_length for > 0, o sistema confia na sua configuração
@@ -128,7 +173,7 @@ treinamento:
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
-  warmup_steps: 30
+  warmup_steps: 0
   
   #| Decaimento de peso (regularização). Padrão 0.01.
   weight_decay: 0.01
@@ -158,10 +203,10 @@ lora:
   #| Rank: 8, 16, 32, 64, 128. Recomendado: 16 ou 32.
   #| Maior rank = mais capacidade, mas usa mais VRAM e pode overfitar.
   #| [7B/H100] Pode aumentar para 32, 64 ou 128.
-  r: 8
+  r: 4
   #| Alpha: Escala do ajuste. Recomendado: igual a r ou 2*r.
   #| Ex: r=16 -> alpha=32.
-  alpha: 16   # ratio alpha/r = 2 (padrão recomendado)
+  alpha: 8   # ratio alpha/r = 2 (padrão recomendado)
   #| Regularização. Unsloth otimizado para 0, mas use 0.1 se notar overfitting.
   dropout: 0.05
   
@@ -170,8 +215,8 @@ lora:
     - q_proj
     - k_proj
     - v_proj
-    - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+    # - o_proj
+    # - gate_proj
+    # - up_proj
+    # - down_proj
 

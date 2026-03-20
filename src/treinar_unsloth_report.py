@@ -186,17 +186,95 @@ class GeradorRelatorio:
         """
         from datetime import datetime
         
+        cfg = self.yaml_config
         conteudo = []
         conteudo.append(f"# Relatório de Treinamento LLM")
         conteudo.append(f"**Data:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        conteudo.append(f"**Modelo Base:** `{self.yaml_config.modelo.base}`")
+        conteudo.append(f"**Modelo Base:** `{cfg.modelo.base}`")
         conteudo.append(f"**Diretório de Saída:** `{self.output_dir}`")
+        conteudo.append(f"**Tipo de entrada:** {cfg.tipo_entrada}")
         
-        # 1. Configuração
-        conteudo.append("\n## 1. Configuração Utilizada")
-        conteudo.append("```yaml")
-        conteudo.append(self.yaml_config.info())
-        conteudo.append("```")
+        # --- 1. Configuração ---
+        conteudo.append("\n## 1. Configuração do Treinamento")
+        conteudo.append("")
+        conteudo.append("| Parâmetro | Valor |")
+        conteudo.append("|---|---|")
+        conteudo.append(f"| Batch size | {cfg.treinamento.batch_size} |")
+        conteudo.append(f"| Grad accumulation | {cfg.treinamento.grad_batch_size} |")
+        conteudo.append(f"| Épocas | {cfg.treinamento.epochs} |")
+        auto = " (automático)" if cfg._max_seq_auto else ""
+        conteudo.append(f"| Max seq length | {cfg.treinamento.max_seq_length}{auto} |")
+        conteudo.append(f"| LoRA r | {cfg.lora.r} |")
+        conteudo.append(f"| Learning rate | {cfg.treinamento.learning_rate} |")
+        conteudo.append(f"| Train on responses only | {cfg.treinamento.train_on_responses_only} |")
+        conteudo.append(f"| Warmup steps | {cfg.treinamento.warmup_steps} |")
+        conteudo.append(f"| Weight decay | {cfg.treinamento.weight_decay} |")
+        conteudo.append(f"| Otimizador | {cfg.treinamento.optim} |")
+        conteudo.append(f"| LR scheduler | {cfg.treinamento.lr_scheduler_type} |")
+        conteudo.append(f"| Quantização (nbits) | {cfg.treinamento.nbits} |")
+        
+        # --- Seção de dados: adaptada ao tipo de entrada ---
+        from treinar_unsloth_util import TIPOS_BASEADOS_EM_PASTAS, TIPO_ENTRADA_CURRICULUM
+        
+        is_curriculum = cfg.tipo_entrada == TIPO_ENTRADA_CURRICULUM
+        is_pastas = cfg.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS
+        
+        if is_pastas:
+            conteudo.append("\n### Pastas de Dados")
+            conteudo.append(f"- **Gold Dataset:** `{cfg.pastas.dataset.pasta}`")
+            if cfg.pastas.entrada.pasta:
+                conteudo.append(f"- **Entrada (textos):** `{cfg.pastas.entrada.pasta}`")
+            conteudo.append(f"- **Predição:** `{cfg.pastas.predicao.pasta or '(será criado)'}`")
+            
+            if not is_curriculum:
+                # Modo pastas simples: mostra divisão e proporções
+                conteudo.append(f"- **Divisão:** `{cfg.pastas.divisao.arquivo or '(será criado)'}`")
+                prop = cfg.pastas.divisao.proporcao
+                conteudo.append(f"- **Proporções (yaml):** treino={prop[0]}, validação={prop[1]}, teste={prop[2]}")
+                if cfg.pastas.divisao.proporcao_reais:
+                    pr = cfg.pastas.divisao.proporcao_reais
+                    conteudo.append(f"- **Proporções (efetivas):** treino={pr[0]:.2f}, validação={pr[1]:.2f}, teste={pr[2]:.2f}")
+        else:
+            # Modo dataset (parquet)
+            conteudo.append("\n### Arquivos de Dataset")
+            conteudo.append(f"- **Treino:** `{cfg.dataset.train_file}`")
+            if cfg.dataset.eval_file:
+                conteudo.append(f"- **Avaliação:** `{cfg.dataset.eval_file}`")
+            if cfg.dataset.test_file:
+                conteudo.append(f"- **Teste:** `{cfg.dataset.test_file}`")
+        
+        # --- Pipeline / Curriculum ---
+        etapas = cfg.curriculum
+        conteudo.append(f"\n### Pipeline{' Curriculum' if is_curriculum else ''}")
+        conteudo.append(f"**Etapas:** {len(etapas)}")
+        
+        if is_curriculum and len(etapas) > 1:
+            # Tabela detalhada das etapas do curriculum
+            conteudo.append("")
+            conteudo.append("| # | Alias | Tipo | Epochs | LR | Max Seq | Divisão | Treino | Valid. | Teste |")
+            conteudo.append("|---|-------|------|--------|----|---------|---------|--------|--------|-------|")
+            
+            for i, etapa in enumerate(etapas):
+                ep = etapa.pace_epochs if etapa.pace_epochs > 0 else cfg.treinamento.epochs
+                lr = etapa.learning_rate if etapa.learning_rate > 0 else cfg.treinamento.learning_rate
+                msl = etapa.max_seq_length if etapa.max_seq_length > 0 else cfg.treinamento.max_seq_length
+                divisao_nome = os.path.basename(etapa.arquivo) if etapa.arquivo else "-"
+                
+                # Conta instâncias por alvo no CSV da etapa
+                contagens = cfg._contar_instancias_divisao(etapa.arquivo)
+                n_treino = contagens.get("treino", "-")
+                n_valid = contagens.get("validacao", "-")
+                n_teste = contagens.get("teste", "-")
+                
+                conteudo.append(
+                    f"| {i} | {etapa.alias} | {etapa.tipo} | {ep} | {lr} "
+                    f"| {msl} | {divisao_nome} | {n_treino} | {n_valid} | {n_teste} |"
+                )
+        else:
+            # Etapa única: resumo em texto
+            etapa = etapas[0]
+            conteudo.append(f"- **Alias:** {etapa.alias}")
+            conteudo.append(f"- **Tipo:** {etapa.tipo}")
         
         # 2. Hardware
         if hardware_info:

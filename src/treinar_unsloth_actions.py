@@ -294,52 +294,67 @@ def executar_injetar_dicas(cfg_path: str) -> None:
             logger.warning("   ⚠️ Erro ao gerar gráfico de tokens.")
 
     # ==========================================================================
-    # MÉTRICAS DE TREINAMENTO (se houver checkpoints)
+    # MÉTRICAS DE TREINAMENTO
+    # Prioriza training_metrics.jsonl (contém etapa curriculum e instâncias acumuladas)
+    # Fallback: trainer_state.json do último checkpoint
     # ==========================================================================
     from treinar_unsloth_graficos import GraficoTreinamento
+    
+    treinamento_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
+    metricas_jsonl = GraficoTreinamento.carregar_training_metrics(treinamento_dir)
     
     # Tenta encontrar checkpoints em chkpt/ ou no diretório raiz do modelo
     chkpt_dir = os.path.join(yaml_config.modelo.saida, "chkpt")
     if not os.path.exists(chkpt_dir) or not any(d.startswith("checkpoint-") for d in os.listdir(chkpt_dir) if os.path.isdir(os.path.join(chkpt_dir, d))):
-        # Fallback: checkpoints no diretório raiz do modelo
         chkpt_dir = yaml_config.modelo.saida
+    checkpoints = GraficoTreinamento.listar_checkpoints(chkpt_dir)
     
-    trainer_state = GraficoTreinamento.carregar_trainer_state(chkpt_dir)
+    if metricas_jsonl:
+        # Fonte preferida: training_metrics.jsonl com dados enriquecidos
+        train_data = metricas_jsonl["train_data"]
+        eval_data = metricas_jsonl["eval_data"]
+        etapas_curriculum = metricas_jsonl["etapas"]
+    else:
+        # Fallback: trainer_state.json do checkpoint
+        train_data, eval_data, etapas_curriculum = [], [], []
+        trainer_state = GraficoTreinamento.carregar_trainer_state(chkpt_dir)
+        if trainer_state:
+            train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
     
-    if trainer_state:
+    if train_data or eval_data:
         logger.info("\n📈 Processando métricas de treinamento...")
         
-        # Extrai métricas
-        train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
-        checkpoints = GraficoTreinamento.listar_checkpoints(chkpt_dir)
+        stats_report.append("\n## Métricas de Treinamento\n")
+        stats_report.append(f"**Checkpoints encontrados:** {len(checkpoints)}\n")
+        if etapas_curriculum:
+            nomes = [et["alias"] for et in etapas_curriculum]
+            stats_report.append(f"**Etapas do curriculum:** {' → '.join(nomes)}\n")
         
-        if train_data or eval_data:
-            # Adiciona seção ao relatório
-            stats_report.append("\n## Métricas de Treinamento\n")
-            stats_report.append(f"**Checkpoints encontrados:** {len(checkpoints)}\n")
-            stats_report.append(f"**Épocas treinadas:** {trainer_state.get('epoch', 0)}\n")
-            stats_report.append(f"**Steps totais:** {trainer_state.get('global_step', 0)}\n")
-            
-            # Tabela de Loss por Step
-            stats_report.append("\n### Evolução do Loss\n")
-            tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data)
-            stats_report.extend(tabela_loss)
-            
-            # Gera gráfico de Loss
-            logger.info("   📊 Gerando gráfico de loss...")
-            loss_graph_path = os.path.join(report_dir, "treinamento_loss.png")
-            
-            if GraficoTreinamento.evolucao_loss(train_data, eval_data, checkpoints, loss_graph_path):
-                logger.info("   ✅ Gráfico de loss salvo: treinamento_loss.png")
-                stats_report.append(f"\n### Gráfico de Evolução do Loss\n")
-                stats_report.append(f"![Loss de Treinamento](treinamento_loss.png)\n")
-                stats_report.append("*Linhas verdes tracejadas: fim de época | Linhas cinzas pontilhadas: checkpoints*\n")
-            else:
-                logger.warning("   ⚠️ Erro ao gerar gráfico de loss.")
+        # Tabela de Loss por Step
+        stats_report.append("\n### Evolução do Loss\n")
+        tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data)
+        stats_report.extend(tabela_loss)
+        
+        # Gera gráfico de Loss
+        logger.info("   📊 Gerando gráfico de loss...")
+        loss_graph_path = os.path.join(report_dir, "treinamento_loss.png")
+        
+        if GraficoTreinamento.evolucao_loss(
+            train_data, eval_data, checkpoints, loss_graph_path,
+            etapas_curriculum=etapas_curriculum
+        ):
+            logger.info("   ✅ Gráfico de loss salvo: treinamento_loss.png")
+            stats_report.append(f"\n### Gráfico de Evolução do Loss\n")
+            stats_report.append(f"![Loss de Treinamento](treinamento_loss.png)\n")
+            legenda = "*Linhas verdes: fim de época | Cinzas: checkpoints"
+            if etapas_curriculum and len(etapas_curriculum) > 1:
+                legenda += " | Violeta: transição de etapa curriculum"
+            legenda += "*\n"
+            stats_report.append(legenda)
         else:
-            logger.info("   ℹ️ Nenhum dado de loss encontrado nos checkpoints.")
+            logger.warning("   ⚠️ Erro ao gerar gráfico de loss.")
     else:
-        logger.info("\n📊 Nenhum treinamento realizado ainda (pasta chkpt não encontrada ou sem trainer_state).")
+        logger.info("\n📊 Nenhum dado de loss encontrado (sem training_metrics.jsonl nem checkpoints).")
 
     # ==========================================================================
     # MÉTRICAS DE HARDWARE (RAM, GPU, CPU)

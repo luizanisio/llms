@@ -802,7 +802,11 @@ class YamlTreinamento:
     
     
     def info(self) -> str:
-        """Retorna string com resumo da configuração."""
+        """Retorna string com resumo da configuração.
+        
+        O resumo é adaptado ao tipo de entrada (dataset, pastas ou curriculum),
+        omitindo seções irrelevantes para o formato selecionado.
+        """
         lines = [
             "=" * 60,
             "📋 CONFIGURAÇÃO YAML",
@@ -826,6 +830,8 @@ class YamlTreinamento:
             f"  Train on responses only: {self.treinamento.train_on_responses_only}",
         ]
         
+        # --- Seção de dados: varia conforme tipo de entrada ---
+        
         if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
             lines.extend([
                 "",
@@ -833,14 +839,17 @@ class YamlTreinamento:
                 f"  Entrada: {self.pastas.entrada.pasta}",
                 f"  Gold Dataset: {self.pastas.dataset.pasta}",
                 f"  Predição: {self.pastas.predicao.pasta or '(será criado)'}",
-                f"  Divisão: {self.pastas.divisao.arquivo or '(será criado)'}",
-                f"  Validar IDs: {self.pastas.divisao.validar_ids}",
-                f"  Proporções (yaml): treino={self.pastas.divisao.proporcao[0]}, validacao={self.pastas.divisao.proporcao[1]}, teste={self.pastas.divisao.proporcao[2]}",
             ])
-            
-            if self.pastas.divisao.proporcao_reais:
-                 pr = self.pastas.divisao.proporcao_reais
-                 lines.append(f"  Proporções (efetivas): treino={pr[0]:.2f}, validacao={pr[1]:.2f}, teste={pr[2]:.2f}")
+            # Divisão aparece aqui somente para modo 'pastas' (etapa única)
+            if self.tipo_entrada != TIPO_ENTRADA_CURRICULUM:
+                lines.extend([
+                    f"  Divisão: {self.pastas.divisao.arquivo or '(será criado)'}",
+                    f"  Validar IDs: {self.pastas.divisao.validar_ids}",
+                    f"  Proporções (yaml): treino={self.pastas.divisao.proporcao[0]}, validacao={self.pastas.divisao.proporcao[1]}, teste={self.pastas.divisao.proporcao[2]}",
+                ])
+                if self.pastas.divisao.proporcao_reais:
+                    pr = self.pastas.divisao.proporcao_reais
+                    lines.append(f"  Proporções (efetivas): treino={pr[0]:.2f}, validacao={pr[1]:.2f}, teste={pr[2]:.2f}")
         else:
             lines.extend([
                 "",
@@ -850,18 +859,75 @@ class YamlTreinamento:
                 f"  Teste: {self.dataset.test_file or '(não configurado)'}",
             ])
         
-        # Pipeline Universal: informações do curriculum
-        lines.extend([
-            "",
-            "🔄 PIPELINE:",
-            f"  Etapas: {len(self._curriculum)}",
-        ])
+        # --- Seção pipeline/curriculum ---
+        
+        is_curriculum = self.tipo_entrada == TIPO_ENTRADA_CURRICULUM
+        lines.extend(["", f"🔄 PIPELINE{' CURRICULUM' if is_curriculum else ''}:"])
+        lines.append(f"  Etapas: {len(self._curriculum)}")
+        
         for i, etapa in enumerate(self._curriculum):
-            lines.append(f"  [{i}] alias='{etapa.alias}', tipo={etapa.tipo}")
+            # Linha principal com alias e tipo
+            partes = [f"alias='{etapa.alias}'", f"tipo={etapa.tipo}"]
+            # Inclui overrides apenas quando diferem do valor global (>0)
+            if etapa.max_seq_length > 0:
+                partes.append(f"max_seq_length={etapa.max_seq_length}")
+            if etapa.pace_epochs > 0:
+                partes.append(f"epochs={etapa.pace_epochs}")
+            if etapa.learning_rate > 0:
+                partes.append(f"lr={etapa.learning_rate}")
+            if etapa.pace_loss > 0:
+                partes.append(f"pace_loss={etapa.pace_loss}")
+            lines.append(f"  [{i}] {', '.join(partes)}")
+            
+            # Sub-detalhes da etapa (divisão e contagens)
+            if etapa.arquivo:
+                lines.append(f"      - divisão: {os.path.basename(etapa.arquivo)}")
+                contagens = self._contar_instancias_divisao(etapa.arquivo)
+                if contagens:
+                    parts = [f"{k}={v}" for k, v in contagens.items()]
+                    lines.append(f"      - {', '.join(parts)}")
         
         lines.append("=" * 60)
         
         return "\n".join(lines)
+    
+    def _contar_instancias_divisao(self, arquivo_divisao: str) -> dict:
+        """Conta instâncias por alvo (treino/validacao/teste) em um arquivo de divisão CSV.
+        
+        Args:
+            arquivo_divisao: Caminho para o CSV com colunas id_arquivo e alvo.
+            
+        Returns:
+            Dict ordenado {treino: N, validacao: N, teste: N} ou {} se erro/inexistente.
+        """
+        import pandas as pd
+        if not arquivo_divisao or not os.path.isfile(arquivo_divisao):
+            return {}
+        try:
+            df = pd.read_csv(arquivo_divisao)
+            col_alvo = "alvo"
+            if col_alvo not in df.columns:
+                # Tenta nomes antigos
+                for alt in ("divisão", "divisao", "grupo"):
+                    if alt in df.columns:
+                        col_alvo = alt
+                        break
+                else:
+                    return {}
+            contagem = df[col_alvo].value_counts().to_dict()
+            # Ordena na ordem padrão: treino, validacao, teste, outros
+            ordem = ["treino", "validacao", "teste"]
+            resultado = {}
+            for k in ordem:
+                if k in contagem:
+                    resultado[k] = contagem[k]
+            # Inclui chaves extras não previstas
+            for k, v in contagem.items():
+                if k not in resultado:
+                    resultado[k] = v
+            return resultado
+        except Exception:
+            return {}
     
     def __repr__(self) -> str:
         return f"YamlTreinamento(yaml_path='{self.yaml_path}', tipo_entrada='{self.tipo_entrada}')"
