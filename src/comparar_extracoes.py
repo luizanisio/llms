@@ -622,7 +622,30 @@ def main():
             if id_doc is not None and isinstance(json_true, dict):
                 mapa_chaves[str(id_doc)] = contar_chaves_recursivo(json_true)
         
-        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos, mapa_chaves=mapa_chaves)
+        # Constrói mapa de tokens por documento (total e output por modelo)
+        # As chaves nos JSONs de análise usam o formato "{rotulo_true}_{rotulo_modelo}"
+        # enquanto os tokens usam apenas "{rotulo_modelo}" como prefixo.
+        # Remapeamos para que as chaves do mapa usem o formato dos JSONs de análise.
+        mapa_tokens = {}
+        if dados_analise.tem_tokens:
+            for item in dados_analise.dados:
+                id_doc = item.get(rotulo_id_key)
+                if id_doc is not None:
+                    tokens = dados_analise.get_tokens(str(id_doc), por_mil=False)
+                    if tokens:
+                        doc_tokens = {}
+                        for rotulo_modelo in dados_analise.rotulos_modelos:
+                            nome_analise = f'{rotulo_true}_{rotulo_modelo}'
+                            total = tokens.get(f'{rotulo_modelo}_total')
+                            output = tokens.get(f'{rotulo_modelo}_output')
+                            if total is not None:
+                                doc_tokens[f'{nome_analise}_total'] = total
+                            if output is not None:
+                                doc_tokens[f'{nome_analise}_output'] = output
+                        if doc_tokens:
+                            mapa_tokens[str(id_doc)] = doc_tokens
+
+        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos, mapa_chaves=mapa_chaves, mapa_tokens=mapa_tokens)
         util_divisoes.processar()
     except Exception as e:
         print(f"❌ Erro ao gerar divisões: {e}")

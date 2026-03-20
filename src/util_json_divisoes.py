@@ -60,13 +60,15 @@ def contar_chaves_recursivo(obj) -> int:
 
 
 class UtilJsonDivisoes:
-    def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1), mapa_chaves: dict = None):
+    def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1), mapa_chaves: dict = None, mapa_tokens: dict = None):
         self.pasta_analises = pasta_analises
         self.divisao_grupos = divisao_grupos
         self.pasta_jsons = os.path.join(self.pasta_analises, 'jsons')
         self.pasta_saida = os.path.join(self.pasta_analises, 'divisoes')
         # Mapa {id_doc: num_chaves} com contagem de chaves do ground truth
         self.mapa_chaves = mapa_chaves or {}
+        # Mapa {id_doc: {rotulo_total: N, rotulo_output: N, ...}} com contagem de tokens
+        self.mapa_tokens = mapa_tokens or {}
         
         # Regex para identificar as colunas de métricas que entram no cálculo
         # "(global)_*_F1" ou "(estrutura)_*_F1"
@@ -179,6 +181,18 @@ class UtilJsonDivisoes:
             else:
                 df['chaves_peso'] = 0.5
         
+        # 3c. Adiciona contagem de tokens (total e output) do modelo - não entra no cálculo de dificuldade
+        if self.mapa_tokens:
+            sufixo_total = f'{nome_modelo}_total'
+            sufixo_output = f'{nome_modelo}_output'
+            df['token_total'] = df['id'].apply(lambda x: self.mapa_tokens.get(str(x), {}).get(sufixo_total, None))
+            df['token_output'] = df['id'].apply(lambda x: self.mapa_tokens.get(str(x), {}).get(sufixo_output, None))
+            # Converte para int onde possível (mantém NaN para documentos sem info)
+            for col_tk in ['token_total', 'token_output']:
+                df[col_tk] = pd.to_numeric(df[col_tk], errors='coerce')
+                if df[col_tk].notna().any():
+                    df[col_tk] = df[col_tk].astype('Int64')
+
         # Para distribuir bem as notas de dificuldade, usamos posições dos itens (ranking)
         # em vez dos valores absolutos (min-max que concentra nos extremos).
         # Garantimos as proporções: 30% dificil, 40% medio e 30% facil
@@ -268,16 +282,15 @@ class UtilJsonDivisoes:
         # Limpeza da coluna temporária
         df_final = df_final.drop(columns=['soma_pontuacoes'])
         
-        # Reordena colunas: chaves e chaves_peso logo após familia_modelo
-        if 'chaves' in df_final.columns:
+        # Reordena colunas: chaves, chaves_peso e tokens logo após familia_modelo
+        colunas_extras = [c for c in ['chaves', 'chaves_peso', 'token_total', 'token_output'] if c in df_final.columns]
+        if colunas_extras:
             colunas_ordem = list(df_final.columns)
-            for col_mover in ['chaves_peso', 'chaves']:
-                if col_mover in colunas_ordem:
-                    colunas_ordem.remove(col_mover)
+            for col_mover in colunas_extras:
+                colunas_ordem.remove(col_mover)
             idx_familia = colunas_ordem.index('familia_modelo') if 'familia_modelo' in colunas_ordem else 2
-            colunas_ordem.insert(idx_familia + 1, 'chaves')
-            if 'chaves_peso' in df_final.columns:
-                colunas_ordem.insert(idx_familia + 2, 'chaves_peso')
+            for i, col_mover in enumerate(colunas_extras):
+                colunas_ordem.insert(idx_familia + 1 + i, col_mover)
             df_final = df_final[colunas_ordem]
         
         # 6. Salvar na formatação correta do CSV

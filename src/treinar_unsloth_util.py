@@ -904,7 +904,7 @@ class YamlTreinamento:
         if not arquivo_divisao or not os.path.isfile(arquivo_divisao):
             return {}
         try:
-            df = pd.read_csv(arquivo_divisao)
+            df = pd.read_csv(arquivo_divisao, sep=None, engine='python')
             col_alvo = "alvo"
             if col_alvo not in df.columns:
                 # Tenta nomes antigos

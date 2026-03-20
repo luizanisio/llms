@@ -226,7 +226,7 @@ class DatasetTreinamento:
         # Tenta carregar arquivo existente
         if arquivo_divisao and os.path.isfile(arquivo_divisao):
             print(f"📂 Carregando divisão de: {arquivo_divisao}")
-            df = pd.read_csv(arquivo_divisao)
+            df = pd.read_csv(arquivo_divisao, sep=None, engine='python')
             # Migração automática de nomes de colunas antigos
             if "id_arquivo" not in df.columns and "id" in df.columns:
                 print("🔄 Migrando coluna 'id' → 'id_arquivo'...")

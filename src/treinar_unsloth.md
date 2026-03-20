@@ -1,4 +1,4 @@
-# Documentação do Treinamento e Avaliação
+# Documentação do Treinamento com treinar_unsloth.py
 
 ## Descrição Geral
 
@@ -35,7 +35,7 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Modo de estatísticas de tokens com gráficos (`--stats`)
 - [x] Modo teste para validar predições (`--modelo N`) com opção `--base`
 - [x] Geração de predições em massa (`--predict`) com opção `--base`
-- [x] Suporte a datasets em formado de pastas (pares .txt) e arquivos únicos (csv/parquet)
+- [x] Suporte a datasets em formado de pastas (pares .txt), arquivos únicos (csv/parquet) e curriculum (múltiplas divisões)
 - [x] Divisão automática de datasets (treino, validação, teste) via YAML ou CSV
 - [x] Chat template automático baseado no modelo
 - [x] Criptografia de dados sensíveis (Fernet)
@@ -45,11 +45,11 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 
 ---
 
-## Treinamento
+## Uso via Linha de Comando
 
-O treinamento principal do modelo utiliza o banco de dados configurado no YAML para atualizar os pesos do modelo (criando adaptadores LoRA ou ajustando o modelo completo).
+O sistema é dividido em dois scripts independentes:
 
-### Uso via Linha de Comando (`treinar_unsloth.py`)
+### treinar_unsloth.py — Treinamento
 
 ```bash
 python treinar_unsloth.py [CONFIG.yaml] [AÇÃO]
@@ -64,32 +64,7 @@ python treinar_unsloth.py [CONFIG.yaml] [AÇÃO]
 | `--dicas` | Injeta comentários de dicas no YAML de configuração |
 | `--log-level LEVEL` | Define nível de log (DEBUG, INFO, WARNING, ERROR) |
 
-**Exemplos de Uso:**
-```bash
-python treinar_unsloth.py                                 # Modo interativo completo
-python treinar_unsloth.py config.yaml                     # Seleciona ação via menu
-python treinar_unsloth.py config.yaml --treinar           # Inicia treinamento
-python treinar_unsloth.py config.yaml --reset --treinar   # Limpa e treina do zero
-```
-
-### Arquivos de Saída e Monitoramento no Treinamento
-
-| Pasta/Arquivo | Conteúdo |
-|---------------|----------|
-| `adapter_model.safetensors` | Pesos do LoRA treinado |
-| `dados_automaticos.json` | Arquivo de cache interno (metadados resolvidos como `max_seq_length_auto` para acelerar reexecuções) |
-| `treinamento/training_metrics.jsonl` | Métricas de treino (loss, learning rate, epoch) a cada step |
-| `treinamento/hardware_metrics.jsonl` | Uso de recursos (CPU, RAM, GPU, Disco) coletado periodicamente |
-
-**Monitoramento de Recursos:** O módulo `treinar_unsloth_monitor.py` é iniciado em background e registra ativamente uso de RAM, VRAM (GPU) e Disco, armazenados durante o tempo em que o treinamento estiver ativo.
-
----
-
-## Avaliação
-
-O script de avaliação tem o papel de analisar os dados processados e testar um modelo treinado (ou o base) mediante datasets específicos.
-
-### Uso via Linha de Comando (`treinar_unsloth_avaliar.py`)
+### treinar_unsloth_avaliar.py — Avaliação, Inferência e Exportação
 
 ```bash
 python treinar_unsloth_avaliar.py [CONFIG.yaml] [AÇÃO]
@@ -110,8 +85,18 @@ python treinar_unsloth_avaliar.py [CONFIG.yaml] [AÇÃO]
 | `--quant METODO` | Quantização para merge (`16bit`, `4bit`, `q4_k_m`, `q8_0`) |
 | `--log-level LEVEL` | Define nível de log (DEBUG, INFO, WARNING, ERROR) |
 
-**Exemplos de Uso:**
+> **Nota:** Ambos os scripts aceitam o YAML como argumento opcional. Se omitido, exibem menu interativo para seleção do arquivo YAML via `util_menu_opcoes.escolher_yaml()`.
+
+### Exemplos de Uso
+
 ```bash
+# === TREINAMENTO ===
+python treinar_unsloth.py                                 # Modo interativo completo
+python treinar_unsloth.py config.yaml                     # Seleciona ação via menu
+python treinar_unsloth.py config.yaml --treinar           # Inicia treinamento
+python treinar_unsloth.py config.yaml --reset --treinar   # Limpa e treina do zero
+
+# === AVALIAÇÃO ===
 python treinar_unsloth_avaliar.py                          # Modo interativo completo
 python treinar_unsloth_avaliar.py config.yaml --info       # Informações detalhadas
 python treinar_unsloth_avaliar.py config.yaml --stats      # Relatório estatístico
@@ -121,45 +106,40 @@ python treinar_unsloth_avaliar.py config.yaml --modelo 3   # Testar 3 exemplos
 python treinar_unsloth_avaliar.py config.yaml --merge      # Exportar modelo
 ```
 
-### Funcionalidades de Avaliação
+---
 
-#### Relatório de Estatísticas (`--stats`)
+## Detalhes das Funcionalidades
+
+### Relatório de Estatísticas (`--stats`)
 Gera análise detalhada do consumo de tokens (entrada e saída) por subset.
 *   **Saída**: `{output_dir}/treinamento/relatorio_estatistico.md`
 *   **Gráficos**: Gera `stats_tokens_boxplot.png` contendo boxplots comparativos de todos os subsets (Entrada e Saída).
+*   **Tabelas**: No relatório MD, apresenta tabelas com Min, Max, Média, Mediana, Desvio Padrão e Total por subset.
 
-#### Predição em Massa (`--predict`)
-Gera respostas do modelo para os datasets configurados. Remove os arquivos da rodada anterior, mas apenas `.json` e `.txt` para fins de segurança, sem deletar outras coisas presentes na pasta de predição.
+### Predição em Massa (`--predict`)
+Gera respostas do modelo para os datasets configurados.
+*   **Limpeza Segura**: Antes de iniciar, remove apenas arquivos `.json` e `.txt` da pasta de destino do subset, preservando outros arquivos.
 *   **Arquivos Gerados**:
     *   `{id}.txt`: O texto da resposta gerada.
     *   `{id}.json`: Metadados (tempo, tokens, preview do prompt).
-    *   `resumo.json`: Estatísticas consolidadas da execução na respectiva pasta.
+    *   `resumo.json`: Estatísticas consolidadas da execução.
 
-#### Inferência Interativa e Memória (`--modelo`)
-* Gera gráfico `treinamento/memoria_predicao.png` constatando o uso de VRAM demandado pelo LLM ao instanciar as requisições gerativas.
+### Configuração YAML
 
----
+A configuração é centralizada em arquivo YAML. Principais seções:
 
-## Principais Chaves do Arquivo YAML
+#### Pastas: Dataset e Predição
+O YAML separa claramente os dados de **entrada** (gold dataset para treino) dos de **saída** (predições geradas pelo modelo):
 
-O arquivo de configuração define todas as variáveis que controlam o treinamento e a avaliação. Para garantir compreensão fácil, as chaves mais utilizadas foram agrupadas e explicadas:
-
-### 1. Modelo Base (`modelo`)
-```yaml
-modelo:
-  nome: unsloth/Qwen2.5-1.5B-Instruct
-  saida: ./modelos_treinados/qwen_padrao
-```
-*   `nome`: Repositório do modelo na no Hugging Face (preferencialmente os quantizados do _unsloth/_).
-*   `saida`: Pasta principal local onde os pesos do LoRA, os logs de treino e as predições geradas serão salvos.
-
-### 2. Configurações de Pastas (`pastas`)
 ```yaml
 pastas:
   dataset:
+    #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino (OBRIGATÓRIO)
+    #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
     pasta: ./saidas_fold11/ext_qwen235b_11
     mascara: "*.txt"
   predicao:
+    #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
     pasta: ./treino_simples/predict/ext_qwen1_5b_11
   entrada:
     dataframe: ./saidas/pecas_exportadas_textos.parquet
@@ -168,39 +148,187 @@ pastas:
     prompt_template: './saidas/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
 ```
-*   `dataset.pasta`: **[Obrigatório]** É o seu *Gold Dataset* (respostas originais corretas). Usado para calcular o _loss_ (erro) que o modelo precisa aprender a reduzir.
-*   `predicao.pasta`: Pasta onde as novas inferências/respostas escritas pelo seu modelo treinado serão registradas no modo `--predict`.
-*   `entrada`: Especifica onde está localizado o texto de entrada do usuário. Geralmente um `dataframe` (.csv, .parquet) lincando as chaves em `dataframe_id` aos arquivos txt do `dataset.pasta` através de um super prompt definido pelo `prompt_template`.
 
-### 3. Divisão do Dataset (`pastas.divisao`)
+- **`pastas.dataset`**: Gold standard (saídas esperadas). Obrigatório. Erro se a pasta não existir.
+- **`pastas.predicao`**: Saída das predições do modelo. Criada automaticamente se não existir.
+- **`pastas.entrada`**: Textos de entrada (via `dataframe` ou `pasta` de arquivos).
+
+#### Proporção e Divisão
+Define como os dados são divididos em subconjuntos para treinamento se não houver um arquivo CSV de divisão prévia.
+- **`validar_ids`**: Quando `true`, levanta um erro fatal caso existam arquivos nas pastas (pareados) que não estejam mapeados no arquivo CSV de divisão prévio. Quando `false`, processa normalmente e apenas emite um aviso sobre os arquivos ignorados – excelente para usar apenas uma amostra do conjunto total de arquivos em disco.
+
 ```yaml
+pastas:
   divisao:
-    arquivo: "caminho/para/divisao.csv"
-    proporcao:
+    arquivo: "caminho/para/divisao.csv" # Opcional: Caminho para fixar/ler a divisão. Se não existir, será criado.
+    proporcao: # Lista com a proporção de divisão de cada conjunto (deve somar 1.0)
       - treino: 0.7
       - validacao: 0.1
       - teste: 0.2
-    validar_ids: true
+    seed: 42 # Opcional: Semente aleatória (Padrão: 42)
+    validar_ids: true # Opcional: Verifica a integridade dos IDs (Padrão: true)
 ```
-*   `arquivo`: Se omitido, novos subconjuntos são embaralhados. Se preenchido com um arquivo que existe, fixa qual texto cai em qual subconjunto usando um CSV para reprodução determinística em outros testes.
-*   `proporcao`: Define a porcentagem das amostras entre Treinamento, Validação e Teste (a soma obrigatoriamente é 1.0).
-*   `validar_ids`: Se `true`, para a execução quando encontrar IDs no dataset que não constam no aquivo de divisão. Se `false`, o programa avança com um warning, servindo para trabalhar com fragmentos da base instalada localmente no repositório.
 
-### 4. Modo de Aprendizagem e LoRA (`treinamento`)
+#### Train on Responses Only
+Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário. (sugerido no unsloth)
 ```yaml
 treinamento:
   train_on_responses_only: true
-  lora:
-    r: 16
-    lora_alpha: 16
 ```
-*   `train_on_responses_only`: Quando estabelecido `true`, o modelo recebe o prompt inteiro e a resposta esperada, mas a "nota" da punição do gradiente (o cálculo de loss) incidirá exclusivamente nos tokens respondidos por ele — evitando que o LoRA tente acidentalmente re-codificar as palavras dadas pelo usuário.
-*   `lora.r` e `lora_alpha`: Controlam o tamanho (paramétricos ajustáveis) do seu adaptador (matriz injetada em subcamadas do Transformer), ajustando expressividade vs custo de memoria durante o refino do comportamento.
 
-### 5. Janela de Contexto (`max_seq_length`)
+#### Curriculum Learning
+O modo `curriculum` tem sua própria seção no YAML com a mesma estrutura que `pastas` (predicao, dataset, entrada, validacao). A subchave `divisao` contém a lista de etapas do pipeline, cada uma com seu próprio arquivo CSV de divisão e parâmetros de treino.
 ```yaml
-treinamento:
-  max_seq_length: 0 # Opcional (se omitido ou 0, utiliza o Cálculo Dinâmico)
+formatos:
+  tipo_entrada: curriculum
+
+curriculum:
+  predicao:
+    pasta: ./predict/output
+  dataset:
+    pasta: ./saidas/gold
+    mascara: "*.txt"
+  entrada:
+    dataframe: ./dados/textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+  validacao:
+    exigir_json_valido: true
+  divisao:
+    - arquivo: ./divisao_facil.csv
+      alias: "fácil"
+      tipo: "lora"
+      pace_epochs: 1
+    - arquivo: ./divisao_medio.csv
+      alias: "médio"
+      tipo: "lora"
+      pace_epochs: 2
 ```
-*   `max_seq_length`: Define a limitação de leitura máxima do modelo. **Regra de Ouro:** O tamanho do contexto reflete a janela _inteira_, logo, considera textualmente a soma do **Prompt/Entrada do Usuário + a Resposta/Saída do Assistente + formatação estrutural**. 
-*   **Cálculo Dinâmico**: Se omitido ou definido como `0`, o módulo de carregamento lerá seu _Dataset_ inteiro prevendo as divisões para simular como determinado modelo formatará os tokens. Ele encontra o teto máximo de processamento exigido e enxuga as alocações de VRAM da GPU para aquele limite calculado. Os resultados dessa conta e de eventuais desdobramentos de *Curriculum Learning* são postos em um arquivo cache `dados_automaticos.json` ao lado do aprendizado.
+
+---
+
+## Arquivos de Saída e Métricas
+
+Durante o treinamento e testes, diversos arquivos são gerados na pasta de saída (`modelo.saida`):
+
+| Pasta/Arquivo | Conteúdo |
+|---------------|----------|
+| `adapter_model.safetensors` | Pesos do LoRA treinado |
+| `treinamento/training_metrics.jsonl` | Métricas de treino (loss, learning rate, epoch) a cada step |
+| `treinamento/hardware_metrics.jsonl` | Uso de recursos (CPU, RAM, GPU, Disco) coletado periodicamente |
+| `treinamento/memoria_predicao.png` | Gráfico de uso de memória gerado durante teste (`--modelo`) |
+| `predict/` | Resultados da predição com modelo treinado |
+| `predict_base/` | Resultados da predição com modelo base (`--base`) |
+
+---
+
+## Monitoramento
+
+O sistema inclui monitoramento de recursos em background (`treinar_unsloth_monitor.py`):
+1.  **Durante Treino**: Registra em `hardware_metrics.jsonl`.
+2.  **Durante Teste (`--modelo`)**: Coleta dados em tempo real e gera gráfico ao final.
+3.  **Logs**: Exibe consumo de VRAM e RAM nos logs de execução.
+
+---
+
+## Desenvolvimento e Manutenção
+
+### Pendências Concluídas Recentemente ✅
+1.  **Refatoração de Ações**: Lógica CLI movida para `treinar_unsloth_actions.py`.
+2.  **Separação de Dataset**: Lógica complexa movida para `treinar_unsloth_dataset.py`.
+3.  **Segurança**: Limpeza seletiva em `--predict`.
+4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
+5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
+6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com toda a lógica de avaliação, inferência e exportação. CLI de treino simplificado.
+7.  **Separação `dataset` / `predicao` no YAML**: Nova seção `pastas.dataset` para o gold dataset (entrada obrigatória). `pastas.predicao` agora é apenas pasta de saída das predições (criada automaticamente se não existir).
+8.  **Menu Interativo YAML**: Ambos os scripts usam `util_menu_opcoes.escolher_yaml()` quando YAML é omitido, com menus de ação específicos para cada script.
+
+### Próximo Passo de Desenvolvimento
+> pace de treinamento (Curriculum Learning) e simplificação do código
+
+**Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace).
+
+Para garantir uma implementação segura e testável, o desenvolvimento será dividido nas seguintes etapas incrementais, permitindo validação e testes intermediários a cada avanço.
+
+#### Passo 1: Separação de Preocupações e Melhoria do CLI ✅ CONCLUÍDO
+**Objetivo:** Desacoplar a inferência do motor de treinamento para blindar e otimizar o código base do Treinador, centralizando o treinamento para focar *apenas Treinar e dar Merge*, e melhorar a experiência CLI.
+
+**Implementado:**
+1. ✅ **Extração da Avaliação/Inferência:** Funções `executar_info`, `executar_stats`, `executar_predict`, `executar_merge`, `executar_modelo` movidas para `treinar_unsloth_avaliar.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
+2. ✅ **Novo Script Independente:** `treinar_unsloth_avaliar.py` criado (~830 linhas) com CLI próprio, modo interativo e funções completas de avaliação.
+3. ✅ **Menu Interativo (CLI):** Ambos os scripts usam `util_menu_opcoes.escolher_yaml(chave_obrigatoria='modelo')`. Argumento `config` é `nargs='?'` (opcional). Menu de ações específico: treino (treinar, reset+treinar, reset) e avaliação (info, stats, predict, modelo, merge).
+4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigGold` para `pastas.dataset` (gold standard, obrigatório, validação de existência). `ConfigPredicao` agora é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `pastas.dataset` como fonte do gold.
+* **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.
+
+#### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum)
+**Objetivo:** Unificar a base de código do sistema atual antes de construir o Curriculum Learning multicamadas, assim o processo opera o mesmo sistema de logs (como se fosse de "apenas uma etapa").
+
+1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
+2. **Log de Rastreiamento Unificado e Resumo:** Implementar que todo salvamento utilize métricas gravadas no esquema universal (`curriculum_state.json` constando `{"current_step": 0, "status": "running"}` e `curriculum_metrics.jsonl`), abandonando outros tipos de lógicas divergentes.
+3. **Ajuste Dinâmico de `max_seq_length`:** Antes de dar início ao processo, codificar a análise da extensão máxima de tokens. Caso o dado ultrapasse o valor configurado/suportado, levantar Exception. Se `max_seq_length` for 0 ou omitido, deve arredondar com margem o teto máximo (ex: múltiplos precisos de 512 de folga para alocar tudo e enxugar VRAM).
+* **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) a partir do zero. As métricas exportadas, `.JSONL`, consolidações do estado de curriculum e a folga calculada do `max_seq_length` devem gerar relatórios perfeitamente adequados sem ter exigido yaml especializado, comprovando a blindagem base.
+
+#### Passo 3: Motor Multietapas do Curriculum Learning
+**Objetivo:** Adicionar interpretador do YAML para Curriculum, transições e regras de `LoRA` \leftrightarrow `Full`.
+
+1. **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo:
+```yaml
+formatos:
+  tipo_entrada: curriculum # Opções: dataset, pastas, curriculum
+
+pastas:
+  # Compartilhado entre todas as etapas do curriculum
+  predicao:
+    pasta: ./predict/output
+  dataset:
+    pasta: ./saidas/gold
+    mascara: "*.txt"
+  entrada:
+    dataframe: ./dados/textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+    prompt_template: './dados/prompt.txt'
+    tag_texto: '<<--TEXTO-->>'
+  divisao:
+    validar_ids: false
+    proporcao:
+      - treino: 0.70
+      - validacao: 0.10
+      - teste: 0.20
+    seed: 42
+  validacao:
+    exigir_json_valido: true
+    skip_invalidos: false
+
+# Cada etapa = uma divisão do dataset com parâmetros de treino
+curriculum:
+  - arquivo: "./saidas/divisao_facil.csv"
+    alias: "fácil"
+    tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+    pace_epochs: 1     # (Padrão) Transita após 1 época.
+    max_seq_length: 512 # [Opcional] Pode sobrepor config geral.
+    learning_rate: 0.0003 # [Opcional] Força LR independente para esta etapa
+  - arquivo: "./saidas/divisao_medio.csv"
+    alias: "médio"
+    tipo: "lora"
+    pace_loss: 0.015   # Transita se eval_loss <= 0.015
+    pace_epochs: 2     # Limite de segurança. Padrão ao omitir = 1.
+```
+2. **Divisão Dinâmica ("Fail Fast"):** Evitar a autogeração baseada em divisões randômicas complexas ao usar curriculum. O sistema deve abortar prevenindo bugs se os subarquivos parametrizados (ex. `{arquivo}_facil.csv`) ikke existirem perfeitamente.
+3. **Roteamento e Sobrevivência de Passos:**
+    * Encapsular salvamentos no format de roteamento (ex: `{modelo.saida}/curriculum/01_facil`). Onde um retoma o modelo do passado.
+    * No caso de Resume (`--treinar` de checkpoint quebrado), utilizar do state vivo (`curriculum_state.json`) extraído no passo 2 para instanciar subpastas `checkpoint-N` precisas resgatando o ponto cego daquela etapa exata.
+4. **Mixando Modelos (LoRA vs Full):**
+    * *Transição `[LoRA -> Full]`*: Mesclar base + lora via instanciador e usar o Merge como "o novo `FastLanguageModel` pleno" da segunda fase.
+    * *Transição `[Full -> LoRA]`*: A requantização p/ nbits deve ser estritamente reacendida e embutida na modelagem ` FastLanguageModel.get_peft_model()` que sucede a transição.
+* **⏱️ Teste Intermediário:** Simular um YAML com duas etapas restritas em LoRA. Processar passo 1 e pausar; retomar usando reexecução do script pelo CLI, e observar se os modelos são salvos nos seus compartimentos próprios no HD, e o passo 2 continua usando as raízes geradas. 
+
+#### Passo 4: Pace Dinâmico e Ajustes Visuais de Controle
+**Objetivo:** Interpolação analítica final garantindo eficiência via parada prematura baseada no desempenho e legibilidade de análise das métricas via Gráficos evolutivos de múltiplas fases.
+
+1. **Pacing / Early Stopping Configurable:**
+    * Programar `TrainerCallback` customizado plugado no Unsloth, que intercepta pós gatilhos `on_evaluate()`.
+    * Checar `eval_loss <= pace_loss` ou total epochs se aproximarem de `pace_epochs`, injetar `control.should_training_stop = True` finalizando imediatamente aquela frente do currículo para poupar horas de servidor.
+2. **Métricas de Eficiência Analíticas Estendidas:** Em cada finalização de passo (`curriculum_metrics.jsonl`), adicionar logs em cada etapa englobando *Tamanho em instâncias geradas (Utilização e Validação do target)*, *eval_loss absoluto que atestou o fim da etapa*, *Tempo Real Clocked Time*, *VRAM Peak* na fase cruzada.
+3. **Legendagem Visual do Gráfico (Loss):** Redesenhar e adaptar o método `GraficoTreinamento.evolucao_loss()` usando a engine base. Ele deve ler o tracker consolidado lido, identificar onde ocorreu a transição dos aliases e traçar linhas demarcatórias cruzando e assinalando como legenda "Etapa Fácil", "Etapa Médio", nos boxes e boxplots (em `--stats`).
+* **⏱️ Teste Intermediário Final:** Processar múltiplos estágios usando Curriculum completo. Embutir propositalmente uma meta `pace_loss = 1.5` de fácil alcance numa das passagens e testar os limites do Early-Stopping e o respectivo avanço para a etapa 2. Constatar a divisão formatada do gráfico unificado renderizado em `.png` ao encerramento pleno.
