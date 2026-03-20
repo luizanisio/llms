@@ -117,11 +117,16 @@ class TreinarChatTemplate:
         """
         Aplica a configuração para treinar apenas nas respostas do assistente.
         
+        IMPORTANTE: train_on_responses_only do unsloth MUTA o trainer (altera
+        trainer.train_dataset e trainer.data_collator) ANTES de validar labels.
+        Se a validação falhar (ZeroDivisionError do fix_zero_training_loss), é
+        necessário RESTAURAR o estado original do trainer para evitar NaN loss.
+        
         Args:
             trainer: O objeto SFTTrainer instanciado
             
         Returns:
-            O trainer configurado (ou o original se houver erro)
+            O trainer configurado (ou o original restaurado se houver erro)
         """
         try:
             # Detecta as tags de instrução e resposta baseado no modelo/template
@@ -157,6 +162,12 @@ class TreinarChatTemplate:
                 instruction_part = "<|im_start|>user\n"
                 response_part = "<|im_start|>assistant\n"
             
+            # Salva estado ANTES da mutação (train_on_responses_only altera
+            # trainer.train_dataset, trainer.eval_dataset e trainer.data_collator)
+            ds_treino_original = trainer.train_dataset
+            ds_eval_original = trainer.eval_dataset
+            collator_original = trainer.data_collator
+            
             # Aplica train_on_responses_only do unsloth
             trainer = train_on_responses_only(
                 trainer,
@@ -170,6 +181,12 @@ class TreinarChatTemplate:
             
         except Exception as e:
             print(f'   ⚠️ Erro ao aplicar train_on_responses_only: {e}')
+            # RESTAURA estado original do trainer (mutado por train_on_responses_only
+            # antes da exceção ser lançada por fix_zero_training_loss)
+            trainer.train_dataset = ds_treino_original
+            trainer.eval_dataset = ds_eval_original
+            trainer.data_collator = collator_original
+            print(f'   Estado do trainer restaurado (dataset e collator originais).')
             print(f'   Continuando com treinamento padrão (full sequence loss)...')
             return trainer
 

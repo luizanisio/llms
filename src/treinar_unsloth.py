@@ -47,6 +47,7 @@ dataset_eval_path: ""     # opcional
 
 import argparse
 from cmath import inf
+import math
 import os, time, json
 import sys
 import traceback
@@ -348,10 +349,18 @@ class MetricsLoggerCallback(TrainerCallback):
             open(self.metrics_file, "w").close()
         
     def _registrar(self, registro: dict):
-        """Salva registro no arquivo JSONL."""
+        """Salva registro no arquivo JSONL.
+        
+        Substitui float NaN/Inf por None para gerar JSON válido
+        (NaN não é JSON válido e quebra parsers padrão).
+        """
         try:
+            limpo = {
+                k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+                for k, v in registro.items()
+            }
             with open(self.metrics_file, "a") as fp:
-                fp.write(json.dumps(registro, ensure_ascii=False) + "\n")
+                fp.write(json.dumps(limpo, ensure_ascii=False) + "\n")
         except Exception:
             pass
     
@@ -409,24 +418,30 @@ class MetricsLoggerCallback(TrainerCallback):
         
         # Métricas de treinamento
         if "loss" in logs:
-            registro["train_loss"] = round(logs["loss"], 6)
-            self._train_losses.append(logs["loss"])
-            # Média móvel das últimas 10 perdas
-            if len(self._train_losses) >= 10:
-                registro["train_loss_avg_10"] = round(sum(self._train_losses[-10:]) / 10, 6)
+            val = logs["loss"]
+            if not (isinstance(val, float) and math.isnan(val)):
+                registro["train_loss"] = round(val, 6)
+                self._train_losses.append(val)
+                # Média móvel das últimas 10 perdas
+                if len(self._train_losses) >= 10:
+                    registro["train_loss_avg_10"] = round(sum(self._train_losses[-10:]) / 10, 6)
         
         if "learning_rate" in logs:
             registro["learning_rate"] = logs["learning_rate"]
             
         if "grad_norm" in logs:
-            registro["grad_norm"] = round(logs["grad_norm"], 6)
+            val = logs["grad_norm"]
+            if not (isinstance(val, float) and math.isnan(val)):
+                registro["grad_norm"] = round(val, 6)
         
         # Métricas de avaliação
         if "eval_loss" in logs:
-            registro["eval_loss"] = round(logs["eval_loss"], 6)
-            if logs["eval_loss"] < self._best_eval_loss:
-                self._best_eval_loss = logs["eval_loss"]
-                registro["is_best_eval"] = True
+            val = logs["eval_loss"]
+            if not (isinstance(val, float) and math.isnan(val)):
+                registro["eval_loss"] = round(val, 6)
+                if val < self._best_eval_loss:
+                    self._best_eval_loss = val
+                    registro["is_best_eval"] = True
         
         # Progresso
         if state.max_steps > 0:
@@ -1120,8 +1135,31 @@ class LLMsTrainer:
         )
         
         # Aplica train_on_responses_only se configurado
+        # O Unsloth SFTTrainer tokeniza o dataset (text → input_ids/attention_mask)
+        # e define DataCollatorForLanguageModeling (sem labels).
+        # train_on_responses_only mapeia o dataset adicionando labels com -100 nas
+        # posições do prompt e tokens reais nas respostas do assistant.
         if treino_cfg.train_on_responses_only:
-            trainer = self.chat_handler.aplicar_train_on_responses_only(trainer)
+            dataset_ja_tem_labels = "labels" in (trainer.train_dataset.column_names if trainer.train_dataset else [])
+            if dataset_ja_tem_labels:
+                # Verifica se os labels existentes já mascaram o prompt corretamente
+                amostra = trainer.train_dataset[0]
+                labels_amostra = amostra["labels"]
+                n_validos = sum(1 for lb in labels_amostra if lb != -100)
+                n_total = len(labels_amostra)
+                if n_validos > 0 and n_validos < n_total:
+                    # Labels já possuem mascaramento parcial (prompt=-100, resposta=válida)
+                    print(f'   ✅ train_on_responses_only: dataset já possui labels pré-mascarados')
+                    print(f'      ({n_validos}/{n_total} tokens com loss, {n_total - n_validos} mascarados)')
+                    print(f'      Pulando train_on_responses_only para preservar labels corretos.')
+                else:
+                    # Labels existem mas sem mascaramento adequado — aplica normalmente
+                    trainer = self.chat_handler.aplicar_train_on_responses_only(trainer)
+            else:
+                trainer = self.chat_handler.aplicar_train_on_responses_only(trainer)
+            
+            # Verificação pós-aplicação: garante que ao menos alguns labels sejam válidos
+            self._verificar_labels_dataset(trainer)
         
         # Remove colunas string residuais dos datasets internos do trainer.
         # O SFTTrainer tokeniza 'text' → input_ids/labels, mas mantém a coluna original.
@@ -1176,6 +1214,61 @@ class LLMsTrainer:
         trainer.model.config.use_cache = False
         
         return trainer
+
+    def _verificar_labels_dataset(self, trainer) -> None:
+        """Verifica se o dataset do trainer possui labels válidos após train_on_responses_only.
+        
+        Confere uma amostra de exemplos para garantir que ao menos alguns tokens
+        tenham labels != -100 (necessário para computar loss não-NaN).
+        """
+        ds = trainer.train_dataset
+        if ds is None or "labels" not in ds.column_names:
+            print(f'   ℹ️  Sem coluna labels no dataset — collator criará labels em tempo de execução.')
+            return
+        
+        n_check = min(10, len(ds))
+        total_validos = 0
+        total_tokens = 0
+        exemplos_vazios = 0
+        
+        for i in range(n_check):
+            labels = ds[i]["labels"]
+            if isinstance(labels, list):
+                n_val = sum(1 for lb in labels if lb != -100)
+                n_tok = len(labels)
+            else:
+                # tensor
+                n_val = int((labels != -100).sum().item())
+                n_tok = len(labels)
+            total_validos += n_val
+            total_tokens += n_tok
+            if n_val == 0:
+                exemplos_vazios += 1
+        
+        if total_validos == 0:
+            print(f'   ❌ ALERTA: Todos os {n_check} exemplos verificados têm labels inteiramente -100!')
+            print(f'      Isso causará loss=NaN e grad_norm=0.0 durante o treinamento.')
+            print(f'      Possíveis causas:')
+            print(f'      • Os marcadores de resposta não foram encontrados nos input_ids')
+            print(f'      • O chat template não corresponde ao formato esperado pelo modelo')
+            # Diagnóstico: mostra o primeiro exemplo para depuração
+            if len(ds) > 0 and "input_ids" in ds.column_names:
+                ids = ds[0]["input_ids"]
+                if hasattr(ids, 'tolist'):
+                    ids = ids.tolist()
+                print(f'      Diagnóstico — input_ids (primeiros 30 tokens): {ids[:30]}')
+                try:
+                    texto_decodificado = self.tokenizer.decode(ids[:50], skip_special_tokens=False)
+                    print(f'      Diagnóstico — texto decodificado: {texto_decodificado[:200]!r}')
+                except Exception:
+                    pass
+        elif exemplos_vazios > 0:
+            pct = exemplos_vazios / n_check * 100
+            print(f'   ⚠️ {exemplos_vazios}/{n_check} exemplos com labels inteiramente -100 ({pct:.0f}%)')
+            print(f'      Total: {total_validos}/{total_tokens} tokens com loss')
+        else:
+            pct_resp = total_validos / total_tokens * 100 if total_tokens > 0 else 0
+            print(f'   ✅ Labels verificados: {total_validos}/{total_tokens} tokens com loss ({pct_resp:.1f}%)')
 
     # ------------------------- checkpoint management --------------------- 
     def _find_latest_checkpoint(self) -> str:
