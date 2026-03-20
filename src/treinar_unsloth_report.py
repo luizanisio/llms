@@ -202,7 +202,7 @@ class GeradorRelatorio:
         conteudo.append(f"| Batch size | {cfg.treinamento.batch_size} |")
         conteudo.append(f"| Grad accumulation | {cfg.treinamento.grad_batch_size} |")
         conteudo.append(f"| Épocas | {cfg.treinamento.epochs} |")
-        auto = " (automático)" if cfg._max_seq_auto else ""
+        auto = ""
         conteudo.append(f"| Max seq length | {cfg.treinamento.max_seq_length}{auto} |")
         conteudo.append(f"| LoRA r | {cfg.lora.r} |")
         conteudo.append(f"| Learning rate | {cfg.treinamento.learning_rate} |")

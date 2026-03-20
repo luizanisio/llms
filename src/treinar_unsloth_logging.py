@@ -33,6 +33,9 @@ import sys
 from typing import Optional
 from datetime import datetime
 
+# Importa suporte a cores ANSI
+from util_print import aplicar_cores
+
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -57,6 +60,26 @@ NIVEIS_VALIDOS = {
 FORMATO_CONSOLE = "%(message)s"
 FORMATO_CONSOLE_DEBUG = "[%(levelname).1s] %(message)s"
 FORMATO_ARQUIVO = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+
+# ---------------------------------------------------------------------------
+# Formatter com suporte a cores ANSI
+# ---------------------------------------------------------------------------
+
+class ColorFormatter(logging.Formatter):
+    """Formatter que aplica tags de cor <verde>, <vermelho>, etc. no console."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = super().format(record)
+        return aplicar_cores(msg)
+
+
+class StripColorFormatter(logging.Formatter):
+    """Formatter que remove tags de cor (para saída em arquivo)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = super().format(record)
+        return aplicar_cores(msg, enabled=False)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +144,7 @@ def configurar_logging(
     else:
         console_format = FORMATO_CONSOLE
     
-    console_handler.setFormatter(logging.Formatter(console_format))
+    console_handler.setFormatter(ColorFormatter(console_format))
     logger.addHandler(console_handler)
     
     # Handler de arquivo (se especificado)
@@ -129,7 +152,7 @@ def configurar_logging(
         os.makedirs(os.path.dirname(_arquivo_log) or ".", exist_ok=True)
         file_handler = logging.FileHandler(_arquivo_log, encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)  # Arquivo sempre recebe tudo
-        file_handler.setFormatter(logging.Formatter(FORMATO_ARQUIVO))
+        file_handler.setFormatter(StripColorFormatter(FORMATO_ARQUIVO))
         logger.addHandler(file_handler)
     
     _logger_configurado = True

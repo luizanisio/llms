@@ -34,7 +34,7 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 
 1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
 2. **Log de Rastreiamento Unificado e Resumo:** Implementar que todo salvamento utilize métricas gravadas no esquema universal (`curriculum_state.json` constando `{"current_step": 0, "status": "running"}` e `curriculum_metrics.jsonl`), abandonando outros tipos de lógicas divergentes.
-3. **[Pendente] Simplificação do `max_seq_length` e Remoção do Cache:** A lógica atual de cálculo automático (e _dados_automaticos.json) provou ser uma complicação desnecessária e será removida e substituída por um comportamento estrito (ver Passo 3).
+3. ✅ **Simplificação do `max_seq_length` e Remoção do Cache:** A lógica de cálculo automático (e _dados_automaticos.json) provou ser uma complicação desnecessária e foi removida e substituída por um comportamento estrito (ver Passo 3).
 * **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) exigindo que o código passe perfeitamente sem as checagens e cálculos automáticos de contexto e não trave por arquivos de cache.
 
 #### Passo 3: Motor Multietapas do Curriculum Learning
@@ -80,10 +80,11 @@ curriculum:
 4. **Mixando Modelos (LoRA vs Full):**
     * *Transição `[LoRA -> Full]`*: Mesclar base + lora via instanciador e usar o Merge como "o novo `FastLanguageModel` pleno" da segunda fase.
     * *Transição `[Full -> LoRA]`*: A requantização p/ nbits deve ser estritamente reacendida e embutida na modelagem ` FastLanguageModel.get_peft_model()` que sucede a transição.
-5. **Gestão do `max_seq_length` por Estágio (Simplificado):**
-    * **Remoção do Cache Complexo**: O cálculo automático e cache (`_dados_automaticos.json`) serão inteiramente removidos para descomplicar a base de código.
-    * **Parâmetro Global Obrigatório**: O `max_seq_length` será um parâmetro obrigatório global. O sistema abortará com erro fatal nas validações se estiver zerado ou ausente.
-    * **Recarga Dinâmica**: O valor pode ser sobreposto em cada etapa do `curriculum`. Caso haja variação do `max_seq_length` durante a transição de um estágio para o outro, o pipeline se encarregará de recarregar a modelagem/tokenizer com a nova configuração, permitindo dar sequência com a nova limitação estritamente alocada.
+5. ✅ **Gestão do `max_seq_length` por Estágio (Simplificado):**
+    * ✅ **Remoção do Cache Complexo**: Classe `CacheSeqLength` e arquivo `_dados_automaticos.json` removidos. Métodos `calcular_max_seq_length()`, `resolver_max_seq_length()` e `_arredondar_seq_length()` removidos. Flag `validar_max_seq_length` eliminada do YAML e da `ConfigTreinamento`.
+    * ✅ **Parâmetro Global Obrigatório**: `max_seq_length` é agora obrigatório (> 0) tanto no `__post_init__` quanto no `_processar_treinamento()`. O sistema aborta com erro fatal orientando o pesquisador a consultar a coluna `token_total` do CSV de divisão.
+    * ✅ **Informações de Tokens por Etapa**: Novo método `_ler_info_tokens_divisao()` lê `token_total` do CSV de divisão (gerado pelo pacote de comparação). `validar_max_seq_length()` e `info()` exibem max/média de tokens por etapa e alertam se `max_seq_length` é insuficiente.
+    * ✅ **Recarga Dinâmica**: Em `_aplicar_etapa_curriculum()`, se `max_seq_length` muda entre etapas, o modelo e tokenizer são recarregados automaticamente via `_load_model()` com o novo valor.
 
 #### Passo 4: Pace Dinâmico e Ajustes Visuais de Controle
 **Objetivo:** Interpolação analítica final garantindo eficiência via parada prematura baseada no desempenho e legibilidade de análise das métricas via Gráficos evolutivos de múltiplas fases.

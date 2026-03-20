@@ -580,7 +580,7 @@ class UtilGraficos:
                 ax.plot(x, y, color=cor, linestyle=estilo, linewidth=largura,
                        label=nome, marker=marcador, markersize=tamanho_marcador, alpha=alpha)
                 
-                if preencher_area:
+                if preencher_area and config.get('preencher', True):
                     ax.fill_between(x, y, alpha=0.2, color=cor)
         
         # Marcadores de época (linhas verticais destacadas com label)

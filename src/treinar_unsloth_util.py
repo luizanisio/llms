@@ -148,7 +148,6 @@ class ConfigTreinamento:
     weight_decay: float = 0.01
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "linear"
-    validar_max_seq_length: bool = True  # Se False e max_seq_length>0, pula recálculo de tokens
     
     def __post_init__(self):
         # Validações de valores
@@ -158,8 +157,12 @@ class ConfigTreinamento:
             raise ValueError(f"grad_batch_size deve ser > 0, recebido: {self.grad_batch_size}")
         if self.epochs <= 0:
             raise ValueError(f"epochs deve ser > 0, recebido: {self.epochs}")
-        if self.max_seq_length < 0:
-            raise ValueError(f"max_seq_length deve ser >= 0 (0 = automático), recebido: {self.max_seq_length}")
+        if self.max_seq_length <= 0:
+            raise ValueError(
+                f"max_seq_length é obrigatório e deve ser > 0, recebido: {self.max_seq_length}. "
+                f"Consulte os dados de tokens no CSV de divisão (coluna token_total) "
+                f"para definir um valor adequado."
+            )
         if self.nbits not in {0, 4, 8, None}:
             raise ValueError(f"nbits deve ser 0, 4, 8 ou None, recebido: {self.nbits}")
 
@@ -339,7 +342,6 @@ class YamlTreinamento:
         self.yaml_path = yaml_path
         self.validar_caminhos = validar_caminhos
         self._yaml_dir = os.path.dirname(os.path.abspath(yaml_path))
-        self._max_seq_auto = False  # Flag: max_seq_length foi calculado automaticamente
         
         # Carrega YAML bruto
         self._raw_config = self._carregar_yaml()
@@ -624,12 +626,21 @@ class YamlTreinamento:
         if nbits is None or nbits == 0:
             nbits = 0
             
+        # max_seq_length é obrigatório — o pesquisador deve definir com base
+        # nos dados de tokens do CSV de divisão (coluna token_total)
+        msl_raw = treino_raw.get("max_seq_length")
+        if msl_raw is None or int(msl_raw) <= 0:
+            raise ValueError(
+                "❌ 'treinamento.max_seq_length' é obrigatório e deve ser > 0.\n"
+                "   Consulte a coluna 'token_total' no CSV de divisão para definir um valor adequado."
+            )
+
         return ConfigTreinamento(
             eval_steps=treino_raw.get("eval_steps", "15%"),
             batch_size=int(treino_raw.get("batch_size", 2)),
             grad_batch_size=int(treino_raw.get("grad_batch_size", 5)),
             epochs=int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1),
-            max_seq_length=int(treino_raw.get("max_seq_length") or 0),
+            max_seq_length=int(msl_raw),
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
             save_checkpoints=treino_raw.get("save_checkpoints", True) in {True, "true", "True", 1, "1", "sim"},
             resume_from_checkpoint=treino_raw.get("resume_from_checkpoint", True) in {True, "true", "True", 1, "1", "sim"},
@@ -637,7 +648,6 @@ class YamlTreinamento:
             nbits=nbits,
             seed=int(treino_raw.get("seed", 3407)),
             train_on_responses_only=treino_raw.get("train_on_responses_only", True) in {True, "true", "True", 1, "1", "sim"},
-            validar_max_seq_length=treino_raw.get("validar_max_seq_length", True) in {True, "true", "True", 1, "1", "sim"}
         )
 
     def _processar_lora(self) -> ConfigLora:
@@ -662,143 +672,60 @@ class YamlTreinamento:
     # Métodos Públicos
     # ---------------------------------------------------------------------------
 
-    @staticmethod
-    def _arredondar_seq_length(valor: int, margem_minima: int = 256) -> int:
-        """
-        Arredonda um valor de tokens para o próximo múltiplo de 256
-        garantindo margem mínima entre o valor original e o resultado.
+    def validar_max_seq_length(self) -> None:
+        """Valida que max_seq_length está definido e exibe informações de tokens por etapa.
         
-        Args:
-            valor: Número máximo de tokens encontrado
-            margem_minima: Folga mínima entre valor e resultado (padrão: 256)
-        
-        Returns:
-            Próximo múltiplo de 256 com margem garantida
-        """
-        from treinar_unsloth_pipeline import arredondar_seq_length
-        return arredondar_seq_length(valor, margem_minima)
-
-    def calcular_max_seq_length(self, cache=None, alias: str = "Principal") -> int:
-        """
-        Calcula max_seq_length automaticamente com base nos tokens das mensagens do dataset.
-        Usa cache em _dados_automaticos.json para evitar recálculos.
-        Usa o tokenizer do modelo base para contagem precisa.
-        
-        Args:
-            cache: Instância de CacheSeqLength (se None, cria automaticamente)
-            alias: Alias da etapa do curriculum para cache por etapa
-            
-        Returns:
-            Valor de max_seq_length arredondado com margem de segurança
-        """
-        from treinar_unsloth_pipeline import CacheSeqLength, arredondar_seq_length
-        
-        # Inicializa cache se necessário
-        if cache is None:
-            cache = CacheSeqLength(self.modelo.saida, self.yaml_path)
-        
-        # Tenta usar cache válido
-        valor_cache = cache.obter_max_seq_length(alias)
-        if valor_cache is not None:
-            print(f"   💾 max_seq_length={valor_cache} (cache válido em {CacheSeqLength.NOME_ARQUIVO})")
-            return valor_cache
-        
-        print("🔄 max_seq_length=0: calculando automaticamente a partir do dataset...")
-        
-        # Coleta textos completos (user + assistant) de todos os alvos
-        todos_textos = []
-        
-        if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-            for alvo in ("treino", "validacao", "teste"):
-                try:
-                    mensagens = self.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
-                    for msg in mensagens:
-                        if isinstance(msg, dict) and "messages" in msg:
-                            texto_completo = " ".join(
-                                m.get("content", "") for m in msg["messages"]
-                            )
-                            todos_textos.append(texto_completo)
-                except Exception:
-                    continue
-        else:
-            # Modo dataset: não é possível calcular sem carregar o arquivo
-            print("   ⚠️ Cálculo automático não disponível para tipo_entrada='dataset'. Usando 4096.")
-            return 4096
-        
-        if not todos_textos:
-            print("   ⚠️ Nenhuma mensagem encontrada. Usando 4096.")
-            return 4096
-        
-        # Tenta usar tokenizer para contagem precisa
-        try:
-            from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(self.modelo.base, use_fast=True)
-            comprimentos = [len(tokenizer.encode(t)) for t in todos_textos]
-            metodo = "tokenizer"
-        except Exception:
-            # Fallback: estimativa por caracteres (1 token ≈ 4 chars)
-            comprimentos = [len(t) // 4 for t in todos_textos]
-            metodo = "estimativa (chars/4)"
-        
-        max_tokens = max(comprimentos)
-        media_tokens = sum(comprimentos) / len(comprimentos)
-        
-        # Arredonda com margem de segurança (mín 256 tokens de folga, múltiplo de 256)
-        valor_calculado = arredondar_seq_length(max_tokens)
-        
-        print(f"   📊 {len(comprimentos)} registros analisados ({metodo})")
-        print(f"   📊 Tokens: max={max_tokens}, média={media_tokens:.0f}")
-        print(f"   ✅ max_seq_length calculado: {max_tokens} → {valor_calculado} (margem: {valor_calculado - max_tokens})")
-        
-        # Salva no cache
-        try:
-            cache.salvar(
-                max_seq_length=valor_calculado,
-                alias=alias,
-                max_tokens_encontrado=max_tokens,
-                media_tokens=round(media_tokens, 1),
-                total_registros=len(comprimentos),
-                metodo=metodo
-            )
-        except Exception as e:
-            print(f"   ⚠️ Erro ao salvar cache: {e}")
-        
-        return valor_calculado
-
-    def resolver_max_seq_length(self) -> None:
-        """
-        Resolve max_seq_length respeitando a flag validar_max_seq_length e o cache.
-        
-        Lógica:
-        - Se validar_max_seq_length=False e max_seq_length>0: usa o valor do YAML diretamente (bypass)
-        - Se max_seq_length==0: calcula automaticamente (com cache)
-        - Se validar_max_seq_length=True e max_seq_length>0: recalcula para validar
-        
-        Deve ser chamado antes de carregar o modelo.
+        max_seq_length é obrigatório (já validado no __post_init__).
+        Aqui apenas exibimos informações úteis baseadas nos dados de tokens
+        disponíveis no CSV de divisão (coluna token_total), para que o pesquisador
+        possa verificar se o valor escolhido é adequado.
         """
         msl = self.treinamento.max_seq_length
-        validar = self.treinamento.validar_max_seq_length
+        print(f"✅ max_seq_length={msl} (definido no YAML)")
         
-        if not validar and msl > 0:
-            # Bypass: confia no valor do YAML sem recalcular
-            print(f"⏭️  max_seq_length={msl} (validar_max_seq_length=false, bypass)")
-            return
+        # Exibe informações de tokens por etapa do curriculum (se disponível nos CSVs)
+        for etapa in self._curriculum:
+            msl_etapa = etapa.max_seq_length if etapa.max_seq_length > 0 else msl
+            info_tokens = self._ler_info_tokens_divisao(etapa.arquivo)
+            if info_tokens:
+                max_tk = info_tokens.get("max", 0)
+                media_tk = info_tokens.get("media", 0)
+                total = info_tokens.get("total", 0)
+                suficiente = "✅" if msl_etapa >= max_tk else "⚠️  INSUFICIENTE 🚩"
+                print(f"   📊 Etapa '{etapa.alias}': {total} registros, "
+                      f"tokens max={max_tk}, média={media_tk:.0f} → "
+                      f"max_seq_length={msl_etapa} {suficiente}")
+    
+    def _ler_info_tokens_divisao(self, arquivo_divisao: str) -> dict:
+        """Lê estatísticas de tokens do CSV de divisão (coluna token_total).
         
-        if msl == 0:
-            # Precisa calcular
-            self.treinamento.max_seq_length = self.calcular_max_seq_length()
-            self._max_seq_auto = True
-        elif validar:
-            # Tem valor mas precisa validar — apenas verifica sem sobrescrever
-            # Calcula e avisa se o valor configurado é insuficiente
-            from treinar_unsloth_pipeline import CacheSeqLength
-            cache = CacheSeqLength(self.modelo.saida, self.yaml_path)
-            valor_cache = cache.obter_max_seq_length()
-            if valor_cache is not None:
-                if msl < valor_cache:
-                    print(f"⚠️  max_seq_length={msl} pode ser insuficiente (cache sugere {valor_cache})")
-                else:
-                    print(f"✅ max_seq_length={msl} validado (cache: {valor_cache})")
+        O CSV de divisão gerado pelo pacote de comparação inclui colunas
+        token_total e token_output com a contagem de tokens por instância.
+        
+        Args:
+            arquivo_divisao: Caminho para o CSV de divisão.
+            
+        Returns:
+            Dict com {max, media, min, total} ou {} se coluna não disponível.
+        """
+        import pandas as pd
+        if not arquivo_divisao or not os.path.isfile(arquivo_divisao):
+            return {}
+        try:
+            df = pd.read_csv(arquivo_divisao, sep=None, engine='python')
+            if 'token_total' not in df.columns:
+                return {}
+            tokens = pd.to_numeric(df['token_total'], errors='coerce').dropna()
+            if tokens.empty:
+                return {}
+            return {
+                "max": int(tokens.max()),
+                "media": float(tokens.mean()),
+                "min": int(tokens.min()),
+                "total": len(tokens),
+            }
+        except Exception:
+            return {}
     
     
     def info(self) -> str:
@@ -823,8 +750,7 @@ class YamlTreinamento:
             f"  Batch size: {self.treinamento.batch_size}",
             f"  Grad batch size: {self.treinamento.grad_batch_size}",
             f"  Épocas: {self.treinamento.epochs}",
-            f"  Max seq length: {self.treinamento.max_seq_length}{' (automático)' if self._max_seq_auto else ''}",
-            f"  Validar max seq length: {self.treinamento.validar_max_seq_length}",
+            f"  Max seq length: {self.treinamento.max_seq_length}",
             f"  LoRA r: {self.lora.r}",
             f"  Learning rate: {self.treinamento.learning_rate}",
             f"  Train on responses only: {self.treinamento.train_on_responses_only}",
@@ -869,6 +795,7 @@ class YamlTreinamento:
             # Linha principal com alias e tipo
             partes = [f"alias='{etapa.alias}'", f"tipo={etapa.tipo}"]
             # Inclui overrides apenas quando diferem do valor global (>0)
+            msl_etapa = etapa.max_seq_length if etapa.max_seq_length > 0 else self.treinamento.max_seq_length
             if etapa.max_seq_length > 0:
                 partes.append(f"max_seq_length={etapa.max_seq_length}")
             if etapa.pace_epochs > 0:
@@ -886,6 +813,14 @@ class YamlTreinamento:
                 if contagens:
                     parts = [f"{k}={v}" for k, v in contagens.items()]
                     lines.append(f"      - {', '.join(parts)}")
+                # Informações de tokens do CSV de divisão
+                info_tokens = self._ler_info_tokens_divisao(etapa.arquivo)
+                if info_tokens:
+                    max_tk = info_tokens["max"]
+                    media_tk = info_tokens["media"]
+                    suficiente = "✅" if msl_etapa >= max_tk else "⚠️ INSUFICIENTE 🚩"
+                    lines.append(f"      - tokens: max={max_tk}, média={media_tk:.0f}, "
+                                 f"max_seq_length={msl_etapa} {suficiente}")
         
         lines.append("=" * 60)
         

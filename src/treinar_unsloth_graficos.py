@@ -59,6 +59,71 @@ class GraficoTokens:
             return False
 
 
+# ---------------------------------------------------------------------------
+# Funções reutilizáveis para marcadores de época e etapas do curriculum
+# Usadas por GraficoTreinamento.evolucao_loss() e GraficoHardware.evolucao_memoria()
+# ---------------------------------------------------------------------------
+
+def construir_marcadores_epocas(train_data: List[Dict]) -> List[Dict]:
+    """Constrói marcadores de época a partir dos dados de treino.
+    
+    Detecta transições de época inteira usando epoch_global (contínuo entre
+    etapas do curriculum) e retorna marcadores verticais verdes.
+    
+    Args:
+        train_data: Lista de dicts com {step, epoch, epoch_global?, ...}
+        
+    Returns:
+        Lista de dicts para marcadores_epoca do UtilGraficos.gerar_grafico_linhas()
+    """
+    marcadores = []
+    epochs_seen = set()
+    for t in train_data:
+        eg = t.get("epoch_global", t.get("epoch", 0))
+        epoch_int = int(eg)
+        if epoch_int > 0 and epoch_int not in epochs_seen and eg == epoch_int:
+            marcadores.append({
+                'x': t["step"],
+                'label': f'Época {epoch_int}',
+                'cor': 'green',
+                'y_frac': 0.05,
+                'va': 'bottom',
+            })
+            epochs_seen.add(epoch_int)
+    return marcadores
+
+
+def construir_marcadores_etapas(
+    marcadores_epoca: List[Dict],
+    etapas_curriculum: List[Dict],
+    all_steps: List = None,
+) -> None:
+    """Acrescenta marcadores de transição de etapa do curriculum (in-place).
+    
+    Adiciona linhas verticais violeta para cada transição entre etapas do curriculum
+    (a partir da 2ª etapa). Os steps das etapas são também adicionados a all_steps
+    para que o eixo x do gráfico inclua esses pontos.
+    
+    Args:
+        marcadores_epoca: Lista de marcadores já existentes (será modificada in-place)
+        etapas_curriculum: Lista de {step_global, alias, index} (pode ser None)
+        all_steps: Lista de steps para ampliar limites do eixo x (pode ser None)
+    """
+    if not etapas_curriculum or len(etapas_curriculum) <= 1:
+        return
+    for i, et in enumerate(etapas_curriculum[1:]):
+        y_frac = 0.92 - (i % 3) * 0.12
+        marcadores_epoca.append({
+            'x': et["step_global"],
+            'label': f'Etapa: {et["alias"]}',
+            'cor': 'darkviolet',
+            'y_frac': y_frac,
+            'va': 'top',
+        })
+        if all_steps is not None:
+            all_steps.append(et["step_global"])
+
+
 class GraficoTreinamento:
     """Gera gráficos de métricas de treinamento.
     
@@ -138,6 +203,8 @@ class GraficoTreinamento:
                     "etapa_alias": etapa_alias,
                     "etapa_index": etapa_index,
                     "instancias_acumuladas": r.get("instancias_acumuladas", 0),
+                    "tokens_acumulados": r.get("tokens_acumulados", 0),
+                    "elapsed_seconds": r.get("elapsed_seconds", 0),
                 }
                 if "train_loss" in r:
                     entry["loss"] = round(r["train_loss"], 4)
@@ -346,21 +413,9 @@ class GraficoTreinamento:
             # Coleta todos os step values para definir limites do eixo x
             all_steps = [t["step"] for t in train_data] + [e["step"] for e in eval_data]
             
-            # Marcadores de época — usa epoch_global para continuidade entre etapas
-            marcadores_epoca = []
-            epochs_seen = set()
-            for t in train_data:
-                eg = t.get("epoch_global", t["epoch"])
-                epoch_int = int(eg)
-                if epoch_int > 0 and epoch_int not in epochs_seen and eg == epoch_int:
-                    marcadores_epoca.append({
-                        'x': t["step"],
-                        'label': f'Época {epoch_int}',
-                        'cor': 'green',
-                        'y_frac': 0.05,
-                        'va': 'bottom',
-                    })
-                    epochs_seen.add(epoch_int)
+            # Marcadores reutilizáveis de época e etapas do curriculum
+            marcadores_epoca = construir_marcadores_epocas(train_data)
+            construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
             
             # Marcadores de checkpoints
             marcadores_verticais = []
@@ -376,20 +431,6 @@ class GraficoTreinamento:
                     })
                 except ValueError:
                     continue
-            
-            # Marcadores de transição de etapa do curriculum (a partir da 2ª etapa)
-            if etapas_curriculum and len(etapas_curriculum) > 1:
-                for i, et in enumerate(etapas_curriculum[1:]):
-                    # Escalona posição vertical dos rótulos para evitar sobreposição
-                    y_frac = 0.92 - (i % 3) * 0.12
-                    marcadores_epoca.append({
-                        'x': et["step_global"],
-                        'label': f'Etapa: {et["alias"]}',
-                        'cor': 'darkviolet',
-                        'y_frac': y_frac,
-                        'va': 'top',
-                    })
-                    all_steps.append(et["step_global"])
             
             # Info text com instâncias acumuladas (se disponível)
             info_text = None
@@ -587,29 +628,76 @@ class GraficoHardware:
     @staticmethod
     def carregar_metricas(treinamento_dir: str) -> List[Dict[str, Any]]:
         """
-        Carrega métricas de hardware do arquivo JSONL.
+        Carrega métricas de hardware do arquivo unificado training_metrics.jsonl.
+        
+        Extrai registros relevantes para o gráfico de memória:
+        - event=log com train_loss → fase "train" (GPU durante treino)
+        - event=evaluate → fase "eval" (GPU durante avaliação)
+        - Ignora train_begin/train_end (bookend) e on_log com só eval_loss
+          (redundante com on_evaluate)
+        
+        Compatibilidade: se training_metrics.jsonl não existir ou não contiver
+        dados de hardware, tenta o legado hardware_metrics.jsonl.
         
         Args:
-            treinamento_dir: Diretório contendo hardware_metrics.jsonl
+            treinamento_dir: Diretório 'treinamento/' contendo os arquivos JSONL
             
         Returns:
-            Lista de dicts com métricas por step
+            Lista de dicts com métricas de hardware por step
         """
-        arquivo = os.path.join(treinamento_dir, "hardware_metrics.jsonl")
-        if not os.path.exists(arquivo):
-            return []
-            
+        # Fonte principal: training_metrics.jsonl (unificado)
+        arquivo = os.path.join(treinamento_dir, "training_metrics.jsonl")
         metricas = []
-        try:
-            with open(arquivo, "r", encoding="utf-8") as f:
-                for linha in f:
-                    try:
-                        metricas.append(json.loads(linha.strip()))
-                    except json.JSONDecodeError:
-                        continue
-        except Exception as e:
-            logger.error(f"Erro ao carregar hardware_metrics.jsonl: {e}")
-            return []
+        
+        if os.path.exists(arquivo):
+            try:
+                with open(arquivo, "r", encoding="utf-8") as f:
+                    for linha in f:
+                        try:
+                            r = json.loads(linha.strip())
+                        except json.JSONDecodeError:
+                            continue
+                        # Só inclui registros com dados de hardware
+                        if "ram_usada_gb" not in r:
+                            continue
+                        
+                        event = r.get("event", "log")
+                        
+                        # Ignora eventos de bookend (sem step relevante)
+                        if event in ("train_begin", "train_end"):
+                            continue
+                        
+                        # on_log com train_loss → GPU reflete estado pós-treino
+                        if event == "log" and "train_loss" in r:
+                            r["fase"] = "train"
+                        # on_evaluate → GPU reflete estado durante avaliação
+                        elif event == "evaluate":
+                            r["fase"] = "eval"
+                        else:
+                            # on_log sem train_loss (ex: só eval_loss) — redundante
+                            # com on_evaluate, pular para evitar duplicatas
+                            continue
+                        
+                        # Normaliza campos
+                        r["step"] = r.get("step_global", r.get("step", 0))
+                        r["epoch"] = r.get("epoch_global", r.get("epoch", 0))
+                        metricas.append(r)
+            except Exception as e:
+                logger.error(f"Erro ao carregar métricas de hardware de training_metrics.jsonl: {e}")
+        
+        # Fallback: hardware_metrics.jsonl legado
+        if not metricas:
+            arquivo_legado = os.path.join(treinamento_dir, "hardware_metrics.jsonl")
+            if os.path.exists(arquivo_legado):
+                try:
+                    with open(arquivo_legado, "r", encoding="utf-8") as f:
+                        for linha in f:
+                            try:
+                                metricas.append(json.loads(linha.strip()))
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    logger.error(f"Erro ao carregar hardware_metrics.jsonl: {e}")
             
         return metricas
     
@@ -617,13 +705,19 @@ class GraficoHardware:
     def evolucao_memoria(
         metricas: List[Dict[str, Any]],
         output_path: str,
-        titulo: str = "Uso de Memória durante Treinamento"
+        titulo: str = "Uso de Memória durante Treinamento",
+        train_data: List[Dict] = None,
+        etapas_curriculum: List[Dict] = None,
     ) -> bool:
         """
         Gera gráfico de evolução de memória RAM e GPU por step.
         
         Args:
             metricas: Lista de dicts com métricas por step
+            output_path: Caminho para salvar o gráfico
+            titulo: Título do gráfico
+            train_data: Dados de treino (para marcadores de época). Se None, usa epoch das próprias métricas.
+            etapas_curriculum: Lista de {step_global, alias, index} para marcar transições
             output_path: Caminho para salvar o gráfico
             titulo: Título do gráfico
             
@@ -675,42 +769,28 @@ class GraficoHardware:
             }
             
             if gpu_train_x:
-                series['GPU (Backprop)'] = {
+                series['GPU (Treino)'] = {
                     'x': gpu_train_x,
                     'y': gpu_train_y,
                     'cor': 'red',
                     'marcador': '^',
-                    'tamanho_marcador': 8,
-                    'estilo': 'None', # Apenas pontos, sem linha conectando
-                    'alpha': 1.0
+                    'tamanho_marcador': 5,
+                    'estilo': '-',
+                    'alpha': 0.7,
+                    'preencher': False,
                 }
                 
             if gpu_eval_x:
-                series['GPU (Inferência)'] = {
+                series['GPU (Avaliação)'] = {
                     'x': gpu_eval_x,
                     'y': gpu_eval_y,
                     'cor': 'darkorange',
                     'marcador': 's',
-                    'tamanho_marcador': 3,
-                    'estilo': '-',
-                    'alpha': 0.6
+                    'tamanho_marcador': 5,
+                    'estilo': '--',
+                    'alpha': 0.7,
+                    'preencher': False,
                 }
-            
-            # Marcadores de Treino (onde fase == "train")
-            marcadores_verticais = []
-            for m in metricas:
-                fase = m.get("fase", "")
-                if fase == "train":
-                    step = m.get("step", 0)
-                    marcadores_verticais.append({
-                        'x': step,
-                        'cor': 'red',
-                        'estilo': '--',
-                        'alpha': 0.3,
-                        'largura': 1,
-                        'label': 'Backprop',
-                        'texto': 'Backprop'
-                    })
             
             # Info text
             ram_max = max(ram_usadas) if ram_usadas else 0
@@ -725,6 +805,24 @@ class GraficoHardware:
             if n_evals > 0:
                 info_text += f" | {n_evals} avaliações"
             
+            # Marcadores de época e etapas do curriculum (reutilizáveis)
+            # Se train_data foi fornecido, usa-o; caso contrário, constrói a
+            # partir das próprias métricas de hardware (que contêm step e epoch)
+            fonte_epocas = train_data if train_data else [
+                {"step": m.get("step", 0), "epoch": m.get("epoch", 0), "epoch_global": m.get("epoch", 0)}
+                for m in metricas
+            ]
+            marcadores_epoca = construir_marcadores_epocas(fonte_epocas)
+            all_steps = list(steps)
+            construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
+            
+            # Calcula limites do eixo x para incluir etapas
+            xlim = None
+            if all_steps:
+                x_min, x_max = min(all_steps), max(all_steps)
+                margem = max(0.5, (x_max - x_min) * 0.05)
+                xlim = (x_min - margem, x_max + margem)
+            
             # Gera gráfico
             resultado = UtilGraficos.gerar_grafico_linhas(
                 series=series,
@@ -734,7 +832,8 @@ class GraficoHardware:
                 arquivo_saida=output_path,
                 preencher_area=True,
                 info_text=info_text,
-                marcadores_verticais=marcadores_verticais
+                marcadores_epoca=marcadores_epoca,
+                xlim=xlim,
             )
             
             return resultado is not None
@@ -795,3 +894,161 @@ class GraficoHardware:
             lines.append(f"| GPU Pico (GB) | - | {max(gpu_max_reservada):.2f} | - |")
         
         return lines
+
+
+# ---------------------------------------------------------------------------
+# Gráficos de eficiência computacional (tokens, instâncias)
+# ---------------------------------------------------------------------------
+
+def _formatar_numero(valor: int) -> str:
+    """Formata número grande de forma legível: 1.2M, 45.3K, etc."""
+    if valor >= 1_000_000:
+        return f"{valor / 1_000_000:.1f}M"
+    if valor >= 1_000:
+        return f"{valor / 1_000:.1f}K"
+    return str(valor)
+
+
+class GraficoEficiencia:
+    """Gera gráficos de eficiência computacional do treinamento.
+    
+    Tokens acumulados e instâncias acumuladas por step, com marcadores de
+    época e etapa do curriculum para comparação entre pipelines.
+    """
+    
+    @staticmethod
+    def evolucao_tokens(
+        train_data: List[Dict],
+        output_path: str,
+        titulo: str = "Custo Computacional do Treinamento",
+        etapas_curriculum: List[Dict] = None,
+    ) -> bool:
+        """
+        Gera gráfico de tokens e instâncias acumulados ao longo dos steps.
+        
+        Eixo Y esquerdo: tokens acumulados (azul, área preenchida)
+        Eixo Y direito: instâncias acumuladas (laranja, linha)
+        Inclui marcadores de época e etapa, e info_text com eficiência.
+        
+        Args:
+            train_data: Lista de dicts com {step, tokens_acumulados, instancias_acumuladas,
+                        epoch_global?, loss?}
+            output_path: Caminho para salvar o gráfico
+            titulo: Título do gráfico
+            etapas_curriculum: Lista de {step_global, alias, index} para transições
+            
+        Returns:
+            True se gerou com sucesso, False caso contrário
+        """
+        if not train_data:
+            logger.warning("Nenhum dado de treino para gerar gráfico de tokens.")
+            return False
+        
+        # Filtra apenas pontos que têm tokens_acumulados > 0
+        dados_validos = [t for t in train_data if t.get("tokens_acumulados", 0) > 0]
+        if not dados_validos:
+            logger.warning("Nenhum dado de tokens_acumulados disponível (treinamento anterior à v2?).")
+            return False
+        
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            steps = [t["step"] for t in dados_validos]
+            tokens = [t["tokens_acumulados"] for t in dados_validos]
+            instancias = [t.get("instancias_acumuladas", 0) for t in dados_validos]
+            
+            fig, ax1 = plt.subplots(figsize=(12, 6))
+            
+            # --- Eixo esquerdo: Tokens acumulados ---
+            cor_tokens = '#2563EB'  # azul
+            ax1.plot(steps, tokens, color=cor_tokens, linewidth=2, marker='o',
+                     markersize=4, alpha=0.9, label='Tokens Acumulados')
+            ax1.fill_between(steps, tokens, alpha=0.15, color=cor_tokens)
+            ax1.set_xlabel('Step (global)', fontsize=12)
+            ax1.set_ylabel('Tokens Acumulados', fontsize=12, color=cor_tokens)
+            ax1.tick_params(axis='y', labelcolor=cor_tokens)
+            
+            # Formata eixo Y esquerdo com K/M
+            from matplotlib.ticker import FuncFormatter
+            ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
+            
+            # --- Eixo direito: Instâncias acumuladas ---
+            cor_inst = '#EA580C'  # laranja escuro
+            ax2 = ax1.twinx()
+            ax2.plot(steps, instancias, color=cor_inst, linewidth=2, marker='s',
+                     markersize=3, alpha=0.7, linestyle='--', label='Instâncias Acumuladas')
+            ax2.set_ylabel('Instâncias Acumuladas', fontsize=12, color=cor_inst)
+            ax2.tick_params(axis='y', labelcolor=cor_inst)
+            ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
+            
+            # --- Marcadores de época e etapas ---
+            marcadores_epoca = construir_marcadores_epocas(train_data)
+            all_steps = list(steps)
+            construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
+            
+            for m in marcadores_epoca:
+                x_pos = m.get('x', 0)
+                label = m.get('label', '')
+                cor = m.get('cor', 'green')
+                alpha = m.get('alpha', 0.7)
+                ax1.axvline(x=x_pos, color=cor, linestyle='--', alpha=alpha, linewidth=1.5)
+                if label:
+                    y_frac = m.get('y_frac', 0.05)
+                    va = m.get('va', 'bottom')
+                    y_min, y_max = ax1.get_ylim()
+                    y_pos = y_min + (y_max - y_min) * y_frac
+                    ha = 'right' if va == 'top' else 'left'
+                    ax1.text(x_pos, y_pos, label,
+                             rotation=90, va=va, ha=ha, fontsize=9, color=cor)
+            
+            # --- Limites do eixo x ---
+            if all_steps:
+                x_min, x_max = min(all_steps), max(all_steps)
+                margem = max(0.5, (x_max - x_min) * 0.05)
+                ax1.set_xlim(x_min - margem, x_max + margem)
+            
+            # --- Info text: resumo de eficiência ---
+            tokens_total = tokens[-1] if tokens else 0
+            inst_total = instancias[-1] if instancias else 0
+            info_parts = [f"Tokens: {_formatar_numero(tokens_total)}"]
+            info_parts.append(f"Instâncias: {_formatar_numero(inst_total)}")
+            
+            # Eficiência: Δloss / Mtokens
+            perdas = [t.get("loss") for t in dados_validos if t.get("loss") is not None]
+            if len(perdas) >= 2 and tokens_total > 0:
+                delta_loss = perdas[0] - perdas[-1]
+                mtokens = tokens_total / 1_000_000
+                if mtokens > 0:
+                    eficiencia = delta_loss / mtokens
+                    info_parts.append(f"Eficiência: {eficiencia:.2f} Δloss/Mtok")
+            
+            # Etapas do curriculum
+            if etapas_curriculum and len(etapas_curriculum) > 1:
+                nomes = [et["alias"] for et in etapas_curriculum]
+                info_parts.append(f"Etapas: {' → '.join(nomes)}")
+            
+            info_text = " | ".join(info_parts)
+            ax1.text(0.02, 0.98, info_text, transform=ax1.transAxes, fontsize=10,
+                     verticalalignment='top',
+                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            
+            # --- Estilo ---
+            ax1.set_title(titulo, fontsize=14, fontweight='bold')
+            ax1.grid(True, alpha=0.3)
+            
+            # Legenda combinada dos dois eixos
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=11)
+            
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar gráfico de tokens: {e}")
+            return False

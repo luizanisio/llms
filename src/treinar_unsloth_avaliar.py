@@ -81,11 +81,11 @@ def executar_info(yaml_path: str) -> None:
         # Fallback sem validação de caminhos (ex: pastas inexistentes)
         yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
     
-    # Verifica/recalcula max_seq_length antes de exibir info
+    # Valida max_seq_length (obrigatório) e exibe info de tokens
     try:
-        yaml_config.resolver_max_seq_length()
+        yaml_config.validar_max_seq_length()
     except Exception as e:
-        logger.warning(f"⚠️ Não foi possível resolver max_seq_length: {e}")
+        logger.warning(f"<amarelo>⚠️ Não foi possível validar max_seq_length: {e}</amarelo>")
     
     # Captura stdout para gravar em arquivo (inclui saída do debug_info)
     buffer = io.StringIO()
@@ -108,9 +108,109 @@ def executar_info(yaml_path: str) -> None:
             f.write("```\n")
             f.write(conteudo)
             f.write("```\n")
-        logger.info(f"\n📝 Info salvo em: {info_path}")
+        logger.info(f"<verde>\n📝 Info salvo em: {info_path}</verde>")
     except Exception as e:
-        logger.warning(f"⚠️ Não foi possível salvar info.md: {e}")
+        logger.warning(f"<amarelo>⚠️ Não foi possível salvar info.md: {e}</amarelo>")
+
+
+def _gerar_resumo_consolidado(
+    stats_report: list,
+    train_data: list,
+    eval_data: list,
+    etapas_curriculum: list,
+    hardware_metricas: list,
+) -> None:
+    """Adiciona seção 'Resumo Consolidado' ao relatório com dados-chave dos três gráficos."""
+    linhas = ["\n---\n", "\n## Resumo Consolidado do Treinamento\n"]
+
+    # --- Loss ---
+    if train_data:
+        total_steps = len(train_data)
+        loss_inicial = train_data[0].get("loss", 0)
+        loss_final = train_data[-1].get("loss", 0)
+        reducao_pct = ((loss_inicial - loss_final) / loss_inicial * 100) if loss_inicial > 0 else 0
+
+        linhas.append("### Desempenho (Loss)\n")
+        linhas.append("| Indicador | Valor |")
+        linhas.append("|-----------|-------|")
+        linhas.append(f"| Loss inicial | {loss_inicial:.4f} |")
+        linhas.append(f"| Loss final | {loss_final:.4f} |")
+        linhas.append(f"| Redução | {reducao_pct:.1f}% |")
+        linhas.append(f"| Steps de treino | {total_steps} |")
+
+        if eval_data:
+            best_eval = min(eval_data, key=lambda e: e.get("eval_loss", float("inf")))
+            linhas.append(f"| Melhor eval loss | {best_eval.get('eval_loss', 0):.4f} (step {best_eval.get('step', '?')}) |")
+            linhas.append(f"| Avaliações realizadas | {len(eval_data)} |")
+
+        if etapas_curriculum and len(etapas_curriculum) > 1:
+            nomes = [et["alias"] for et in etapas_curriculum]
+            linhas.append(f"| Etapas curriculum | {' → '.join(nomes)} |")
+
+        # Épocas globais
+        last_epoch = train_data[-1].get("epoch_global", train_data[-1].get("epoch", 0))
+        if last_epoch:
+            linhas.append(f"| Épocas totais | {int(last_epoch)} |")
+
+        linhas.append("")
+
+    # --- Tokens / eficiência ---
+    if train_data:
+        tokens_final = train_data[-1].get("tokens_acumulados", 0)
+        instancias_final = train_data[-1].get("instancias_acumuladas", 0)
+        elapsed = train_data[-1].get("elapsed_seconds", 0)
+
+        if tokens_final > 0 or instancias_final > 0:
+            linhas.append("### Custo Computacional\n")
+            linhas.append("| Indicador | Valor |")
+            linhas.append("|-----------|-------|")
+            if tokens_final > 0:
+                linhas.append(f"| Tokens processados | {tokens_final:,.0f} |")
+            if instancias_final > 0:
+                linhas.append(f"| Instâncias treinadas | {instancias_final:,.0f} |")
+            if elapsed > 0:
+                mins = elapsed / 60
+                linhas.append(f"| Tempo de treino | {mins:.1f} min |")
+                if tokens_final > 0:
+                    tok_per_sec = tokens_final / elapsed
+                    linhas.append(f"| Throughput | {tok_per_sec:,.0f} tok/s |")
+            # Eficiência: redução de loss por milhão de tokens
+            if tokens_final > 0 and train_data:
+                loss_ini = train_data[0].get("loss", 0)
+                loss_fim = train_data[-1].get("loss", 0)
+                delta_loss = loss_ini - loss_fim
+                mtok = tokens_final / 1_000_000
+                if mtok > 0:
+                    linhas.append(f"| Eficiência (Δloss/Mtok) | {delta_loss / mtok:.4f} |")
+            linhas.append("")
+
+    # --- Hardware ---
+    if hardware_metricas:
+        ram_usadas = [m.get("ram_usada_gb", 0) for m in hardware_metricas]
+        gpu_picos = []
+        for m in hardware_metricas:
+            gpu_total = 0
+            for key in m:
+                if key.startswith("gpu") and "reservada_gb" in key and "max" not in key:
+                    gpu_total += m.get(key, 0)
+            if gpu_total > 0:
+                gpu_picos.append(gpu_total)
+
+        linhas.append("### Recursos de Hardware\n")
+        linhas.append("| Indicador | Valor |")
+        linhas.append("|-----------|-------|")
+        if ram_usadas:
+            linhas.append(f"| RAM pico | {max(ram_usadas):.1f} GB |")
+        if gpu_picos:
+            linhas.append(f"| GPU VRAM pico | {max(gpu_picos):.1f} GB |")
+            linhas.append(f"| GPU VRAM média | {sum(gpu_picos)/len(gpu_picos):.1f} GB |")
+        cpu_usos = [m.get("cpu_uso_%", 0) for m in hardware_metricas if m.get("cpu_uso_%", 0) > 0]
+        if cpu_usos:
+            linhas.append(f"| CPU médio | {sum(cpu_usos)/len(cpu_usos):.0f}% |")
+        linhas.append("")
+
+    if len(linhas) > 2:  # Tem conteúdo além do separador e título
+        stats_report.extend(linhas)
 
 
 def executar_stats(yaml_path: str) -> None:
@@ -125,7 +225,7 @@ def executar_stats(yaml_path: str) -> None:
     
     logger.info("\n")
     log_separador(caractere="=", largura=80)
-    logger.info(">> MODO STATS - RELATÓRIO ESTATÍSTICO DE TOKENS")
+    logger.info("<azul>>> MODO STATS - RELATÓRIO ESTATÍSTICO DE TOKENS</azul>")
     log_separador(caractere="=", largura=80)
     
     # Carrega configuração
@@ -137,7 +237,7 @@ def executar_stats(yaml_path: str) -> None:
     os.makedirs(report_dir, exist_ok=True)
     
     # Carrega dados para estatísticas
-    logger.info("\n📊 Carregando dados para estatísticas...")
+    logger.info("<azul>\n📊 Carregando dados para estatísticas...</azul>")
     
     # Estrutura para armazenar dados por subset
     stats_por_subset = {}
@@ -154,7 +254,7 @@ def executar_stats(yaml_path: str) -> None:
                         'entrada': [],
                         'saida': []
                     }
-                    logger.info(f"   {nome}: {len(mensagens)} registros")
+                    logger.info(f"<cinza>   {nome}: {len(mensagens)} registros</cinza>")
                     
                     for msg in mensagens:
                         if isinstance(msg, dict) and 'messages' in msg:
@@ -166,7 +266,7 @@ def executar_stats(yaml_path: str) -> None:
                                 elif m.get('role') == 'assistant':
                                     stats_por_subset[alvo]['saida'].append(tokens)
             except Exception as e:
-                logger.warning(f"   ⚠️ Erro ao carregar {alvo}: {e}")
+                logger.warning(f"<amarelo>   ⚠️ Erro ao carregar {alvo}: {e}</amarelo>")
     else:
         logger.info("   Modo dataset: use --info para ver estatísticas do dataset")
         return
@@ -206,7 +306,7 @@ def executar_stats(yaml_path: str) -> None:
     for alvo, dados in stats_por_subset.items():
         stats_report.append(f"| {dados['nome']} | {dados['registros']} |")
     
-    logger.info("\n📈 Gerando relatórios e preparando gráficos...")
+    logger.info("<azul>\n📈 Gerando relatórios e preparando gráficos...</azul>")
     
     dados_grafico = {}
     subsets_ordem = ['treino', 'validacao', 'teste']
@@ -240,11 +340,11 @@ def executar_stats(yaml_path: str) -> None:
         boxplot_path = os.path.join(report_dir, nome_arquivo_grafico)
         
         if GraficoTokens.boxplot_comparativo(dados_grafico, boxplot_path):
-            logger.info(f"   ✅ Gráfico consolidado salvo: {nome_arquivo_grafico}")
+            logger.info(f"<verde>   ✅ Gráfico consolidado salvo: {nome_arquivo_grafico}</verde>")
             stats_report.append(f"\n## Gráfico Comparativo\n")
             stats_report.append(f"![Boxplot Comparativo]({nome_arquivo_grafico})\n")
         else:
-            logger.warning("   ⚠️ Erro ao gerar gráfico de tokens.")
+            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de tokens.</amarelo>")
 
     # Métricas de treinamento (loss) — prioriza training_metrics.jsonl
     from treinar_unsloth_graficos import GraficoTreinamento
@@ -271,7 +371,7 @@ def executar_stats(yaml_path: str) -> None:
             train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
     
     if train_data or eval_data:
-        logger.info("\n📈 Processando métricas de treinamento...")
+        logger.info("<azul>\n📈 Processando métricas de treinamento...</azul>")
         
         stats_report.append("\n## Métricas de Treinamento\n")
         stats_report.append(f"**Checkpoints encontrados:** {len(checkpoints)}\n")
@@ -283,14 +383,14 @@ def executar_stats(yaml_path: str) -> None:
         tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data)
         stats_report.extend(tabela_loss)
         
-        logger.info("   📊 Gerando gráfico de loss...")
+        logger.info("<cinza>   📊 Gerando gráfico de loss...</cinza>")
         loss_graph_path = os.path.join(report_dir, "treinamento_loss.png")
         
         if GraficoTreinamento.evolucao_loss(
             train_data, eval_data, checkpoints, loss_graph_path,
             etapas_curriculum=etapas_curriculum
         ):
-            logger.info("   ✅ Gráfico de loss salvo: treinamento_loss.png")
+            logger.info("<verde>   ✅ Gráfico de loss salvo: treinamento_loss.png</verde>")
             stats_report.append(f"\n### Gráfico de Evolução do Loss\n")
             stats_report.append(f"![Loss de Treinamento](treinamento_loss.png)\n")
             legenda = "*Linhas verdes: fim de época | Cinzas: checkpoints"
@@ -299,9 +399,28 @@ def executar_stats(yaml_path: str) -> None:
             legenda += "*\n"
             stats_report.append(legenda)
         else:
-            logger.warning("   ⚠️ Erro ao gerar gráfico de loss.")
+            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de loss.</amarelo>")
     else:
         logger.info("\n📊 Nenhum dado de loss encontrado (sem training_metrics.jsonl nem checkpoints).")
+
+    # Gráfico de eficiência (tokens e instâncias acumulados)
+    if train_data:
+        from treinar_unsloth_graficos import GraficoEficiencia
+        
+        logger.info("<cinza>   📊 Gerando gráfico de eficiência (tokens)...</cinza>")
+        tokens_graph_path = os.path.join(report_dir, "treinamento_tokens.png")
+        
+        if GraficoEficiencia.evolucao_tokens(
+            train_data, tokens_graph_path,
+            etapas_curriculum=etapas_curriculum
+        ):
+            logger.info("<verde>   ✅ Gráfico de tokens salvo: treinamento_tokens.png</verde>")
+            stats_report.append(f"\n### Custo Computacional\n")
+            stats_report.append(f"![Tokens Acumulados](treinamento_tokens.png)\n")
+            legenda_tok = "*Azul: tokens processados (custo computacional) | Laranja: instâncias treinadas*\n"
+            stats_report.append(legenda_tok)
+        else:
+            logger.info("<cinza>   ℹ️ Gráfico de tokens não gerado (sem dados de tokens_acumulados).</cinza>")
 
     # Métricas de hardware
     from treinar_unsloth_graficos import GraficoHardware
@@ -310,7 +429,7 @@ def executar_stats(yaml_path: str) -> None:
     hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)
     
     if hardware_metricas:
-        logger.info("\n📊 Processando métricas de hardware...")
+        logger.info("<azul>\n📊 Processando métricas de hardware...</azul>")
         
         stats_report.append("\n## Métricas de Hardware\n")
         stats_report.append(f"**Amostras coletadas:** {len(hardware_metricas)}\n")
@@ -319,27 +438,30 @@ def executar_stats(yaml_path: str) -> None:
         tabela_hw = GraficoHardware.tabela_resumo_markdown(hardware_metricas)
         stats_report.extend(tabela_hw)
         
-        logger.info("   📊 Gerando gráfico de memória...")
+        logger.info("<cinza>   📊 Gerando gráfico de memória...</cinza>")
         mem_graph_path = os.path.join(report_dir, "hardware_memoria.png")
         
-        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path):
-            logger.info("   ✅ Gráfico de memória salvo: hardware_memoria.png")
+        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path, train_data=train_data, etapas_curriculum=etapas_curriculum):
+            logger.info("<verde>   ✅ Gráfico de memória salvo: hardware_memoria.png</verde>")
             stats_report.append(f"\n### Gráfico de Uso de Memória\n")
             stats_report.append(f"![Uso de Memória](hardware_memoria.png)\n")
         else:
-            logger.warning("   ⚠️ Erro ao gerar gráfico de memória.")
+            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de memória.</amarelo>")
     else:
-        logger.info("\n📊 Nenhuma métrica de hardware disponível (arquivo hardware_metrics.jsonl não encontrado).")
+        logger.info("\n📊 Nenhuma métrica de hardware disponível (sem dados em training_metrics.jsonl).")
+
+    # Resumo Consolidado do Treinamento
+    _gerar_resumo_consolidado(stats_report, train_data, eval_data, etapas_curriculum, hardware_metricas)
 
     # Salva relatório
     report_path = os.path.join(report_dir, "relatorio_estatistico.md")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(stats_report))
     
-    logger.info(f"\n📝 Relatório estatístico salvo em: {report_path}")
+    logger.info(f"<verde>\n📝 Relatório estatístico salvo em: {report_path}</verde>")
     
     log_separador(caractere="=", largura=80)
-    logger.info("✅ STATS COMPLETO - RELATÓRIO GERADO")
+    logger.info("<verde>✅ STATS COMPLETO - RELATÓRIO GERADO</verde>")
     log_separador(caractere="=", largura=80)
 
 
@@ -362,32 +484,32 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     
     logger.info("\n")
     log_separador(caractere="=", largura=80)
-    logger.info(">> MODO PREDICT - GERANDO PREDIÇÕES")
+    logger.info("<azul>>> MODO PREDICT - GERANDO PREDIÇÕES</azul>")
     log_separador(caractere="=", largura=80)
     
     # Carrega configuração para validações iniciais
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
-    yaml_config.resolver_max_seq_length()
+    yaml_config.validar_max_seq_length()
     _exibir_cabecalho_modelo(yaml_config)
     
     # Verifica formato de saída
     formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
-    logger.info(f"\n📋 Formato de saída: {yaml_config.formato_saida}")
+    logger.info(f"<cinza>\n📋 Formato de saída: {yaml_config.formato_saida}</cinza>")
     
     # Verifica se há modelo treinado
     tem_modelo_treinado = _verificar_modelo_treinado(yaml_config)
     
     if usar_base:
-        logger.info(f"ℹ️  Opção --base ativada: Forçando uso do modelo base.")
+        logger.info(f"<cinza>ℹ️  Opção --base ativada: Forçando uso do modelo base.</cinza>")
     elif not tem_modelo_treinado:
-        logger.warning("\n⚠️ Não foi encontrado modelo LoRA treinado.")
+        logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo LoRA treinado.</amarelo>")
         if not _perguntar_confirmacao("Deseja usar o modelo base para predição?", padrao=False):
             logger.info("Operação cancelada.")
             return
         usar_base = True
         logger.info("Usando modelo base para predição...\n")
     else:
-        logger.info(f"✅ Usando modelo treinado: {yaml_config.modelo.saida}")
+        logger.info(f"<verde>✅ Usando modelo treinado: {yaml_config.modelo.saida}</verde>")
     
     modelo_usado = yaml_config.modelo.base if usar_base else yaml_config.modelo.saida
     
@@ -395,7 +517,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     if subsets is None:
         subsets = ['treino', 'validacao', 'teste']
     
-    logger.info(f"\n📋 Subsets a processar: {', '.join(subsets)}")
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
     
     # Cria diretório de predições
     nome_pasta = "predict_base" if usar_base else "predict"
@@ -403,14 +525,14 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     os.makedirs(predict_dir, exist_ok=True)
     
     # Carrega modelo via LLMsTrainer (mesmo caminho que executar_modelo)
-    logger.info("\n🔄 Carregando modelo via LLMsTrainer...")
+    logger.info("<azul>\n🔄 Carregando modelo via LLMsTrainer...</azul>")
     ini_carga = time.time()
     
     try:
         trainer = LLMsTrainer(yaml_path, force_base=usar_base)
-        logger.info(f"   ✅ Modelo carregado em {time.time() - ini_carga:.1f}s")
+        logger.info(f"<verde>   ✅ Modelo carregado em {time.time() - ini_carga:.1f}s</verde>")
     except Exception as e:
-        logger.error(f"❌ Erro ao carregar modelo: {e}")
+        logger.error(f"<vermelho>❌ Erro ao carregar modelo: {e}</vermelho>")
         return
     
     max_new_tokens = yaml_config.treinamento.max_seq_length
@@ -427,18 +549,18 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     try:
         # Processa cada subset
         for subset in subsets:
-            logger.info(f"\n📂 Processando subset: {subset}")
+            logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
             log_separador(caractere="-", largura=60)
             
             if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
                 try:
                     mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
                     if not mensagens:
-                        logger.warning(f"   ⚠️ Nenhum dado encontrado para {subset}")
+                        logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                         continue
-                    logger.info(f"   📊 {len(mensagens)} registros encontrados")
+                    logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
                 except Exception as e:
-                    logger.error(f"   ❌ Erro ao carregar {subset}: {e}")
+                    logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                     continue
             else:
                 logger.warning(f"   ⚠️ Modo dataset não suportado para predict ainda")
@@ -539,7 +661,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
                         logger.info(f"   Progresso: {idx + 1}/{total} ({100*(idx+1)//total}%)")
                         
                 except Exception as e:
-                    logger.error(f"   ❌ Erro no registro {idx}: {e}")
+                    logger.error(f"<vermelho>   ❌ Erro no registro {idx}: {e}</vermelho>")
                     subset_stats['registros_erro'] += 1
                     continue
             
@@ -561,8 +683,8 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
             with open(resumo_file, 'w', encoding='utf-8') as f:
                 json.dump(resumo_subset, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}")
-            logger.info(f"   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída")
+            logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída</cinza>")
             
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -595,8 +717,8 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
         json.dump(resumo_geral, f, ensure_ascii=False, indent=2)
     
     log_separador(caractere="=", largura=80)
-    logger.info(f"✅ PREDICT COMPLETO - Resultados em: {predict_dir}")
-    logger.info(f"📊 Total: {uso_total['total_registros']} registros, {uso_total['input_tokens']} + {uso_total['output_tokens']} tokens")
+    logger.info(f"<verde>✅ PREDICT COMPLETO - Resultados em: {predict_dir}</verde>")
+    logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, {uso_total['input_tokens']} + {uso_total['output_tokens']} tokens</cinza>")
     log_separador(caractere="=", largura=80)
 
 
@@ -613,7 +735,7 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     
     logger.info("\n")
     log_separador(caractere="=", largura=80)
-    logger.info(">> MODO MERGE - INTEGRANDO LORA ADAPTERS")
+    logger.info("<azul>>> MODO MERGE - INTEGRANDO LORA ADAPTERS</azul>")
     log_separador(caractere="=", largura=80)
     
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
@@ -622,7 +744,7 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     output_dir = yaml_config.modelo.saida
     
     if not _verificar_modelo_treinado(yaml_config):
-        logger.error(f"❌ Erro: Não foi encontrado modelo treinado em {output_dir}")
+        logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
         return
     
     mapa_quant = {
@@ -657,15 +779,15 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     
     dirname = f"{output_dir}(merged_{quantizacao})"
         
-    logger.info(f"\n📂 Diretório de destino: {dirname}")
-    logger.info(f"⚙️  Formato: {quantizacao}")
+    logger.info(f"<cinza>\n📂 Diretório de destino: {dirname}</cinza>")
+    logger.info(f"<cinza>⚙️  Formato: {quantizacao}</cinza>")
 
     # Gera stats antes do merge
-    logger.info("\n📊 Verificando estatísticas...")
+    logger.info("<azul>\n📊 Verificando estatísticas...</azul>")
     try:
         executar_stats(yaml_path)
     except Exception as e:
-        logger.warning(f"⚠️  Erro ao gerar estatísticas (o merge continuará): {e}")
+        logger.warning(f"<amarelo>⚠️  Erro ao gerar estatísticas (o merge continuará): {e}</amarelo>")
 
     if os.path.exists(dirname):
         logger.warning(f"⚠️  O diretório já existe.")
@@ -679,7 +801,7 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
             logger.error(f"Erro ao remover diretório: {e}")
             return
             
-    logger.info(f"\n🔄 Carregando modelo LoRA de: {output_dir}")
+    logger.info(f"<azul>\n🔄 Carregando modelo LoRA de: {output_dir}</azul>")
     logger.info("   Isso pode levar alguns instantes...")
     
     try:
@@ -708,11 +830,11 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
             logger.info("📋 Copiando relatórios e gráficos...")
             shutil.copytree(src_treinamento, dst_treinamento, dirs_exist_ok=True)
         
-        logger.info("✅ Merge concluído com sucesso!")
-        logger.info(f"   Modelo pronto em: {dirname}")
+        logger.info("<verde>✅ Merge concluído com sucesso!</verde>")
+        logger.info(f"<cinza>   Modelo pronto em: {dirname}</cinza>")
         
     except Exception as e:
-        logger.error(f"❌ Erro ao realizar merge/exportação: {e}")
+        logger.error(f"<vermelho>❌ Erro ao realizar merge/exportação: {e}</vermelho>")
 
 
 def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False) -> None:
@@ -728,23 +850,23 @@ def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False
     
     logger.info("\n")
     log_separador(caractere="=", largura=80)
-    logger.info(f">> MODO MODELO - TESTANDO INFERÊNCIA ({n_exemplos} exemplo(s))")
+    logger.info(f"<azul>>> MODO MODELO - TESTANDO INFERÊNCIA ({n_exemplos} exemplo(s))</azul>")
     log_separador(caractere="=", largura=80)
     
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
     
     if not usar_base:
         if not _verificar_modelo_treinado(yaml_config):
-            logger.warning("\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.")
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
             if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
                 logger.info("Operação cancelada.")
                 return
             usar_base = True
             logger.info("Continuando com modelo base (sem fine-tuning)...\n")
         else:
-            logger.info(f"✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}")
+            logger.info(f"<verde>✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}</verde>")
     else:
-        logger.info("ℹ️  Opção --base ativada: Forçando uso do modelo base.")
+        logger.info("<cinza>ℹ️  Opção --base ativada: Forçando uso do modelo base.</cinza>")
 
     trainer = LLMsTrainer(yaml_path, force_base=usar_base)
     resultado = trainer.testar_predicoes(
@@ -769,7 +891,7 @@ def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False
         torch.cuda.empty_cache()
     
     log_separador(caractere="=", largura=80)
-    logger.info("✅ TESTE DE INFERÊNCIA COMPLETO")
+    logger.info("<verde>✅ TESTE DE INFERÊNCIA COMPLETO</verde>")
     log_separador(caractere="=", largura=80)
 
 

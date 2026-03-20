@@ -220,106 +220,33 @@ class JsonLoggerCallback(TrainerCallback):
         self.on_log(args, state, control, metrics)
 
 
-class HardwareMetricsCallback(TrainerCallback):
-    """
-    Callback para registrar métricas contínuas de hardware durante o treinamento.
-    
-    Registra: CPU (uso %), RAM (usada/disponível GB), Disco (uso %), GPU (memória alocada/reservada GB)
-    As métricas são salvas em arquivo JSONL separado para análise posterior.
-    """
-    
-    def __init__(self, output_dir: str, intervalo_steps: int = 10):
-        """
-        Args:
-            output_dir: Diretório onde salvar o arquivo de métricas
-            intervalo_steps: Intervalo de steps entre registros (evita overhead excessivo)
-        """
-        self.output_dir = output_dir
-        self.intervalo_steps = max(1, intervalo_steps)
-        self.metrics_file = os.path.join(output_dir, "treinamento", "hardware_metrics.jsonl")
-        self._ultimo_step = -1
-        
-        # Cria diretório e arquivo
-        os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
-        open(self.metrics_file, "w").close()  # Limpa arquivo anterior
-        
-    def _registrar_metricas(self, step: int, epoch: float, fase: str = "train"):
-        """Registra métricas de hardware no arquivo JSONL."""
-        try:
-            hardware = Util.dados_hardware(incluir_gpu=True)
-            
-            registro = {
-                "timestamp": time.time(),
-                "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "step": step,
-                "epoch": round(epoch, 4) if epoch else 0,
-                "fase": fase,
-                # CPU
-                "cpu_uso_%": hardware.get("cpu_uso_%", 0),
-                "cpu_uso_processo_%": hardware.get("cpu_uso_processo_%", 0),
-                # RAM
-                "ram_usada_gb": hardware.get("mem_usada_gb", 0),
-                "ram_disponivel_gb": hardware.get("mem_disponivel_gb", 0),
-                "ram_uso_%": hardware.get("mem_uso_%", 0),
-                # Disco
-                "disco_uso_%": hardware.get("disco_uso_%", 0),
-            }
-            
-            # GPU (pode ter múltiplas)
-            gpu_info = hardware.get("gpu", {})
-            if gpu_info.get("disponivel", False):
-                gpus = gpu_info.get("gpus", [])
-                for gpu in gpus:
-                    idx = gpu.get("idx", 0)
-                    registro[f"gpu{idx}_reservada_gb"] = gpu.get("mem_reservada_gb", 0)
-                    registro[f"gpu{idx}_alocada_gb"] = gpu.get("mem_alocada_gb", 0)
-                    registro[f"gpu{idx}_max_reservada_gb"] = gpu.get("mem_max_reservada_gb", 0)
-            
-            with open(self.metrics_file, "a") as fp:
-                fp.write(json.dumps(registro, ensure_ascii=False) + "\n")
-                
-        except Exception as e:
-            # Não interrompe o treinamento por erro de métricas
-            pass
-    
-    def on_step_end(self, args, state, control, **kwargs):
-        """Registra métricas a cada N steps."""
-        if state.global_step % self.intervalo_steps == 0 and state.global_step != self._ultimo_step:
-            self._ultimo_step = state.global_step
-            self._registrar_metricas(state.global_step, state.epoch, "train")
-    
-    def on_evaluate(self, args, state, control, **kwargs):
-        """Registra métricas durante avaliação."""
-        self._registrar_metricas(state.global_step, state.epoch, "eval")
-    
-    def on_train_begin(self, args, state, control, **kwargs):
-        """Registra métricas no início do treinamento."""
-        self._registrar_metricas(0, 0, "train_begin")
-    
-    def on_train_end(self, args, state, control, **kwargs):
-        """Registra métricas no final do treinamento."""
-        self._registrar_metricas(state.global_step, state.epoch, "train_end")
-
-
 class MetricsLoggerCallback(TrainerCallback):
     """
-    Callback para registrar métricas detalhadas de treinamento e validação.
+    Callback unificado para registrar TODAS as métricas de treinamento.
     
-    Registra: loss, learning_rate, grad_norm, eval_loss, etapa do curriculum
-    e contagem acumulada de instâncias treinadas.
-    Salva em arquivo JSONL para análise posterior e geração de gráficos.
+    Registra em um único arquivo JSONL:
+    - Treinamento: loss, learning_rate, grad_norm, eval_loss
+    - Hardware: CPU (%), RAM (GB), GPU (memória reservada/alocada GB), Disco (%)
+    - Curriculum: etapa_alias, etapa_index, step_global, epoch_global
+    - Eficiência: instancias_acumuladas, tokens_acumulados
     
-    Campos adicionais em cada registro:
-        - etapa_alias: nome da etapa do curriculum ("Principal" para treino simples)
-        - etapa_index: índice da etapa (0 para treino simples)
+    A coleta unificada garante que métricas de hardware e treinamento
+    estejam no mesmo registro, com timestamp e contexto consistentes.
+    
+    Campos-chave em cada registro:
+        - event: tipo do evento (train_begin, log, evaluate, train_end)
         - step_global: step contínuo somando todas as etapas do curriculum
         - epoch_global: época contínua somando épocas de todas as etapas
-        - instancias_acumuladas: total de instâncias processadas até o momento
+        - etapa_alias/etapa_index: identificação da etapa do curriculum
+        - instancias_acumuladas: total de instâncias processadas
+        - tokens_acumulados: total de tokens processados (instâncias × max_seq_length)
+        - ram_usada_gb, gpu*_reservada_gb, cpu_uso_%: métricas de hardware
     """
     
     def __init__(self, output_dir: str, etapa_alias: str = "Principal",
                  etapa_index: int = 0, instancias_previas: int = 0,
-                 step_offset: int = 0, epoch_offset: float = 0.0):
+                 step_offset: int = 0, epoch_offset: float = 0.0,
+                 max_seq_length: int = 0, tokens_previos: int = 0):
         """
         Args:
             output_dir: Diretório onde salvar o arquivo de métricas
@@ -328,6 +255,8 @@ class MetricsLoggerCallback(TrainerCallback):
             instancias_previas: Total de instâncias treinadas em etapas anteriores
             step_offset: Total de steps acumulados de etapas anteriores (para step_global)
             epoch_offset: Total de épocas acumuladas de etapas anteriores (para epoch_global)
+            max_seq_length: Comprimento máximo de sequência (para calcular tokens processados)
+            tokens_previos: Total de tokens processados em etapas anteriores
         """
         self.output_dir = output_dir
         self.metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
@@ -342,6 +271,8 @@ class MetricsLoggerCallback(TrainerCallback):
         self._step_offset = step_offset
         self._epoch_offset = epoch_offset
         self._effective_batch_size = 1  # Calculado em on_train_begin
+        self._max_seq_length = max_seq_length
+        self._tokens_previos = tokens_previos
         
         # Cria diretório; trunca arquivo apenas na primeira etapa do curriculum
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
@@ -351,16 +282,45 @@ class MetricsLoggerCallback(TrainerCallback):
     def _registrar(self, registro: dict):
         """Salva registro no arquivo JSONL.
         
-        Substitui float NaN/Inf por None para gerar JSON válido
-        (NaN não é JSON válido e quebra parsers padrão).
+        Adiciona métricas de hardware ao registro e substitui float NaN/Inf
+        por None para gerar JSON válido.
         """
         try:
+            # Coleta métricas de hardware no mesmo instante
+            self._adicionar_hardware(registro)
+            
             limpo = {
                 k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
                 for k, v in registro.items()
             }
             with open(self.metrics_file, "a") as fp:
                 fp.write(json.dumps(limpo, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    
+    def _adicionar_hardware(self, registro: dict) -> None:
+        """Adiciona métricas de hardware ao registro (in-place)."""
+        try:
+            hardware = Util.dados_hardware(incluir_gpu=True)
+            
+            # CPU
+            registro["cpu_uso_%"] = hardware.get("cpu_uso_%", 0)
+            registro["cpu_uso_processo_%"] = hardware.get("cpu_uso_processo_%", 0)
+            # RAM
+            registro["ram_usada_gb"] = hardware.get("mem_usada_gb", 0)
+            registro["ram_disponivel_gb"] = hardware.get("mem_disponivel_gb", 0)
+            registro["ram_uso_%"] = hardware.get("mem_uso_%", 0)
+            # Disco
+            registro["disco_uso_%"] = hardware.get("disco_uso_%", 0)
+            
+            # GPU (pode ter múltiplas)
+            gpu_info = hardware.get("gpu", {})
+            if gpu_info.get("disponivel", False):
+                for gpu in gpu_info.get("gpus", []):
+                    idx = gpu.get("idx", 0)
+                    registro[f"gpu{idx}_reservada_gb"] = gpu.get("mem_reservada_gb", 0)
+                    registro[f"gpu{idx}_alocada_gb"] = gpu.get("mem_alocada_gb", 0)
+                    registro[f"gpu{idx}_max_reservada_gb"] = gpu.get("mem_max_reservada_gb", 0)
         except Exception:
             pass
     
@@ -386,6 +346,8 @@ class MetricsLoggerCallback(TrainerCallback):
             "epoch_offset": self._epoch_offset,
             "instancias_previas": self._instancias_previas,
             "effective_batch_size": self._effective_batch_size,
+            "max_seq_length": self._max_seq_length,
+            "tokens_previos": self._tokens_previos,
         })
     
     def on_log(self, args, state, control, logs=None, **kwargs):
@@ -414,6 +376,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "etapa_alias": self._etapa_alias,
             "etapa_index": self._etapa_index,
             "instancias_acumuladas": instancias_acumuladas,
+            "tokens_acumulados": self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._max_seq_length if self._max_seq_length > 0 else 0,
         }
         
         # Métricas de treinamento
@@ -473,6 +436,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "etapa_alias": self._etapa_alias,
             "etapa_index": self._etapa_index,
             "instancias_acumuladas": instancias_acumuladas,
+            "tokens_acumulados": self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._max_seq_length if self._max_seq_length > 0 else 0,
         }
         
         # Copia todas as métricas de avaliação
@@ -508,6 +472,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "etapa_alias": self._etapa_alias,
             "etapa_index": self._etapa_index,
             "instancias_acumuladas": instancias_acumuladas,
+            "tokens_acumulados": self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._max_seq_length if self._max_seq_length > 0 else 0,
         }
         
         self._registrar(registro)
@@ -578,8 +543,8 @@ class LLMsTrainer:
         self._etapas = self._yaml_config.curriculum
         self._tracker = CurriculumTracker(self._yaml_config.modelo.saida)
         
-        # Auto-calcula max_seq_length se necessário (antes de carregar modelo)
-        self._yaml_config.resolver_max_seq_length()
+        # Valida max_seq_length (obrigatório) e exibe info de tokens por etapa
+        self._yaml_config.validar_max_seq_length()
         
         # Carrega modelo e tokenizer
         self.model, self.tokenizer = self._load_model()
@@ -692,7 +657,7 @@ class LLMsTrainer:
         
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
-        print("[1/6] Carregando modelo base…")
+        print("<azul>[1/6] Carregando modelo base…</azul>")
         # Carrega configuração de bits
         nbits = self._yaml_config.treinamento.nbits
         
@@ -710,7 +675,7 @@ class LLMsTrainer:
                             os.path.exists(os.path.join(lora_model_path, 'pytorch_model.bin'))))
             
             if is_trained_lora:
-                print(f'🔄 Carregando modelo LoRA já treinado de {lora_model_path}...')
+                print(f'<azul>🔄 Carregando modelo LoRA já treinado de {lora_model_path}...</azul>')
                 try:
                     # Carrega o modelo LoRA já treinado diretamente
                     model, tokenizer = FastModel.from_pretrained(
@@ -720,23 +685,23 @@ class LLMsTrainer:
                         load_in_8bit=nbits == 8,
                         device_map="auto",
                     )
-                    print(f'✅ Modelo LoRA treinado carregado com sucesso!')
+                    print(f'<verde>✅ Modelo LoRA treinado carregado com sucesso!</verde>')
                     lora_ok = True
                     
                     # Log de informações do modelo carregado
                     self.log_processamento(f"Modelo LoRA carregado de: {lora_model_path}", "LORA_LOADED")
                     
                 except Exception as e:
-                    print(f'❌ Erro ao carregar modelo LoRA treinado: {e}')
+                    print(f'<vermelho>❌ Erro ao carregar modelo LoRA treinado: {e}</vermelho>')
                     traceback.print_exc()
-                    print('Tentando carregar modelo base e aplicar LoRA...')
+                    print('<amarelo>Tentando carregar modelo base e aplicar LoRA...</amarelo>')
                     time.sleep(2)
         else:
-             print(f'ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.')
+             print(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>')
         
         # Se não conseguiu carregar o LoRA ou não existe ou force_base=True, carrega modelo base
         if not lora_ok:
-            print(f'🔄 Carregando modelo base: {self._yaml_config.modelo.base}...')
+            print(f'<azul>🔄 Carregando modelo base: {self._yaml_config.modelo.base}...</azul>')
             model, tokenizer = FastModel.from_pretrained(
                 model_name=self._yaml_config.modelo.base,
                 max_seq_length=self._yaml_config.treinamento.max_seq_length,
@@ -747,7 +712,7 @@ class LLMsTrainer:
             
             # Se usar LoRA, aplica as configurações (Exceto se force_base=True)
             if not self.force_base and self._yaml_config.lora.r not in (0,None,False):
-                print(f'🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...')
+                print(f'<azul>🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...</azul>')
                 model = FastModel.get_peft_model(
                     model,
                     finetune_vision_layers=False,
@@ -762,7 +727,7 @@ class LLMsTrainer:
                     device_map="auto",
                 )
             elif self.force_base:
-                print(f'ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.')
+                print(f'<cinza>ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.</cinza>')
         # Template agora é aplicado pelo TreinarChatTemplate após o carregamento
         if hasattr(model, 'print_trainable_parameters'):
             model.print_trainable_parameters()
@@ -771,7 +736,7 @@ class LLMsTrainer:
         model_type = type(model).__name__
         is_peft_model = hasattr(model, 'peft_config') or hasattr(model, 'base_model')
         
-        print(f"\n📊 MODELO CARREGADO:")
+        print(f"\n<azul>📊 MODELO CARREGADO:</azul>")
         print(f"  - Tipo: {model_type}")
         print(f"  - É modelo PEFT: {is_peft_model}")
         print(f"  - LoRA carregado: {lora_ok}")
@@ -1011,7 +976,7 @@ class LLMsTrainer:
     # ------------------------- trainer -----------------------------------
     def _build_trainer(self, etapa_index: int = 0, etapa_alias: str = "Principal",
                        instancias_previas: int = 0, step_offset: int = 0,
-                       epoch_offset: float = 0.0) -> SFTTrainer:
+                       epoch_offset: float = 0.0, tokens_previos: int = 0) -> SFTTrainer:
         """Constrói o SFTTrainer com callbacks de métricas.
         
         Args:
@@ -1020,8 +985,9 @@ class LLMsTrainer:
             instancias_previas: Instâncias acumuladas de etapas anteriores
             step_offset: Steps acumulados de etapas anteriores (para step_global contínuo)
             epoch_offset: Épocas acumuladas de etapas anteriores (para epoch_global contínuo)
+            tokens_previos: Tokens processados em etapas anteriores (para tokens_acumulados contínuo)
         """
-        print("[3/6] Configurando trainer…")
+        print("<azul>[3/6] Configurando trainer…</azul>")
         
         # === Formatação do Dataset (garante coluna 'text') ===
         # num_proc não deve exceder o número de registros (causa falha silenciosa)
@@ -1079,16 +1045,16 @@ class LLMsTrainer:
              eval_steps = max(1, int((total_examples / 100) / _st))
 
         if self.eval_ds and eval_steps > 0:
-           print(f' - avaliando a cada {eval_steps} steps...')
+           print(f'<cinza> - avaliando a cada {eval_steps} steps...</cinza>')
         
         log_steps = eval_steps if isinstance(eval_steps, int) and eval_steps > 0 else 50
         
         if self.save_checkpoints:
-            print(f' - gravando checkpoints a cada {log_steps} steps')
+            print(f'<cinza> - gravando checkpoints a cada {log_steps} steps</cinza>')
         
         # Log train_on_responses_only
         if treino_cfg.train_on_responses_only:
-            print(f' - train_on_responses_only ATIVADO (treina apenas nas respostas do assistant)')
+            print(f'<cinza> - train_on_responses_only ATIVADO (treina apenas nas respostas do assistant)</cinza>')
 
         # Configuração de argumentos de treino
         # Nota: Usamos TrainingArguments padrão ou SFTConfig se disponível no unsloth
@@ -1149,7 +1115,7 @@ class LLMsTrainer:
                 n_total = len(labels_amostra)
                 if n_validos > 0 and n_validos < n_total:
                     # Labels já possuem mascaramento parcial (prompt=-100, resposta=válida)
-                    print(f'   ✅ train_on_responses_only: dataset já possui labels pré-mascarados')
+                    print(f'   <verde>✅ train_on_responses_only: dataset já possui labels pré-mascarados</verde>')
                     print(f'      ({n_validos}/{n_total} tokens com loss, {n_total - n_validos} mascarados)')
                     print(f'      Pulando train_on_responses_only para preservar labels corretos.')
                 else:
@@ -1184,11 +1150,7 @@ class LLMsTrainer:
             os.remove(jsonl)
         trainer.add_callback(JsonLoggerCallback(jsonl))
         
-        # 2. HardwareMetricsCallback (métricas de RAM, GPU, CPU, Disco)
-        # Registra a cada 10 steps para não sobrecarregar
-        trainer.add_callback(HardwareMetricsCallback(output_dir, intervalo_steps=10))
-        
-        # 3. MetricsLoggerCallback (métricas detalhadas com etapa curriculum + instâncias)
+        # 2. MetricsLoggerCallback (métricas unificadas: loss, hardware, curriculum, tokens)
         trainer.add_callback(MetricsLoggerCallback(
             output_dir,
             etapa_alias=etapa_alias,
@@ -1196,20 +1158,21 @@ class LLMsTrainer:
             instancias_previas=instancias_previas,
             step_offset=step_offset,
             epoch_offset=epoch_offset,
+            max_seq_length=self._yaml_config.treinamento.max_seq_length,
+            tokens_previos=tokens_previos,
         ))
         
-        # 4. CheckpointRenameCallback (renomeia checkpoints com zero-padding)
+        # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding)
         if self.save_checkpoints:
             chkpt_dir = os.path.join(self._yaml_config.modelo.saida, "chkpt")
             os.makedirs(chkpt_dir, exist_ok=True)
             trainer.add_callback(CheckpointRenameCallback(chkpt_dir, step_offset=step_offset))
         
-        print(f' - callbacks de métricas configurados:')
-        print(f'   • metrics_stream.jsonl (métricas brutas)')
-        print(f'   • treinamento/hardware_metrics.jsonl (RAM, GPU, CPU, Disco)')
-        print(f'   • treinamento/training_metrics.jsonl (loss, lr, eval_loss)')
+        print(f'<cinza> - callbacks de métricas configurados:</cinza>')
+        print(f'   <cinza>• metrics_stream.jsonl (métricas brutas)</cinza>')
+        print(f'   <cinza>• treinamento/training_metrics.jsonl (loss, hardware, tokens)</cinza>')
         if self.save_checkpoints:
-            print(f'   • checkpoint renaming (zero-padding: checkpoint-00001)')
+            print(f'   <cinza>• checkpoint renaming (zero-padding: checkpoint-00001)</cinza>')
         
         trainer.model.config.use_cache = False
         
@@ -1223,7 +1186,7 @@ class LLMsTrainer:
         """
         ds = trainer.train_dataset
         if ds is None or "labels" not in ds.column_names:
-            print(f'   ℹ️  Sem coluna labels no dataset — collator criará labels em tempo de execução.')
+            print(f'   <cinza>ℹ️  Sem coluna labels no dataset — collator criará labels em tempo de execução.</cinza>')
             return
         
         n_check = min(10, len(ds))
@@ -1246,8 +1209,8 @@ class LLMsTrainer:
                 exemplos_vazios += 1
         
         if total_validos == 0:
-            print(f'   ❌ ALERTA: Todos os {n_check} exemplos verificados têm labels inteiramente -100!')
-            print(f'      Isso causará loss=NaN e grad_norm=0.0 durante o treinamento.')
+            print(f'   <vermelho>❌ ALERTA: Todos os {n_check} exemplos verificados têm labels inteiramente -100!</vermelho>')
+            print(f'      <vermelho>Isso causará loss=NaN e grad_norm=0.0 durante o treinamento.</vermelho>')
             print(f'      Possíveis causas:')
             print(f'      • Os marcadores de resposta não foram encontrados nos input_ids')
             print(f'      • O chat template não corresponde ao formato esperado pelo modelo')
@@ -1264,11 +1227,11 @@ class LLMsTrainer:
                     pass
         elif exemplos_vazios > 0:
             pct = exemplos_vazios / n_check * 100
-            print(f'   ⚠️ {exemplos_vazios}/{n_check} exemplos com labels inteiramente -100 ({pct:.0f}%)')
+            print(f'   <amarelo>⚠️ {exemplos_vazios}/{n_check} exemplos com labels inteiramente -100 ({pct:.0f}%)</amarelo>')
             print(f'      Total: {total_validos}/{total_tokens} tokens com loss')
         else:
             pct_resp = total_validos / total_tokens * 100 if total_tokens > 0 else 0
-            print(f'   ✅ Labels verificados: {total_validos}/{total_tokens} tokens com loss ({pct_resp:.1f}%)')
+            print(f'   <verde>✅ Labels verificados: {total_validos}/{total_tokens} tokens com loss ({pct_resp:.1f}%)</verde>')
 
     # ------------------------- checkpoint management --------------------- 
     def _find_latest_checkpoint(self) -> str:
@@ -1279,7 +1242,7 @@ class LLMsTrainer:
         """
         # verifica se o resume está habilitado na configuração
         if not self._yaml_config.treinamento.resume_from_checkpoint:
-            print("⚠️ Checkpoint ignorado por configuração (resume_from_checkpoint=False)")
+            print("<amarelo>⚠️ Checkpoint ignorado por configuração (resume_from_checkpoint=False)</amarelo>")
             return None
             
         if not self.save_checkpoints:
@@ -1314,7 +1277,7 @@ class LLMsTrainer:
         has_alternative = any(os.path.exists(os.path.join(latest_path, f)) for f in alternative_files)
         
         if has_required or (has_alternative and os.path.exists(os.path.join(latest_path, "trainer_state.json"))):
-            print(f"✅ Checkpoint encontrado: {latest_path} (step {latest_step})")
+            print(f"<verde>✅ Checkpoint encontrado: {latest_path} (step {latest_step})</verde>")
             self.log_processamento(f"Checkpoint encontrado: {latest_path} (step {latest_step})", "CHECKPOINT_FOUND")
             return latest_path
         else:
@@ -1328,8 +1291,10 @@ class LLMsTrainer:
         
         - Aplica pace_epochs, learning_rate e max_seq_length da etapa
         - Para etapas > 0, troca o arquivo de divisão e recarrega os datasets
+        - Se max_seq_length mudar entre etapas, recarrega model/tokenizer
         """
         treino = self._yaml_config.treinamento
+        msl_anterior = treino.max_seq_length
 
         # Override de epochs com pace_epochs da etapa
         if etapa.pace_epochs > 0:
@@ -1342,6 +1307,22 @@ class LLMsTrainer:
         # Override de max_seq_length se especificado
         if etapa.max_seq_length > 0:
             treino.max_seq_length = etapa.max_seq_length
+
+        # Recarga dinâmica: se max_seq_length mudou, recarrega modelo e tokenizer
+        msl_atual = treino.max_seq_length
+        if msl_atual != msl_anterior and step_index > 0:
+            logger.info(f"🔄 max_seq_length mudou: {msl_anterior} → {msl_atual}. Recarregando modelo...")
+            print(f"🔄 Recarga dinâmica: max_seq_length {msl_anterior} → {msl_atual}")
+            self.model, self.tokenizer = self._load_model()
+            self.chat_handler = TreinarChatTemplate(self.tokenizer, self._yaml_config.modelo.base)
+            self.tokenizer = self.chat_handler.tokenizer
+
+        # Exibe informações de tokens da divisão da etapa
+        info_tokens = self._yaml_config._ler_info_tokens_divisao(etapa.arquivo)
+        if info_tokens:
+            suficiente = "✅" if msl_atual >= info_tokens["max"] else "⚠️  INSUFICIENTE 🚩"
+            print(f"   📊 Tokens etapa '{etapa.alias}': max={info_tokens['max']}, "
+                  f"média={info_tokens['media']:.0f} → max_seq_length={msl_atual} {suficiente}")
 
         # Para etapas além da primeira, recarrega dados com o arquivo de divisão da etapa
         if step_index > 0 and etapa.arquivo:
@@ -1367,19 +1348,20 @@ class LLMsTrainer:
         total_etapas = len(self._etapas)
 
         if is_curriculum:
-            print(f"[4/6] Iniciando treinamento com {total_etapas} etapas de curriculum…")
+            print(f"<azul>[4/6] Iniciando treinamento com {total_etapas} etapas de curriculum…</azul>")
         else:
-            print("[4/6] Iniciando treinamento…")
+            print("<azul>[4/6] Iniciando treinamento…</azul>")
 
         # Contadores acumulados para métricas contínuas entre etapas do curriculum
         instancias_acumuladas = 0
         step_offset_global = 0
         epoch_offset_global = 0.0
+        tokens_acumulados = 0
 
         for step_index, etapa_atual in enumerate(self._etapas):
             # --- Preparação da etapa ---
             if is_curriculum:
-                logger.info(f"🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'")
+                logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
                 self._aplicar_etapa_curriculum(step_index, etapa_atual)
 
             # Constrói (ou reconstrói) o trainer com contexto da etapa
@@ -1389,6 +1371,7 @@ class LLMsTrainer:
                 instancias_previas=instancias_acumuladas,
                 step_offset=step_offset_global,
                 epoch_offset=epoch_offset_global,
+                tokens_previos=tokens_acumulados,
             )
 
             # Pipeline Universal: marca início da etapa
@@ -1405,15 +1388,15 @@ class LLMsTrainer:
 
             try:
                 if resume_from_checkpoint:
-                    print(f"🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}")
+                    print(f"<azul>🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}</azul>")
                     try:
                         train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
-                        print("✅ Treinamento continuado com sucesso a partir do checkpoint")
+                        print("<verde>✅ Treinamento continuado com sucesso a partir do checkpoint</verde>")
                         self.log_processamento("Treinamento continuado com sucesso do checkpoint", "CHECKPOINT_SUCCESS")
                     except Exception as e:
                         error_msg = str(e)
-                        print(f"❌ Erro ao continuar do checkpoint: {error_msg}")
-                        print("🔄 Reiniciando treinamento do início...")
+                        print(f"<vermelho>❌ Erro ao continuar do checkpoint: {error_msg}</vermelho>")
+                        print("<amarelo>🔄 Reiniciando treinamento do início...</amarelo>")
 
                         if any(keyword in error_msg.lower() for keyword in ['config', 'parameter', 'mismatch', 'size']):
                             self.log_processamento(f"Erro de configuração no checkpoint: {error_msg}", "CHECKPOINT_CONFIG_ERROR")
@@ -1423,9 +1406,9 @@ class LLMsTrainer:
                         train_stats = self.trainer.train()
                 else:
                     if step_index == 0:
-                        print("🆕 Iniciando novo treinamento")
+                        print("<azul>🆕 Iniciando novo treinamento</azul>")
                     else:
-                        print(f"▶ Iniciando etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'")
+                        print(f"<azul>▶ Iniciando etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
                     train_stats = self.trainer.train()
             except Exception as e:
                 self._tracker.marcar_falha(step_index=step_index, alias=etapa_atual.alias, erro=str(e))
@@ -1433,7 +1416,7 @@ class LLMsTrainer:
 
             depois = _print_mem("DEPOIS")
             tempo_total = time.time() - tempo_inicio
-            print("[5/6] Tempo de execução: {:.2f} s".format(train_stats.metrics["train_runtime"]))
+            print("<verde>[5/6] Tempo de execução: {:.2f} s</verde>".format(train_stats.metrics["train_runtime"]))
 
             # Valida o modelo após o treinamento
             print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
@@ -1494,7 +1477,9 @@ class LLMsTrainer:
                 * n_gpus
             )
             step_offset_global += train_stats.global_step
-            instancias_acumuladas += train_stats.global_step * effective_batch
+            instancias_etapa = train_stats.global_step * effective_batch
+            instancias_acumuladas += instancias_etapa
+            tokens_acumulados += instancias_etapa * self._yaml_config.treinamento.max_seq_length
             # Usa a época real do Trainer (não pace_epochs configurado) para robustez
             # com early stopping ou datasets que não dividem exatamente em batches.
             # ceil() garante que a próxima etapa inicia em fronteira inteira de época.
@@ -1506,13 +1491,13 @@ class LLMsTrainer:
             epoch_offset_global = math.ceil(epoch_offset_global + epocas_reais)
 
         if is_curriculum:
-            logger.info(f"✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas")
+            logger.info(f"<verde>✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas</verde>")
         
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
         out_dir = self._yaml_config.modelo.saida
         os.makedirs(out_dir, exist_ok=True)
-        print(f"[6/6] Salvando modelo em {out_dir}…")
+        print(f"<azul>[6/6] Salvando modelo em {out_dir}…</azul>")
         
         # Salva o modelo (LoRA ou modelo completo)
         self.model.save_pretrained(out_dir)
@@ -1523,12 +1508,12 @@ class LLMsTrainer:
         adapter_model = os.path.join(out_dir, 'adapter_model.safetensors')
         
         if os.path.exists(adapter_config):
-            print(f"✅ Arquivo de configuração LoRA salvo: {adapter_config}")
+            print(f"<verde>✅ Arquivo de configuração LoRA salvo: {adapter_config}</verde>")
             
         if os.path.exists(adapter_model):
-            print(f"✅ Modelo LoRA salvo: {adapter_model}")
+            print(f"<verde>✅ Modelo LoRA salvo: {adapter_model}</verde>")
         elif os.path.exists(os.path.join(out_dir, 'pytorch_model.bin')):
-            print(f"✅ Modelo PyTorch salvo: pytorch_model.bin")
+            print(f"<verde>✅ Modelo PyTorch salvo: pytorch_model.bin</verde>")
         
         # Log detalhado do que foi salvo
         files_saved = []
@@ -1541,7 +1526,7 @@ class LLMsTrainer:
         if stats is not None:
             with open(os.path.join(self._yaml_config.modelo.saida, "metrics_summary.json"), "w") as fp:
                  json.dump(stats, fp, indent=2)
-        print(r"Modelo salvo com sucesso \o/")
+        print(r"<verde>Modelo salvo com sucesso \o/</verde>")
 
     def log_processamento(self, msg: str, titulo:str) -> None:
         ''' grava no arquivo de log com o nome _log_processamento_.txt dados importantes

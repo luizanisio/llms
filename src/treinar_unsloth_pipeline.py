@@ -9,12 +9,10 @@ lista universal de etapas e gerencia rastreamento unificado de estado e métrica
 
 Classes:
     - CurriculumTracker: Rastreamento de estado e métricas do pipeline
-    - CacheSeqLength: Cache de max_seq_length calculado automaticamente
 """
 
 import os
 import json
-import hashlib
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -127,7 +125,7 @@ class CurriculumTracker:
             step_index=step_index,
             tipo=etapa.tipo
         )
-        logger.info(f"▶ Etapa {step_index} iniciada: alias='{etapa.alias}', tipo={etapa.tipo}")
+        logger.info(f"<azul>▶ Etapa {step_index} iniciada: alias='{etapa.alias}', tipo={etapa.tipo}</azul>")
     
     def finalizar_etapa(self, step_index: int, alias: str, **metricas) -> None:
         """Marca fim de uma etapa e registra métricas finais."""
@@ -137,7 +135,7 @@ class CurriculumTracker:
             alias=alias
         )
         self.registrar_metrica(alias=alias, event="etapa_fim", **metricas)
-        logger.info(f"✅ Etapa {step_index} finalizada: alias='{alias}'")
+        logger.info(f"<verde>✅ Etapa {step_index} finalizada: alias='{alias}'</verde>")
     
     def marcar_falha(self, step_index: int, alias: str, erro: str) -> None:
         """Registra falha em uma etapa."""
@@ -148,94 +146,7 @@ class CurriculumTracker:
             erro=erro
         )
         self.registrar_metrica(alias=alias, event="etapa_falha", erro=erro)
-        logger.error(f"❌ Etapa {step_index} falhou: alias='{alias}' - {erro}")
-
-
-# ---------------------------------------------------------------------------
-# CacheSeqLength: Cache de max_seq_length
-# ---------------------------------------------------------------------------
-
-class CacheSeqLength:
-    """Gerencia cache de max_seq_length calculado automaticamente.
-    
-    O cache é armazenado em {output_dir}/_dados_automaticos.json e contém:
-    - max_seq_length global calculado
-    - hash do YAML para detecção de mudanças
-    - data da última atualização
-    - Valores por alias (para curriculum learning futuro)
-    """
-    
-    NOME_ARQUIVO = "_dados_automaticos.json"
-    
-    def __init__(self, output_dir: str, yaml_path: str):
-        self.cache_file = os.path.join(output_dir, self.NOME_ARQUIVO)
-        self.yaml_path = yaml_path
-        self._yaml_hash = self._calcular_yaml_hash()
-    
-    def _calcular_yaml_hash(self) -> str:
-        """Calcula hash SHA256 do conteúdo do arquivo YAML."""
-        try:
-            with open(self.yaml_path, "rb") as f:
-                return hashlib.sha256(f.read()).hexdigest()
-        except OSError:
-            return ""
-    
-    def carregar(self) -> Optional[Dict[str, Any]]:
-        """Carrega dados do cache se existir."""
-        if not os.path.isfile(self.cache_file):
-            return None
-        try:
-            with open(self.cache_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Erro ao ler cache {self.NOME_ARQUIVO}: {e}")
-            return None
-    
-    def esta_atualizado(self) -> bool:
-        """Verifica se o cache está atualizado em relação ao YAML atual."""
-        dados = self.carregar()
-        if dados is None:
-            return False
-        return dados.get("yaml_hash") == self._yaml_hash
-    
-    def obter_max_seq_length(self, alias: str = "Principal") -> Optional[int]:
-        """Retorna max_seq_length do cache para um alias, se disponível e atualizado."""
-        if not self.esta_atualizado():
-            return None
-        dados = self.carregar()
-        if dados is None:
-            return None
-        # Verifica valor por alias
-        if alias != "Principal" and alias in dados:
-            valor_alias = dados[alias]
-            if isinstance(valor_alias, dict) and "max_seq_length" in valor_alias:
-                return valor_alias["max_seq_length"]
-        # Valor global
-        return dados.get("max_seq_length")
-    
-    def salvar(self, max_seq_length: int, alias: str = "Principal", **extras) -> None:
-        """Salva valores calculados no cache."""
-        # Carrega dados existentes para preservar outros aliases
-        dados = self.carregar() or {}
-        
-        dados["max_seq_length"] = max_seq_length
-        dados["yaml_hash"] = self._yaml_hash
-        dados["yaml_atualizacao"] = datetime.now().isoformat()
-        
-        # Salva por alias se não for o principal
-        if alias != "Principal":
-            dados[alias] = {"max_seq_length": max_seq_length, **extras}
-        
-        # Merge extras no nível raiz
-        for k, v in extras.items():
-            if k not in dados:
-                dados[k] = v
-        
-        os.makedirs(os.path.dirname(self.cache_file) or ".", exist_ok=True)
-        with open(self.cache_file, "w", encoding="utf-8") as f:
-            json.dump(dados, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"💾 Cache salvo em {self.NOME_ARQUIVO}: max_seq_length={max_seq_length}")
+        logger.error(f"<vermelho>❌ Etapa {step_index} falhou: alias='{alias}' - {erro}</vermelho>")
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +224,9 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
         if not etapas:
             raise ValueError("Seção 'curriculum.divisao' está vazia no YAML")
         
-        logger.info(f"📋 Curriculum: {len(etapas)} etapa(s) configurada(s)")
+        logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s)</azul>")
         for i, e in enumerate(etapas):
-            logger.info(f"   [{i}] alias='{e.alias}', tipo={e.tipo}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}")
+            logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}</cinza>")
         
         return etapas
     

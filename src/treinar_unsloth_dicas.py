@@ -67,8 +67,8 @@ DICAS_YAML = {
     "treinamento/num_train_epochs": """#| Passadas no dataset. Recomendado: 1-3 épocas.
 #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
 #| [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10.""",
-    "treinamento/max_seq_length": """#| Contexto máximo. Qwen/Llama suportam long context, mas 2048-4096 é comum.
-#| Valor maior consome mais VRAM.
+    "treinamento/max_seq_length": """#| Contexto máximo (OBRIGATÓRIO). Qwen/Llama suportam long context, mas 2048-4096 é comum.
+#| Valor maior consome mais VRAM. Consulte token_total no CSV de divisão.
 #| [7B] Suporta até 128k, mas 4096-8192 é prático.""",
     "treinamento/learning_rate": """#| Taxa de aprendizado. QLoRA/LoRA: start 2e-4. RL (DPO): 5e-6.
 #| Se overfitting/loss < 0.2: Reduzir. Se underfitting: Aumentar.
@@ -76,7 +76,6 @@ DICAS_YAML = {
     "treinamento/nbits": """#| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
 #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.""",
     "treinamento/train_on_responses_only": "#| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.",
-    "treinamento/validar_max_seq_length": "#| Se false e max_seq_length>0, pula o recálculo de tokens (usa valor do YAML direto).",
     "treinamento/warmup_steps": """#| Passos de aquecimento. Recomendado: 5-10% do total de steps.
 #| [7B] Aumentar para 10-20 steps em modelos maiores.""",
     "treinamento/weight_decay": "#| Decaimento de peso (regularização). Padrão 0.01.",

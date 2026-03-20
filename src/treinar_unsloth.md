@@ -214,8 +214,7 @@ Durante o treinamento e testes, diversos arquivos são gerados na pasta de saíd
 | Pasta/Arquivo | Conteúdo |
 |---------------|----------|
 | `adapter_model.safetensors` | Pesos do LoRA treinado |
-| `treinamento/training_metrics.jsonl` | Métricas de treino (loss, learning rate, epoch) a cada step |
-| `treinamento/hardware_metrics.jsonl` | Uso de recursos (CPU, RAM, GPU, Disco) coletado periodicamente |
+| `treinamento/training_metrics.jsonl` | Métricas unificadas: treino (loss, lr, epoch) + hardware (CPU, RAM, GPU, Disco) |
 | `treinamento/memoria_predicao.png` | Gráfico de uso de memória gerado durante teste (`--modelo`) |
 | `predict/` | Resultados da predição com modelo treinado |
 | `predict_base/` | Resultados da predição com modelo base (`--base`) |
@@ -225,7 +224,7 @@ Durante o treinamento e testes, diversos arquivos são gerados na pasta de saíd
 ## Monitoramento
 
 O sistema inclui monitoramento de recursos em background (`treinar_unsloth_monitor.py`):
-1.  **Durante Treino**: Registra em `hardware_metrics.jsonl`.
+1.  **Durante Treino**: Registra em `training_metrics.jsonl` (arquivo unificado com métricas de treino e hardware).
 2.  **Durante Teste (`--modelo`)**: Coleta dados em tempo real e gera gráfico ao final.
 3.  **Logs**: Exibe consumo de VRAM e RAM nos logs de execução.
 
