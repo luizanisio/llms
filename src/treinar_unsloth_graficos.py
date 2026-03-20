@@ -356,7 +356,9 @@ class GraficoTreinamento:
                     marcadores_epoca.append({
                         'x': t["step"],
                         'label': f'Época {epoch_int}',
-                        'cor': 'green'
+                        'cor': 'green',
+                        'y_frac': 0.05,
+                        'va': 'bottom',
                     })
                     epochs_seen.add(epoch_int)
             
@@ -385,6 +387,7 @@ class GraficoTreinamento:
                         'label': f'Etapa: {et["alias"]}',
                         'cor': 'darkviolet',
                         'y_frac': y_frac,
+                        'va': 'top',
                     })
                     all_steps.append(et["step_global"])
             

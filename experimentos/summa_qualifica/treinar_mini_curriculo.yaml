@@ -155,8 +155,8 @@ treinamento:
   #| Valor maior consome mais VRAM.
   #| [7B] Suporta até 128k, mas 4096-8192 é prático.
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
-  #| ⚠️ RTX 3060 12GB: use 2048-4096. Valores maiores causam OOM. 
-  #|    8192 é o máximo absoluto com 12Gb e modelo 1.5B em 4-bit
+  #| ⚠️ RTX 3060 12GB: use 2048-4096. Valores maiores podem causar OOM. 
+  #|    - 6144 (6k) é o máximo conseguido sem erro com 12Gb e modelo 1.5B em 4-bit
   max_seq_length: 6144
   
   #| Validação de tokens segura. Recomendado: true.
