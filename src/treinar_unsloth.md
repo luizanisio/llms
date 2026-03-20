@@ -260,18 +260,21 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigGold` para `pastas.dataset` (gold standard, obrigatório, validação de existência). `ConfigPredicao` agora é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `pastas.dataset` como fonte do gold.
 * **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.
 
-#### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum)
+#### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum) ✅ CONCLUÍDO
 **Objetivo:** Unificar a base de código do sistema atual antes de construir o Curriculum Learning multicamadas, assim o processo opera o mesmo sistema de logs (como se fosse de "apenas uma etapa").
 
 1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
 2. **Log de Rastreiamento Unificado e Resumo:** Implementar que todo salvamento utilize métricas gravadas no esquema universal (`curriculum_state.json` constando `{"current_step": 0, "status": "running"}` e `curriculum_metrics.jsonl`), abandonando outros tipos de lógicas divergentes.
-3. **Ajuste Dinâmico de `max_seq_length`:** Antes de dar início ao processo, codificar a análise da extensão máxima de tokens. Caso o dado ultrapasse o valor configurado/suportado, levantar Exception. Se `max_seq_length` for 0 ou omitido, deve arredondar com margem o teto máximo (ex: múltiplos precisos de 512 de folga para alocar tudo e enxugar VRAM).
-* **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) a partir do zero. As métricas exportadas, `.JSONL`, consolidações do estado de curriculum e a folga calculada do `max_seq_length` devem gerar relatórios perfeitamente adequados sem ter exigido yaml especializado, comprovando a blindagem base.
+4. **Mixando Modelos (LoRA vs Full):**
+    * *Transição `[LoRA -> Full]`*: Mesclar base + lora via instanciador e usar o Merge como "o novo `FastLanguageModel` pleno" da segunda fase.
+    * *Transição `[Full -> LoRA]`*: A requantização p/ nbits deve ser estritamente reacendida e embutida na modelagem ` FastLanguageModel.get_peft_model()` que sucede a transição.
+3. **[Pendente] Simplificação do `max_seq_length` e Remoção do Cache:** A lógica atual de cálculo automático (e _dados_automaticos.json) provou ser uma complicação desnecessária e será removida e substituída por um comportamento estrito (ver Passo 3).
+* **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) exigindo que o código passe perfeitamente sem as checagens e cálculos automáticos de contexto e não trave por arquivos de cache.
 
 #### Passo 3: Motor Multietapas do Curriculum Learning
 **Objetivo:** Adicionar interpretador do YAML para Curriculum, transições e regras de `LoRA` \leftrightarrow `Full`.
 
-1. **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo:
+1. ✅ **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo:
 ```yaml
 formatos:
   tipo_entrada: curriculum # Opções: dataset, pastas, curriculum
@@ -314,14 +317,14 @@ curriculum:
     pace_loss: 0.015   # Transita se eval_loss <= 0.015
     pace_epochs: 2     # Limite de segurança. Padrão ao omitir = 1.
 ```
-2. **Divisão Dinâmica ("Fail Fast"):** Evitar a autogeração baseada em divisões randômicas complexas ao usar curriculum. O sistema deve abortar prevenindo bugs se os subarquivos parametrizados (ex. `{arquivo}_facil.csv`) ikke existirem perfeitamente.
-3. **Roteamento e Sobrevivência de Passos:**
+2. ✅ **Divisão Dinâmica ("Fail Fast"):** Evitar a autogeração baseada em divisões randômicas complexas ao usar curriculum. O sistema deve abortar prevenindo bugs se os subarquivos parametrizados (ex. `{arquivo}_facil.csv`) ikke existirem perfeitamente.
+3. ✅ **Roteamento e Sobrevivência de Passos:**
     * Encapsular salvamentos no format de roteamento (ex: `{modelo.saida}/curriculum/01_facil`). Onde um retoma o modelo do passado.
     * No caso de Resume (`--treinar` de checkpoint quebrado), utilizar do state vivo (`curriculum_state.json`) extraído no passo 2 para instanciar subpastas `checkpoint-N` precisas resgatando o ponto cego daquela etapa exata.
-4. **Mixando Modelos (LoRA vs Full):**
-    * *Transição `[LoRA -> Full]`*: Mesclar base + lora via instanciador e usar o Merge como "o novo `FastLanguageModel` pleno" da segunda fase.
-    * *Transição `[Full -> LoRA]`*: A requantização p/ nbits deve ser estritamente reacendida e embutida na modelagem ` FastLanguageModel.get_peft_model()` que sucede a transição.
-* **⏱️ Teste Intermediário:** Simular um YAML com duas etapas restritas em LoRA. Processar passo 1 e pausar; retomar usando reexecução do script pelo CLI, e observar se os modelos são salvos nos seus compartimentos próprios no HD, e o passo 2 continua usando as raízes geradas. 
+5. **Gestão do `max_seq_length` por Estágio (Simplificado):**
+    * **Remoção do Cache Complexo**: O cálculo automático e cache (`_dados_automaticos.json`) serão inteiramente removidos para descomplicar a base de código.
+    * **Parâmetro Global Obrigatório**: O `max_seq_length` será um parâmetro obrigatório global. O sistema abortará com erro fatal nas validações se estiver zerado ou ausente.
+    * **Recarga Dinâmica**: O valor pode ser sobreposto em cada etapa do `curriculum`. Caso haja variação do `max_seq_length` durante a transição de um estágio para o outro, o pipeline se encarregará de recarregar a modelagem/tokenizer com a nova configuração, permitindo dar sequência com a nova limitação estritamente alocada.
 
 #### Passo 4: Pace Dinâmico e Ajustes Visuais de Controle
 **Objetivo:** Interpolação analítica final garantindo eficiência via parada prematura baseada no desempenho e legibilidade de análise das métricas via Gráficos evolutivos de múltiplas fases.
