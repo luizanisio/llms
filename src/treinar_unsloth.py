@@ -543,6 +543,17 @@ class LLMsTrainer:
         self._etapas = self._yaml_config.curriculum
         self._tracker = CurriculumTracker(self._yaml_config.modelo.saida)
         
+        # Histórico de treinamento
+        from treinar_unsloth_historico import HistoricoTreinamento
+        self._historico = HistoricoTreinamento(
+            output_dir=self._yaml_config.modelo.saida,
+            yaml_path=cfg_path
+        )
+        
+        # Determina se é novo treinamento (sem modelo LoRA existente)
+        _arq_adapter = os.path.join(self._yaml_config.modelo.saida, 'adapter_config.json')
+        self._is_novo_treinamento = not os.path.exists(_arq_adapter)
+        
         # Valida max_seq_length (obrigatório) e exibe info de tokens por etapa
         self._yaml_config.validar_max_seq_length()
         
@@ -583,12 +594,23 @@ class LLMsTrainer:
             "token_stats": ts
         }
 
-        # Log do primeiro registro
-        if len(self.train_ds) > 0:
-            self.log_processamento(self.train_ds[0], titulo="Primeiro registro do dataset de treino")
-        
         self.save_checkpoints = self._yaml_config.treinamento.save_checkpoints
         self.trainer = None  # Inicialização lazy no método train()
+        
+        # Inicializa histórico: se é novo treinamento, gera todos os arquivos
+        # Se é continuação, registra retomada e verifica YAML
+        if self._is_novo_treinamento:
+            self._historico.inicializar_novo_treinamento(
+                yaml_config=self._yaml_config,
+                model=self.model,
+                tokenizer=self.tokenizer,
+                train_ds=self.train_ds,
+                eval_ds=self.eval_ds,
+            )
+        else:
+            self._historico.evento_reinicio(
+                motivo="Continuação de treinamento existente"
+            )
 
     # ------------------------- controle no colab ------------------------------
     @classmethod
@@ -687,9 +709,7 @@ class LLMsTrainer:
                     )
                     print(f'<verde>✅ Modelo LoRA treinado carregado com sucesso!</verde>')
                     lora_ok = True
-                    
-                    # Log de informações do modelo carregado
-                    self.log_processamento(f"Modelo LoRA carregado de: {lora_model_path}", "LORA_LOADED")
+
                     
                 except Exception as e:
                     print(f'<vermelho>❌ Erro ao carregar modelo LoRA treinado: {e}</vermelho>')
@@ -752,11 +772,7 @@ class LLMsTrainer:
                     print(f"  - Modelo base: {type(model.base_model).__name__}")
             except Exception as e:
                 print(f"  - Erro ao obter detalhes PEFT: {e}")
-        
-        self.log_processamento(self._yaml_config._raw_config, titulo="Configuração do treinamento")
-        self.log_processamento(str(model), titulo="Resumo do modelo")
-        self.log_processamento(f"Tipo do modelo: {model_type} | PEFT: {is_peft_model} | LoRA OK: {lora_ok}", titulo="Status do modelo")
-        self.log_processamento(tokenizer.chat_template, titulo="Template do tokenizer")
+
         return model, tokenizer
 
 
@@ -1278,11 +1294,10 @@ class LLMsTrainer:
         
         if has_required or (has_alternative and os.path.exists(os.path.join(latest_path, "trainer_state.json"))):
             print(f"<verde>✅ Checkpoint encontrado: {latest_path} (step {latest_step})</verde>")
-            self.log_processamento(f"Checkpoint encontrado: {latest_path} (step {latest_step})", "CHECKPOINT_FOUND")
+            self._historico.evento_checkpoint_encontrado(latest_path, latest_step)
             return latest_path
         else:
             print(f"⚠️  Checkpoint incompleto encontrado: {latest_path}")
-            self.log_processamento(f"Checkpoint incompleto: {latest_path}", "CHECKPOINT_INCOMPLETE")
             return None
 
     # ------------------------- curriculum: preparação por etapa -----------
@@ -1363,6 +1378,13 @@ class LLMsTrainer:
             if is_curriculum:
                 logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
                 self._aplicar_etapa_curriculum(step_index, etapa_atual)
+                self._historico.evento_etapa_curriculum(
+                    step_index=step_index,
+                    alias=etapa_atual.alias,
+                    tipo=etapa_atual.tipo,
+                    pace_epochs=etapa_atual.pace_epochs,
+                    max_seq_length=etapa_atual.max_seq_length if etapa_atual.max_seq_length > 0 else self._yaml_config.treinamento.max_seq_length,
+                )
 
             # Constrói (ou reconstrói) o trainer com contexto da etapa
             self.trainer = self._build_trainer(
@@ -1392,21 +1414,18 @@ class LLMsTrainer:
                     try:
                         train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
                         print("<verde>✅ Treinamento continuado com sucesso a partir do checkpoint</verde>")
-                        self.log_processamento("Treinamento continuado com sucesso do checkpoint", "CHECKPOINT_SUCCESS")
+                        self._historico.evento_checkpoint_retomado(sucesso=True)
                     except Exception as e:
                         error_msg = str(e)
                         print(f"<vermelho>❌ Erro ao continuar do checkpoint: {error_msg}</vermelho>")
                         print("<amarelo>🔄 Reiniciando treinamento do início...</amarelo>")
-
-                        if any(keyword in error_msg.lower() for keyword in ['config', 'parameter', 'mismatch', 'size']):
-                            self.log_processamento(f"Erro de configuração no checkpoint: {error_msg}", "CHECKPOINT_CONFIG_ERROR")
-                        else:
-                            self.log_processamento(f"Erro geral no checkpoint: {error_msg}", "CHECKPOINT_ERROR")
+                        self._historico.evento_checkpoint_retomado(sucesso=False, erro=error_msg)
 
                         train_stats = self.trainer.train()
                 else:
                     if step_index == 0:
                         print("<azul>🆕 Iniciando novo treinamento</azul>")
+                        self._historico.registrar_evento("TREINO INICIADO", f"Novo treinamento do zero")
                     else:
                         print(f"<azul>▶ Iniciando etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
                     train_stats = self.trainer.train()
@@ -1445,6 +1464,7 @@ class LLMsTrainer:
                 train_stats=stats,
                 hardware_info=hardware
             )
+            self._historico.evento_geracao_estatisticas()
 
             # Grava o modelo antes do último eval (pode dar erro de memória no eval)
             self._save_model(stats=stats)
@@ -1456,6 +1476,10 @@ class LLMsTrainer:
                 stats.update(final_eval)
                 eval_loss = final_eval.get("eval_loss")
             self._save_model(stats=stats)
+            
+            # Registra conclusão no histórico
+            self._historico.evento_treinamento_concluido(stats)
+            self._historico.atualizar_yaml_se_necessario()
 
             # Pipeline Universal: registra conclusão da etapa com métricas
             self._tracker.finalizar_etapa(
@@ -1492,6 +1516,10 @@ class LLMsTrainer:
 
         if is_curriculum:
             logger.info(f"<verde>✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas</verde>")
+            self._historico.registrar_evento(
+                f"CURRICULUM COMPLETO",
+                f"- **Etapas concluídas:** {total_etapas}"
+            )
         
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
@@ -1521,24 +1549,12 @@ class LLMsTrainer:
             if file.endswith(('.json', '.safetensors', '.bin')):
                 files_saved.append(file)
         
-        self.log_processamento(f"Arquivos salvos em {out_dir}: {files_saved}", "MODEL_SAVED")
+        self._historico.evento_modelo_salvo(out_dir, files_saved)
         
         if stats is not None:
             with open(os.path.join(self._yaml_config.modelo.saida, "metrics_summary.json"), "w") as fp:
                  json.dump(stats, fp, indent=2)
         print(r"<verde>Modelo salvo com sucesso \o/</verde>")
-
-    def log_processamento(self, msg: str, titulo:str) -> None:
-        ''' grava no arquivo de log com o nome _log_processamento_.txt dados importantes
-            do processamento do treino como data, hora, parâmetros, dataset, etc
-        '''
-        arquivo = os.path.join(self._yaml_config.modelo.saida, f"_log_processamento_.txt")
-        with open(arquivo, "a") as f:
-            _msg = f"{msg}" if isinstance(msg,str) else json.dumps(msg, indent=2, ensure_ascii=False)
-            if titulo:
-                f.write(f"\n{'='*60}\n[{datetime.now()}] {str(titulo).upper()}\n{'-'*60}\n{_msg}\n{'='*60}\n")
-            else:
-                f.write(f"[{datetime.now()}] {_msg}\n")
 
     def _place_inputs(self, inputs):
         try:
@@ -1847,9 +1863,6 @@ class LLMsTrainer:
             print(f"\n⚠️  NENHUM ADAPTADOR ATIVO DETECTADO")
         
         print(f"{'='*60}")
-        
-        # Log no arquivo
-        self.log_processamento(info, "STATUS_MODELO_DETALHADO")
         
         return info
 

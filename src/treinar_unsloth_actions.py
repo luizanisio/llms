@@ -199,8 +199,14 @@ def executar_reset(yaml_path: str, confirmar: bool = True) -> bool:
         # Remove checkpoints
         if tem_checkpoints:
             checkpoint_dir = os.path.join(output_dir, "chkpt")
-            shutil.rmtree(checkpoint_dir)
-            logger.info(f"<verde>   ✅ Checkpoints removidos: {checkpoint_dir}</verde>")
+            removidos = 0
+            for item in os.listdir(checkpoint_dir):
+                item_path = os.path.join(checkpoint_dir, item)
+                if os.path.isdir(item_path) and item.startswith("checkpoint-"):
+                    shutil.rmtree(item_path)
+                    removidos += 1
+                    logger.debug(f"   Removido: {item}")
+            logger.info(f"<verde>   ✅ {removidos} checkpoint(s) removido(s) de: {checkpoint_dir}</verde>")
         
         # Remove modelo LoRA (apenas arquivos do adapter, não a pasta inteira)
         if tem_modelo:
@@ -220,6 +226,41 @@ def executar_reset(yaml_path: str, confirmar: bool = True) -> bool:
                     os.remove(arq_path)
                     logger.debug(f"   Removido: {arq}")
             logger.info(f"<verde>   ✅ Modelo LoRA removido de: {output_dir}</verde>")
+        
+        # Limpa arquivos de histórico (serão recriados no próximo treinamento)
+        treino_dir = os.path.join(output_dir, "treinamento")
+        config_dir = os.path.join(treino_dir, "treinamento_config")
+        
+        # Remove cópias versionadas do YAML (apenas arquivos .yaml/.yml)
+        if os.path.isdir(config_dir):
+            removidos_yaml = 0
+            for arq in os.listdir(config_dir):
+                if arq.lower().endswith(('.yaml', '.yml')):
+                    os.remove(os.path.join(config_dir, arq))
+                    removidos_yaml += 1
+                    logger.debug(f"   Removido: {arq}")
+            if removidos_yaml > 0:
+                logger.info(f"<verde>   ✅ {removidos_yaml} cópia(s) de configuração removida(s)</verde>")
+        
+        # Remove arquivos de histórico que serão recriados
+        arquivos_historico = [
+            os.path.join(treino_dir, "treinamento_exemplos.md"),
+            os.path.join(treino_dir, "modelo_info.md"),
+            os.path.join(treino_dir, "treinamento_eventos.md"),
+        ]
+        for arq_h in arquivos_historico:
+            if os.path.exists(arq_h):
+                os.remove(arq_h)
+                logger.debug(f"   Removido: {os.path.basename(arq_h)}")
+        
+        # Limpa logs de processamento antigos
+        for log_file in ["metrics_stream.jsonl"]:
+            log_path = os.path.join(output_dir, log_file)
+            if os.path.exists(log_path):
+                os.remove(log_path)
+                logger.debug(f"   Removido: {log_file}")
+        
+        logger.info(f"<verde>   ✅ Histórico de treinamento limpo</verde>")
             
     except Exception as e:
         logger.error(f"<vermelho>❌ Erro ao limpar: {e}</vermelho>")

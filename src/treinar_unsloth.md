@@ -15,6 +15,7 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 | `treinar_unsloth_actions.py` | Ações de treinamento (`executar_treinar`, `executar_reset`, `executar_injetar_dicas`) |
 | `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`, `ConfigGold`, `ConfigPredicao`) e helpers |
 | `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, divisão, validação (`DatasetTreinamento`) |
+| `treinar_unsloth_historico.py` | Histórico de treinamento: exemplos, info do modelo, eventos e versionamento YAML |
 | `treinar_unsloth_logging.py` | Sistema centralizado de logging com níveis configuráveis |
 | `treinar_unsloth_monitor.py` | Monitoramento contínuo de RAM/GPU |
 | `treinar_unsloth_report.py` | Geração de relatórios em Markdown |
@@ -227,6 +228,23 @@ O sistema inclui monitoramento de recursos em background (`treinar_unsloth_monit
 1.  **Durante Treino**: Registra em `training_metrics.jsonl` (arquivo unificado com métricas de treino e hardware).
 2.  **Durante Teste (`--modelo`)**: Coleta dados em tempo real e gera gráfico ao final.
 3.  **Logs**: Exibe consumo de VRAM e RAM nos logs de execução.
+---
+
+## Histórico de Treinamento
+
+O módulo `treinar_unsloth_historico.py` organiza informações estruturadas na pasta `{modelo.saida}/treinamento/`:
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| `treinamento_exemplos.md` | Um exemplo de treino e um de validação (sem campos internos de tokenização) |
+| `modelo_info.md` | Modelo base, tipo, configuração LoRA, parâmetros, chat template e arquitetura resumida |
+| `treinamento_config/` | Cópias versionadas do YAML: `nome (v001).yaml`, `(v002).yaml`, etc. |
+| `treinamento_eventos.md` | Eventos de alto nível com data/hora (checkpoints, etapas, conclusão) |
+
+**Regras de criação:**
+- **Novo treinamento** (sem `adapter_config.json`): todos os 4 arquivos são criados do zero.
+- **Continuação**: apenas `treinamento_eventos.md` é atualizado com um separador de nova sessão. Se o YAML foi modificado desde a última cópia, uma nova versão `(vN+1).yaml` é criada automaticamente.
+- **Reset** (`--reset`): todos os arquivos de histórico são apagados junto com checkpoints e modelo LoRA.
 
 ---
 
