@@ -97,7 +97,7 @@ treinamento:
   #| Passadas no dataset. Recomendado: 1-3 épocas.
   #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
   #| [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10.
-  num_train_epochs: 6
+  num_train_epochs: 4
   
   #| Contexto máximo. Qwen/Llama suportam long context, mas 2048-4096 é comum.
   #| Valor maior consome mais VRAM.
@@ -122,7 +122,7 @@ treinamento:
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
-  warmup_steps: 2
+  warmup_steps: 5
   
   #| Decaimento de peso (regularização). Padrão 0.01.
   weight_decay: 0.01
