@@ -899,12 +899,13 @@ def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False
 # Predições com vLLM (inferência rápida)
 # ---------------------------------------------------------------------------
 
-def executar_predict_vllm(yaml_path: str, subsets: list = None) -> None:
+def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool = False) -> None:
     """Executa predições usando vLLM para inferência de alta performance.
 
     Args:
         yaml_path: Caminho para o arquivo YAML de configuração
         subsets: Lista de subsets a processar (None = todos)
+        usar_base: Se True, forca o uso do modelo base sem LoRA
     """
     try:
         from treinar_vllm_inference import VLLMInferenceEngine, VLLM_AVAILABLE, get_recommended_config
@@ -923,17 +924,32 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None) -> None:
     log_separador(caractere="=", largura=80)
 
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    yaml_config.validar_max_seq_length()
     _exibir_cabecalho_modelo(yaml_config)
 
     output_dir = yaml_config.modelo.saida
     modelo_base_path = yaml_config.modelo.base
+    max_seq_length = yaml_config.treinamento.max_seq_length
 
-    if not _verificar_modelo_treinado(yaml_config):
-        logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
-        return
+    # Verifica formato de saída
+    formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
+    logger.info(f"<cinza>\n📋 Formato de saída: {yaml_config.formato_saida}</cinza>")
 
-    logger.info(f"<verde>✅ Modelo treinado (LoRA): {output_dir}</verde>")
-    logger.info(f"<cinza>   Modelo base para vLLM: {modelo_base_path}</cinza>")
+    # Decide o caminho do modelo a utilizar
+    lora_adapter_path = None
+    if usar_base:
+        logger.info(f"<cinza>ℹ️  Usando modelo BASE: {modelo_base_path}</cinza>")
+    else:
+        if not _verificar_modelo_treinado(yaml_config):
+            logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo treinado em {output_dir}</amarelo>")
+            if not _perguntar_confirmacao("Deseja usar o modelo base para predição?", padrao=False):
+                return
+            usar_base = True
+            logger.info("Continuando com modelo base...\n")
+        else:
+            lora_adapter_path = output_dir
+            logger.info(f"<verde>✅ Modelo treinado (LoRA): {lora_adapter_path}</verde>")
+            logger.info(f"<cinza>   Modelo base para vLLM: {modelo_base_path}</cinza>")
 
     # Detecta número de GPUs
     import torch
@@ -942,26 +958,181 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None) -> None:
 
     # Configuração recomendada
     config = get_recommended_config(num_gpus=num_gpus, model_size="7B")
-    config.max_model_len = yaml_config.treinamento.max_seq_length
+    config.max_model_len = max_seq_length
     logger.info(f"⚙️  Tensor Parallel: {config.tensor_parallel_size} GPU(s)")
     logger.info(f"⚙️  GPU Memory Utilization: {config.gpu_memory_utilization*100:.0f}%\n")
 
-    # Inicializa vLLM (modelo base + LoRA adapter)
+    # Inicializa vLLM (modelo base + LoRA adapter opcional)
     try:
         engine = VLLMInferenceEngine(
             model_path=modelo_base_path,
             config=config,
-            lora_path=output_dir,
+            lora_path=lora_adapter_path,
         )
     except Exception as e:
         logger.error(f"❌ Erro ao inicializar vLLM: {e}")
         return
 
-    # TODO: Implementar geração de predições em batch
-    # Por enquanto, apenas demonstra que o engine foi inicializado
-    logger.info("✅ vLLM inicializado com sucesso!")
-    logger.info("\n⚠️  Implementação de predições em batch em desenvolvimento.")
-    logger.info("   Por enquanto, use --predict para predições padrão.")
+    # O engine expõe seu tokenizer base para uso generalizado (como get_tokenizer)
+    vllm_tokenizer = engine.llm.get_tokenizer()
+    if getattr(vllm_tokenizer, "pad_token", None) is None:
+        vllm_tokenizer.pad_token = vllm_tokenizer.eos_token
+
+    # Define subsets a processar
+    if subsets is None:
+        subsets = ['treino', 'validacao', 'teste']
+
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
+
+    # Cria diretório de predições
+    nome_pasta = "predict_base_vllm" if usar_base else "predict_vllm"
+    predict_dir = os.path.join(output_dir, nome_pasta)
+    os.makedirs(predict_dir, exist_ok=True)
+
+    uso_total = {'input_tokens': 0, 'output_tokens': 0, 'total_registros': 0, 'tempo_total_s': 0}
+
+    try:
+        for subset in subsets:
+            logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
+            log_separador(caractere="-", largura=60)
+
+            if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+                try:
+                    mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                    if not mensagens:
+                        logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
+                        continue
+                    logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+                except Exception as e:
+                    logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
+                    continue
+            else:
+                logger.warning(f"   ⚠️ Modo dataset não suportado para predict vLLM")
+                continue
+
+            # Cria diretório do subset
+            subset_dir = os.path.join(predict_dir, subset)
+            if os.path.exists(subset_dir):
+                for f in os.listdir(subset_dir):
+                    if f.endswith('.json') or f.endswith('.txt'):
+                        try:
+                            os.remove(os.path.join(subset_dir, f))
+                        except Exception:
+                            pass
+            os.makedirs(subset_dir, exist_ok=True)
+
+            total = len(mensagens)
+            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0}
+            ini_subset = time.time()
+
+            max_input_len = max_seq_length - 256
+            prompts_batch = []
+            registros_batch = []
+
+            for idx, msg in enumerate(mensagens):
+                try:
+                    if isinstance(msg, dict) and 'messages' in msg:
+                        messages = msg['messages']
+                        prompt_texto = ""
+                        for m in messages:
+                            if m.get('role') == 'user':
+                                prompt_texto = m.get('content', '')
+                                break
+                    else:
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    if not prompt_texto:
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    # Estruturar prompt simples (estilo chat_template já feito na base caso necessário)
+                    prompt_ids = vllm_tokenizer.encode(prompt_texto)
+                    if len(prompt_ids) > max_input_len:
+                        prompt_ids = prompt_ids[:max_input_len]
+                        prompt_texto = vllm_tokenizer.decode(prompt_ids, skip_special_tokens=True)
+
+                    registro_id = msg.get('id', f'{subset}_{idx:04d}')
+                    prompts_batch.append(prompt_texto)
+                    registros_batch.append({
+                        'id': registro_id,
+                        'input_tokens': len(prompt_ids),
+                        'idx': idx
+                    })
+                except Exception as e:
+                    logger.error(f"<vermelho>   ❌ Erro gerando prompt: {e}</vermelho>")
+                    subset_stats['registros_erro'] += 1
+
+            if not prompts_batch:
+                continue
+
+            # Processamento em lote real com vLLM
+            try:
+                # vLLM lidando com o fluxo - pegamos min do limite para gerar
+                # Para inferir tokens_para_gerar (tamanho seguro) iteramos maximos
+                max_len_batch = max(reg['input_tokens'] for reg in registros_batch)
+                tokens_para_gerar = min(max_seq_length, config.max_model_len - max_len_batch)
+
+                tempo_inicio = time.time()
+                resultados_vllm = engine.generate_batch(
+                    prompts=prompts_batch,
+                    max_tokens=tokens_para_gerar,
+                    temperature=0.02,
+                    top_k=2,
+                    n=1
+                )
+                tempo_pred = time.time() - tempo_inicio
+
+                # Processar as respostas e salvar
+                for idx_vllm, res in enumerate(resultados_vllm):
+                    reg_meta = registros_batch[idx_vllm]
+                    subset_stats['input_tokens'] += reg_meta['input_tokens']
+
+                    resposta_modelo = res["output"]
+                    if formato_json and resposta_modelo.strip():
+                        try:
+                            from util import UtilTextos
+                            json_obj = UtilTextos.mensagem_to_json(resposta_modelo)
+                            resposta_modelo = json.dumps(json_obj, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
+
+                    output_txt = os.path.join(subset_dir, f"{reg_meta['id']}.txt")
+                    with open(output_txt, 'w', encoding='utf-8') as f:
+                        f.write(resposta_modelo)
+
+                    usage_data = {
+                        'id': reg_meta['id'],
+                        'input_tokens': reg_meta['input_tokens'],
+                        'output_tokens': res["tokens"],
+                        'time_s': round(tempo_pred / len(prompts_batch), 3),
+                    }
+                    output_json = os.path.join(subset_dir, f"{reg_meta['id']}.json")
+                    with open(output_json, 'w', encoding='utf-8') as f:
+                        json.dump(usage_data, f, ensure_ascii=False, indent=2)
+
+                    subset_stats['output_tokens'] += res["tokens"]
+                    subset_stats['registros_ok'] += 1
+
+            except Exception as e:
+                logger.error(f"<vermelho>   ❌ Erro no batch inference: {e}</vermelho>")
+
+            tempo_subset = time.time() - ini_subset
+            logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s)</cinza>")
+
+            uso_total['input_tokens'] += subset_stats['input_tokens']
+            uso_total['output_tokens'] += subset_stats['output_tokens']
+            uso_total['total_registros'] += subset_stats['registros_ok']
+            uso_total['tempo_total_s'] += tempo_subset
+
+    finally:
+        pass
+
+    log_separador(caractere="=", largura=80)
+    logger.info(f"<verde>✅ PREDICT VLLM COMPLETO - Resultados em: {predict_dir}</verde>")
+    logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, {uso_total['input_tokens']} + {uso_total['output_tokens']} tokens ({uso_total['tempo_total_s']:.1f}s)</cinza>")
+    log_separador(caractere="=", largura=80)
 
 def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False) -> None:
     """Testa inferência interativa com N exemplos usando vLLM (inferência rápida).
@@ -1097,10 +1268,22 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
 
         # Gera predição com vLLM
         try:
+            # Trunca prompt se exceder max_seq_length (reserva 256 tokens para resposta)
+            max_input_len = config.max_model_len - 256
+            vllm_tokenizer = engine.llm.get_tokenizer()
+            prompt_ids = vllm_tokenizer.encode(prompt_texto)
+            if len(prompt_ids) > max_input_len:
+                logger.warning(f"   ⚠️ Prompt truncado: {len(prompt_ids)} → {max_input_len} tokens")
+                prompt_ids = prompt_ids[:max_input_len]
+                prompt_texto = vllm_tokenizer.decode(prompt_ids, skip_special_tokens=True)
+
+            # vLLM restringe: prompt_len + max_tokens <= max_model_len
+            tokens_para_gerar = min(max_new_tokens, config.max_model_len - len(prompt_ids))
+
             tempo_inicio = time.time()
             resultado = engine.generate_batch(
                 prompts=[prompt_texto],
-                max_tokens=max_new_tokens,
+                max_tokens=tokens_para_gerar,
                 temperature=max(temperatura, 0.01),
                 top_k=20 if temperatura > 0.3 else 2,
                 n=1,
