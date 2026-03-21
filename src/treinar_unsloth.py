@@ -4,7 +4,7 @@
 Autor: Luiz Anísio
 Fonte: https://github.com/luizanisio/llms/tree/main/src
 
-Treinar Gemma‑3, Deepseek, Llhama, Qwen usando Unsloth 
+Treinar Gemma‑3, Deepseek, Llhama, Qwen usando HuggingFace Transformers + PEFT
         + TRL‑SFTTrainer de forma configurável por yaml.
 
 Uso:
@@ -56,7 +56,8 @@ import dataclasses
 import yaml
 import torch
 
-# Desabilita compilação dinâmica (Dynamo/Inductor) para evitar erros de falta de compilador C
+# Nota: Não precisamos mais desabilitar torch.compile (era necessário apenas para Unsloth)
+# Mantido para compatibilidade com sistemas sem compilador C
 os.environ["TORCH_COMPILE_DISABLE"] = "1"
 try:
     import torch._dynamo
@@ -78,67 +79,39 @@ except ImportError:
     print("Erro: O pacote 'datasets' não está instalado.")
     print("Por favor, instale-o executando: pip install datasets")
     sys.exit(1)
-try:
-    from unsloth import FastModel
-except ImportError:
-    print("Erro: O pacote 'unsloth' não está instalado.")
-    print("Por favor, instale-o executando: pip install unsloth")
-    sys.exit(1)
-try:
-    from unsloth.chat_templates import get_chat_template, CHAT_TEMPLATES, train_on_responses_only
-except ImportError:
-    print("Erro: O pacote 'unsloth.chat_templates' não está instalado.")
-    print("Por favor, instale-o executando: pip install unsloth")
-    sys.exit(1)
+
 try:
     from trl import SFTTrainer, SFTConfig
 except ImportError:
     print("Erro: O pacote 'trl' não está instalado.")
     print("Por favor, instale-o executando: pip install trl")
     sys.exit(1)
+
 try:
-    from transformers import TrainerCallback
+    from transformers import TrainerCallback, GenerationConfig
 except ImportError:
     print("Erro: O pacote 'transformers' não está instalado.")
     print("Por favor, instale-o executando: pip install transformers")
     sys.exit(1)
+
 try:
-    from transformers import GenerationConfig
+    from peft import PeftModel, LoraConfig, get_peft_model
 except ImportError:
-    print("Erro: O pacote 'transformers' não está instalado.")
-    print("Por favor, instale-o executando: pip install transformers")
+    print("Erro: O pacote 'peft' não está instalado.")
+    print("Por favor, instale-o executando: pip install peft")
     sys.exit(1)
-try:
-    import numpy as np
-except ImportError:
-    print("Erro: O pacote 'numpy' não está instalado.")
-    print("Por favor, instale-o executando: pip install numpy")
-    sys.exit(1)
-try:
-    from datetime import datetime
-except ImportError:
-    print("Erro: O pacote 'datetime' não está instalado.")
-    print("Por favor, instale-o executando: pip install datetime")
-    sys.exit(1)
-try:
-    from copy import deepcopy
-except ImportError:
-    print("Erro: O pacote 'copy' não está instalado.")
-    print("Por favor, instale-o executando: pip install copy")
-    sys.exit(1)
-from unsloth import FastModel
-# from unsloth.chat_templates import get_chat_template, CHAT_TEMPLATES, train_on_responses_only
-from trl import SFTTrainer, SFTConfig
-from transformers import TrainerCallback
-from transformers import GenerationConfig
+
 import numpy as np
 from datetime import datetime
 from copy import deepcopy
 
+# Novo módulo para carregamento de modelos (substitui Unsloth)
+from treinar_model_loader import ModelLoader, QuantizationConfig
+
 # Import da nova classe de configuração YAML e Gerador de Relatório
 from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPOS_BASEADOS_EM_PASTAS, calcular_rouge_l
 from treinar_unsloth_report import GeradorRelatorio
-from treinar_unsloth_chat import TreinarChatTemplate
+from treinar_chat_templates import TreinarChatTemplate, get_data_collator_for_completion_only
 from util import UtilEnv, Util
 from util_print import print_cores
 
@@ -681,99 +654,80 @@ class LLMsTrainer:
         
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
-        print_cores("<azul>[1/6] Carregando modelo base…</azul>", color_auto=False)
-        # Carrega configuração de bits
-        nbits = self._yaml_config.treinamento.nbits
-        
-        lora_ok = False
-        
-        if not self.force_base:
-            # Verifica se existe modelo LoRA já treinado
-            lora_model_path = self._yaml_config.modelo.saida
-            arq_lora = os.path.join(lora_model_path, 'adapter_config.json')
-            arq_model = os.path.join(lora_model_path, 'adapter_model.safetensors')
-            
-            # Verifica se é um modelo LoRA completo (não apenas um checkpoint)
-            is_trained_lora = (os.path.exists(arq_lora) and 
-                            (os.path.exists(arq_model) or 
-                            os.path.exists(os.path.join(lora_model_path, 'pytorch_model.bin'))))
-            
-            if is_trained_lora:
-                print_cores(f'<azul>🔄 Carregando modelo LoRA já treinado de {lora_model_path}...</azul>', color_auto=False)
-                try:
-                    # Carrega o modelo LoRA já treinado diretamente
-                    model, tokenizer = FastModel.from_pretrained(
-                        model_name=lora_model_path,  # Carrega da pasta do modelo treinado
-                        max_seq_length=self._yaml_config.treinamento.max_seq_length,
-                        load_in_4bit=nbits == 4,
-                        load_in_8bit=nbits == 8,
-                        device_map="auto",
-                    )
-                    print_cores(f'<verde>✅ Modelo LoRA treinado carregado com sucesso!</verde>', color_auto=False)
-                    lora_ok = True
+        """Carrega modelo usando HuggingFace Transformers + PEFT.
 
-                    
-                except Exception as e:
-                    print_cores(f'<vermelho>❌ Erro ao carregar modelo LoRA treinado: {e}</vermelho>', color_auto=False)
-                    traceback.print_exc()
-                    print_cores('<amarelo>Tentando carregar modelo base e aplicar LoRA...</amarelo>', color_auto=False)
-                    time.sleep(2)
-        else:
-             print_cores(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>', color_auto=False)
-        
-        # Se não conseguiu carregar o LoRA ou não existe ou force_base=True, carrega modelo base
+        Lógica:
+        1. Se --base não foi passado, tenta carregar modelo LoRA já treinado (resume)
+        2. Se falhar ou não existir, carrega modelo base
+        3. Aplica adaptadores LoRA se configurado (lora.r > 0)
+        """
+        print_cores("<azul>[1/6] Carregando modelo base…</azul>", color_auto=False)
+
+        # Configuração de quantização
+        nbits = self._yaml_config.treinamento.nbits
+        quant_config = QuantizationConfig(
+            nbits=nbits,
+            compute_dtype="bfloat16",  # Melhor performance em GPUs modernas
+            quant_type="nf4",
+            use_double_quant=True,
+        )
+
+        max_seq_length = self._yaml_config.treinamento.max_seq_length
+        lora_model_path = self._yaml_config.modelo.saida
+        base_model_name = self._yaml_config.modelo.base
+
+        lora_ok = False
+        model = None
+        tokenizer = None
+
+        # Tentativa 1: Carregar modelo LoRA já treinado (para retomada de treinamento)
+        if not self.force_base and ModelLoader.check_lora_exists(lora_model_path):
+            try:
+                model, tokenizer = ModelLoader.load_lora_model(
+                    base_model_name=base_model_name,
+                    lora_model_path=lora_model_path,
+                    max_seq_length=max_seq_length,
+                    quant_config=quant_config,
+                    device_map="auto",  # Agora funciona sem problemas!
+                )
+                lora_ok = True
+            except Exception as e:
+                print_cores(f'<vermelho>❌ Erro ao carregar modelo LoRA treinado: {e}</vermelho>', color_auto=False)
+                traceback.print_exc()
+                print_cores('<amarelo>Tentando carregar modelo base e aplicar LoRA...</amarelo>', color_auto=False)
+                time.sleep(2)
+        elif self.force_base:
+            print_cores(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>', color_auto=False)
+
+        # Tentativa 2: Carregar modelo base e aplicar LoRA (se necessário)
         if not lora_ok:
-            print_cores(f'<azul>🔄 Carregando modelo base: {self._yaml_config.modelo.base}...</azul>', color_auto=False)
-            model, tokenizer = FastModel.from_pretrained(
-                model_name=self._yaml_config.modelo.base,
-                max_seq_length=self._yaml_config.treinamento.max_seq_length,
-                load_in_4bit=nbits == 4,
-                load_in_8bit=nbits == 8,
-                full_finetuning=self._yaml_config.lora.r in (0,None,False) or self.force_base # Se force_base, não prepara para finetuning
+            model, tokenizer = ModelLoader.load_base_model(
+                model_name=base_model_name,
+                max_seq_length=max_seq_length,
+                quant_config=quant_config,
+                device_map="auto",  # Múltiplas GPUs agora suportadas!
             )
-            
-            # Se usar LoRA, aplica as configurações (Exceto se force_base=True)
-            if not self.force_base and self._yaml_config.lora.r not in (0,None,False):
-                print_cores(f'<azul>🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...</azul>', color_auto=False)
-                model = FastModel.get_peft_model(
-                    model,
-                    finetune_vision_layers=False,
-                    finetune_language_layers=True,
-                    finetune_attention_modules=True,
-                    finetune_mlp_modules=True,
+
+            # Aplica LoRA se configurado (e não for --base)
+            use_lora = (
+                not self.force_base and
+                self._yaml_config.lora.r not in (0, None, False)
+            )
+
+            if use_lora:
+                model = ModelLoader.apply_lora(
+                    model=model,
                     r=self._yaml_config.lora.r,
                     lora_alpha=self._yaml_config.lora.alpha,
                     lora_dropout=self._yaml_config.lora.dropout,
+                    target_modules=None,  # Auto-detecta
                     bias="none",
-                    random_state=3407,
-                    device_map="auto",
                 )
             elif self.force_base:
                 print_cores(f'<cinza>ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.</cinza>', color_auto=False)
-        # Template agora é aplicado pelo TreinarChatTemplate após o carregamento
-        if hasattr(model, 'print_trainable_parameters'):
-            model.print_trainable_parameters()
-        
-        # Log detalhado do modelo carregado
-        model_type = type(model).__name__
-        is_peft_model = hasattr(model, 'peft_config') or hasattr(model, 'base_model')
-        
-        print_cores(f"\n<azul>📊 MODELO CARREGADO:</azul>", color_auto=False)
-        print(f"  - Tipo: {model_type}")
-        print(f"  - É modelo PEFT: {is_peft_model}")
-        print(f"  - LoRA carregado: {lora_ok}")
-        
-        if is_peft_model:
-            try:
-                if hasattr(model, 'peft_config'):
-                    peft_configs = model.peft_config
-                    print(f"  - Configurações PEFT: {list(peft_configs.keys())}")
-                    for adapter_name, config in peft_configs.items():
-                        print(f"    * {adapter_name}: r={getattr(config, 'r', 'N/A')}, alpha={getattr(config, 'lora_alpha', 'N/A')}")
-                elif hasattr(model, 'base_model'):
-                    print(f"  - Modelo base: {type(model.base_model).__name__}")
-            except Exception as e:
-                print(f"  - Erro ao obter detalhes PEFT: {e}")
+
+        # Imprime informações do modelo
+        ModelLoader.print_model_info(model, tokenizer)
 
         return model, tokenizer
 
@@ -1098,24 +1052,24 @@ class LLMsTrainer:
             eval_strategy="steps" if self.eval_ds and eval_steps > 0 else "no",
             eval_steps=eval_steps if self.eval_ds and eval_steps > 0 else None,
             load_best_model_at_end=True if self.eval_ds and eval_steps > 0 else False,
-            report_to="none", 
-            gradient_checkpointing="unsloth", 
+            report_to="none",
+            gradient_checkpointing=True,  # Ativa gradient checkpointing (era "unsloth" antes)
             remove_unused_columns=False,
             dataloader_drop_last=False,
             dataset_text_field="text", # usamos a coluna 'text' formatada
-            max_seq_length=treino_cfg.max_seq_length, 
             dataset_num_proc=2,
             packing=False,
             per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
             eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
+            max_length=treino_cfg.max_seq_length,  # max_length substitui max_seq_length no TRL >= 0.12.0
         )
 
         trainer = SFTTrainer(
             model=self.model,
-            tokenizer=self.tokenizer,
+            processing_class=self.tokenizer,  # processing_class substitui tokenizer no TRL >= 0.12.0
             train_dataset=self.train_ds,
             eval_dataset=self.eval_ds,
-            args=args,
+            args=args,  # max_length agora está configurado no SFTConfig (TRL >= 0.12.0)
         )
         
         # Aplica train_on_responses_only se configurado
@@ -1584,7 +1538,7 @@ class LLMsTrainer:
         
         if stats is not None:
             with open(os.path.join(self._yaml_config.modelo.saida, "metrics_summary.json"), "w") as fp:
-                 json.dump(stats, fp, indent=2)
+                 Util.json_dump(stats, fp, indent=2)
         print_cores(r"<verde>Modelo salvo com sucesso \o/</verde>", color_auto=False)
 
     def _place_inputs(self, inputs):

@@ -1,0 +1,14 @@
+# Dependências OPCIONAIS para exportação GGUF
+#
+# Instale apenas se você precisar exportar modelos para formato GGUF (Ollama, llama.cpp)
+#
+# Uso:
+#   pip install -r requirements-gguf.txt
+#
+# Script de exportação:
+#   python exportar_gguf.py ./modelos/meu_modelo --quantization q4_k_m
+
+# Unsloth - Usado APENAS para exportação GGUF
+# Não é necessário para treinamento (que agora usa HF Transformers + PEFT)
+unsloth>=2026.1.4
+unsloth_zoo>=2026.1.4

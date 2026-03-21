@@ -896,6 +896,347 @@ def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False
 
 
 # ---------------------------------------------------------------------------
+# Predições com vLLM (inferência rápida)
+# ---------------------------------------------------------------------------
+
+def executar_predict_vllm(yaml_path: str, subsets: list = None) -> None:
+    """Executa predições usando vLLM para inferência de alta performance.
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        subsets: Lista de subsets a processar (None = todos)
+    """
+    try:
+        from treinar_vllm_inference import VLLMInferenceEngine, VLLM_AVAILABLE, get_recommended_config
+    except ImportError:
+        logger.error("❌ Módulo vLLM não encontrado!")
+        return
+
+    if not VLLM_AVAILABLE:
+        logger.error("❌ vLLM não está instalado!")
+        logger.info("   Para usar predições rápidas, instale: pip install vllm")
+        return
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info("<azul>>> MODO PREDICT - VLLM (INFERÊNCIA RÁPIDA 🚀)</azul>")
+    log_separador(caractere="=", largura=80)
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    _exibir_cabecalho_modelo(yaml_config)
+
+    output_dir = yaml_config.modelo.saida
+    modelo_base_path = yaml_config.modelo.base
+
+    if not _verificar_modelo_treinado(yaml_config):
+        logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
+        return
+
+    logger.info(f"<verde>✅ Modelo treinado (LoRA): {output_dir}</verde>")
+    logger.info(f"<cinza>   Modelo base para vLLM: {modelo_base_path}</cinza>")
+
+    # Detecta número de GPUs
+    import torch
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    logger.info(f"🎮 GPUs disponíveis: {num_gpus}")
+
+    # Configuração recomendada
+    config = get_recommended_config(num_gpus=num_gpus, model_size="7B")
+    config.max_model_len = yaml_config.treinamento.max_seq_length
+    logger.info(f"⚙️  Tensor Parallel: {config.tensor_parallel_size} GPU(s)")
+    logger.info(f"⚙️  GPU Memory Utilization: {config.gpu_memory_utilization*100:.0f}%\n")
+
+    # Inicializa vLLM (modelo base + LoRA adapter)
+    try:
+        engine = VLLMInferenceEngine(
+            model_path=modelo_base_path,
+            config=config,
+            lora_path=output_dir,
+        )
+    except Exception as e:
+        logger.error(f"❌ Erro ao inicializar vLLM: {e}")
+        return
+
+    # TODO: Implementar geração de predições em batch
+    # Por enquanto, apenas demonstra que o engine foi inicializado
+    logger.info("✅ vLLM inicializado com sucesso!")
+    logger.info("\n⚠️  Implementação de predições em batch em desenvolvimento.")
+    logger.info("   Por enquanto, use --predict para predições padrão.")
+
+def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False) -> None:
+    """Testa inferência interativa com N exemplos usando vLLM (inferência rápida).
+
+    Segue o mesmo fluxo de executar_modelo, mas utiliza o VLLMInferenceEngine
+    para gerar as predições, beneficiando-se de PagedAttention e batching otimizado.
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        n_exemplos: Número de exemplos para testar
+        usar_base: Se True, usa o modelo base (ignora LoRA treinado)
+    """
+    try:
+        from treinar_vllm_inference import VLLMInferenceEngine, VLLM_AVAILABLE, get_recommended_config
+    except ImportError:
+        logger.error("❌ Módulo treinar_vllm_inference não encontrado!")
+        return
+
+    if not VLLM_AVAILABLE:
+        logger.error("❌ vLLM não está instalado!")
+        logger.info("   Instale com: pip install vllm")
+        return
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info(f"<azul>>> MODO MODELO - VLLM 🚀 TESTANDO INFERÊNCIA ({n_exemplos} exemplo(s))</azul>")
+    log_separador(caractere="=", largura=80)
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    _exibir_cabecalho_modelo(yaml_config)
+
+    # Decide o caminho do modelo a utilizar
+    # vLLM com LoRA: carrega modelo BASE + adapter LoRA separado
+    modelo_base_path = yaml_config.modelo.base
+    lora_adapter_path = None
+
+    if usar_base:
+        logger.info(f"<cinza>ℹ️  Usando modelo BASE: {modelo_base_path}</cinza>")
+    else:
+        if not _verificar_modelo_treinado(yaml_config):
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
+            if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
+                logger.info("Operação cancelada.")
+                return
+            usar_base = True
+            logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+        else:
+            lora_adapter_path = yaml_config.modelo.saida
+            logger.info(f"<verde>✅ Modelo treinado (LoRA): {lora_adapter_path}</verde>")
+            logger.info(f"<cinza>   Modelo base para vLLM: {modelo_base_path}</cinza>")
+
+    # ---- Carrega exemplos do dataset ----
+    logger.info("<azul>\n📂 Carregando exemplos do dataset de treino...</azul>")
+
+    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+        try:
+            mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+            if not mensagens:
+                logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
+                return
+        except Exception as e:
+            logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
+            return
+    else:
+        logger.warning("⚠️  Modo dataset ainda não suportado para teste vLLM. Use modo pastas.")
+        return
+
+    n_exemplos = min(n_exemplos, len(mensagens))
+    logger.info(f"<cinza>   📊 {len(mensagens)} registros disponíveis, testando {n_exemplos}</cinza>")
+
+    # ---- Inicializa vLLM ----
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    logger.info(f"\n🎮 GPUs disponíveis: {num_gpus}")
+
+    config = get_recommended_config(num_gpus=num_gpus, model_size="7B")
+    config.max_model_len = yaml_config.treinamento.max_seq_length
+    logger.info(f"⚙️  Tensor Parallel: {config.tensor_parallel_size} GPU(s)")
+    logger.info(f"⚙️  GPU Memory Utilization: {config.gpu_memory_utilization*100:.0f}%")
+    logger.info(f"⚙️  Max Model Len: {config.max_model_len}")
+
+    logger.info("<azul>\n🚀 Inicializando vLLM...</azul>")
+    try:
+        engine = VLLMInferenceEngine(
+            model_path=modelo_base_path,
+            config=config,
+            lora_path=lora_adapter_path,
+        )
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao inicializar vLLM: {e}</vermelho>")
+        return
+
+    # ---- Processa exemplos ----
+    max_new_tokens = yaml_config.treinamento.max_seq_length
+    temperatura = 0.2
+    resultados = []
+
+    for i in range(n_exemplos):
+        log_separador(caractere="-", largura=60)
+        logger.info(f">> EXEMPLO {i+1}/{n_exemplos}")
+        log_separador(caractere="-", largura=60)
+
+        msg = mensagens[i]
+        if not isinstance(msg, dict) or 'messages' not in msg:
+            logger.warning(f"   ⚠️ Formato não reconhecido no registro {i}")
+            continue
+
+        messages = msg['messages']
+        prompt_texto = ""
+        resposta_esperada = ""
+        for m in messages:
+            if m.get('role') == 'user':
+                prompt_texto = m.get('content', '')
+            elif m.get('role') == 'assistant':
+                resposta_esperada = m.get('content', '')
+
+        if not prompt_texto:
+            logger.warning(f"   ⚠️ Prompt vazio no registro {i}")
+            continue
+
+        # Exibe prompt
+        logger.info(f">> PROMPT:")
+        if len(prompt_texto) > 500:
+            logger.info(f"   {prompt_texto[:250]} [...] {prompt_texto[-250:]}")
+        else:
+            logger.info(f"   {prompt_texto}")
+
+        # Exibe resposta esperada
+        logger.info(f"\n>> RESPOSTA ESPERADA:")
+        if len(resposta_esperada) > 500:
+            logger.info(f"   {resposta_esperada[:250]} [...] {resposta_esperada[-250:]}")
+        else:
+            logger.info(f"   {resposta_esperada}")
+
+        # Gera predição com vLLM
+        try:
+            tempo_inicio = time.time()
+            resultado = engine.generate_batch(
+                prompts=[prompt_texto],
+                max_tokens=max_new_tokens,
+                temperature=max(temperatura, 0.01),
+                top_k=20 if temperatura > 0.3 else 2,
+                n=1,
+            )
+            tempo_pred = time.time() - tempo_inicio
+
+            if resultado:
+                resposta_modelo = resultado[0]["output"]
+                output_tokens = resultado[0]["tokens"]
+                finish_reason = resultado[0].get("finish_reason", "?")
+            else:
+                resposta_modelo = "(sem resposta)"
+                output_tokens = 0
+                finish_reason = "error"
+
+            logger.info(f"\n>> RESPOSTA DO MODELO (vLLM 🚀):")
+            if len(resposta_modelo) > 500:
+                logger.info(f"   {resposta_modelo[:250]} [...] {resposta_modelo[-250:]}")
+            else:
+                logger.info(f"   {resposta_modelo}")
+
+            logger.info(f"\n>> ESTATÍSTICAS:")
+            logger.info(f"   - Tokens da resposta: {output_tokens}")
+            logger.info(f"   - Finish reason: {finish_reason}")
+            logger.info(f"   - Temperatura: {temperatura}")
+            logger.info(f"   - Tempo de predição: {tempo_pred:.2f}s")
+            if output_tokens > 0 and tempo_pred > 0:
+                logger.info(f"   - Velocidade: {output_tokens / tempo_pred:.1f} tokens/s")
+
+            resultados.append({
+                "exemplo": i + 1,
+                "output_tokens": output_tokens,
+                "tempo_segundos": round(tempo_pred, 2),
+                "finish_reason": finish_reason,
+            })
+
+        except Exception as e:
+            logger.error(f"<vermelho>   ❌ Erro ao gerar predição: {e}</vermelho>")
+
+    # ---- Resumo final ----
+    del engine
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    if resultados:
+        total_tokens = sum(r["output_tokens"] for r in resultados)
+        total_tempo = sum(r["tempo_segundos"] for r in resultados)
+        logger.info(f"\n📊 RESUMO VLLM:")
+        logger.info(f"   Exemplos processados: {len(resultados)}/{n_exemplos}")
+        logger.info(f"   Tokens gerados: {total_tokens}")
+        logger.info(f"   Tempo total: {total_tempo:.2f}s")
+        if total_tempo > 0:
+            logger.info(f"   Throughput médio: {total_tokens / total_tempo:.1f} tokens/s")
+
+    log_separador(caractere="=", largura=80)
+    logger.info("<verde>✅ TESTE DE INFERÊNCIA VLLM COMPLETO</verde>")
+    log_separador(caractere="=", largura=80)
+
+
+# ---------------------------------------------------------------------------
+# Exportação para GGUF
+# ---------------------------------------------------------------------------
+
+def executar_exportar_gguf(yaml_path: str) -> None:
+    """Exporta modelo para formato GGUF usando unsloth.
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+    """
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info("<azul>>> EXPORTAÇÃO PARA GGUF (Ollama/llama.cpp) COM UNSLOTH</azul>")
+    log_separador(caractere="=", largura=80)
+
+    try:
+        from unsloth import FastLanguageModel
+    except ImportError:
+        logger.error("❌ Módulo unsloth não encontrado!")
+        logger.info("   Instale com: pip install unsloth")
+        return
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    _exibir_cabecalho_modelo(yaml_config)
+
+    output_dir = yaml_config.modelo.saida
+
+    if not _verificar_modelo_treinado(yaml_config):
+        logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
+        return
+
+    # Pergunta método de quantização
+    logger.info("\n📦 Escolha o método de quantização GGUF:")
+    print("   1) q4_k_m   - Balanceado, recomendado (~3.5GB para 7B) ⭐")
+    print("   2) q8_0     - Alta qualidade (~7GB para 7B)")
+    print("   3) f16      - Máxima qualidade (~14GB para 7B)")
+    print("   4) q4_0     - Mais compacto (~3.2GB para 7B)")
+    print("   5) q5_k_m   - Balanceado intermediário (~4.5GB para 7B)")
+
+    try:
+        escolha = input("\nOpção [1]: ").strip()
+        if not escolha:
+            escolha = '1'
+
+        mapa_quant = {
+            '1': 'q4_k_m',
+            '2': 'q8_0',
+            '3': 'f16',
+            '4': 'q4_0',
+            '5': 'q5_k_m',
+        }
+
+        quantization = mapa_quant.get(escolha, 'q4_k_m')
+    except (KeyboardInterrupt, EOFError):
+        logger.info("\nOperação cancelada.")
+        return
+
+    logger.info(f"\n🔄 Iniciando exportação GGUF ({quantization}) com unsloth...")
+    logger.info(f"   Modelo: {output_dir}")
+
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=output_dir,
+            max_seq_length=yaml_config.treinamento.max_seq_length,
+            dtype=None,
+            load_in_4bit=yaml_config.treinamento.nbits == 4,
+        )
+        dirname = f"{output_dir}(merged_{quantization})"
+        model.save_pretrained_gguf(dirname, tokenizer, quantization_method=quantization)
+        logger.info(f"\n✅ Exportação GGUF concluída com sucesso! Salvo em: {dirname}")
+    except Exception as e:
+        logger.error(f"\n❌ Erro durante exportação GGUF via unsloth: {e}")
+
+
+
+# ---------------------------------------------------------------------------
 # Menu interativo de avaliação
 # ---------------------------------------------------------------------------
 
@@ -924,20 +1265,66 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
     else:
         logger.info(f"   💾 Nenhum checkpoint encontrado")
     
+    # Verifica se vLLM está disponível
+    try:
+        from treinar_vllm_inference import VLLM_AVAILABLE
+        vllm_ok = VLLM_AVAILABLE
+    except:
+        vllm_ok = False
+
+    # Verifica se unsloth está disponível
+    try:
+        import unsloth
+        unsloth_ok = True
+    except ImportError:
+        unsloth_ok = False
+
     # Menu
     logger.info("\n📋 AÇÕES DE AVALIAÇÃO:")
     logger.info("   1. info         - Informações detalhadas da configuração e datasets")
     logger.info("   2. stats        - Relatório estatístico (tokens, loss, hardware) com gráficos")
     if tem_modelo:
         logger.info("   3. predict      - Gerar predições com modelo treinado (todos os subsets)")
+        if vllm_ok:
+            logger.info("   3v. predict-vllm - 🚀 Predições RÁPIDAS com vLLM (até 24x mais rápido)")
         logger.info("   4. predict-base - Gerar predições com modelo BASE (todos os subsets)")
         logger.info("   5. modelo       - Testar inferência com modelo treinado (N exemplos)")
+        
+        if vllm_ok:
+            logger.info("   5v. modelo-vllm  - Testar inferência com modelo treinado usando vLLM (🚀 RÁPIDO)")
+        else:
+            logger.info("   5v. modelo-vllm  - (Inativo) Depende do pacote vLLM")
+            
         logger.info("   6. modelo-base  - Testar inferência com modelo BASE (N exemplos)")
-        logger.info("   7. merge        - Exportar modelo (merge LoRA + Base)")
+        
+        if vllm_ok:
+            logger.info("   6v. modelo-base-vllm - Testar inferência com modelo BASE usando vLLM (🚀 RÁPIDO)")
+        else:
+            logger.info("   6v. modelo-base-vllm - (Inativo) Depende do pacote vLLM")
+            
+        logger.info("\n   📦 EXPORTAÇÃO:")
+        logger.info("   7. merge        - Exportar modelo (merge LoRA + Base → HF format)")
+        if unsloth_ok:
+            logger.info("   8. gguf         - Exportar para GGUF usando unsloth (Ollama/llama.cpp)")
+        else:
+            logger.info("   8. gguf         - (Inativo) Depende do pacote unsloth para gerar versão GGUF")
     else:
         logger.info("   3. predict-base - Gerar predições com modelo BASE (todos os subsets)")
         logger.info("   4. modelo-base  - Testar inferência com modelo BASE (N exemplos)")
-    logger.info("   0. sair         - Cancelar e sair")
+        
+        if vllm_ok:
+            logger.info("   4v. modelo-base-vllm - Testar inferência com modelo BASE usando vLLM (🚀 RÁPIDO)")
+        else:
+            logger.info("   4v. modelo-base-vllm - (Inativo) Depende do pacote vLLM")
+            
+    if not vllm_ok or not unsloth_ok:
+        logger.info("\n   ⚠️  Observação:")
+        if not vllm_ok:
+            logger.info("      - vLLM não instalado. Use 'pip install vllm' para ativar as opções rápidas.")
+        if not unsloth_ok:
+            logger.info("      - unsloth não instalado. Instale-o para habilitar a geração GGUF nativa.")
+
+    logger.info("\n   0. sair         - Cancelar e sair")
     
     try:
         escolha = input("\n❓ Digite o número ou nome da ação: ").strip().lower()
@@ -947,10 +1334,14 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
                 '1': 'info', 'info': 'info',
                 '2': 'stats', 'stats': 'stats',
                 '3': 'predict', 'predict': 'predict',
+                '3v': 'predict-vllm', 'predict-vllm': 'predict-vllm',
                 '4': 'predict-base', 'predict-base': 'predict-base',
                 '5': 'modelo', 'modelo': 'modelo',
+                '5v': 'modelo-vllm', 'modelo-vllm': 'modelo-vllm',
                 '6': 'modelo-base', 'modelo-base': 'modelo-base',
+                '6v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
                 '7': 'merge', 'merge': 'merge', 'export': 'merge',
+                '8': 'gguf', 'gguf': 'gguf', 'exportar-gguf': 'gguf',
                 '0': None, 'sair': None, 'exit': None, 'quit': None,
             }
         else:
@@ -959,10 +1350,19 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
                 '2': 'stats', 'stats': 'stats',
                 '3': 'predict-base', 'predict-base': 'predict-base',
                 '4': 'modelo-base', 'modelo-base': 'modelo-base',
+                '4v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
                 '0': None, 'sair': None, 'exit': None, 'quit': None,
             }
         
         acao = mapa_acoes.get(escolha)
+        
+        if acao in ['predict-vllm', 'modelo-vllm', 'modelo-base-vllm'] and not vllm_ok:
+            logger.warning("Opção indisponível: vLLM não está instalado.")
+            return None
+            
+        if acao == 'gguf' and not unsloth_ok:
+            logger.warning("Opção indisponível: unsloth não está instalado.")
+            return None
         
         if escolha not in mapa_acoes:
             logger.warning(f"Opção inválida: '{escolha}'")
@@ -984,7 +1384,7 @@ def _perguntar_n_exemplos() -> int:
         return 1
 
 
-def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False, 
+def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
                            predict_subsets: list = None, quant: str = None) -> None:
     """Despacha a ação de avaliação escolhida."""
     if acao == 'info':
@@ -993,14 +1393,22 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
         executar_stats(yaml_path)
     elif acao == 'predict':
         executar_predict(yaml_path, subsets=predict_subsets, usar_base=usar_base)
+    elif acao == 'predict-vllm':
+        executar_predict_vllm(yaml_path, subsets=predict_subsets)
     elif acao == 'predict-base':
         executar_predict(yaml_path, subsets=predict_subsets, usar_base=True)
     elif acao == 'modelo':
         executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
+    elif acao == 'modelo-vllm':
+        executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
     elif acao == 'modelo-base':
         executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
+    elif acao == 'modelo-base-vllm':
+        executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
     elif acao == 'merge':
         executar_merge(yaml_path, quantizacao=quant)
+    elif acao == 'gguf':
+        executar_exportar_gguf(yaml_path)
     else:
         logger.error(f"Ação desconhecida: '{acao}'")
 

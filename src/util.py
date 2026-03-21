@@ -104,9 +104,41 @@ class Util():
         return datetime.fromtimestamp(os.path.getmtime(arquivo))
 
     @classmethod
+    def json_dump(cls, obj, fp, **kwargs):
+        """
+        Serializa objeto Python para JSON em um arquivo, convertendo tipos não serializáveis nativamente.
+
+        Conversões automáticas:
+        - set → list (ordenada)
+        - objetos aninhados são processados recursivamente
+
+        Args:
+            obj: Objeto a ser serializado
+            fp: File pointer (objeto de arquivo aberto para escrita)
+            **kwargs: Argumentos adicionais para json.dump (indent, etc.)
+
+        Exemplo:
+            >>> data = {"users": {"admin", "user1"}, "count": 2}
+            >>> with open("file.json", "w") as f:
+            >>>     Util.json_dump(data, f, indent=2)
+        """
+        def convert_non_serializable(o):
+            """Converte tipos não serializáveis recursivamente"""
+            if isinstance(o, set):
+                return sorted(list(o))  # Ordena para ter saída determinística
+            elif isinstance(o, dict):
+                return {k: convert_non_serializable(v) for k, v in o.items()}
+            elif isinstance(o, (list, tuple)):
+                return [convert_non_serializable(item) for item in o]
+            return o
+
+        obj_serializable = convert_non_serializable(obj)
+        json.dump(obj_serializable, fp, **kwargs)
+
+    @classmethod
     def gravar_json(cls, arquivo, dados):
         with open(arquivo, 'w') as f:
-            f.write(json.dumps(dados, indent = 2))
+            cls.json_dump(dados, f, indent=2)
 
     @classmethod
     def ler_json(cls, arquivo, padrao = dict({}) ):
