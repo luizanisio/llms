@@ -70,8 +70,7 @@ class _C:
     def cyan(cls):    return cls._a('\033[96m')
     @classmethod
     def yellow(cls):  return cls._a('\033[93m')
-    @classmethod
-    def white(cls):   return cls._a('\033[97m')
+
     @classmethod
     def gray(cls):    return cls._a('\033[38;5;245m')
     @classmethod
@@ -111,7 +110,7 @@ def _exibir_menu(titulo, itens, idx_padrao=-1, opcoes_extras=None):
     sep = f"{G}{'─' * 60}{R}"
 
     print(f"\n{sep}")
-    print(f"  {_C.bold()}{_C.white()}{titulo}{R}")
+    print(f"  {_C.bold()}{titulo}{R}")
     print(sep)
 
     num_padrao = None
@@ -129,10 +128,10 @@ def _exibir_menu(titulo, itens, idx_padrao=-1, opcoes_extras=None):
         if i == idx_padrao:
             num_padrao = num
             sufixo = f"  {Y}◀ mais recente{R}"
-            linha_nome = f"{_C.bold()}{_C.white()}{nome}{R}"
+            linha_nome = f"{_C.bold()}{nome}{R}"
         else:
             sufixo = ''
-            linha_nome = f"{_C.white()}{nome}{R}"
+            linha_nome = f"{nome}"
 
         print(f"  {num_str} {linha_nome}{data_str}{sufixo}")
 
