@@ -1162,6 +1162,457 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
 
 
 # ---------------------------------------------------------------------------
+# Inferência com Unsloth (FastLanguageModel.for_inference)
+# ---------------------------------------------------------------------------
+
+def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False) -> None:
+    """Testa inferência com N exemplos usando unsloth (2x mais rápido que HF padrão).
+
+    Carrega o modelo via FastLanguageModel.from_pretrained e ativa
+    FastLanguageModel.for_inference() para inferência otimizada.
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        n_exemplos: Número de exemplos para testar
+        usar_base: Se True, usa o modelo base (ignora LoRA treinado)
+    """
+    try:
+        from unsloth import FastLanguageModel
+    except ImportError:
+        logger.error("❌ Módulo unsloth não encontrado!")
+        logger.info("   Instale com: pip install unsloth")
+        return
+
+    # Garante que triton encontre um compilador C
+    import shutil
+    if not os.environ.get('CC'):
+        cc_path = shutil.which('gcc') or shutil.which('cc')
+        if cc_path:
+            os.environ['CC'] = cc_path
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info(f"<azul>>> MODO MODELO - UNSLOTH ⚡ TESTANDO INFERÊNCIA ({n_exemplos} exemplo(s))</azul>")
+    log_separador(caractere="=", largura=80)
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    _exibir_cabecalho_modelo(yaml_config)
+
+    output_dir = yaml_config.modelo.saida
+    base_model = yaml_config.modelo.base
+    max_seq_length = yaml_config.treinamento.max_seq_length
+
+    # Decide qual modelo carregar
+    if usar_base:
+        model_name = base_model
+        logger.info(f"<cinza>ℹ️  Usando modelo BASE: {model_name}</cinza>")
+    else:
+        if not _verificar_modelo_treinado(yaml_config):
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
+            if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
+                logger.info("Operação cancelada.")
+                return
+            usar_base = True
+            model_name = base_model
+            logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+        else:
+            model_name = output_dir
+            logger.info(f"<verde>✅ Modelo treinado: {model_name}</verde>")
+
+    # ---- Carrega exemplos do dataset ----
+    logger.info("<azul>\n📂 Carregando exemplos do dataset de treino...</azul>")
+
+    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+        try:
+            mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+            if not mensagens:
+                logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
+                return
+        except Exception as e:
+            logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
+            return
+    else:
+        logger.warning("⚠️  Modo dataset ainda não suportado para teste unsloth. Use modo pastas.")
+        return
+
+    n_exemplos = min(n_exemplos, len(mensagens))
+    logger.info(f"<cinza>   📊 {len(mensagens)} registros disponíveis, testando {n_exemplos}</cinza>")
+
+    # ---- Carrega modelo com unsloth ----
+    logger.info("<azul>\n⚡ Carregando modelo com unsloth...</azul>")
+    ini_carga = time.time()
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=model_name,
+            max_seq_length=max_seq_length,
+            dtype=None,
+            load_in_4bit=yaml_config.treinamento.nbits == 4,
+        )
+        # Ativa modo de inferência otimizado (2x mais rápido)
+        FastLanguageModel.for_inference(model)
+        logger.info(f"<verde>   ✅ Modelo carregado com unsloth em {time.time() - ini_carga:.1f}s</verde>")
+        logger.info(f"<cinza>   ⚡ FastLanguageModel.for_inference() ativado</cinza>")
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao carregar modelo com unsloth: {e}</vermelho>")
+        return
+
+    # Configura pad_token se necessário
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # ---- Processa exemplos ----
+    temperatura = 0.2
+    resultados = []
+
+    for i in range(n_exemplos):
+        log_separador(caractere="-", largura=60)
+        logger.info(f">> EXEMPLO {i+1}/{n_exemplos}")
+        log_separador(caractere="-", largura=60)
+
+        msg = mensagens[i]
+        if not isinstance(msg, dict) or 'messages' not in msg:
+            logger.warning(f"   ⚠️ Formato não reconhecido no registro {i}")
+            continue
+
+        messages = msg['messages']
+        prompt_texto = ""
+        resposta_esperada = ""
+        for m in messages:
+            if m.get('role') == 'user':
+                prompt_texto = m.get('content', '')
+            elif m.get('role') == 'assistant':
+                resposta_esperada = m.get('content', '')
+
+        if not prompt_texto:
+            logger.warning(f"   ⚠️ Prompt vazio no registro {i}")
+            continue
+
+        # Exibe prompt
+        logger.info(f">> PROMPT:")
+        if len(prompt_texto) > 500:
+            logger.info(f"   {prompt_texto[:250]} [...] {prompt_texto[-250:]}")
+        else:
+            logger.info(f"   {prompt_texto}")
+
+        # Exibe resposta esperada
+        logger.info(f"\n>> RESPOSTA ESPERADA:")
+        if len(resposta_esperada) > 500:
+            logger.info(f"   {resposta_esperada[:250]} [...] {resposta_esperada[-250:]}")
+        else:
+            logger.info(f"   {resposta_esperada}")
+
+        # Gera predição com unsloth
+        try:
+            # Tokeniza o prompt usando chat template
+            chat_msgs = [{"role": "user", "content": prompt_texto}]
+            inputs = tokenizer.apply_chat_template(
+                chat_msgs,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+            ).to(model.device)
+
+            # Trunca se exceder max_seq_length (reservando espaço para geração)
+            max_input_len = max_seq_length - 256  # reserva 256 tokens para resposta
+            if inputs.shape[1] > max_input_len:
+                logger.warning(f"   ⚠️ Prompt truncado: {inputs.shape[1]} → {max_input_len} tokens")
+                inputs = inputs[:, :max_input_len]
+
+            input_length = inputs.shape[1]
+            attention_mask = torch.ones_like(inputs)
+
+            tempo_inicio = time.time()
+            with torch.inference_mode():
+                outputs = model.generate(
+                    input_ids=inputs,
+                    attention_mask=attention_mask,
+                    max_new_tokens=max_seq_length,
+                    temperature=max(temperatura, 0.01),
+                    top_k=20 if temperatura > 0.3 else 2,
+                    do_sample=bool(temperatura > 0.3),
+                )
+            tempo_pred = time.time() - tempo_inicio
+
+            # Decode apenas a resposta (exclui tokens de entrada)
+            resposta_modelo = tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True)
+            output_tokens = len(outputs[0]) - input_length
+
+            logger.info(f"\n>> RESPOSTA DO MODELO (unsloth ⚡):")
+            if len(resposta_modelo) > 500:
+                logger.info(f"   {resposta_modelo[:250]} [...] {resposta_modelo[-250:]}")
+            else:
+                logger.info(f"   {resposta_modelo}")
+
+            logger.info(f"\n>> ESTATÍSTICAS:")
+            logger.info(f"   - Tokens do prompt: {input_length}")
+            logger.info(f"   - Tokens da resposta: {output_tokens}")
+            logger.info(f"   - Temperatura: {temperatura}")
+            logger.info(f"   - Tempo de predição: {tempo_pred:.2f}s")
+            if output_tokens > 0 and tempo_pred > 0:
+                logger.info(f"   - Velocidade: {output_tokens / tempo_pred:.1f} tokens/s")
+
+            resultados.append({
+                "exemplo": i + 1,
+                "prompt_tokens": input_length,
+                "output_tokens": output_tokens,
+                "tempo_segundos": round(tempo_pred, 2),
+            })
+
+        except Exception as e:
+            logger.error(f"<vermelho>   ❌ Erro ao gerar predição: {e}</vermelho>")
+
+    # ---- Resumo final ----
+    del model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    if resultados:
+        total_tokens = sum(r["output_tokens"] for r in resultados)
+        total_tempo = sum(r["tempo_segundos"] for r in resultados)
+        logger.info(f"\n📊 RESUMO UNSLOTH:")
+        logger.info(f"   Exemplos processados: {len(resultados)}/{n_exemplos}")
+        logger.info(f"   Tokens gerados: {total_tokens}")
+        logger.info(f"   Tempo total: {total_tempo:.2f}s")
+        if total_tempo > 0:
+            logger.info(f"   Throughput médio: {total_tokens / total_tempo:.1f} tokens/s")
+
+    log_separador(caractere="=", largura=80)
+    logger.info("<verde>✅ TESTE DE INFERÊNCIA UNSLOTH COMPLETO</verde>")
+    log_separador(caractere="=", largura=80)
+
+
+def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bool = False) -> None:
+    """Gera predições usando unsloth FastLanguageModel.for_inference().
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        subsets: Lista de subsets para processar ('treino', 'validacao', 'teste').
+                 Se None, processa todos.
+        usar_base: Se True, usa o modelo base original.
+    """
+    try:
+        from unsloth import FastLanguageModel
+    except ImportError:
+        logger.error("❌ Módulo unsloth não encontrado!")
+        logger.info("   Instale com: pip install unsloth")
+        return
+
+    # Garante que triton encontre um compilador C
+    import shutil
+    if not os.environ.get('CC'):
+        cc_path = shutil.which('gcc') or shutil.which('cc')
+        if cc_path:
+            os.environ['CC'] = cc_path
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info("<azul>>> MODO PREDICT - UNSLOTH ⚡ (INFERÊNCIA RÁPIDA)</azul>")
+    log_separador(caractere="=", largura=80)
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    yaml_config.validar_max_seq_length()
+    _exibir_cabecalho_modelo(yaml_config)
+
+    output_dir = yaml_config.modelo.saida
+    base_model = yaml_config.modelo.base
+    max_seq_length = yaml_config.treinamento.max_seq_length
+
+    # Verifica formato de saída
+    formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
+    logger.info(f"<cinza>\n📋 Formato de saída: {yaml_config.formato_saida}</cinza>")
+
+    # Decide qual modelo carregar
+    tem_modelo_treinado = _verificar_modelo_treinado(yaml_config)
+
+    if usar_base:
+        model_name = base_model
+        logger.info(f"<cinza>ℹ️  Opção --base ativada: Forçando uso do modelo base.</cinza>")
+    elif not tem_modelo_treinado:
+        logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo LoRA treinado.</amarelo>")
+        if not _perguntar_confirmacao("Deseja usar o modelo base para predição?", padrao=False):
+            logger.info("Operação cancelada.")
+            return
+        usar_base = True
+        model_name = base_model
+    else:
+        model_name = output_dir
+        logger.info(f"<verde>✅ Usando modelo treinado: {model_name}</verde>")
+
+    # Carrega modelo com unsloth
+    logger.info("<azul>\n⚡ Carregando modelo com unsloth...</azul>")
+    ini_carga = time.time()
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=model_name,
+            max_seq_length=max_seq_length,
+            dtype=None,
+            load_in_4bit=yaml_config.treinamento.nbits == 4,
+        )
+        FastLanguageModel.for_inference(model)
+        logger.info(f"<verde>   ✅ Modelo carregado com unsloth em {time.time() - ini_carga:.1f}s</verde>")
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao carregar modelo com unsloth: {e}</vermelho>")
+        return
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Define subsets a processar
+    if subsets is None:
+        subsets = ['treino', 'validacao', 'teste']
+
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
+
+    # Cria diretório de predições
+    nome_pasta = "predict_base_unsloth" if usar_base else "predict_unsloth"
+    predict_dir = os.path.join(output_dir, nome_pasta)
+    os.makedirs(predict_dir, exist_ok=True)
+
+    uso_total = {'input_tokens': 0, 'output_tokens': 0, 'total_registros': 0, 'tempo_total_s': 0}
+
+    try:
+        for subset in subsets:
+            logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
+            log_separador(caractere="-", largura=60)
+
+            if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
+                try:
+                    mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                    if not mensagens:
+                        logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
+                        continue
+                    logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+                except Exception as e:
+                    logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
+                    continue
+            else:
+                logger.warning(f"   ⚠️ Modo dataset não suportado para predict unsloth")
+                continue
+
+            # Cria diretório do subset
+            subset_dir = os.path.join(predict_dir, subset)
+            if os.path.exists(subset_dir):
+                for f in os.listdir(subset_dir):
+                    if f.endswith('.json') or f.endswith('.txt'):
+                        try:
+                            os.remove(os.path.join(subset_dir, f))
+                        except Exception:
+                            pass
+            os.makedirs(subset_dir, exist_ok=True)
+
+            total = len(mensagens)
+            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0}
+            ini_subset = time.time()
+
+            for idx, msg in enumerate(mensagens):
+                try:
+                    if isinstance(msg, dict) and 'messages' in msg:
+                        messages = msg['messages']
+                        prompt_texto = ""
+                        for m in messages:
+                            if m.get('role') == 'user':
+                                prompt_texto = m.get('content', '')
+                                break
+                    else:
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    if not prompt_texto:
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    registro_id = msg.get('id', f'{subset}_{idx:04d}')
+
+                    # Tokeniza usando chat template
+                    chat_msgs = [{"role": "user", "content": prompt_texto}]
+                    inputs = tokenizer.apply_chat_template(
+                        chat_msgs,
+                        tokenize=True,
+                        add_generation_prompt=True,
+                        return_tensors="pt",
+                    ).to(model.device)
+
+                    # Trunca se exceder max_seq_length
+                    max_input_len = max_seq_length - 256
+                    if inputs.shape[1] > max_input_len:
+                        inputs = inputs[:, :max_input_len]
+
+                    input_length = inputs.shape[1]
+                    attention_mask = torch.ones_like(inputs)
+
+                    tempo_inicio = time.time()
+                    with torch.inference_mode():
+                        outputs = model.generate(
+                            input_ids=inputs,
+                            attention_mask=attention_mask,
+                            max_new_tokens=max_seq_length,
+                            temperature=0.02,
+                            top_k=2,
+                            do_sample=False,
+                        )
+                    tempo_pred = time.time() - tempo_inicio
+
+                    resposta_modelo = tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True)
+                    output_tokens = len(outputs[0]) - input_length
+
+                    # Se formato JSON, tenta parsear
+                    if formato_json and resposta_modelo.strip():
+                        try:
+                            from util import UtilTextos
+                            json_obj = UtilTextos.mensagem_to_json(resposta_modelo)
+                            resposta_modelo = json.dumps(json_obj, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
+
+                    output_txt = os.path.join(subset_dir, f"{registro_id}.txt")
+                    with open(output_txt, 'w', encoding='utf-8') as f:
+                        f.write(resposta_modelo)
+
+                    usage_data = {
+                        'id': registro_id,
+                        'input_tokens': input_length,
+                        'output_tokens': output_tokens,
+                        'time_s': round(tempo_pred, 3),
+                    }
+                    output_json = os.path.join(subset_dir, f"{registro_id}.json")
+                    with open(output_json, 'w', encoding='utf-8') as f:
+                        json.dump(usage_data, f, ensure_ascii=False, indent=2)
+
+                    subset_stats['input_tokens'] += input_length
+                    subset_stats['output_tokens'] += output_tokens
+                    subset_stats['registros_ok'] += 1
+
+                    if (idx + 1) % 10 == 0 or (idx + 1) == total:
+                        logger.info(f"   Progresso: {idx + 1}/{total} ({100*(idx+1)//total}%)")
+
+                except Exception as e:
+                    logger.error(f"<vermelho>   ❌ Erro no registro {idx}: {e}</vermelho>")
+                    subset_stats['registros_erro'] += 1
+                    continue
+
+            tempo_subset = time.time() - ini_subset
+            logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s)</cinza>")
+
+            uso_total['input_tokens'] += subset_stats['input_tokens']
+            uso_total['output_tokens'] += subset_stats['output_tokens']
+            uso_total['total_registros'] += subset_stats['registros_ok']
+            uso_total['tempo_total_s'] += tempo_subset
+
+    finally:
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    log_separador(caractere="=", largura=80)
+    logger.info(f"<verde>✅ PREDICT UNSLOTH COMPLETO - Resultados em: {predict_dir}</verde>")
+    logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, {uso_total['input_tokens']} + {uso_total['output_tokens']} tokens ({uso_total['tempo_total_s']:.1f}s)</cinza>")
+    log_separador(caractere="=", largura=80)
+
+
+# ---------------------------------------------------------------------------
 # Exportação para GGUF
 # ---------------------------------------------------------------------------
 
@@ -1285,20 +1736,30 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
     logger.info("   2. stats        - Relatório estatístico (tokens, loss, hardware) com gráficos")
     if tem_modelo:
         logger.info("   3. predict      - Gerar predições com modelo treinado (todos os subsets)")
+        if unsloth_ok:
+            logger.info("   3u. predict-unsloth - ⚡ Predições com unsloth (2x mais rápido)")
         if vllm_ok:
             logger.info("   3v. predict-vllm - 🚀 Predições RÁPIDAS com vLLM (até 24x mais rápido)")
         logger.info("   4. predict-base - Gerar predições com modelo BASE (todos os subsets)")
         logger.info("   5. modelo       - Testar inferência com modelo treinado (N exemplos)")
         
+        if unsloth_ok:
+            logger.info("   5u. modelo-unsloth - ⚡ Testar inferência com unsloth (2x mais rápido)")
+        else:
+            logger.info("   5u. modelo-unsloth - (Inativo) Depende do pacote unsloth")
         if vllm_ok:
-            logger.info("   5v. modelo-vllm  - Testar inferência com modelo treinado usando vLLM (🚀 RÁPIDO)")
+            logger.info("   5v. modelo-vllm  - Testar inferência com vLLM (🚀 RÁPIDO)")
         else:
             logger.info("   5v. modelo-vllm  - (Inativo) Depende do pacote vLLM")
             
         logger.info("   6. modelo-base  - Testar inferência com modelo BASE (N exemplos)")
         
+        if unsloth_ok:
+            logger.info("   6u. modelo-base-unsloth - ⚡ Testar BASE com unsloth (2x mais rápido)")
+        else:
+            logger.info("   6u. modelo-base-unsloth - (Inativo) Depende do pacote unsloth")
         if vllm_ok:
-            logger.info("   6v. modelo-base-vllm - Testar inferência com modelo BASE usando vLLM (🚀 RÁPIDO)")
+            logger.info("   6v. modelo-base-vllm - Testar BASE com vLLM (🚀 RÁPIDO)")
         else:
             logger.info("   6v. modelo-base-vllm - (Inativo) Depende do pacote vLLM")
             
@@ -1312,17 +1773,21 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         logger.info("   3. predict-base - Gerar predições com modelo BASE (todos os subsets)")
         logger.info("   4. modelo-base  - Testar inferência com modelo BASE (N exemplos)")
         
+        if unsloth_ok:
+            logger.info("   4u. modelo-base-unsloth - ⚡ Testar BASE com unsloth (2x mais rápido)")
+        else:
+            logger.info("   4u. modelo-base-unsloth - (Inativo) Depende do pacote unsloth")
         if vllm_ok:
-            logger.info("   4v. modelo-base-vllm - Testar inferência com modelo BASE usando vLLM (🚀 RÁPIDO)")
+            logger.info("   4v. modelo-base-vllm - Testar BASE com vLLM (🚀 RÁPIDO)")
         else:
             logger.info("   4v. modelo-base-vllm - (Inativo) Depende do pacote vLLM")
             
     if not vllm_ok or not unsloth_ok:
         logger.info("\n   ⚠️  Observação:")
-        if not vllm_ok:
-            logger.info("      - vLLM não instalado. Use 'pip install vllm' para ativar as opções rápidas.")
         if not unsloth_ok:
-            logger.info("      - unsloth não instalado. Instale-o para habilitar a geração GGUF nativa.")
+            logger.info("      - unsloth não instalado. Instale-o para ativar opções ⚡ (2x) e geração GGUF.")
+        if not vllm_ok:
+            logger.info("      - vLLM não instalado. Use 'pip install vllm' para ativar as opções 🚀.")
 
     logger.info("\n   0. sair         - Cancelar e sair")
     
@@ -1334,11 +1799,14 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
                 '1': 'info', 'info': 'info',
                 '2': 'stats', 'stats': 'stats',
                 '3': 'predict', 'predict': 'predict',
+                '3u': 'predict-unsloth', 'predict-unsloth': 'predict-unsloth',
                 '3v': 'predict-vllm', 'predict-vllm': 'predict-vllm',
                 '4': 'predict-base', 'predict-base': 'predict-base',
                 '5': 'modelo', 'modelo': 'modelo',
+                '5u': 'modelo-unsloth', 'modelo-unsloth': 'modelo-unsloth',
                 '5v': 'modelo-vllm', 'modelo-vllm': 'modelo-vllm',
                 '6': 'modelo-base', 'modelo-base': 'modelo-base',
+                '6u': 'modelo-base-unsloth', 'modelo-base-unsloth': 'modelo-base-unsloth',
                 '6v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
                 '7': 'merge', 'merge': 'merge', 'export': 'merge',
                 '8': 'gguf', 'gguf': 'gguf', 'exportar-gguf': 'gguf',
@@ -1350,6 +1818,7 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
                 '2': 'stats', 'stats': 'stats',
                 '3': 'predict-base', 'predict-base': 'predict-base',
                 '4': 'modelo-base', 'modelo-base': 'modelo-base',
+                '4u': 'modelo-base-unsloth', 'modelo-base-unsloth': 'modelo-base-unsloth',
                 '4v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
                 '0': None, 'sair': None, 'exit': None, 'quit': None,
             }
@@ -1359,8 +1828,8 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         if acao in ['predict-vllm', 'modelo-vllm', 'modelo-base-vllm'] and not vllm_ok:
             logger.warning("Opção indisponível: vLLM não está instalado.")
             return None
-            
-        if acao == 'gguf' and not unsloth_ok:
+
+        if acao in ['predict-unsloth', 'modelo-unsloth', 'modelo-base-unsloth', 'gguf'] and not unsloth_ok:
             logger.warning("Opção indisponível: unsloth não está instalado.")
             return None
         
@@ -1395,14 +1864,20 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
         executar_predict(yaml_path, subsets=predict_subsets, usar_base=usar_base)
     elif acao == 'predict-vllm':
         executar_predict_vllm(yaml_path, subsets=predict_subsets)
+    elif acao == 'predict-unsloth':
+        executar_predict_unsloth(yaml_path, subsets=predict_subsets, usar_base=usar_base)
     elif acao == 'predict-base':
         executar_predict(yaml_path, subsets=predict_subsets, usar_base=True)
     elif acao == 'modelo':
         executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
+    elif acao == 'modelo-unsloth':
+        executar_modelo_unsloth(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
     elif acao == 'modelo-vllm':
         executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
     elif acao == 'modelo-base':
         executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
+    elif acao == 'modelo-base-unsloth':
+        executar_modelo_unsloth(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
     elif acao == 'modelo-base-vllm':
         executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
     elif acao == 'merge':
