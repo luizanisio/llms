@@ -148,6 +148,23 @@ class CurriculumTracker:
         self.registrar_metrica(alias=alias, event="etapa_falha", erro=erro)
         logger.error(f"<vermelho>❌ Etapa {step_index} falhou: alias='{alias}' - {erro}</vermelho>")
 
+    def marcar_conclusao(self, total_etapas: int, target_epochs: float = 0.0) -> None:
+        """Marca o pipeline inteiro como concluído."""
+        self.salvar_estado(
+            current_step=total_etapas,
+            status="finished",
+            alias="COMPLETO",
+            target_epochs=target_epochs,
+            mensagem="Treinamento atingiu seu objetivo final."
+        )
+        self.registrar_metrica(alias="COMPLETO", event="treinamento_concluido", total_etapas=total_etapas, target_epochs=target_epochs)
+        logger.info(f"<verde>✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas</verde>")
+
+    def is_concluido(self) -> bool:
+        """Verifica se o treinamento já foi dado como concluído."""
+        estado = self.carregar_estado()
+        return estado.get("status") == "finished"
+
 
 # ---------------------------------------------------------------------------
 # Funções utilitárias do pipeline

@@ -433,6 +433,18 @@ def print_process(
     with pp as print_func:
         yield print_func
 
+def print_cores(*args, color_auto: bool = True, sep: str = ' ', end: str = '\n', file=None, flush: bool = False):
+    """
+    Imprime mensagens no console processando cores e mantendo compatibilidade com print() nativo.
+    Se color_auto=True, colore palavras e padrões (ex: 'sucesso', datas, números) automaticamente,
+    além de interpretar marcadores explícitos (ex: <verde>OK</verde>).
+    """
+    mensagem = sep.join(str(a) for a in args)
+    if color_auto:
+        mensagem = aplicar_cores_auto(mensagem)
+    else:
+        mensagem = aplicar_cores(mensagem)
+    print(mensagem, end=end, file=file, flush=flush)
 
 def print_linha_simples(mensagem: str, pid: bool = True, include_thread: bool = False, timestamp: bool = False):
     """

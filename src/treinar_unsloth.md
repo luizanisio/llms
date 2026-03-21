@@ -248,6 +248,19 @@ O módulo `treinar_unsloth_historico.py` organiza informações estruturadas na 
 
 ---
 
+## Continuidade e Trava de Conclusão
+
+Para evitar o retrabalho indevido ou degradação de um modelo que já teve sucesso, o sistema inclui um **rastreador integrado de status**.
+
+- **Continuação Automática ("Resume")**: Sempre que um script de treinamento é reexecutado na mesma pasta, o sistema localiza automaticamente o último `checkpoint` e retoma de onde parou.
+- **Trava de Segurança (Early Exit)**: Se o treinamento for reaberto em uma pasta cuja última etapa do Curriculum (ou o total predefinido em um Treino Simples) já foi encerrada, o sistema detecta que o **objetivo final foi atingido** e impede seu avanço com uma mensagem informacional de *Concluído*.
+- **Como estender um modelo retido pela "Trava"**:
+   - Para modelos em **Curriculum** que já finalizaram, basta ir no `.yaml` e adicionar uma nova etapa para que a trava reconheça o novo requisito e seja liberada.
+   - Para um **Treino Simples**, ao apenas ir no `.yaml` e **aumentar o número de épocas finais (`epochs`)**, o sistema identificará que o alvo cresceu em relação ao que constava no `curriculum_state.json` do checkpoint retido, destravando a execução automaticamente e treinando a diferença de steps.
+   - ⚠️ *Dica: passar o argumento `--reset` reinicia do Zero ABSOLUTO (apaga logs, histórico e os checkpoints LoRA gerados). Utilize o reset apenas se desejar remover todo o treinamento realizado e começar o treinamento novamente a partir do modelo base.*
+
+---
+
 ## Desenvolvimento e Manutenção
 
 ### Pendências Concluídas Recentemente ✅

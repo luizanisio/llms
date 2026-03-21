@@ -254,7 +254,7 @@ def executar_reset(yaml_path: str, confirmar: bool = True) -> bool:
                 logger.debug(f"   Removido: {os.path.basename(arq_h)}")
         
         # Limpa logs de processamento antigos
-        for log_file in ["metrics_stream.jsonl"]:
+        for log_file in ["metrics_stream.jsonl", "curriculum_state.json", "curriculum_metrics.jsonl"]:
             log_path = os.path.join(output_dir, log_file)
             if os.path.exists(log_path):
                 os.remove(log_path)

@@ -140,6 +140,8 @@ from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTR
 from treinar_unsloth_report import GeradorRelatorio
 from treinar_unsloth_chat import TreinarChatTemplate
 from util import UtilEnv, Util
+from util_print import print_cores
+
 
 # ---------------------------------------------------------------------------
 # Logger do módulo
@@ -679,7 +681,7 @@ class LLMsTrainer:
         
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
-        print("<azul>[1/6] Carregando modelo base…</azul>")
+        print_cores("<azul>[1/6] Carregando modelo base…</azul>", color_auto=False)
         # Carrega configuração de bits
         nbits = self._yaml_config.treinamento.nbits
         
@@ -697,7 +699,7 @@ class LLMsTrainer:
                             os.path.exists(os.path.join(lora_model_path, 'pytorch_model.bin'))))
             
             if is_trained_lora:
-                print(f'<azul>🔄 Carregando modelo LoRA já treinado de {lora_model_path}...</azul>')
+                print_cores(f'<azul>🔄 Carregando modelo LoRA já treinado de {lora_model_path}...</azul>', color_auto=False)
                 try:
                     # Carrega o modelo LoRA já treinado diretamente
                     model, tokenizer = FastModel.from_pretrained(
@@ -707,21 +709,21 @@ class LLMsTrainer:
                         load_in_8bit=nbits == 8,
                         device_map="auto",
                     )
-                    print(f'<verde>✅ Modelo LoRA treinado carregado com sucesso!</verde>')
+                    print_cores(f'<verde>✅ Modelo LoRA treinado carregado com sucesso!</verde>', color_auto=False)
                     lora_ok = True
 
                     
                 except Exception as e:
-                    print(f'<vermelho>❌ Erro ao carregar modelo LoRA treinado: {e}</vermelho>')
+                    print_cores(f'<vermelho>❌ Erro ao carregar modelo LoRA treinado: {e}</vermelho>', color_auto=False)
                     traceback.print_exc()
-                    print('<amarelo>Tentando carregar modelo base e aplicar LoRA...</amarelo>')
+                    print_cores('<amarelo>Tentando carregar modelo base e aplicar LoRA...</amarelo>', color_auto=False)
                     time.sleep(2)
         else:
-             print(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>')
+             print_cores(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>', color_auto=False)
         
         # Se não conseguiu carregar o LoRA ou não existe ou force_base=True, carrega modelo base
         if not lora_ok:
-            print(f'<azul>🔄 Carregando modelo base: {self._yaml_config.modelo.base}...</azul>')
+            print_cores(f'<azul>🔄 Carregando modelo base: {self._yaml_config.modelo.base}...</azul>', color_auto=False)
             model, tokenizer = FastModel.from_pretrained(
                 model_name=self._yaml_config.modelo.base,
                 max_seq_length=self._yaml_config.treinamento.max_seq_length,
@@ -732,7 +734,7 @@ class LLMsTrainer:
             
             # Se usar LoRA, aplica as configurações (Exceto se force_base=True)
             if not self.force_base and self._yaml_config.lora.r not in (0,None,False):
-                print(f'<azul>🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...</azul>')
+                print_cores(f'<azul>🔄 Aplicando LoRA r={self._yaml_config.lora.r} ao modelo base ...</azul>', color_auto=False)
                 model = FastModel.get_peft_model(
                     model,
                     finetune_vision_layers=False,
@@ -747,7 +749,7 @@ class LLMsTrainer:
                     device_map="auto",
                 )
             elif self.force_base:
-                print(f'<cinza>ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.</cinza>')
+                print_cores(f'<cinza>ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.</cinza>', color_auto=False)
         # Template agora é aplicado pelo TreinarChatTemplate após o carregamento
         if hasattr(model, 'print_trainable_parameters'):
             model.print_trainable_parameters()
@@ -756,7 +758,7 @@ class LLMsTrainer:
         model_type = type(model).__name__
         is_peft_model = hasattr(model, 'peft_config') or hasattr(model, 'base_model')
         
-        print(f"\n<azul>📊 MODELO CARREGADO:</azul>")
+        print_cores(f"\n<azul>📊 MODELO CARREGADO:</azul>", color_auto=False)
         print(f"  - Tipo: {model_type}")
         print(f"  - É modelo PEFT: {is_peft_model}")
         print(f"  - LoRA carregado: {lora_ok}")
@@ -1003,7 +1005,7 @@ class LLMsTrainer:
             epoch_offset: Épocas acumuladas de etapas anteriores (para epoch_global contínuo)
             tokens_previos: Tokens processados em etapas anteriores (para tokens_acumulados contínuo)
         """
-        print("<azul>[3/6] Configurando trainer…</azul>")
+        print_cores("<azul>[3/6] Configurando trainer…</azul>", color_auto=False)
         
         # === Formatação do Dataset (garante coluna 'text') ===
         # num_proc não deve exceder o número de registros (causa falha silenciosa)
@@ -1061,16 +1063,16 @@ class LLMsTrainer:
              eval_steps = max(1, int((total_examples / 100) / _st))
 
         if self.eval_ds and eval_steps > 0:
-           print(f'<cinza> - avaliando a cada {eval_steps} steps...</cinza>')
+           print_cores(f'<cinza> - avaliando a cada {eval_steps} steps...</cinza>', color_auto=False)
         
         log_steps = eval_steps if isinstance(eval_steps, int) and eval_steps > 0 else 50
         
         if self.save_checkpoints:
-            print(f'<cinza> - gravando checkpoints a cada {log_steps} steps</cinza>')
+            print_cores(f'<cinza> - gravando checkpoints a cada {log_steps} steps</cinza>', color_auto=False)
         
         # Log train_on_responses_only
         if treino_cfg.train_on_responses_only:
-            print(f'<cinza> - train_on_responses_only ATIVADO (treina apenas nas respostas do assistant)</cinza>')
+            print_cores(f'<cinza> - train_on_responses_only ATIVADO (treina apenas nas respostas do assistant)</cinza>', color_auto=False)
 
         # Configuração de argumentos de treino
         # Nota: Usamos TrainingArguments padrão ou SFTConfig se disponível no unsloth
@@ -1131,7 +1133,7 @@ class LLMsTrainer:
                 n_total = len(labels_amostra)
                 if n_validos > 0 and n_validos < n_total:
                     # Labels já possuem mascaramento parcial (prompt=-100, resposta=válida)
-                    print(f'   <verde>✅ train_on_responses_only: dataset já possui labels pré-mascarados</verde>')
+                    print_cores(f'   <verde>✅ train_on_responses_only: dataset já possui labels pré-mascarados</verde>', color_auto=False)
                     print(f'      ({n_validos}/{n_total} tokens com loss, {n_total - n_validos} mascarados)')
                     print(f'      Pulando train_on_responses_only para preservar labels corretos.')
                 else:
@@ -1184,11 +1186,11 @@ class LLMsTrainer:
             os.makedirs(chkpt_dir, exist_ok=True)
             trainer.add_callback(CheckpointRenameCallback(chkpt_dir, step_offset=step_offset))
         
-        print(f'<cinza> - callbacks de métricas configurados:</cinza>')
-        print(f'   <cinza>• metrics_stream.jsonl (métricas brutas)</cinza>')
-        print(f'   <cinza>• treinamento/training_metrics.jsonl (loss, hardware, tokens)</cinza>')
+        print_cores(f'<cinza> - callbacks de métricas configurados:</cinza>', color_auto=False)
+        print_cores(f'   <cinza>• metrics_stream.jsonl (métricas brutas)</cinza>', color_auto=False)
+        print_cores(f'   <cinza>• treinamento/training_metrics.jsonl (loss, hardware, tokens)</cinza>', color_auto=False)
         if self.save_checkpoints:
-            print(f'   <cinza>• checkpoint renaming (zero-padding: checkpoint-00001)</cinza>')
+            print_cores(f'   <cinza>• checkpoint renaming (zero-padding: checkpoint-00001)</cinza>', color_auto=False)
         
         trainer.model.config.use_cache = False
         
@@ -1202,7 +1204,7 @@ class LLMsTrainer:
         """
         ds = trainer.train_dataset
         if ds is None or "labels" not in ds.column_names:
-            print(f'   <cinza>ℹ️  Sem coluna labels no dataset — collator criará labels em tempo de execução.</cinza>')
+            print_cores(f'   <cinza>ℹ️  Sem coluna labels no dataset — collator criará labels em tempo de execução.</cinza>', color_auto=False)
             return
         
         n_check = min(10, len(ds))
@@ -1225,8 +1227,8 @@ class LLMsTrainer:
                 exemplos_vazios += 1
         
         if total_validos == 0:
-            print(f'   <vermelho>❌ ALERTA: Todos os {n_check} exemplos verificados têm labels inteiramente -100!</vermelho>')
-            print(f'      <vermelho>Isso causará loss=NaN e grad_norm=0.0 durante o treinamento.</vermelho>')
+            print_cores(f'   <vermelho>❌ ALERTA: Todos os {n_check} exemplos verificados têm labels inteiramente -100!</vermelho>', color_auto=False)
+            print_cores(f'      <vermelho>Isso causará loss=NaN e grad_norm=0.0 durante o treinamento.</vermelho>', color_auto=False)
             print(f'      Possíveis causas:')
             print(f'      • Os marcadores de resposta não foram encontrados nos input_ids')
             print(f'      • O chat template não corresponde ao formato esperado pelo modelo')
@@ -1243,11 +1245,11 @@ class LLMsTrainer:
                     pass
         elif exemplos_vazios > 0:
             pct = exemplos_vazios / n_check * 100
-            print(f'   <amarelo>⚠️ {exemplos_vazios}/{n_check} exemplos com labels inteiramente -100 ({pct:.0f}%)</amarelo>')
+            print_cores(f'   <amarelo>⚠️ {exemplos_vazios}/{n_check} exemplos com labels inteiramente -100 ({pct:.0f}%)</amarelo>', color_auto=False)
             print(f'      Total: {total_validos}/{total_tokens} tokens com loss')
         else:
             pct_resp = total_validos / total_tokens * 100 if total_tokens > 0 else 0
-            print(f'   <verde>✅ Labels verificados: {total_validos}/{total_tokens} tokens com loss ({pct_resp:.1f}%)</verde>')
+            print_cores(f'   <verde>✅ Labels verificados: {total_validos}/{total_tokens} tokens com loss ({pct_resp:.1f}%)</verde>', color_auto=False)
 
     # ------------------------- checkpoint management --------------------- 
     def _find_latest_checkpoint(self) -> str:
@@ -1258,7 +1260,7 @@ class LLMsTrainer:
         """
         # verifica se o resume está habilitado na configuração
         if not self._yaml_config.treinamento.resume_from_checkpoint:
-            print("<amarelo>⚠️ Checkpoint ignorado por configuração (resume_from_checkpoint=False)</amarelo>")
+            print_cores("<amarelo>⚠️ Checkpoint ignorado por configuração (resume_from_checkpoint=False)</amarelo>", color_auto=False)
             return None
             
         if not self.save_checkpoints:
@@ -1293,7 +1295,7 @@ class LLMsTrainer:
         has_alternative = any(os.path.exists(os.path.join(latest_path, f)) for f in alternative_files)
         
         if has_required or (has_alternative and os.path.exists(os.path.join(latest_path, "trainer_state.json"))):
-            print(f"<verde>✅ Checkpoint encontrado: {latest_path} (step {latest_step})</verde>")
+            print_cores(f"<verde>✅ Checkpoint encontrado: {latest_path} (step {latest_step})</verde>", color_auto=False)
             self._historico.evento_checkpoint_encontrado(latest_path, latest_step)
             return latest_path
         else:
@@ -1362,10 +1364,31 @@ class LLMsTrainer:
         is_curriculum = len(self._etapas) > 1
         total_etapas = len(self._etapas)
 
+        # ---------------------------------------------------------
+        # Controle de Conclusão e Retomada
+        # ---------------------------------------------------------
+        estado_pipeline = self._tracker.carregar_estado()
+        target_epochs_yaml = sum([e.pace_epochs if e.pace_epochs > 0 else self._yaml_config.treinamento.epochs for e in self._etapas])
+        target_epochs_salvo = estado_pipeline.get("target_epochs", -1.0)
+        
+        # Se concluído e o número de etapas/épocas no YAML não aumentou, evite recomeçar
+        bloqueado_por_etapas = estado_pipeline.get("current_step", 0) >= total_etapas 
+        
+        # Só libera a continuação se o alvo exigido agora (yaml) for EXPLICITAMENTE maior do que o alvo
+        # em que encerrou. Se não há alvo salvo de épocas (-1.0), assume bloqueado por precaução.
+        bloqueado_por_epochs = (target_epochs_salvo == -1.0) or (target_epochs_salvo >= target_epochs_yaml)
+        
+        if self._tracker.is_concluido() and bloqueado_por_etapas and bloqueado_por_epochs:
+            print_cores("\n<verde>✅ Treinamento já foi concluído e atingiu seu objetivo final (todas as etapas).</verde>", color_auto=False)
+            print_cores("<amarelo>   Evitando continuação indevida de um modelo já finalizado.</amarelo>", color_auto=False)
+            print_cores("<cinza>   ↳ Para continuar a partir daqui: adicione uma nova etapa no curriculum ou aumente as epochs.</cinza>", color_auto=False)
+            print_cores("<cinza>   ↳ Para reiniciar integralmente: acione o script com a opção --reset.</cinza>\n", color_auto=False)
+            return
+
         if is_curriculum:
-            print(f"<azul>[4/6] Iniciando treinamento com {total_etapas} etapas de curriculum…</azul>")
+            print_cores(f"<azul>[4/6] Iniciando treinamento com {total_etapas} etapas de curriculum…</azul>", color_auto=False)
         else:
-            print("<azul>[4/6] Iniciando treinamento…</azul>")
+            print_cores("<azul>[4/6] Iniciando treinamento…</azul>", color_auto=False)
 
         # Contadores acumulados para métricas contínuas entre etapas do curriculum
         instancias_acumuladas = 0
@@ -1410,24 +1433,24 @@ class LLMsTrainer:
 
             try:
                 if resume_from_checkpoint:
-                    print(f"<azul>🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}</azul>")
+                    print_cores(f"<azul>🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}</azul>", color_auto=False)
                     try:
                         train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
-                        print("<verde>✅ Treinamento continuado com sucesso a partir do checkpoint</verde>")
+                        print_cores("<verde>✅ Treinamento continuado com sucesso a partir do checkpoint</verde>", color_auto=False)
                         self._historico.evento_checkpoint_retomado(sucesso=True)
                     except Exception as e:
                         error_msg = str(e)
-                        print(f"<vermelho>❌ Erro ao continuar do checkpoint: {error_msg}</vermelho>")
-                        print("<amarelo>🔄 Reiniciando treinamento do início...</amarelo>")
+                        print_cores(f"<vermelho>❌ Erro ao continuar do checkpoint: {error_msg}</vermelho>", color_auto=False)
+                        print_cores("<amarelo>🔄 Reiniciando treinamento do início...</amarelo>", color_auto=False)
                         self._historico.evento_checkpoint_retomado(sucesso=False, erro=error_msg)
 
                         train_stats = self.trainer.train()
                 else:
                     if step_index == 0:
-                        print("<azul>🆕 Iniciando novo treinamento</azul>")
+                        print_cores("<azul>🆕 Iniciando novo treinamento</azul>", color_auto=False)
                         self._historico.registrar_evento("TREINO INICIADO", f"Novo treinamento do zero")
                     else:
-                        print(f"<azul>▶ Iniciando etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
+                        print_cores(f"<azul>▶ Iniciando etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>", color_auto=False)
                     train_stats = self.trainer.train()
             except Exception as e:
                 self._tracker.marcar_falha(step_index=step_index, alias=etapa_atual.alias, erro=str(e))
@@ -1435,7 +1458,7 @@ class LLMsTrainer:
 
             depois = _print_mem("DEPOIS")
             tempo_total = time.time() - tempo_inicio
-            print("<verde>[5/6] Tempo de execução: {:.2f} s</verde>".format(train_stats.metrics["train_runtime"]))
+            print_cores("<verde>[5/6] Tempo de execução: {:.2f} s</verde>".format(train_stats.metrics["train_runtime"]), color_auto=False)
 
             # Valida o modelo após o treinamento
             print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
@@ -1520,12 +1543,20 @@ class LLMsTrainer:
                 f"CURRICULUM COMPLETO",
                 f"- **Etapas concluídas:** {total_etapas}"
             )
+        else:
+            logger.info("<verde>✅ TREINAMENTO COMPLETO</verde>")
+            
+        # Calcula o target total demandado
+        target_epochs_yaml = sum([e.pace_epochs if e.pace_epochs > 0 else self._yaml_config.treinamento.epochs for e in self._etapas])
+
+        # O treinamento encerrou completamente o pipeline requerido. Registrar trava.
+        self._tracker.marcar_conclusao(total_etapas=total_etapas, target_epochs=target_epochs_yaml)
         
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
         out_dir = self._yaml_config.modelo.saida
         os.makedirs(out_dir, exist_ok=True)
-        print(f"<azul>[6/6] Salvando modelo em {out_dir}…</azul>")
+        print_cores(f"<azul>[6/6] Salvando modelo em {out_dir}…</azul>", color_auto=False)
         
         # Salva o modelo (LoRA ou modelo completo)
         self.model.save_pretrained(out_dir)
@@ -1536,12 +1567,12 @@ class LLMsTrainer:
         adapter_model = os.path.join(out_dir, 'adapter_model.safetensors')
         
         if os.path.exists(adapter_config):
-            print(f"<verde>✅ Arquivo de configuração LoRA salvo: {adapter_config}</verde>")
+            print_cores(f"<verde>✅ Arquivo de configuração LoRA salvo: {adapter_config}</verde>", color_auto=False)
             
         if os.path.exists(adapter_model):
-            print(f"<verde>✅ Modelo LoRA salvo: {adapter_model}</verde>")
+            print_cores(f"<verde>✅ Modelo LoRA salvo: {adapter_model}</verde>", color_auto=False)
         elif os.path.exists(os.path.join(out_dir, 'pytorch_model.bin')):
-            print(f"<verde>✅ Modelo PyTorch salvo: pytorch_model.bin</verde>")
+            print_cores(f"<verde>✅ Modelo PyTorch salvo: pytorch_model.bin</verde>", color_auto=False)
         
         # Log detalhado do que foi salvo
         files_saved = []
@@ -1554,7 +1585,7 @@ class LLMsTrainer:
         if stats is not None:
             with open(os.path.join(self._yaml_config.modelo.saida, "metrics_summary.json"), "w") as fp:
                  json.dump(stats, fp, indent=2)
-        print(r"<verde>Modelo salvo com sucesso \o/</verde>")
+        print_cores(r"<verde>Modelo salvo com sucesso \o/</verde>", color_auto=False)
 
     def _place_inputs(self, inputs):
         try:

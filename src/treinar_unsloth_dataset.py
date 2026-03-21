@@ -227,6 +227,10 @@ class DatasetTreinamento:
         if arquivo_divisao and os.path.isfile(arquivo_divisao):
             print(f"📂 Carregando divisão de: {arquivo_divisao}")
             df = pd.read_csv(arquivo_divisao, sep=None, engine='python')
+            
+            # Limpa o BOM UTF-8 (\ufeff) e espaços das colunas caso o arquivo seja salvo no formato corrompido ou BOM pelo Excel/Win
+            df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+            
             # Migração automática de nomes de colunas antigos
             if "id_arquivo" not in df.columns and "id" in df.columns:
                 print("🔄 Migrando coluna 'id' → 'id_arquivo'...")
