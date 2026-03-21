@@ -99,7 +99,7 @@ curriculum:
     - arquivo: ./treino_simples/divisao_dificil.csv
       alias: "difícil"
       tipo: "lora"
-      pace_epochs: 4     # (Padrão) Transita após 1 época.
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 3072  # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
@@ -143,7 +143,7 @@ treinamento:
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
   #| [7B] Aumente para 20-40 se batch_size=1.
-  grad_batch_size: 4
+  grad_batch_size: 16
   # Batch efetivo: 2 * 10 = 20
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
@@ -157,7 +157,7 @@ treinamento:
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
   #| ⚠️ RTX 3060 12GB: use 2048-4096. Valores maiores podem causar OOM. 
   #|    - 6144 (6k) é o máximo conseguido sem erro com 12Gb e modelo 1.5B em 4-bit
-  max_seq_length: 4098
+  max_seq_length: 3072
   
   #| Validação de tokens segura. Recomendado: true.
   #| Se `false` e o max_seq_length for > 0, o sistema confia na sua configuração
@@ -174,7 +174,7 @@ treinamento:
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
-  warmup_steps: 2
+  warmup_steps: 5
   
   #| Decaimento de peso (regularização). Padrão 0.01.
   weight_decay: 0.01
