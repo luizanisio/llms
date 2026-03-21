@@ -98,3 +98,54 @@ curriculum:
     * Implementar trava estrutural bloqueando continuações indevidas. Se um treinamento for acionado em uma pasta onde a última etapa do curriculum (ou o número de épocas planejadas em modo simples) já foi dada como completa, o sistema deve abortar graciosamente informando: "✅ Treinamento já foi concluído e atingiu seu objetivo final."
     * Evitar retreinar ou estender o treinamento de um modelo que já bateu as metas de parada. Caso o desenvolvedor queira estender, deverá aumentar os parâmetros no `.yaml` (o qual fará o status voltar para `incompleto`) ou acionar o `--reset`.
 * **⏱️ Teste Intermediário Final:** Processar múltiplos estágios usando Curriculum completo. Embutir propositalmente uma meta `pace_loss = 1.5` de fácil alcance numa das passagens e testar os limites do Early-Stopping e o respectivo avanço para a etapa 2. Constatar a divisão formatada do gráfico unificado renderizado em `.png` ao encerramento pleno.
+
+#### Backlog Múltiplas GPUs
+
+##### Estado atual
+O modelo é carregado em **GPU única** usando o default do Unsloth (`device_map="sequential"`). O parâmetro `device_map="auto"` foi **removido intencionalmente** de `FastModel.from_pretrained()` e `FastModel.get_peft_model()` em `treinar_unsloth.py`. Adicionalmente, as seguintes variáveis de ambiente são definidas no topo do script antes de qualquer import do Unsloth:
+```python
+os.environ["TORCH_COMPILE_DISABLE"] = "1"        # Desabilita Dynamo/Inductor global
+os.environ["UNSLOTH_COMPILE_DISABLE"] = "1"       # Desabilita torch.compile na fused CE loss
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.disable = True
+```
+
+##### Motivação: por que múltiplas GPUs estão desativadas
+A fused cross-entropy loss do Unsloth (`unsloth_zoo/fused_losses/cross_entropy_loss.py`) utiliza internamente `torch.func.grad_and_value` (API do functorch) para computar loss e gradientes de forma chunked e memory-efficient sem materializar a matriz completa `[batch×seq_len, vocab_size]` de logits. Quando `device_map="auto"` é usado, o **Accelerate** instala hooks de dispatch (`accelerate/hooks.py`) que interceptam chamadas `forward` para mover tensores entre GPUs. Esses hooks são **fundamentalmente incompatíveis** com `torch.func.grad_and_value`, que cria objetos `TensorWrapper` internos (subclasse C++ de `TensorImpl`) — o Accelerate não sabe manipular esses wrappers, resultando no erro fatal:
+```
+NotImplementedError: Cannot access storage of TensorWrapper
+```
+O erro ocorria na segunda etapa do curriculum learning, quando o trainer era reconstruído e o modelo ainda carregava estado de autograd residual da etapa anterior, agravando a incompatibilidade.
+
+##### Erros solucionados
+1. **`NotImplementedError: Cannot access storage of TensorWrapper`** — Removido `device_map="auto"` de `_load_model()` (tanto no carregamento do modelo LoRA treinado via `FastModel.from_pretrained()` quanto na aplicação de adaptadores via `FastModel.get_peft_model()`). Com o default `"sequential"` do Unsloth, o modelo fica em GPU única e a fused loss funciona normalmente.
+2. **Compilação dinâmica conflitante** — Adicionado `UNSLOTH_COMPILE_DISABLE=1` (lido em import-time pelo compiled cache e pelo `cross_entropy_loss.py`) para desabilitar `torch.compile(fullgraph=True)` na função `accumulate_chunk` da fused loss. Isso remove uma segunda camada de incompatibilidade entre `torch.compile` + `torch.func.grad_and_value`.
+3. **Estado de autograd residual entre etapas** — Adicionada limpeza explícita entre etapas do curriculum (`model.zero_grad(set_to_none=True)`, `del trainer`, `gc.collect()`, `torch.cuda.empty_cache()`) para evitar que gradientes e grafos computacionais da etapa anterior contaminem a próxima.
+4. **`metrics_stream.jsonl` apagado na etapa 2+** — O arquivo de métricas brutas era deletado a cada reconstrução do trainer. Corrigido para só limpar na `etapa_index == 0`.
+
+##### O que precisa ser feito para usar múltiplas GPUs no futuro
+A abordagem recomendada é **não** usar `device_map="auto"` (model parallelism do Accelerate), mas sim uma das estratégias de paralelismo nativas do HuggingFace Trainer:
+
+1. **DeepSpeed ZeRO (recomendado para LoRA + QLoRA):**
+   - Criar arquivo `ds_config.json` com configuração ZeRO Stage 2 (partição de gradientes e estados do otimizador entre GPUs).
+   - Adicionar `deepspeed="ds_config.json"` no `SFTConfig` em `_build_trainer()`.
+   - Lançar via `accelerate launch` ou `torchrun --nproc_per_node=N treinar_unsloth.py`.
+   - **Cuidado:** Verificar compatibilidade do Unsloth com DeepSpeed — a fused loss pode precisar de ajustes ou ser desabilitada (`UNSLOTH_RETURN_LOGITS=1`).
+
+2. **FSDP (Fully Sharded Data Parallel):**
+   - Configurar via parâmetro `fsdp` e `fsdp_config` do `TrainingArguments`.
+   - Requer que o modelo seja compatível com wrapping FSDP (pode conflitar com PEFT/LoRA).
+
+3. **DataParallel simples (DDP via Trainer):**
+   - O HuggingFace Trainer já suporta DDP automaticamente quando lançado via `torchrun`.
+   - Cada GPU recebe uma réplica completa do modelo e processa batches diferentes.
+   - **Limitação:** Exige que o modelo inteiro caiba em cada GPU individual.
+
+4. **Investigar bypass da fused loss:**
+   - O compiled cache (`unsloth_compiled_module_qwen2.py`) hardcoda a chamada a `unsloth_fused_ce_loss` sem escape via env var para o branch de treinamento (Branch 2). `UNSLOTH_RETURN_LOGITS=1` só afeta o Branch 1 (CCE para pesos frozen).
+   - Uma solução futura seria contribuir upstream ao Unsloth um flag para desabilitar a fused loss, ou modificar o compiled cache para cair no Branch 3 (CE loss padrão do PyTorch) quando multi-GPU é detectado.
+
+5. **Pré-requisitos de infraestrutura:**
+   - Validar que `CUDA_VISIBLE_DEVICES` expõe as GPUs desejadas.
+   - Garantir que o script seja compatível com lançamento distribuído (`if __name__ == "__main__"` + `torch.distributed.init_process_group()`).
+   - Adaptar o sistema de callbacks e métricas para não duplicar registros em processos múltiplos (registrar apenas no `rank == 0`).
