@@ -53,7 +53,7 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Limpeza automática de gráficos anteriores ao iniciar novo treinamento (evita confusão com dados antigos)
 - [x] Trava de conclusão: impede reexecução de treino já finalizado (com liberação via YAML)
 - [x] Curriculum Learning: transições de etapas com legendas visuais nos gráficos
-- [x] Curriculum Learning: cálculo automático de `grad_batch_size` para manter batch efetivo constante independente do nº de GPUs
+- [x] Cálculo automático de `grad_batch_size` para manter batch efetivo constante independente do nº de GPUs (todos os formatos: pastas, dataset, curriculum)
 
 ---
 
@@ -228,8 +228,18 @@ curriculum:
       pace_epochs: 2
 ```
 
-##### Batch Size Automático (`curriculum.batch_size`)
-Quando configurado, o sistema calcula `grad_batch_size` automaticamente para atingir o batch efetivo desejado, independente do número de GPUs. O `batch_size` por GPU é fixo (determinado empiricamente para evitar OOM).
+##### Batch Size Automático (`treinamento.batch_size`)
+Quando `treinamento.batch_size` é configurado como dicionário com `efetivo` e `batch_size`, o sistema calcula `grad_batch_size` automaticamente para atingir o batch efetivo desejado, independente do número de GPUs. O `batch_size` por GPU é fixo (determinado empiricamente para evitar OOM).
+
+Esta funcionalidade é suportada em **todos os formatos** (pastas, dataset, curriculum).
+
+```yaml
+# Qualquer formato (pastas, dataset, curriculum)
+treinamento:
+  batch_size:
+    efetivo: 16  # Batch efetivo (ajusta grad_batch_size automaticamente)
+    batch_size: 2  # Batch por GPU (verificar empiricamente para evitar OOM)
+```
 
 **Fórmula:** `grad_batch_size = round(efetivo / (batch_size × n_gpus))`, mínimo 1.
 
@@ -319,7 +329,7 @@ Para evitar o retrabalho indevido ou degradação de um modelo que já teve suce
 9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
 10. **Geração Automática de Gráficos Pós-Treinamento**: Função `gerar_graficos_estatisticos()` extraída e reutilizada por `--stats` e `executar_treinar()`. Gera loss, tokens, hardware e relatório .md automaticamente ao final do treino.
 11. **Limpeza de Artefatos Antigos**: `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores ao iniciar novo treinamento, evitando confusão com dados de treinos passados.
-12. **Batch Size Automático (Curriculum)**: Nova seção `curriculum.batch_size` com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente, mantendo o batch efetivo constante independente do número de GPUs.
+12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`, suportada em todos os formatos (pastas, dataset, curriculum). O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
 
 ### Próximo Passo de Desenvolvimento
 > pace de treinamento (Curriculum Learning) e simplificação do código

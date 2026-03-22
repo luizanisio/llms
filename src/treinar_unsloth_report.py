@@ -200,7 +200,12 @@ class GeradorRelatorio:
         yaml_epochs = int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1)
         yaml_lr = float(treino_raw.get("learning_rate", 2e-4))
         yaml_msl = int(treino_raw.get("max_seq_length", 4096))
-        yaml_bs = int(treino_raw.get("batch_size", 2))
+        # batch_size pode ser int (manual) ou dict (auto: {efetivo, batch_size})
+        yaml_bs_raw = treino_raw.get("batch_size", 2)
+        if isinstance(yaml_bs_raw, dict):
+            yaml_bs = int(yaml_bs_raw.get("batch_size", 2))
+        else:
+            yaml_bs = int(yaml_bs_raw)
         yaml_grad = int(treino_raw.get("grad_batch_size", 5))
         
         # Valores efetivos (após batch_size_auto e overrides da 1ª etapa curriculum)

@@ -411,7 +411,8 @@ class YamlTreinamento:
         self.treinamento: ConfigTreinamento = self._processar_treinamento()
         self.lora: ConfigLora = self._processar_lora()
         
-        # Batch automático para curriculum (calcula grad_batch_size com base no nº de GPUs)
+        # Batch automático (calcula grad_batch_size com base no nº de GPUs)
+        # Ativado quando treinamento.batch_size é dict com {efetivo, batch_size}
         self.batch_size_auto: Optional[ConfigBatchSize] = self._processar_batch_size_auto()
         self._aplicar_batch_size_auto()
         
@@ -685,6 +686,16 @@ class YamlTreinamento:
         if nbits is None or nbits == 0:
             nbits = 0
             
+        # batch_size pode ser int (manual) ou dict (auto: {efetivo, batch_size})
+        batch_size_raw = treino_raw.get("batch_size", 2)
+        if isinstance(batch_size_raw, dict):
+            # Modo automático — valores provisórios, sobrescritos por _aplicar_batch_size_auto()
+            batch_size_val = int(batch_size_raw.get("batch_size", 2))
+            grad_batch_size_val = int(treino_raw.get("grad_batch_size", 1))
+        else:
+            batch_size_val = int(batch_size_raw)
+            grad_batch_size_val = int(treino_raw.get("grad_batch_size", 5))
+
         # max_seq_length é obrigatório — o pesquisador deve definir com base
         # nos dados de tokens do CSV de divisão (coluna token_total)
         msl_raw = treino_raw.get("max_seq_length")
@@ -696,8 +707,8 @@ class YamlTreinamento:
 
         return ConfigTreinamento(
             eval_steps=treino_raw.get("eval_steps", "15%"),
-            batch_size=int(treino_raw.get("batch_size", 2)),
-            grad_batch_size=int(treino_raw.get("grad_batch_size", 5)),
+            batch_size=batch_size_val,
+            grad_batch_size=grad_batch_size_val,
             epochs=int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1),
             max_seq_length=int(msl_raw),
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
@@ -731,19 +742,19 @@ class YamlTreinamento:
         )
     
     def _processar_batch_size_auto(self) -> Optional[ConfigBatchSize]:
-        """Processa a seção 'curriculum.batch_size' do YAML (cálculo automático de batches).
+        """Processa configuração de batch automático do YAML (treinamento.batch_size como dict).
+        
+        Quando treinamento.batch_size é um dict com {efetivo, batch_size}, ativa o
+        cálculo automático de grad_batch_size. Funciona para qualquer formato
+        (pastas, dataset, curriculum).
         
         Retorna ConfigBatchSize se configurado, ou None se não aplicável.
-        Só é ativado quando tipo_entrada='curriculum' e a seção existe com efetivo > 0.
         """
-        if self.tipo_entrada != TIPO_ENTRADA_CURRICULUM:
+        treino_raw = self._raw_config.get("treinamento", {})
+        if not isinstance(treino_raw, dict):
             return None
         
-        curriculum_raw = self._raw_config.get("curriculum", {})
-        if not isinstance(curriculum_raw, dict):
-            return None
-        
-        batch_raw = curriculum_raw.get("batch_size", {})
+        batch_raw = treino_raw.get("batch_size", None)
         if not isinstance(batch_raw, dict) or not batch_raw:
             return None
         

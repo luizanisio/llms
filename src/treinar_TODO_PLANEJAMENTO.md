@@ -14,7 +14,7 @@
 9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
 10. **Geração Automática de Gráficos Pós-Treinamento**: Função `gerar_graficos_estatisticos()` extraída e reutilizada por `--stats` e `executar_treinar()`. Gera loss, tokens, hardware e relatório .md automaticamente ao final do treino.
 11. **Limpeza de Artefatos Antigos**: `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores ao iniciar novo treinamento, evitando confusão com dados de treinos passados.
-12. **Batch Size Automático (Curriculum)**: Nova seção `curriculum.batch_size` com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente, mantendo o batch efetivo constante independente do número de GPUs.
+12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`, suportada em todos os formatos (pastas, dataset, curriculum). O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
 
 ### Próximo Passo de Desenvolvimento
 > pace de treinamento (Curriculum Learning) e simplificação do código
@@ -102,7 +102,7 @@ curriculum:
 5. ✅ **Geração Automática de Gráficos Pós-Treinamento:** Função `gerar_graficos_estatisticos()` extraída em `treinar_unsloth_avaliar.py` e chamada automaticamente ao final de `executar_treinar()` em `treinar_unsloth_actions.py`. Gera loss, tokens, hardware e relatório .md sem necessidade de rodar `--stats` manualmente.
 6. ✅ **Limpeza de Artefatos Antigos:** Ao iniciar novo treinamento (`etapa_index == 0`), o `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores junto com a truncagem do `training_metrics.jsonl`.
 7. ✅ **Validação Fail-Fast de Criptografia:** `ConfigMisc.__post_init__` verifica se a variável de ambiente de criptografia existe quando configurada no YAML (`misc.env_chave_criptografia`). `_carregar_dataframe_entrada` em `treinar_unsloth_dataset.py` levanta `EnvironmentError` em vez de silenciosamente continuar com dados criptografados.
-8. ✅ **Batch Size Automático:** Nova `ConfigBatchSize` em `treinar_unsloth_util.py`. Seção `curriculum.batch_size` com `efetivo` (batch desejado) e `batch_size` (por GPU). `_aplicar_batch_size_auto()` calcula `grad_batch_size` com base no nº de GPUs detectado via `torch.cuda.device_count()`, sobrescrevendo `treinamento.batch_size` e `treinamento.grad_batch_size` de forma transparente.
+8. ✅ **Batch Size Automático:** Nova `ConfigBatchSize` em `treinar_unsloth_util.py`. Seção `treinamento.batch_size` (dict) com `efetivo` (batch desejado) e `batch_size` (por GPU), suportada em todos os formatos (pastas, dataset, curriculum). `_aplicar_batch_size_auto()` calcula `grad_batch_size` com base no nº de GPUs detectado via `torch.cuda.device_count()`, sobrescrevendo `treinamento.batch_size` e `treinamento.grad_batch_size` de forma transparente.
 * **⏱️ Teste Intermediário Final:** Processar múltiplos estágios usando Curriculum completo. Embutir propositalmente uma meta `pace_loss = 1.5` de fácil alcance numa das passagens e testar os limites do Early-Stopping e o respectivo avanço para a etapa 2. Constatar a divisão formatada do gráfico unificado renderizado em `.png` ao encerramento pleno.
 
 #### Backlog Múltiplas GPUs
