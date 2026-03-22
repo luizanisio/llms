@@ -1,9 +1,9 @@
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum Learning)
 # ==========================================================================
 # Ambiente: 2x H100 80GB (CUDA_VISIBLE_DEVICES="2,3")
-# Modo: pastas (treino direto, sem curriculum learning)
+# Modo: curriculum (fácil → médio → difícil → completo)
 # ==========================================================================
 
 #| =========================================================================
@@ -11,7 +11,7 @@
 #| =========================================================================
 #| Configuração dos formatos de entrada e saída de dados.
 formatos:
-  tipo_entrada: pastas
+  tipo_entrada: curriculum
   formato_saida: json
 
 #| =========================================================================
@@ -31,7 +31,7 @@ misc:
 pastas:
   predicao:
     #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
-    pasta: ./treino_simples/predict/ext_qwen1_5b_11_direto
+    pasta: ./treino_simples/predict/ext_qwen1_5b_11
   dataset:
     #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
     #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
@@ -58,6 +58,64 @@ pastas:
     skip_invalidos: false
 
 #| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
+  predicao:
+    #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
+    pasta: ./treino_simples/predict/ext_qwen1_5b_11
+  dataset:
+    #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
+    #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
+    pasta: ./saidas_fold11/ext_qwen235b_11
+    mascara: "*.txt"
+  entrada:
+    #pasta: ./saidas/acordaos_raw
+    #mascara: "*.txt"
+    dataframe: ./summa_data/pecas_exportadas_textos.parquet
+    dataframe_col: texto
+    dataframe_id: id_peca
+    prompt_template: './summa_data/prompt_summa_raw.txt'
+    tag_texto: '<<--TEXTO-->>'
+  validacao:
+    exigir_json_valido: true
+    skip_invalidos: false
+  divisao:
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_facil.csv
+      alias: "fácil"
+      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_medio.csv
+      alias: "médio"
+      tipo: "lora"
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_dificil.csv
+      alias: "difícil"
+      tipo: "lora"
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_unica.csv
+      alias: "completo"
+      tipo: "lora"
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
+
+#| =========================================================================
+#| DATASET (PARQUET)
+#| =========================================================================
+#| Configuração para carregamento de dados via arquivos parquet.
+dataset:
+  train_prompt_col: messages
+  eval_prompt_col: ''
+  train_file: ./saidas/ext_qwen235b_11_train.parquet
+  eval_file: ./saidas/ext_qwen235b_11_eval.parquet
+  test_file: ./saidas/ext_qwen235b_11_test.parquet
+
+#| =========================================================================
 #| MODELO
 #| =========================================================================
 #| Configurações do modelo base e diretório de saída.
@@ -67,9 +125,10 @@ modelo:
   #| [7B] Ex: Qwen/Qwen2.5-7B-Instruct (requer ~24GB VRAM em 4-bit)
   #base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #base_model_name: unsloth/Qwen2.5-1.5B-Instruct-unsloth-bnb-4bit
+  #base_model_name: Qwen/Qwen2.5-3B-Instruct
   base_model_name: Qwen/Qwen2.5-7B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-7B-Instruct(direto)
+  saida: ./treino_simples/Qwen2.5-7B-Instruct(MINI curriculum)
 
 #| =========================================================================
 #| TREINAMENTO
@@ -92,22 +151,23 @@ treinamento:
     batch_size: 2  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16-24).
-  #| [H100] Com batch_size=2 e 2 GPUs: grad_batch_size=8 → efetivo = 2*8*2 = 32.
-  grad_batch_size: 6
-  # Batch efetivo: 2 * 8 * 2 GPUs = 32
+  #| [H100] Com batch_size=1 e 2 GPUs: grad_batch_size=12 → efetivo = 1*12*2 = 24.
+  grad_batch_size: 8
+  # Batch efetivo: 1 * 3 * 2 GPUs = 6
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
   #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
   #| [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10.
-  num_train_epochs: 4
+  num_train_epochs: 1
   
   #| Contexto máximo para truncagem de dados. NÃO altera a arquitetura do modelo.
   #| O modelo usa seu max_position_embeddings nativo (Qwen2.5 = 32768, com
   #| rope_theta=1e6 suportando até 131072 tokens via RoPE estendido).
   #| Este valor controla apenas o max_length do SFTTrainer (truncagem/padding).
+  #| Em modo curriculum, cada etapa pode sobrepor este valor (ver curriculum.divisao).
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
   #| ⚠️ Com sequências longas, reduza batch_size para 1 e aumente grad_batch_size.
-  max_seq_length: 35840
+  max_seq_length: 4098
   
   #| Validação de tokens segura. Recomendado: true.
   #| Se `false` e o max_seq_length for > 0, o sistema confia na sua configuração
@@ -124,7 +184,7 @@ treinamento:
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
-  warmup_steps: 5
+  warmup_steps: 1
   
   #| Decaimento de peso (regularização). Padrão 0.01.
   weight_decay: 0.01

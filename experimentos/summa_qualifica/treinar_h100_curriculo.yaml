@@ -146,12 +146,14 @@ treinamento:
   #|    - batch=2, seq=35k → logits ≈ 43 GB (pode causar OOM)
   #|    - batch=1, seq=35k → logits ≈ 22 GB (seguro em H100 80GB)
   #| [H100] Com sequências longas: use 1. Com sequências curtas (<8k): pode usar 4-8.
-  batch_size: 1
+  batch_size:
+    efetivo: 16  # Batch efetivo (ajusta batch_size e grad_batch_size automaticamente)
+    batch_size: 2  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16-24).
   #| [H100] Com batch_size=1 e 2 GPUs: grad_batch_size=12 → efetivo = 1*12*2 = 24.
-  grad_batch_size: 12
-  # Batch efetivo: 1 * 12 * 2 GPUs = 24
+  grad_batch_size: 6
+  # Batch efetivo: 2 * 8 * 2 GPUs = 32
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
   #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
