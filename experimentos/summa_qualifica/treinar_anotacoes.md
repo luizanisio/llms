@@ -15,7 +15,10 @@ RTX3060
 
 H100 x 2
 - max_seq_length = 35840
-- batch_size = 8
+- batch_size = 1
+
+- Qwen 3B - 60Gb
+- Qwen 7B - 79Gb + 40Gb
 
   
   

@@ -68,9 +68,9 @@ modelo:
   #| [7B] Ex: Qwen/Qwen2.5-7B-Instruct (requer ~24GB VRAM em 4-bit)
   #base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #base_model_name: unsloth/Qwen2.5-1.5B-Instruct-unsloth-bnb-4bit
-  base_model_name: Qwen/Qwen2.5-3B-Instruct
+  base_model_name: Qwen/Qwen2.5-7B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-3B-Instruct_simples_direto
+  saida: ./treino_simples/Qwen2.5-7B-Instruct(direto)
 
 #| =========================================================================
 #| TREINAMENTO
