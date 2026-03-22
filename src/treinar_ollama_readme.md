@@ -10,15 +10,14 @@ converter para GGUF com llama.cpp, e importar no Ollama.
 Exporte em **16-bit** (recomendado para conversão GGUF):
 
 ```bash
-conda activate trans
-python treinar_unsloth.py config.yaml --merge --quant 16bit
+python treinar_unsloth.py treina_meu_modelo.yaml --merge --quant 16bit
 ```
 
 > **⚠️ Importante**: modelos exportados em 4-bit (BitsAndBytes) **não** são
 > compatíveis com `convert_hf_to_gguf.py`. Use sempre **16-bit** se pretende
 > converter para GGUF.
 
-A pasta de saída será criada ao lado do `config.yaml`, por exemplo:
+A pasta de saída será criada ao lado do `treina_meu_modelo.yaml`, por exemplo:
 ```
 experimentos/summa_qualifica/merged_google_gemma-3-4b-it_(16bit)/
 ├── config.json
