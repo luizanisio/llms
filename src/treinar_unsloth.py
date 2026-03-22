@@ -109,11 +109,11 @@ from copy import deepcopy
 from treinar_model_loader import ModelLoader, QuantizationConfig
 
 # Import da nova classe de configuração YAML e Gerador de Relatório
-from treinar_unsloth_util import YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPOS_BASEADOS_EM_PASTAS, calcular_rouge_l
+from treinar_unsloth_util import YamlTreinamento, calcular_rouge_l
 from treinar_unsloth_report import GeradorRelatorio
 from treinar_chat_templates import TreinarChatTemplate, get_data_collator_for_completion_only
 from util import UtilEnv, Util
-from util_print import print_cores
+from util_print import print_cores, exibir_menu_opcoes
 
 
 # ---------------------------------------------------------------------------
@@ -555,25 +555,9 @@ class LLMsTrainer:
         self.chat_handler = TreinarChatTemplate(self.tokenizer, self._yaml_config.modelo.base)
         self.tokenizer = self.chat_handler.tokenizer
         
-        # Carrega datasets baseado no tipo de entrada
-        if self._yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-            # Modo pastas/curriculum: carrega de arquivos pareados
-            self.train_ds = self._load_from_pastas(alvo="treino")
-            self.eval_ds = self._load_from_pastas(alvo="validacao")
-        else:
-            # Modo dataset: carrega de arquivos parquet
-            self.train_ds = self._load_split(
-                self._yaml_config.dataset.train_file, 
-                self._yaml_config.dataset.train_prompt_col, 
-                split="treino"
-            )
-            self.eval_ds = None
-            if self._yaml_config.dataset.eval_file:
-                self.eval_ds = self._load_split(
-                    self._yaml_config.dataset.eval_file,
-                    self._yaml_config.dataset.eval_prompt_col or self._yaml_config.dataset.train_prompt_col,
-                    split="validação",
-                )
+        # Carrega datasets a partir do curriculum (pastas/dataframes + divisão)
+        self.train_ds = self._load_from_pastas(alvo="treino")
+        self.eval_ds = self._load_from_pastas(alvo="validacao")
         
         # Exibe estatísticas pré-treinamento e armazena para relatório
         ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino")
@@ -749,22 +733,6 @@ class LLMsTrainer:
 
 
     # ------------------------- dados -------------------------------------
-    def _load_split(self, parquet_path: str, prompt_col: str, *, split: str) -> Dataset:
-        """Carrega dataset usando classe LLMsDataset para padronização."""
-        print(f"[2/6] Lendo {split} de {parquet_path}…")
-        
-        # cria instância da classe LLMsDataset com detecção automática do template
-        dataset_loader = LLMsDataset(
-            path=parquet_path,
-            prompt_col=prompt_col,
-            tokenizer=self.tokenizer,
-            max_seq_length=self._yaml_config.treinamento.max_seq_length
-        )
-        
-        # obtém dataset processado
-        print(f" - {split} carregado com {len(dataset_loader.dataset)} registros")
-        
-        return dataset_loader.dataset
 
     @classmethod
     def debug_info(cls, cfg_path: str, yaml_config=None):
@@ -792,8 +760,7 @@ class LLMsTrainer:
              "modelo": dataclasses.asdict(yaml_config.modelo),
              "treinamento": dataclasses.asdict(yaml_config.treinamento),
              "lora": dataclasses.asdict(yaml_config.lora),
-             "dataset": dataclasses.asdict(yaml_config.dataset) if yaml_config.dataset else None,
-             "formatos": dataclasses.asdict(yaml_config.formatos)
+             "curriculum": dataclasses.asdict(yaml_config.curriculum_config),
         }
         print(json.dumps(config_dict, indent=2, ensure_ascii=False, default=str))
 
@@ -848,69 +815,50 @@ class LLMsTrainer:
         else:
             print(f"  📄 Será usado modelo base sem LoRA")
         
-        # Modo pastas/curriculum: mostra arquivos pareados
-        if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-            print(f"\n📁 MODO PASTAS - ARQUIVOS PAREADOS:")
-            try:
-                pares = yaml_config.dataset_manager.parear_arquivos()
-                print(f"  - Total de pares: {len(pares)}")
-                if pares:
-                    print(f"  - Primeiros 3 pares:")
-                    for par in pares[:3]:
-                        print(f"    * {par.get('id', 'N/A')}")
-                
-                # Carrega divisão se existir
-                divisao = yaml_config.dataset_manager.carregar_ou_criar_divisao()
-                if not divisao.empty:
-                    contagem = divisao['alvo'].value_counts()
-                    total = len(divisao)
-                    print(f"\n  📊 Divisão de dados (total = {total}):")
-                    for alvo, qtd in contagem.items():
-                        print(f"    - {alvo}: {qtd}")
-                
-                # Testa carregamento de mensagens
-                print(f"\n  🔄 Carregando amostras de mensagens...")
-                
-                msgs_treino = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
-                print(f"    - Mensagens de treino: {len(msgs_treino)}")
-                yaml_config.dataset_manager.mostrar_exemplo("Amostra Treino", msgs_treino)
+        # Mostra arquivos pareados do curriculum
+        print(f"\n📁 CURRICULUM - ARQUIVOS PAREADOS:")
+        try:
+            pares = yaml_config.dataset_manager.parear_arquivos()
+            print(f"  - Total de pares: {len(pares)}")
+            if pares:
+                print(f"  - Primeiros 3 pares:")
+                for par in pares[:3]:
+                    print(f"    * {par.get('id', 'N/A')}")
+            
+            # Carrega divisão se existir
+            divisao = yaml_config.dataset_manager.carregar_ou_criar_divisao()
+            if not divisao.empty:
+                contagem = divisao['alvo'].value_counts()
+                total = len(divisao)
+                print(f"\n  📊 Divisão de dados (total = {total}):")
+                for alvo, qtd in contagem.items():
+                    print(f"    - {alvo}: {qtd}")
+            
+            # Testa carregamento de mensagens
+            print(f"\n  🔄 Carregando amostras de mensagens...")
+            
+            msgs_treino = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+            print(f"    - Mensagens de treino: {len(msgs_treino)}")
+            yaml_config.dataset_manager.mostrar_exemplo("Amostra Treino", msgs_treino)
 
-                # Mostra também teste e validação se existirem
-                if not yaml_config.dataset_manager.carregar_ou_criar_divisao().empty:
-                    msgs_teste = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="teste")
-                    if msgs_teste:
-                        print(f"    - Mensagens de teste: {len(msgs_teste)}")
-                        yaml_config.dataset_manager.mostrar_exemplo("Amostra Teste", msgs_teste)
-                    
-                    msgs_val = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="validacao")
+            # Mostra também teste e validação se existirem
+            if not yaml_config.dataset_manager.carregar_ou_criar_divisao().empty:
+                msgs_teste = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="teste")
+                if msgs_teste:
+                    print(f"    - Mensagens de teste: {len(msgs_teste)}")
+                    yaml_config.dataset_manager.mostrar_exemplo("Amostra Teste", msgs_teste)
+                
+                msgs_val = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="validacao")
 
-                    if msgs_val:
-                        print(f"    - Mensagens de validação: {len(msgs_val)}")
-                        yaml_config.dataset_manager.mostrar_exemplo("Amostra Validação", msgs_val)
-                    
+                if msgs_val:
+                    print(f"    - Mensagens de validação: {len(msgs_val)}")
+                    yaml_config.dataset_manager.mostrar_exemplo("Amostra Validação", msgs_val)
+                
 
-            except Exception as e:
-                print(f"  ❌ Erro ao processar pastas: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            # Modo dataset: carrega de arquivo
-            if yaml_config.dataset and yaml_config.dataset.train_file:
-                try:
-                    train_loader = LLMsDataset(
-                        path=yaml_config.dataset.train_file,
-                        prompt_col=yaml_config.dataset.train_prompt_col,
-                        tokenizer=tokenizer,
-                        max_seq_length=yaml_config.treinamento.max_seq_length
-                    )
-                    train_stats = train_loader.get_stats()
-                    print(f"\n📊 DATASET DE TREINO:")
-                    print(f"  - Registros: {train_stats['total_registros']}")
-                    print(f"  - Colunas: {train_stats['colunas']}")
-                    print(f"  - Formato: {train_stats['formato_arquivo']}")
-                    print(f"  - Caminho: {train_stats['caminho']}")
-                except Exception as e:
-                    print(f"\n❌ Erro ao carregar dataset de treino: {e}")
+        except Exception as e:
+            print(f"  ❌ Erro ao processar dados: {e}")
+            import traceback
+            traceback.print_exc()
         
         # informações de checkpoints
         print(f"\n💾 CHECKPOINT INFO:")
@@ -1312,7 +1260,7 @@ class LLMsTrainer:
 
         # Para etapas além da primeira, recarrega dados com o arquivo de divisão da etapa
         if step_index > 0 and etapa.arquivo:
-            self._yaml_config.pastas.divisao.arquivo = etapa.arquivo
+            self._yaml_config.curriculum_config.divisao.arquivo = etapa.arquivo
             # Limpa cache de divisão para forçar releitura
             self._yaml_config.dataset_manager._dados_divisao = None
 
@@ -1657,24 +1605,15 @@ class LLMsTrainer:
                 logger.info(f"{'-'*60}")
                 
                 # pega o registro original do dataset
-                if self._yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-                    # Modo pastas: recarrega mensagens em memória
-                    mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
-                    
-                    # Cria loader temporário com dados em memória
-                    dataset_loader = LLMsDataset(
-                        data=mensagens,
-                        tokenizer=self.tokenizer,
-                        max_seq_length=self._yaml_config.treinamento.max_seq_length
-                    )
-                else:
-                    # Modo dataset: recarrega do arquivo
-                    dataset_loader = LLMsDataset(
-                        path=self._yaml_config.dataset.train_file,
-                        prompt_col=self._yaml_config.dataset.train_prompt_col,
-                        tokenizer=self.tokenizer,
-                        max_seq_length=self._yaml_config.treinamento.max_seq_length
-                    )
+                # Carrega mensagens do curriculum
+                mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+                
+                # Cria loader temporário com dados em memória
+                dataset_loader = LLMsDataset(
+                    data=mensagens,
+                    tokenizer=self.tokenizer,
+                    max_seq_length=self._yaml_config.treinamento.max_seq_length
+                )
                 
                 sample_row = dataset_loader.dataset[i]
                 processador = lambda x: dataset_loader._process_single_message(x, max_length=self._yaml_config.treinamento.max_seq_length, inferencia=True)
@@ -2156,19 +2095,40 @@ class LLMsDataset:
 
 def _create_default_cfg(path: str) -> None:
     template = {
-        "formatos": {
-            "tipo_entrada": "dataset",
-            "formato_saida": "texto",
+        "curriculum": {
+            "predicao": {
+                "pasta": "../saidas/predicoes",
+            },
+            "saida": {
+                "pasta": "../saidas/gold",
+                "formato": "texto",
+            },
+            "entrada": {
+                "pasta": "../saidas/textos",
+                "prompt_template": "../prompts/template.txt",
+                "tag_texto": "<<TEXTO>>",
+            },
+            "divisao": [
+                {
+                    "arquivo": "../divisao.csv",
+                    "alias": "Principal",
+                    "tipo": "lora",
+                    "pace_epochs": 1,
+                    "proporcao": [
+                        {"treino": 0.70},
+                        {"validacao": 0.15},
+                        {"teste": 0.15}
+                    ]
+                }
+            ],
+            "validacao": {
+                "exigir_json_valido": True,
+                "exigir_ids_pareados": True,
+            },
         },
         "misc": {
             "log_level": "INFO",
-            "env_chave_criptografia": "",  # Nome da variável de ambiente com chave Fernet
-        },
-        "dataset": {
-            "train_file": "../dataset/data/dados_unificados_sm_treino.parquet",
-            "train_prompt_col": "messages",
-            "eval_file": "",
-            "eval_prompt_col": "",
+            "env_chave_criptografia": "",
         },
         "modelo": {
             "base_model_name": "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
@@ -2233,26 +2193,31 @@ def _modo_interativo_treinar(yaml_path: str):
     tem_modelo = _verificar_modelo_treinado(yaml_config)
     tem_checkpoints, qtd_checkpoints = _verificar_checkpoints_existem(yaml_config)
     
-    logger.info("\n📊 STATUS ATUAL:")
+    print_cores("\n📊 STATUS ATUAL:", color_auto=False)
     if tem_modelo:
-        logger.info(f"   ✅ Modelo LoRA treinado encontrado")
+        print_cores("   ✅ Modelo LoRA treinado encontrado", color_auto=False)
     else:
-        logger.info(f"   ❌ Nenhum modelo treinado encontrado")
+        print_cores("   ❌ Nenhum modelo treinado encontrado", color_auto=False)
     
     if tem_checkpoints:
-        logger.info(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)")
+        print_cores(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)", color_auto=False)
     else:
-        logger.info(f"   💾 Nenhum checkpoint encontrado")
+        print_cores("   💾 Nenhum checkpoint encontrado", color_auto=False)
     
     # Menu
-    logger.info("\n📋 AÇÕES DE TREINAMENTO:")
-    logger.info("   1. treinar       - Iniciar ou continuar treinamento")
-    logger.info("   2. reset+treinar - Limpar tudo e treinar do zero")
-    logger.info("   3. reset         - Limpar treinamento atual")
-    logger.info("   0. sair          - Cancelar e sair")
+    itens = [
+        ('1', 'treinar',        'Iniciar ou continuar treinamento'),
+        ('2', 'reset+treinar',  'Limpar tudo e treinar do zero'),
+        ('3', 'reset',          'Limpar treinamento atual'),
+        ('---',),
+        ('0', 'sair',           'Cancelar e sair'),
+    ]
     
     try:
-        escolha = input("\n❓ Digite o número ou nome da ação: ").strip().lower()
+        escolha = exibir_menu_opcoes(
+            titulo='<azul>📋 AÇÕES DE TREINAMENTO:</azul>',
+            itens=itens,
+        )
         
         mapa_acoes = {
             '1': 'treinar', 'treinar': 'treinar', 'train': 'treinar',

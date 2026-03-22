@@ -13,7 +13,7 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 | `treinar_unsloth.py` | Script de treinamento e CLI (`LLMsTrainer`, `--treinar`, `--reset`) |
 | `treinar_unsloth_avaliar.py` | Script de avaliação, inferência e exportação (`--info`, `--stats`, `--predict`, `--modelo`, `--merge`, `gerar_graficos_estatisticos`) |
 | `treinar_unsloth_actions.py` | Ações de treinamento (`executar_treinar`, `executar_reset`, `executar_injetar_dicas`) |
-| `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`, `ConfigMisc`, `ConfigGold`, `ConfigPredicao`) e helpers |
+| `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`, `ConfigCurriculum`, `ConfigSaida`, `ConfigEntrada`, `ConfigPredicao`) e helpers |
 | `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, divisão, validação, criptografia (`DatasetTreinamento`) |
 | `treinar_unsloth_pipeline.py` | Pipeline Universal: construção de etapas e `CurriculumTracker` (trava de conclusão) |
 | `treinar_unsloth_graficos.py` | Gráficos: loss, eficiência (tokens), hardware (memória), boxplots de tokens |
@@ -23,6 +23,7 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 | `treinar_unsloth_report.py` | Geração de relatórios em Markdown |
 | `treinar_chat_templates.py` | Chat templates automáticos por modelo e `train_on_responses_only` |
 | `treinar_unsloth_dicas.py` | Injeção de comentários de dicas no YAML (`--dicas`) |
+| `util_print.py` | Utilitários de impressão: cores ANSI, `print_cores`, `exibir_menu_opcoes` (menus padronizados) |
 | `treinar_unsloth.md` | Esta documentação |
 | `treinar_TODO_PLANEJAMENTO.md` | Planejamento e roadmap de desenvolvimento |
 
@@ -41,10 +42,10 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Modo de estatísticas de tokens com gráficos (`--stats`)
 - [x] Modo teste para validar predições (`--modelo N`) com opção `--base`
 - [x] Geração de predições em massa (`--predict`) com opção `--base`
-- [x] Suporte a datasets em formado de pastas (pares .txt), arquivos únicos (csv/parquet) e curriculum (múltiplas divisões)
-- [x] Divisão automática de datasets (treino, validação, teste) via YAML ou CSV
+- [x] Suporte a entrada/saída via pasta de arquivos (pares .txt) ou dataframe parquet, com criptografia granular por campo
+- [x] Divisão de datasets (treino, validação, teste) via CSV de divisão
 - [x] Chat template automático baseado no modelo
-- [x] Criptografia de dados sensíveis (Fernet)
+- [x] Criptografia granular de dados sensíveis (Fernet) — por campo: `entrada.texto_criptografado`, `entrada.prompt_criptografado`, `saida.texto_criptografado`
 - [x] Validação fail-fast da chave de criptografia (erro fatal se `misc.env_chave_criptografia` aponta para variável de ambiente inexistente)
 - [x] Validação automática de consistência de dados (IDs e arquivos pareados)
 - [x] Implementar exportação de modelo (GGUF, Merge)
@@ -52,8 +53,9 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Geração automática de gráficos estatísticos pós-treinamento (loss, tokens, hardware, relatório .md)
 - [x] Limpeza automática de gráficos anteriores ao iniciar novo treinamento (evita confusão com dados antigos)
 - [x] Trava de conclusão: impede reexecução de treino já finalizado (com liberação via YAML)
-- [x] Curriculum Learning: transições de etapas com legendas visuais nos gráficos
-- [x] Cálculo automático de `grad_batch_size` para manter batch efetivo constante independente do nº de GPUs (todos os formatos: pastas, dataset, curriculum)
+- [x] Curriculum Learning: treinamento multietapa com transições e legendas visuais nos gráficos
+- [x] Cálculo automático de `grad_batch_size` para manter batch efetivo constante independente do nº de GPUs
+- [x] Formato unificado: seção `curriculum` como único formato de configuração de dados (entrada/saída suportam pasta ou dataframe)
 
 ---
 
@@ -97,7 +99,7 @@ python treinar_unsloth_avaliar.py [CONFIG.yaml] [AÇÃO]
 | `--quant METODO` | Quantização para merge (`16bit`, `4bit`, `q4_k_m`, `q8_0`) |
 | `--log-level LEVEL` | Define nível de log (DEBUG, INFO, WARNING, ERROR) |
 
-> **Nota:** Ambos os scripts aceitam o YAML como argumento opcional. Se omitido, exibem menu interativo para seleção do arquivo YAML via `util_menu_opcoes.escolher_yaml()`.
+> **Nota:** Ambos os scripts aceitam o YAML como argumento opcional. Se omitido, exibem menu interativo para seleção do arquivo YAML via `util_menu_opcoes.escolher_yaml()`. Os menus de ação são renderizados pela função padronizada `exibir_menu_opcoes()` de `util_print.py`, que formata as opções como tabela visual alinhada com suporte a sub-itens, cores e seções.
 
 ### Exemplos de Uso
 
@@ -138,56 +140,85 @@ Gera respostas do modelo para os datasets configurados.
 
 ### Configuração YAML
 
-A configuração é centralizada em arquivo YAML. Principais seções:
+A configuração é centralizada em arquivo YAML. A seção `curriculum` é o formato único de configuração de dados.
 
-#### Pastas: Dataset e Predição
-O YAML separa claramente os dados de **entrada** (gold dataset para treino) dos de **saída** (predições geradas pelo modelo):
+#### Curriculum: Entrada, Saída e Predição
+O YAML organiza os dados em três seções dentro de `curriculum`:
+- **`saida`**: Gold standard (saídas esperadas). Suporta pasta de arquivos OU dataframe parquet. Obrigatório.
+- **`entrada`**: Textos de entrada. Suporta pasta de arquivos OU dataframe parquet.
+- **`predicao`**: Saída das predições do modelo. Criada automaticamente se não existir.
 
 ```yaml
-pastas:
-  dataset:
-    #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino (OBRIGATÓRIO)
-    #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
+curriculum:
+  saida:
+    #| Gold dataset: saídas esperadas usadas como alvo no treino (OBRIGATÓRIO)
+    #| Modo pasta: ID = nome do arquivo sem extensão
     pasta: ./saidas_fold11/ext_qwen235b_11
     mascara: "*.txt"
+    formato: json              # 'json' ou 'texto' (padrão: texto)
+    # OU modo dataframe:
+    # dataframe: ./saidas/gold.parquet
+    # dataframe_col: saida
+    # dataframe_id: id_peca
+    # texto_criptografado: false
   predicao:
     #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
     pasta: ./treino_simples/predict/ext_qwen1_5b_11
   entrada:
+    #| Modo dataframe (texto de entrada via parquet):
     dataframe: ./saidas/pecas_exportadas_textos.parquet
     dataframe_col: texto
     dataframe_id: id_peca
+    texto_criptografado: false   # Se true, descriptografa o texto
+    prompt_criptografado: false  # Se true, descriptografa o template
+    # OU modo pasta:
+    # pasta: ./saidas/textos
+    # mascara: "*.txt"
     prompt_template: './saidas/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
 ```
 
-- **`pastas.dataset`**: Gold standard (saídas esperadas). Obrigatório. Erro se a pasta não existir.
-- **`pastas.predicao`**: Saída das predições do modelo. Criada automaticamente se não existir.
-- **`pastas.entrada`**: Textos de entrada (via `dataframe` ou `pasta` de arquivos).
-
-#### Proporção e Divisão
-Define como os dados são divididos em subconjuntos para treinamento se não houver um arquivo CSV de divisão prévia.
-- **`validar_ids`**: Quando `true`, levanta um erro fatal caso existam arquivos nas pastas (pareados) que não estejam mapeados no arquivo CSV de divisão prévio. Quando `false`, processa normalmente e apenas emite um aviso sobre os arquivos ignorados – excelente para usar apenas uma amostra do conjunto total de arquivos em disco.
+#### Divisão e Pipeline
+A subchave `divisao` define as etapas do pipeline de treinamento. Uma única etapa = treinamento simples.
+- **`validar_ids`**: Quando `true`, levanta erro fatal se existem IDs nos arquivos que não estejam no CSV de divisão. Quando `false`, apenas emite aviso.
 
 ```yaml
-pastas:
+curriculum:
   divisao:
-    arquivo: "caminho/para/divisao.csv" # Opcional: Caminho para fixar/ler a divisão. Se não existir, será criado.
-    proporcao: # Lista com a proporção de divisão de cada conjunto (deve somar 1.0)
-      - treino: 0.7
-      - validacao: 0.1
-      - teste: 0.2
-    seed: 42 # Opcional: Semente aleatória (Padrão: 42)
-    validar_ids: true # Opcional: Verifica a integridade dos IDs (Padrão: true)
+    # Etapa única (treinamento simples):
+    - arquivo: "caminho/para/divisao.csv"
+      alias: "Principal"
+      tipo: "lora"
+      pace_epochs: 3
+      proporcao:
+        - treino: 0.7
+        - validacao: 0.1
+        - teste: 0.2
+      seed: 42
+      validar_ids: true
+    # Ou múltiplas etapas (Curriculum Learning):
+    # - arquivo: ./divisao_facil.csv
+    #   alias: "fácil"
+    #   pace_epochs: 1
+    # - arquivo: ./divisao_medio.csv
+    #   alias: "médio"
+    #   pace_epochs: 2
 ```
 
 #### Criptografia de Dados (`misc.env_chave_criptografia`)
-Quando os dados de entrada (dataframe parquet) estão criptografados com Fernet, configure o nome da variável de ambiente que contém a chave:
+Quando os dados de entrada ou saída estão criptografados com Fernet, configure o nome da variável de ambiente que contém a chave e ative os flags nos campos correspondentes:
 ```yaml
 misc:
   env_chave_criptografia: CHAVE_CRIPT  # Nome da variável de ambiente
+
+curriculum:
+  entrada:
+    texto_criptografado: true   # Descriptografa texto de entrada
+    prompt_criptografado: false  # Descriptografa template de prompt
+  saida:
+    texto_criptografado: true   # Descriptografa saídas esperadas
 ```
-**Validação fail-fast:** Se esta configuração existir no YAML, o sistema verifica imediatamente (no carregamento da configuração) se a variável de ambiente está definida e não está vazia. Caso contrário, levanta `EnvironmentError` com mensagem orientando a correção, impedindo que o treinamento prossiga com texto criptografado (ilegível).
+**Validação fail-fast:** Se qualquer flag `*_criptografado` estiver ativo, o sistema verifica imediatamente se a variável de ambiente (`misc.env_chave_criptografia`) está definida e não está vazia. Caso contrário, levanta `EnvironmentError` impedindo que o treinamento prossiga com texto criptografado.
 
 #### Train on Responses Only
 Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário. (sugerido no unsloth)
@@ -197,26 +228,21 @@ treinamento:
 ```
 
 #### Curriculum Learning
-O modo `curriculum` tem sua própria seção no YAML com a mesma estrutura que `pastas` (predicao, dataset, entrada, validacao). A subchave `divisao` contém a lista de etapas do pipeline, cada uma com seu próprio arquivo CSV de divisão e parâmetros de treino.
+A seção `curriculum` é o formato único de configuração de dados. Um treinamento de etapa única é configurado como curriculum com uma divisão. A subchave `divisao` contém a lista de etapas do pipeline, cada uma com seu próprio arquivo CSV de divisão e parâmetros de treino.
 ```yaml
-formatos:
-  tipo_entrada: curriculum
-
 curriculum:
   predicao:
     pasta: ./predict/output
-  dataset:
+  saida:
     pasta: ./saidas/gold
     mascara: "*.txt"
+    formato: json
   entrada:
     dataframe: ./dados/textos.parquet
     dataframe_col: texto
     dataframe_id: id_peca
   validacao:
     exigir_json_valido: true
-  batch_size:
-    efetivo: 16   # Batch efetivo desejado (ajusta grad_batch_size automaticamente)
-    batch_size: 2  # Batch por GPU (fixo, determinado empiricamente para evitar OOM)
   divisao:
     - arquivo: ./divisao_facil.csv
       alias: "fácil"
@@ -231,10 +257,7 @@ curriculum:
 ##### Batch Size Automático (`treinamento.batch_size`)
 Quando `treinamento.batch_size` é configurado como dicionário com `efetivo` e `batch_size`, o sistema calcula `grad_batch_size` automaticamente para atingir o batch efetivo desejado, independente do número de GPUs. O `batch_size` por GPU é fixo (determinado empiricamente para evitar OOM).
 
-Esta funcionalidade é suportada em **todos os formatos** (pastas, dataset, curriculum).
-
 ```yaml
-# Qualquer formato (pastas, dataset, curriculum)
 treinamento:
   batch_size:
     efetivo: 16  # Batch efetivo (ajusta grad_batch_size automaticamente)
@@ -307,10 +330,10 @@ O módulo `treinar_unsloth_historico.py` organiza informações estruturadas na 
 Para evitar o retrabalho indevido ou degradação de um modelo que já teve sucesso, o sistema inclui um **rastreador integrado de status**.
 
 - **Continuação Automática ("Resume")**: Sempre que um script de treinamento é reexecutado na mesma pasta, o sistema localiza automaticamente o último `checkpoint` e retoma de onde parou.
-- **Trava de Segurança (Early Exit)**: Se o treinamento for reaberto em uma pasta cuja última etapa do Curriculum (ou o total predefinido em um Treino Simples) já foi encerrada, o sistema detecta que o **objetivo final foi atingido** e impede seu avanço com uma mensagem informacional de *Concluído*.
+- **Trava de Segurança (Early Exit)**: Se o treinamento for reaberto em uma pasta cuja última etapa do Curriculum já foi encerrada, o sistema detecta que o **objetivo final foi atingido** e impede seu avanço com uma mensagem informacional de *Concluído*.
 - **Como estender um modelo retido pela "Trava"**:
-   - Para modelos em **Curriculum** que já finalizaram, basta ir no `.yaml` e adicionar uma nova etapa para que a trava reconheça o novo requisito e seja liberada.
-   - Para um **Treino Simples**, ao apenas ir no `.yaml` e **aumentar o número de épocas finais (`epochs`)**, o sistema identificará que o alvo cresceu em relação ao que constava no `curriculum_state.json` do checkpoint retido, destravando a execução automaticamente e treinando a diferença de steps.
+   - Para adicionar mais etapas, basta ir no `.yaml` e adicionar uma nova etapa na lista `curriculum.divisao` para que a trava reconheça o novo requisito e seja liberada.
+   - Para treinar mais épocas, ao **aumentar o número de épocas** (`pace_epochs` na etapa ou `epochs` global), o sistema identificará que o alvo cresceu em relação ao que constava no `curriculum_state.json`, destravando automaticamente.
    - ⚠️ *Dica: passar o argumento `--reset` reinicia do Zero ABSOLUTO (apaga logs, histórico e os checkpoints LoRA gerados). Utilize o reset apenas se desejar remover todo o treinamento realizado e começar o treinamento novamente a partir do modelo base.*
 
 ---
@@ -324,19 +347,20 @@ Para evitar o retrabalho indevido ou degradação de um modelo que já teve suce
 4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
 5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
 6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com toda a lógica de avaliação, inferência e exportação. CLI de treino simplificado.
-7.  **Separação `dataset` / `predicao` no YAML**: Nova seção `pastas.dataset` para o gold dataset (entrada obrigatória). `pastas.predicao` agora é apenas pasta de saída das predições (criada automaticamente se não existir).
+7.  **Separação `saida` / `predicao` no YAML**: `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório). `ConfigPredicao` é pasta de saída das predições (criada automaticamente se não existir).
 8.  **Menu Interativo YAML**: Ambos os scripts usam `util_menu_opcoes.escolher_yaml()` quando YAML é omitido, com menus de ação específicos para cada script.
 9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
 10. **Geração Automática de Gráficos Pós-Treinamento**: Função `gerar_graficos_estatisticos()` extraída e reutilizada por `--stats` e `executar_treinar()`. Gera loss, tokens, hardware e relatório .md automaticamente ao final do treino.
 11. **Limpeza de Artefatos Antigos**: `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores ao iniciar novo treinamento, evitando confusão com dados de treinos passados.
-12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`, suportada em todos os formatos (pastas, dataset, curriculum). O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
+12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
+13. **Simplificação do YAML — Curriculum como Formato Único**: Removidos os modos `pastas` e `dataset` (`formatos.tipo_entrada`). Seção `curriculum` é o único formato de configuração de dados. Entrada e saída suportam pasta de arquivos OU dataframe parquet. Criptografia granular por campo. Classes removidas: `ConfigFormatos`, `ConfigGold`, `ConfigPastas`, `ConfigDataset`. Classes adicionadas: `ConfigSaida`, `ConfigCurriculum`.
 
-### Próximo Passo de Desenvolvimento
-> pace de treinamento (Curriculum Learning) e simplificação do código
+### Histórico de Desenvolvimento
+> Curriculum Learning, simplificação do código e unificação de formatos
 
-**Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace).
+**Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace), com formato de configuração unificado.
 
-Para garantir uma implementação segura e testável, o desenvolvimento será dividido nas seguintes etapas incrementais, permitindo validação e testes intermediários a cada avanço.
+O desenvolvimento foi dividido nas seguintes etapas incrementais:
 
 #### Passo 1: Separação de Preocupações e Melhoria do CLI ✅ CONCLUÍDO
 **Objetivo:** Desacoplar a inferência do motor de treinamento para blindar e otimizar o código base do Treinador, centralizando o treinamento para focar *apenas Treinar e dar Merge*, e melhorar a experiência CLI.
@@ -345,74 +369,65 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 1. ✅ **Extração da Avaliação/Inferência:** Funções `executar_info`, `executar_stats`, `executar_predict`, `executar_merge`, `executar_modelo` movidas para `treinar_unsloth_avaliar.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
 2. ✅ **Novo Script Independente:** `treinar_unsloth_avaliar.py` criado (~830 linhas) com CLI próprio, modo interativo e funções completas de avaliação.
 3. ✅ **Menu Interativo (CLI):** Ambos os scripts usam `util_menu_opcoes.escolher_yaml(chave_obrigatoria='modelo')`. Argumento `config` é `nargs='?'` (opcional). Menu de ações específico: treino (treinar, reset+treinar, reset) e avaliação (info, stats, predict, modelo, merge).
-4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigGold` para `pastas.dataset` (gold standard, obrigatório, validação de existência). `ConfigPredicao` agora é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `pastas.dataset` como fonte do gold.
+4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório, validação de existência). `ConfigPredicao` é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `curriculum.saida` como fonte do gold.
 * **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.
 
 #### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum) ✅ CONCLUÍDO
 **Objetivo:** Unificar a base de código do sistema atual antes de construir o Curriculum Learning multicamadas, assim o processo opera o mesmo sistema de logs (como se fosse de "apenas uma etapa").
 
-1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
-2. **Log de Rastreiamento Unificado e Resumo:** Implementar que todo salvamento utilize métricas gravadas no esquema universal (`curriculum_state.json` constando `{"current_step": 0, "status": "running"}` e `curriculum_metrics.jsonl`), abandonando outros tipos de lógicas divergentes.
-4. **Mixando Modelos (LoRA vs Full):**
+1. **Pipeline Universal:** A seção `curriculum` é o formato único. Um treinamento simples (etapa única) é representado como curriculum com uma divisão. Toda parte de tracking funciona em cima desta lista universal.
+2. **Log de Rastreamento Unificado e Resumo:** Todo salvamento utiliza métricas gravadas no esquema universal (`curriculum_state.json` e `curriculum_metrics.jsonl`).
+3. **Mixando Modelos (LoRA vs Full):**
     * *Transição `[LoRA -> Full]`*: Mesclar base + lora via instanciador e usar o Merge como "o novo `FastLanguageModel` pleno" da segunda fase.
     * *Transição `[Full -> LoRA]`*: A requantização p/ nbits deve ser estritamente reacendida e embutida na modelagem ` FastLanguageModel.get_peft_model()` que sucede a transição.
-3. **[Pendente] Simplificação do `max_seq_length` e Remoção do Cache:** A lógica atual de cálculo automático (e _dados_automaticos.json) provou ser uma complicação desnecessária e será removida e substituída por um comportamento estrito (ver Passo 3).
+4. ✅ **Simplificação do `max_seq_length` e Remoção do Cache:** Cálculo automático (e _dados_automaticos.json) removidos. Substituídos por comportamento estrito (ver Passo 3).
 * **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) exigindo que o código passe perfeitamente sem as checagens e cálculos automáticos de contexto e não trave por arquivos de cache.
 
 #### Passo 3: Motor Multietapas do Curriculum Learning
 **Objetivo:** Adicionar interpretador do YAML para Curriculum, transições e regras de `LoRA` \leftrightarrow `Full`.
 
-1. ✅ **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo:
+1. ✅ **Estrutura YAML (Curriculum Unificado):** A seção `curriculum` é o único formato de configuração de dados:
 ```yaml
-formatos:
-  tipo_entrada: curriculum # Opções: dataset, pastas, curriculum
-
-pastas:
-  # Compartilhado entre todas as etapas do curriculum
+curriculum:
   predicao:
     pasta: ./predict/output
-  dataset:
-    pasta: ./saidas/gold
+  saida:
+    pasta: ./saidas/gold       # OU dataframe: ./saidas/gold.parquet
     mascara: "*.txt"
+    formato: json
+    texto_criptografado: false
   entrada:
-    dataframe: ./dados/textos.parquet
+    dataframe: ./dados/textos.parquet  # OU pasta: ./dados/textos
     dataframe_col: texto
     dataframe_id: id_peca
     prompt_template: './dados/prompt.txt'
     tag_texto: '<<--TEXTO-->>'
-  divisao:
-    validar_ids: false
-    proporcao:
-      - treino: 0.70
-      - validacao: 0.10
-      - teste: 0.20
-    seed: 42
+    texto_criptografado: false
+    prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    skip_invalidos: false
-
-# Cada etapa = uma divisão do dataset com parâmetros de treino
-curriculum:
-  - arquivo: "./saidas/divisao_facil.csv"
-    alias: "fácil"
-    tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
-    pace_epochs: 1     # (Padrão) Transita após 1 época.
-    max_seq_length: 512 # [Opcional] Pode sobrepor config geral.
-    learning_rate: 0.0003 # [Opcional] Força LR independente para esta etapa
-  - arquivo: "./saidas/divisao_medio.csv"
-    alias: "médio"
-    tipo: "lora"
-    pace_loss: 0.015   # Transita se eval_loss <= 0.015
-    pace_epochs: 2     # Limite de segurança. Padrão ao omitir = 1.
+    exigir_ids_pareados: true
+  divisao:
+    - arquivo: "./saidas/divisao_facil.csv"
+      alias: "fácil"
+      tipo: "full"
+      pace_epochs: 1
+      max_seq_length: 512
+      learning_rate: 0.0003
+    - arquivo: "./saidas/divisao_medio.csv"
+      alias: "médio"
+      tipo: "lora"
+      pace_loss: 0.015
+      pace_epochs: 2
 ```
-2. ✅ **Divisão Dinâmica ("Fail Fast"):** Evitar a autogeração baseada em divisões randômicas complexas ao usar curriculum. O sistema deve abortar prevenindo bugs se os subarquivos parametrizados (ex. `{arquivo}_facil.csv`) ikke existirem perfeitamente.
+2. ✅ **Divisão Dinâmica ("Fail Fast"):** O sistema aborta com erro fatal se os arquivos CSV de divisão parametrizados não existirem.
 3. ✅ **Roteamento e Sobrevivência de Passos:**
-    * Encapsular salvamentos no format de roteamento (ex: `{modelo.saida}/curriculum/01_facil`). Onde um retoma o modelo do passado.
-    * No caso de Resume (`--treinar` de checkpoint quebrado), utilizar do state vivo (`curriculum_state.json`) extraído no passo 2 para instanciar subpastas `checkpoint-N` precisas resgatando o ponto cego daquela etapa exata.
-5. **Gestão do `max_seq_length` por Estágio (Simplificado):**
-    * **Remoção do Cache Complexo**: O cálculo automático e cache (`_dados_automaticos.json`) serão inteiramente removidos para descomplicar a base de código.
-    * **Parâmetro Global Obrigatório**: O `max_seq_length` será um parâmetro obrigatório global. O sistema abortará com erro fatal nas validações se estiver zerado ou ausente.
-    * **Recarga Dinâmica**: O valor pode ser sobreposto em cada etapa do `curriculum`. Caso haja variação do `max_seq_length` durante a transição de um estágio para o outro, o pipeline se encarregará de recarregar a modelagem/tokenizer com a nova configuração, permitindo dar sequência com a nova limitação estritamente alocada.
+    * Encapsular salvamentos no formato de roteamento (ex: `{modelo.saida}/curriculum/01_facil`). Onde um retoma o modelo do passado.
+    * No caso de Resume (`--treinar` de checkpoint quebrado), utilizar do state vivo (`curriculum_state.json`) para instanciar subpastas `checkpoint-N` precisas resgatando o ponto exato.
+4. ✅ **Gestão do `max_seq_length` por Estágio (Simplificado):**
+    * **Remoção do Cache Complexo**: Cálculo automático e cache (`_dados_automaticos.json`) removidos.
+    * **Parâmetro Global Obrigatório**: `max_seq_length` é obrigatório (> 0). Erro fatal se zerado ou ausente.
+    * **Recarga Dinâmica**: Se `max_seq_length` muda entre etapas, o modelo e tokenizer são recarregados automaticamente.
 
 #### Passo 4: Pace Dinâmico e Ajustes Visuais de Controle
 **Objetivo:** Interpolação analítica final garantindo eficiência via parada prematura baseada no desempenho e legibilidade de análise das métricas via Gráficos evolutivos de múltiplas fases.

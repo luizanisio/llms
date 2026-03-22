@@ -204,7 +204,7 @@ class HistoricoTreinamento:
         linhas.append("## Origem")
         linhas.append(f"- **Modelo Base:** `{yaml_config.modelo.base}`")
         linhas.append(f"- **Diretório de Saída:** `{yaml_config.modelo.saida}`")
-        linhas.append(f"- **Tipo de Entrada:** {yaml_config.tipo_entrada}")
+        linhas.append(f"- **Modo:** curriculum")
         linhas.append("")
 
         # Tipo e arquitetura

@@ -9,19 +9,21 @@
 4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
 5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
 6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com toda a lógica de avaliação, inferência e exportação. CLI de treino simplificado.
-7.  **Separação `dataset` / `predicao` no YAML**: Nova seção `pastas.dataset` para o gold dataset (entrada obrigatória). `pastas.predicao` agora é apenas pasta de saída das predições (criada automaticamente se não existir).
+7.  **Separação `saida` / `predicao` no YAML**: `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório). `ConfigPredicao` é pasta de saída das predições (criada automaticamente se não existir).
 8.  **Menu Interativo YAML**: Ambos os scripts usam `util_menu_opcoes.escolher_yaml()` quando YAML é omitido, com menus de ação específicos para cada script.
 9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
 10. **Geração Automática de Gráficos Pós-Treinamento**: Função `gerar_graficos_estatisticos()` extraída e reutilizada por `--stats` e `executar_treinar()`. Gera loss, tokens, hardware e relatório .md automaticamente ao final do treino.
 11. **Limpeza de Artefatos Antigos**: `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores ao iniciar novo treinamento, evitando confusão com dados de treinos passados.
-12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`, suportada em todos os formatos (pastas, dataset, curriculum). O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
+12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
+13. **Simplificação do YAML — Curriculum como Formato Único**: Removidos os modos `pastas` e `dataset` (`formatos.tipo_entrada`). Agora o YAML possui apenas a seção `curriculum` com subcampos `entrada`, `saida`, `predicao`, `divisao` e `validacao`. Tanto `entrada` quanto `saida` suportam pasta de arquivos OU dataframe parquet. Criptografia por campo (`entrada.texto_criptografado`, `entrada.prompt_criptografado`, `saida.texto_criptografado`). Classes removidas: `ConfigFormatos`, `ConfigGold`, `ConfigPastas`, `ConfigDataset`. Classes adicionadas: `ConfigSaida`, `ConfigCurriculum`. CLI simplificado: `--criar-exemplo` substitui `--criar-exemplo-pastas`/`--criar-exemplo-dataset`.
+14. **Menus Padronizados com `exibir_menu_opcoes`**: Função reutilizável em `util_print.py` que renderiza menus como tabela visual alinhada (colunas de tecla, nome e descrição). Suporta sub-itens indentados (nível 1), cores por item, cabeçalhos de seção e notas. Menus de treinamento (`treinar_unsloth.py`) e avaliação (`treinar_unsloth_avaliar.py`) unificados usando esta função, eliminando formatação manual com `logger.info()`.
 
-### Próximo Passo de Desenvolvimento
-> pace de treinamento (Curriculum Learning) e simplificação do código
+### Histórico de Desenvolvimento
+> Curriculum Learning, simplificação do código e unificação de formatos
 
-**Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace).
+**Objetivo:** Permitir um fluxo de treinamento em múltiplos estágios (Curriculum Learning) alternando dados, estratégias (LoRA vs Full Fine-Tuning) e critérios de parada dinâmicos (Pace), com formato de configuração unificado.
 
-Para garantir uma implementação segura e testável, o desenvolvimento será dividido nas seguintes etapas incrementais, permitindo validação e testes intermediários a cada avanço.
+O desenvolvimento foi dividido nas seguintes etapas incrementais:
 
 #### Passo 1: Separação de Preocupações e Melhoria do CLI ✅ CONCLUÍDO
 **Objetivo:** Desacoplar a inferência do motor de treinamento para blindar e otimizar o código base do Treinador, centralizando o treinamento para focar *apenas Treinar e dar Merge*, e melhorar a experiência CLI.
@@ -30,13 +32,13 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 1. ✅ **Extração da Avaliação/Inferência:** Funções `executar_info`, `executar_stats`, `executar_predict`, `executar_merge`, `executar_modelo` movidas para `treinar_unsloth_avaliar.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
 2. ✅ **Novo Script Independente:** `treinar_unsloth_avaliar.py` criado (~830 linhas) com CLI próprio, modo interativo e funções completas de avaliação.
 3. ✅ **Menu Interativo (CLI):** Ambos os scripts usam `util_menu_opcoes.escolher_yaml(chave_obrigatoria='modelo')`. Argumento `config` é `nargs='?'` (opcional). Menu de ações específico: treino (treinar, reset+treinar, reset) e avaliação (info, stats, predict, modelo, merge).
-4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigGold` para `pastas.dataset` (gold standard, obrigatório, validação de existência). `ConfigPredicao` agora é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `pastas.dataset` como fonte do gold.
+4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório, validação de existência). `ConfigPredicao` é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `curriculum.saida` como fonte do gold.
 * **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.
 
 #### Passo 2: O "Pipeline Universal" e Ajustes Finos (Pré Curriculum) ✅ CONCLUÍDO
 **Objetivo:** Unificar a base de código do sistema atual antes de construir o Curriculum Learning multicamadas, assim o processo opera o mesmo sistema de logs (como se fosse de "apenas uma etapa").
 
-1. **Pipeline Universal:** Remover as lógicas apartadas. Se o YAML acionar apenas 1 dataset ou pastas (`tipo_entrada: dataset` ou `pastas`), o inicializador do sistema encapsulará isso convertendo automaticamente em uma lista `curriculum` de tamanho 1, definindo `alias` padrão como "Principal". Toda parte de tracking funcionará agora em cima desta lista universal.
+1. **Pipeline Universal:** A seção `curriculum` é o formato único. Um treinamento simples (etapa única) é representado como curriculum com uma divisão. Toda parte de tracking funciona em cima desta lista universal.
 2. **Log de Rastreiamento Unificado e Resumo:** Implementar que todo salvamento utilize métricas gravadas no esquema universal (`curriculum_state.json` constando `{"current_step": 0, "status": "running"}` e `curriculum_metrics.jsonl`), abandonando outros tipos de lógicas divergentes.
 3. ✅ **Simplificação do `max_seq_length` e Remoção do Cache:** A lógica de cálculo automático (e _dados_automaticos.json) provou ser uma complicação desnecessária e foi removida e substituída por um comportamento estrito (ver Passo 3).
 * **⏱️ Teste Intermediário:** Rodar um treinamento normal de teste (`pastas`) exigindo que o código passe perfeitamente sem as checagens e cálculos automáticos de contexto e não trave por arquivos de cache.
@@ -44,26 +46,27 @@ Para garantir uma implementação segura e testável, o desenvolvimento será di
 #### Passo 3: Motor Multietapas do Curriculum Learning
 **Objetivo:** Adicionar interpretador do YAML para Curriculum, transições e regras de `LoRA` \leftrightarrow `Full`.
 
-1. ✅ **Estrutura YAML:** Integrar suporte a configuração `curriculum` no arquivo. A seção `curriculum` segue a mesma estrutura que `pastas` (predicao, dataset, entrada, validacao), mas a subchave `divisao` é uma lista de etapas do pipeline:
+1. ✅ **Estrutura YAML (Curriculum Unificado):** A seção `curriculum` é o único formato de configuração de dados. Entrada e saída suportam pasta OU dataframe. Criptografia granular por campo:
 ```yaml
-formatos:
-  tipo_entrada: curriculum # Opções: dataset, pastas, curriculum
-
 curriculum:
   predicao:
     pasta: ./predict/output
-  dataset:
-    pasta: ./saidas/gold
+  saida:
+    pasta: ./saidas/gold       # OU dataframe: ./saidas/gold.parquet
     mascara: "*.txt"
+    formato: json              # 'json' ou 'texto'
+    texto_criptografado: false
   entrada:
-    dataframe: ./dados/textos.parquet
+    dataframe: ./dados/textos.parquet  # OU pasta: ./dados/textos
     dataframe_col: texto
     dataframe_id: id_peca
     prompt_template: './dados/prompt.txt'
     tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    skip_invalidos: false
+    exigir_ids_pareados: true
   divisao:
     - arquivo: "./saidas/divisao_facil.csv"
       alias: "fácil"
@@ -102,7 +105,7 @@ curriculum:
 5. ✅ **Geração Automática de Gráficos Pós-Treinamento:** Função `gerar_graficos_estatisticos()` extraída em `treinar_unsloth_avaliar.py` e chamada automaticamente ao final de `executar_treinar()` em `treinar_unsloth_actions.py`. Gera loss, tokens, hardware e relatório .md sem necessidade de rodar `--stats` manualmente.
 6. ✅ **Limpeza de Artefatos Antigos:** Ao iniciar novo treinamento (`etapa_index == 0`), o `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores junto com a truncagem do `training_metrics.jsonl`.
 7. ✅ **Validação Fail-Fast de Criptografia:** `ConfigMisc.__post_init__` verifica se a variável de ambiente de criptografia existe quando configurada no YAML (`misc.env_chave_criptografia`). `_carregar_dataframe_entrada` em `treinar_unsloth_dataset.py` levanta `EnvironmentError` em vez de silenciosamente continuar com dados criptografados.
-8. ✅ **Batch Size Automático:** Nova `ConfigBatchSize` em `treinar_unsloth_util.py`. Seção `treinamento.batch_size` (dict) com `efetivo` (batch desejado) e `batch_size` (por GPU), suportada em todos os formatos (pastas, dataset, curriculum). `_aplicar_batch_size_auto()` calcula `grad_batch_size` com base no nº de GPUs detectado via `torch.cuda.device_count()`, sobrescrevendo `treinamento.batch_size` e `treinamento.grad_batch_size` de forma transparente.
+8. ✅ **Batch Size Automático:** Nova `ConfigBatchSize` em `treinar_unsloth_util.py`. Seção `treinamento.batch_size` (dict) com `efetivo` (batch desejado) e `batch_size` (por GPU). `_aplicar_batch_size_auto()` calcula `grad_batch_size` com base no nº de GPUs detectado via `torch.cuda.device_count()`, sobrescrevendo `treinamento.batch_size` e `treinamento.grad_batch_size` de forma transparente.
 * **⏱️ Teste Intermediário Final:** Processar múltiplos estágios usando Curriculum completo. Embutir propositalmente uma meta `pace_loss = 1.5` de fácil alcance numa das passagens e testar os limites do Early-Stopping e o respectivo avanço para a etapa 2. Constatar a divisão formatada do gráfico unificado renderizado em `.png` ao encerramento pleno.
 
 #### Backlog Múltiplas GPUs

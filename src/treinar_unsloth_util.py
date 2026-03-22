@@ -46,16 +46,8 @@ from util import UtilTextos as Util  # UtilTextos tem mensagem_to_json
 # Constantes
 # ---------------------------------------------------------------------------
 
-TIPO_ENTRADA_PASTAS = "pastas"
-TIPO_ENTRADA_DATASET = "dataset"
-TIPO_ENTRADA_CURRICULUM = "curriculum"
-TIPOS_ENTRADA_VALIDOS = {TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPO_ENTRADA_CURRICULUM}
-# Tipos que usam infraestrutura de pastas (entrada, dataset, predicao, validacao)
-TIPOS_BASEADOS_EM_PASTAS = {TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_CURRICULUM}
-
 FORMATO_SAIDA_JSON = "json"
 FORMATO_SAIDA_TEXTO = "texto"
-FORMATOS_SAIDA_VALIDOS = {FORMATO_SAIDA_JSON, FORMATO_SAIDA_TEXTO}
 
 # Valores válidos para coluna "alvo" no CSV de divisão
 VALORES_TREINO = {"treino", "train"}
@@ -195,17 +187,9 @@ class ConfigBatchSize:
             raise ValueError(f"batch_size.batch_size deve ser > 0 quando efetivo > 0, recebido: {self.batch_size}")
 
 
-@dataclass
-class ConfigFormatos:
-    """Configuração de formatos de entrada/saída."""
-    tipo_entrada: str = TIPO_ENTRADA_DATASET
-    formato_saida: str = FORMATO_SAIDA_TEXTO
-    
-    def __post_init__(self):
-        if self.tipo_entrada not in TIPOS_ENTRADA_VALIDOS:
-            raise ValueError(f"tipo_entrada deve ser um de {TIPOS_ENTRADA_VALIDOS}, recebido: '{self.tipo_entrada}'")
-        if self.formato_saida not in FORMATOS_SAIDA_VALIDOS:
-            raise ValueError(f"formato_saida deve ser um de {FORMATOS_SAIDA_VALIDOS}, recebido: '{self.formato_saida}'")
+
+
+
 
 
 @dataclass
@@ -219,25 +203,6 @@ class ConfigMisc:
         if self.log_level.upper() not in niveis_validos:
             raise ValueError(f"log_level deve ser um de {niveis_validos}, recebido: '{self.log_level}'")
         self.log_level = self.log_level.upper()  # Normaliza para maiúsculas
-        
-        # Valida que a variável de ambiente de criptografia existe quando configurada.
-        # Sem ela, o treinamento usaria o texto criptografado (lixo) como entrada.
-        if self.env_chave_criptografia:
-            import os as _os
-            valor = _os.getenv(self.env_chave_criptografia)
-            if not valor or not valor.strip():
-                raise EnvironmentError(
-                    f"\n{'='*70}\n"
-                    f"❌ ERRO CRÍTICO: Variável de ambiente '{self.env_chave_criptografia}' "
-                    f"não está definida ou está vazia.\n\n"
-                    f"O YAML configurou 'misc.env_chave_criptografia: {self.env_chave_criptografia}',\n"
-                    f"mas essa variável não foi encontrada no ambiente atual.\n\n"
-                    f"Sem a chave de criptografia, o treinamento será feito com o texto\n"
-                    f"criptografado (ilegível), gerando um modelo inutilizável.\n\n"
-                    f"Para corrigir, defina a variável antes de executar:\n"
-                    f"  export {self.env_chave_criptografia}=\"sua_chave_fernet_aqui\"\n"
-                    f"{'='*70}"
-                )
 
 
 @dataclass
@@ -254,31 +219,64 @@ class ConfigPredicao:
 
 
 @dataclass
-class ConfigGold:
-    """Configuração da pasta com o gold dataset (saídas esperadas para treino)."""
+class ConfigSaida:
+    """Configuração da fonte de saídas esperadas (gold dataset para treino).
+    
+    Suporta dois modos:
+    - Pasta de arquivos: pasta + mascara (ID = nome sem extensão)
+    - Dataframe: dataframe + dataframe_col + dataframe_id
+    
+    formato: 'json' ou 'texto' (qualquer valor != 'json' assume texto)
+    texto_criptografado: Se True, saídas serão descriptografadas
+    """
     pasta: str = ""
-    mascara: str = "*.txt"  # Padrão glob para filtrar arquivos
+    mascara: str = "*.txt"  # Padrão glob para filtrar arquivos (obrigatório se pasta)
+    dataframe: str = ""  # Caminho para arquivo parquet com saídas
+    dataframe_col: str = "saida"  # Coluna do dataframe com a saída (padrão: saida)
+    dataframe_id: str = "id_peca"  # Coluna do dataframe com o ID (padrão: id_peca)
+    formato: str = FORMATO_SAIDA_TEXTO  # 'json' ou 'texto'
+    texto_criptografado: bool = False  # Se True, saídas serão descriptografadas
     _validar_caminhos: bool = field(default=True, repr=False)
     
     def __post_init__(self):
-        if self._validar_caminhos and self.pasta and not os.path.isdir(self.pasta):
-            raise ValueError(f"Pasta do gold dataset não encontrada: '{self.pasta}'")
+        tem_pasta = bool(self.pasta)
+        tem_df = bool(self.dataframe)
+        
+        if not tem_pasta and not tem_df:
+            raise ValueError("Seção 'saida' deve ter 'pasta' ou 'dataframe' configurado")
+        
+        if self._validar_caminhos:
+            if tem_pasta and not os.path.isdir(self.pasta):
+                raise ValueError(f"Pasta do gold dataset não encontrada: '{self.pasta}'")
+            if tem_df and not os.path.isfile(self.dataframe):
+                raise ValueError(f"Arquivo de dataframe de saída não encontrado: '{self.dataframe}'")
+        
+        # Normaliza formato: qualquer valor != 'json' vira 'texto'
+        if self.formato != FORMATO_SAIDA_JSON:
+            self.formato = FORMATO_SAIDA_TEXTO
 
 
 @dataclass
 class ConfigEntrada:
-    """Configuração da pasta de entrada (textos para prompt)."""
+    """Configuração da fonte de entrada (textos para prompt).
+    
+    Suporta dois modos:
+    - Pasta de arquivos: pasta + mascara
+    - Dataframe: dataframe + dataframe_col + dataframe_id
+    """
     pasta: str = ""  # Pasta com arquivos de texto
     mascara: str = "*.txt"  # Padrão glob para filtrar arquivos
     prompt_template: str = ""  # Arquivo com template do prompt
     tag_texto: str = ""  # Tag a ser substituída pelo conteúdo
     dataframe: str = ""  # Caminho para arquivo parquet com textos
-    dataframe_col: str = ""  # Coluna do dataframe com o texto
-    dataframe_id: str = ""  # Coluna do dataframe com o ID
+    dataframe_col: str = "texto"  # Coluna do dataframe com o texto (padrão: texto)
+    dataframe_id: str = "id_peca"  # Coluna do dataframe com o ID (padrão: id_peca)
+    texto_criptografado: bool = False  # Se True, texto de entrada será descriptografado
+    prompt_criptografado: bool = False  # Se True, template de prompt será descriptografado
     _validar_caminhos: bool = field(default=True, repr=False)
     
     def __post_init__(self):
-        # Valida que tem pasta ou dataframe, mas não ambos
+        # Valida que tem pasta ou dataframe
         tem_pasta = bool(self.pasta)
         tem_df = bool(self.dataframe)
         
@@ -289,10 +287,6 @@ class ConfigEntrada:
                 raise ValueError(f"Arquivo de dataframe não encontrado: '{self.dataframe}'")
             if self.prompt_template and not os.path.isfile(self.prompt_template):
                 raise ValueError(f"Arquivo de template não encontrado: '{self.prompt_template}'")
-        
-        # Se usa dataframe, precisa informar as colunas
-        if tem_df and (not self.dataframe_col or not self.dataframe_id):
-            raise ValueError("Se 'dataframe' for informado, 'dataframe_col' e 'dataframe_id' são obrigatórios")
         
         # Se tem template, precisa ter tag (validação estrutural)
         if self.prompt_template and not self.tag_texto:
@@ -305,7 +299,6 @@ class ConfigDivisao:
     arquivo: str = ""
     proporcao: List[float] = field(default_factory=lambda: PROPORCAO_PADRAO.copy())
     seed: int = SEED_PADRAO
-    validar_ids: bool = True
     proporcao_reais: Optional[List[float]] = None # Campo para armazenar distribuição real do arquivo
     
     def __post_init__(self):
@@ -323,37 +316,20 @@ class ConfigDivisao:
 class ConfigValidacao:
     """Configuração de validação de saídas."""
     exigir_json_valido: bool = True
-    skip_invalidos: bool = False
+    exigir_ids_pareados: bool = True
 
 
 @dataclass
-class ConfigPastas:
-    """Configuração completa para modo 'pastas'."""
+class ConfigCurriculum:
+    """Configuração completa do curriculum (única forma de entrada de dados)."""
     predicao: ConfigPredicao = field(default_factory=ConfigPredicao)
-    dataset: ConfigGold = field(default_factory=ConfigGold)
+    saida: ConfigSaida = field(default_factory=ConfigSaida)
     entrada: ConfigEntrada = field(default_factory=ConfigEntrada)
     divisao: ConfigDivisao = field(default_factory=ConfigDivisao)
     validacao: ConfigValidacao = field(default_factory=ConfigValidacao)
 
 
-@dataclass
-class ConfigDataset:
-    """Configuração para modo 'dataset' (arquivos parquet)."""
-    train_prompt_col: str = "messages"
-    eval_prompt_col: str = ""
-    train_file: str = ""
-    eval_file: str = ""
-    test_file: str = ""
-    _validar_caminhos: bool = field(default=True, repr=False)
-    
-    def __post_init__(self):
-        if self._validar_caminhos:
-            # Valida existência de arquivos se especificados
-            for nome, caminho in [("train_file", self.train_file), 
-                                   ("eval_file", self.eval_file), 
-                                   ("test_file", self.test_file)]:
-                if caminho and not os.path.isfile(caminho):
-                    raise ValueError(f"Arquivo de dataset não encontrado ({nome}): '{caminho}'")
+
 
 
 
@@ -367,15 +343,13 @@ class YamlTreinamento:
     """
     Carrega, valida e processa configurações YAML para treinamento de LLMs.
     
-    Suporta dois modos de entrada:
-    - 'pastas': Carrega dados de pastas com arquivos de texto/JSON
-    - 'dataset': Carrega dados de arquivos parquet
+    Formato único de entrada: curriculum (seção 'curriculum' no YAML).
+    Um treinamento de etapa única é configurado como um curriculum com uma divisão.
     
     Exemplo de uso:
         >>> config = YamlTreinamento("config.yaml")
-        >>> print(config.tipo_entrada)
-        'pastas'
-        >>> datasets = config.carregar_datasets()
+        >>> print(config.formato_saida)
+        'json'
     """
     
     def __init__(self, yaml_path: str, validar_caminhos: bool = True):
@@ -394,34 +368,24 @@ class YamlTreinamento:
         self._raw_config = self._carregar_yaml()
         
         # Processa e valida configurações
-        self.formatos: ConfigFormatos = self._processar_formatos()
         self.misc: ConfigMisc = self._processar_misc()
-        self.pastas: Optional[ConfigPastas] = None
-        self.dataset: Optional[ConfigDataset] = None
-        
-        if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-            if self.tipo_entrada == TIPO_ENTRADA_CURRICULUM:
-                self.pastas = self._processar_pastas(secao="curriculum")
-            else:
-                self.pastas = self._processar_pastas()
-        else:
-            self.dataset = self._processar_dataset()
-            
+        self.curriculum_config: ConfigCurriculum = self._processar_curriculum()
         self.modelo: ConfigModelo = self._processar_modelo()
         self.treinamento: ConfigTreinamento = self._processar_treinamento()
         self.lora: ConfigLora = self._processar_lora()
         
+        # Validação de criptografia: se alguma flag *_criptografado é True,
+        # a chave de criptografia deve estar configurada e acessível
+        self._validar_criptografia()
+        
         # Batch automático (calcula grad_batch_size com base no nº de GPUs)
-        # Ativado quando treinamento.batch_size é dict com {efetivo, batch_size}
         self.batch_size_auto: Optional[ConfigBatchSize] = self._processar_batch_size_auto()
         self._aplicar_batch_size_auto()
         
         # Gerenciador de datasets
         from treinar_unsloth_dataset import DatasetTreinamento
         self.dataset_manager = DatasetTreinamento(
-            config_pastas=self.pastas,
-            config_dataset=self.dataset,
-            config_formatos=self.formatos,
+            config_curriculum=self.curriculum_config,
             config_misc=self.misc
         )
         
@@ -429,15 +393,13 @@ class YamlTreinamento:
         from treinar_unsloth_pipeline import construir_etapas
         self._curriculum: list = construir_etapas(self)
         
-        # Para curriculum: usa o arquivo da primeira etapa como divisao padrão
-        # e aplica overrides da primeira etapa em treinamento (max_seq_length,
-        # epochs, learning_rate) para que todo o código downstream (exibição
-        # de info do modelo, carga de datasets, etc.) já reflita os valores efetivos.
-        if self.tipo_entrada == TIPO_ENTRADA_CURRICULUM and self.pastas and self._curriculum:
+        # Usa o arquivo da primeira etapa como divisao padrão e aplica overrides
+        # da primeira etapa em treinamento (max_seq_length, epochs, learning_rate)
+        # para que o código downstream reflita os valores efetivos.
+        if self._curriculum:
             primeira = self._curriculum[0]
-            if primeira.arquivo and not self.pastas.divisao.arquivo:
-                self.pastas.divisao.arquivo = self._resolver_caminho(primeira.arquivo)
-            # Aplica overrides da 1ª etapa para que treinamento reflita o efetivo
+            if primeira.arquivo and not self.curriculum_config.divisao.arquivo:
+                self.curriculum_config.divisao.arquivo = self._resolver_caminho(primeira.arquivo)
             if primeira.pace_epochs > 0:
                 self.treinamento.epochs = primeira.pace_epochs
             if primeira.learning_rate > 0:
@@ -451,14 +413,9 @@ class YamlTreinamento:
         return self._curriculum
     
     @property
-    def tipo_entrada(self) -> str:
-        """Retorna o tipo de entrada configurado."""
-        return self.formatos.tipo_entrada
-    
-    @property
     def formato_saida(self) -> str:
-        """Retorna o formato de saída configurado."""
-        return self.formatos.formato_saida
+        """Retorna o formato de saída configurado ('json' ou 'texto')."""
+        return self.curriculum_config.saida.formato
     
     @property
     def output_dir(self) -> str:
@@ -487,10 +444,7 @@ class YamlTreinamento:
         return config
     
     def _resolver_caminho(self, caminho: str) -> str:
-        """
-        Resolve um caminho relativo em relação ao diretório do YAML.
-        Caminhos absolutos são mantidos como estão.
-        """
+        """Resolve um caminho relativo em relação ao diretório do YAML."""
         if not caminho:
             return caminho
         if os.path.isabs(caminho):
@@ -500,17 +454,6 @@ class YamlTreinamento:
     # ---------------------------------------------------------------------------
     # Processamento de seções do YAML
     # ---------------------------------------------------------------------------
-    
-    def _processar_formatos(self) -> ConfigFormatos:
-        """Processa a seção 'formatos' do YAML."""
-        formatos_raw = self._raw_config.get("formatos", {})
-        if not isinstance(formatos_raw, dict):
-            formatos_raw = {}
-        
-        return ConfigFormatos(
-            tipo_entrada=formatos_raw.get("tipo_entrada", TIPO_ENTRADA_DATASET),
-            formato_saida=formatos_raw.get("formato_saida", FORMATO_SAIDA_TEXTO),
-        )
     
     def _processar_misc(self) -> ConfigMisc:
         """Processa a seção 'misc' do YAML."""
@@ -523,142 +466,174 @@ class YamlTreinamento:
             env_chave_criptografia=misc_raw.get("env_chave_criptografia", "")
         )
     
-    def _processar_pastas(self, secao: str = "pastas") -> ConfigPastas:
-        """Processa a seção 'pastas' (ou 'curriculum') do YAML.
+    def _processar_curriculum(self) -> ConfigCurriculum:
+        """Processa a seção 'curriculum' do YAML.
         
-        Para tipo_entrada='curriculum', a seção 'curriculum' tem a mesma
-        estrutura que 'pastas', mas 'divisao' é uma lista de etapas.
-        
-        Args:
-            secao: Nome da seção no YAML ('pastas' ou 'curriculum')
+        A seção curriculum contém: predicao, saida, entrada, validacao, divisao.
+        'divisao' é uma lista de etapas do pipeline.
         """
-        pastas_raw = self._raw_config.get(secao, {})
-        if not isinstance(pastas_raw, dict):
-            raise ValueError(f"Seção '{secao}' deve ser um dicionário")
+        curriculum_raw = self._raw_config.get("curriculum", {})
+        if not isinstance(curriculum_raw, dict):
+            raise ValueError("Seção 'curriculum' é obrigatória e deve ser um dicionário")
         
         # Processa subseções
-        predicao_raw = pastas_raw.get("predicao", {})
-        dataset_gold_raw = pastas_raw.get("dataset", {})
-        entrada_raw = pastas_raw.get("entrada", {})
-        # Para curriculum, divisao_raw é uma lista de etapas — extrair apenas campos de divisão
-        divisao_raw = pastas_raw.get("divisao", {})
-        if isinstance(divisao_raw, list):
-            # Modo curriculum: divisao é a lista de etapas, não há arquivo único
-            divisao_raw = {}
-        validacao_raw = pastas_raw.get("validacao", {})
+        predicao_raw = curriculum_raw.get("predicao", {}) or {}
+        saida_raw = curriculum_raw.get("saida", {}) or {}
+        entrada_raw = curriculum_raw.get("entrada", {}) or {}
+        validacao_raw = curriculum_raw.get("validacao", {}) or {}
         
-        # Resolve caminhos (sempre resolve, validação é controlada pelo _validar_caminhos)
+        # divisao_raw é uma lista de etapas — não usada aqui (processada pelo pipeline)
+        # Mas pode ter campos de divisão se for etapa única
+        divisao_raw = curriculum_raw.get("divisao", {})
+        if isinstance(divisao_raw, list):
+            divisao_raw = {}  # Lista de etapas: sem arquivo único de divisão
+        
+        # --- Resolve caminhos ---
         pasta_predicao = self._resolver_caminho(predicao_raw.get("pasta", ""))
-        pasta_gold = self._resolver_caminho(dataset_gold_raw.get("pasta", ""))
-        # Resolve caminhos de entrada (pasta ou dataframe)
+        
+        # Saída (gold dataset): pasta ou dataframe
+        pasta_saida = self._resolver_caminho(saida_raw.get("pasta", ""))
+        dataframe_saida = self._resolver_caminho(saida_raw.get("dataframe", ""))
+        
+        # Entrada: pasta ou dataframe
         pasta_entrada = self._resolver_caminho(entrada_raw.get("pasta", ""))
-        dataframe_path = self._resolver_caminho(entrada_raw.get("dataframe", ""))
+        dataframe_entrada = self._resolver_caminho(entrada_raw.get("dataframe", ""))
         prompt_template = self._resolver_caminho(entrada_raw.get("prompt_template", ""))
+        
+        # Divisão
         arquivo_divisao = divisao_raw.get("arquivo", "")
         if arquivo_divisao:
             arquivo_divisao = self._resolver_caminho(arquivo_divisao)
         
-        # Cria configurações passando _validar_caminhos
+        # --- Cria configurações ---
         predicao = ConfigPredicao(
             pasta=pasta_predicao,
             mascara=predicao_raw.get("mascara", r"^(.+)\.txt$"),
             _validar_caminhos=self.validar_caminhos
         )
         
-        # Gold dataset (obrigatório)
-        if not pasta_gold:
-            raise ValueError(f"Seção '{secao}.dataset.pasta' é obrigatória (pasta com o gold dataset)")
-        gold = ConfigGold(
-            pasta=pasta_gold,
-            mascara=dataset_gold_raw.get("mascara", "*.txt"),
+        saida = ConfigSaida(
+            pasta=pasta_saida,
+            mascara=saida_raw.get("mascara", "*.txt"),
+            dataframe=dataframe_saida,
+            dataframe_col=saida_raw.get("dataframe_col", "saida"),
+            dataframe_id=saida_raw.get("dataframe_id", "id_peca"),
+            formato=saida_raw.get("formato", FORMATO_SAIDA_TEXTO),
+            texto_criptografado=saida_raw.get("texto_criptografado", False) in {True, "true", "True", 1, "1", "sim"},
             _validar_caminhos=self.validar_caminhos
         )
         
         entrada = ConfigEntrada(
             pasta=pasta_entrada,
-            mascara=entrada_raw.get("mascara", r"^(.+)\.txt$"),
+            mascara=entrada_raw.get("mascara", "*.txt"),
             prompt_template=prompt_template,
             tag_texto=entrada_raw.get("tag_texto", ""),
-            dataframe=dataframe_path,
-            dataframe_col=entrada_raw.get("dataframe_col", ""),
-            dataframe_id=entrada_raw.get("dataframe_id", ""),
+            dataframe=dataframe_entrada,
+            dataframe_col=entrada_raw.get("dataframe_col", "texto"),
+            dataframe_id=entrada_raw.get("dataframe_id", "id_peca"),
+            texto_criptografado=entrada_raw.get("texto_criptografado", False) in {True, "true", "True", 1, "1", "sim"},
+            prompt_criptografado=entrada_raw.get("prompt_criptografado", False) in {True, "true", "True", 1, "1", "sim"},
             _validar_caminhos=self.validar_caminhos
         )
         
         # Processa proporções
         proporcao_raw = divisao_raw.get("proporcao", PROPORCAO_PADRAO.copy())
-        proporcao = [0.0, 0.0, 0.0]
-
-        if isinstance(proporcao_raw, list) and all(isinstance(x, (int, float)) for x in proporcao_raw):
-            proporcao = proporcao_raw # Lista simples [0.8, 0.1, 0.1]
-        
-        elif isinstance(proporcao_raw, dict):
-            # Formato dict: {treino: 0.8, validacao: 0.1, teste: 0.1}
-            proporcao[0] = float(proporcao_raw.get("treino", 0))
-            proporcao[1] = float(proporcao_raw.get("validacao", 0) or proporcao_raw.get("validação", 0) or proporcao_raw.get("avaliacao", 0))
-            proporcao[2] = float(proporcao_raw.get("teste", 0))
-            
-        elif isinstance(proporcao_raw, list) and all(isinstance(x, dict) for x in proporcao_raw):
-             # Formato lista de dicts: [- treino: 0.8, - validacao: 0.1]
-             for item in proporcao_raw:
-                 for k, v in item.items():
-                     k_norm = k.lower().strip()
-                     if k_norm in ["treino", "train"]:
-                         proporcao[0] = float(v)
-                     elif k_norm in ["validacao", "validação", "validation", "avaliacao", "avaliação"]:
-                         proporcao[1] = float(v)
-                     elif k_norm in ["teste", "test"]:
-                         proporcao[2] = float(v)
-
-        elif isinstance(proporcao_raw, str):
-            proporcao = [float(x.strip()) for x in proporcao_raw.split(",")]
+        proporcao = self._processar_proporcao(proporcao_raw)
         
         divisao = ConfigDivisao(
             arquivo=arquivo_divisao,
             proporcao=proporcao,
-            seed=divisao_raw.get("seed", SEED_PADRAO),
-            validar_ids=divisao_raw.get("validar_ids", True)
+            seed=divisao_raw.get("seed", SEED_PADRAO)
         )
         
         validacao = ConfigValidacao(
             exigir_json_valido=validacao_raw.get("exigir_json_valido", True),
-            skip_invalidos=validacao_raw.get("skip_invalidos", False)
+            exigir_ids_pareados=validacao_raw.get("exigir_ids_pareados", True)
         )
         
-        return ConfigPastas(
+        return ConfigCurriculum(
             predicao=predicao,
-            dataset=gold,
+            saida=saida,
             entrada=entrada,
             divisao=divisao,
             validacao=validacao
         )
     
-    def _processar_dataset(self) -> ConfigDataset:
-        """Processa a seção 'dataset' do YAML."""
-        dataset_raw = self._raw_config.get("dataset", {})
-        if not isinstance(dataset_raw, dict):
-            dataset_raw = {}
+    def _processar_proporcao(self, proporcao_raw) -> List[float]:
+        """Processa proporções de divisão em diversos formatos YAML."""
+        proporcao = [0.0, 0.0, 0.0]
         
-        # Resolve caminhos (sempre resolve, validação é controlada pelo _validar_caminhos)
-        train_file = dataset_raw.get("train_file", "")
-        eval_file = dataset_raw.get("eval_file", "")
-        test_file = dataset_raw.get("test_file", "")
+        if isinstance(proporcao_raw, list) and all(isinstance(x, (int, float)) for x in proporcao_raw):
+            proporcao = proporcao_raw
+        elif isinstance(proporcao_raw, dict):
+            proporcao[0] = float(proporcao_raw.get("treino", 0))
+            proporcao[1] = float(proporcao_raw.get("validacao", 0) or proporcao_raw.get("validação", 0) or proporcao_raw.get("avaliacao", 0))
+            proporcao[2] = float(proporcao_raw.get("teste", 0))
+        elif isinstance(proporcao_raw, list) and all(isinstance(x, dict) for x in proporcao_raw):
+            for item in proporcao_raw:
+                for k, v in item.items():
+                    k_norm = k.lower().strip()
+                    if k_norm in ["treino", "train"]:
+                        proporcao[0] = float(v)
+                    elif k_norm in ["validacao", "validação", "validation", "avaliacao", "avaliação"]:
+                        proporcao[1] = float(v)
+                    elif k_norm in ["teste", "test"]:
+                        proporcao[2] = float(v)
+        elif isinstance(proporcao_raw, str):
+            proporcao = [float(x.strip()) for x in proporcao_raw.split(",")]
         
-        if train_file:
-            train_file = self._resolver_caminho(train_file)
-        if eval_file:
-            eval_file = self._resolver_caminho(eval_file)
-        if test_file:
-            test_file = self._resolver_caminho(test_file)
+        return proporcao
+    
+    def _validar_criptografia(self) -> None:
+        """Valida que a chave de criptografia existe se alguma flag *_criptografado é True.
         
-        return ConfigDataset(
-            train_prompt_col=dataset_raw.get("train_prompt_col", "messages"),
-            eval_prompt_col=dataset_raw.get("eval_prompt_col", ""),
-            train_file=train_file,
-            eval_file=eval_file,
-            test_file=test_file,
-            _validar_caminhos=self.validar_caminhos
+        Verifica as flags:
+        - entrada.texto_criptografado
+        - entrada.prompt_criptografado
+        - saida.texto_criptografado
+        
+        Se qualquer uma for True, misc.env_chave_criptografia deve apontar para
+        uma variável de ambiente existente e não vazia.
+        """
+        entrada = self.curriculum_config.entrada
+        saida = self.curriculum_config.saida
+        
+        precisa_criptografia = (
+            entrada.texto_criptografado or
+            entrada.prompt_criptografado or
+            saida.texto_criptografado
         )
+        
+        if not precisa_criptografia:
+            return
+        
+        nome_var = self.misc.env_chave_criptografia
+        if not nome_var:
+            flags_ativas = []
+            if entrada.texto_criptografado:
+                flags_ativas.append("entrada.texto_criptografado")
+            if entrada.prompt_criptografado:
+                flags_ativas.append("entrada.prompt_criptografado")
+            if saida.texto_criptografado:
+                flags_ativas.append("saida.texto_criptografado")
+            raise ValueError(
+                f"❌ Flags de criptografia ativas ({', '.join(flags_ativas)}) "
+                f"mas 'misc.env_chave_criptografia' não está configurada no YAML."
+            )
+        
+        valor = os.getenv(nome_var)
+        if not valor or not valor.strip():
+            raise EnvironmentError(
+                f"\n{'='*70}\n"
+                f"❌ ERRO CRÍTICO: Variável de ambiente '{nome_var}' "
+                f"não está definida ou está vazia.\n\n"
+                f"O YAML configurou 'misc.env_chave_criptografia: {nome_var}',\n"
+                f"e dados criptografados foram marcados para descriptografia.\n\n"
+                f"Sem a chave, o treinamento usará texto criptografado (ilegível).\n\n"
+                f"Para corrigir, defina a variável antes de executar:\n"
+                f"  export {nome_var}=\"sua_chave_fernet_aqui\"\n"
+                f"{'='*70}"
+            )
     
     def _processar_modelo(self) -> ConfigModelo:
         """Processa a seção 'modelo' do YAML."""
@@ -866,17 +841,13 @@ class YamlTreinamento:
     
     
     def info(self) -> str:
-        """Retorna string com resumo da configuração.
-        
-        O resumo é adaptado ao tipo de entrada (dataset, pastas ou curriculum),
-        omitindo seções irrelevantes para o formato selecionado.
-        """
+        """Retorna string com resumo da configuração."""
+        cc = self.curriculum_config
         lines = [
             "=" * 60,
             "📋 CONFIGURAÇÃO YAML",
             "=" * 60,
             f"Arquivo: {self.yaml_path}",
-            f"Tipo de entrada: {self.tipo_entrada}",
             f"Formato de saída: {self.formato_saida}",
             "",
             "🤖 MODELO:",
@@ -891,40 +862,38 @@ class YamlTreinamento:
             f"  LoRA r: {self.lora.r}",
             f"  Learning rate: {self.treinamento.learning_rate}",
             f"  Train on responses only: {self.treinamento.train_on_responses_only}",
+            "",
+            "📁 DADOS:",
         ]
         
-        # --- Seção de dados: varia conforme tipo de entrada ---
+        # Entrada
+        if cc.entrada.pasta:
+            lines.append(f"  Entrada (pasta): {cc.entrada.pasta}")
+        elif cc.entrada.dataframe:
+            lines.append(f"  Entrada (dataframe): {cc.entrada.dataframe} [col={cc.entrada.dataframe_col}, id={cc.entrada.dataframe_id}]")
         
-        if self.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-            lines.extend([
-                "",
-                "📁 PASTAS:",
-                f"  Entrada: {self.pastas.entrada.pasta}",
-                f"  Gold Dataset: {self.pastas.dataset.pasta}",
-                f"  Predição: {self.pastas.predicao.pasta or '(será criado)'}",
-            ])
-            # Divisão aparece aqui somente para modo 'pastas' (etapa única)
-            if self.tipo_entrada != TIPO_ENTRADA_CURRICULUM:
-                lines.extend([
-                    f"  Divisão: {self.pastas.divisao.arquivo or '(será criado)'}",
-                    f"  Validar IDs: {self.pastas.divisao.validar_ids}",
-                    f"  Proporções (yaml): treino={self.pastas.divisao.proporcao[0]}, validacao={self.pastas.divisao.proporcao[1]}, teste={self.pastas.divisao.proporcao[2]}",
-                ])
-                if self.pastas.divisao.proporcao_reais:
-                    pr = self.pastas.divisao.proporcao_reais
-                    lines.append(f"  Proporções (efetivas): treino={pr[0]:.2f}, validacao={pr[1]:.2f}, teste={pr[2]:.2f}")
-        else:
-            lines.extend([
-                "",
-                "📊 DATASET:",
-                f"  Treino: {self.dataset.train_file}",
-                f"  Avaliação: {self.dataset.eval_file or '(não configurado)'}",
-                f"  Teste: {self.dataset.test_file or '(não configurado)'}",
-            ])
+        # Saída (gold)
+        if cc.saida.pasta:
+            lines.append(f"  Saída/Gold (pasta): {cc.saida.pasta}")
+        elif cc.saida.dataframe:
+            lines.append(f"  Saída/Gold (dataframe): {cc.saida.dataframe} [col={cc.saida.dataframe_col}, id={cc.saida.dataframe_id}]")
+        
+        lines.append(f"  Predição: {cc.predicao.pasta or '(será criado)'}")
+        
+        # Flags de criptografia
+        flags_crypto = []
+        if cc.entrada.texto_criptografado:
+            flags_crypto.append("entrada.texto")
+        if cc.entrada.prompt_criptografado:
+            flags_crypto.append("entrada.prompt")
+        if cc.saida.texto_criptografado:
+            flags_crypto.append("saida.texto")
+        if flags_crypto:
+            lines.append(f"  🔐 Criptografado: {', '.join(flags_crypto)}")
         
         # --- Seção pipeline/curriculum ---
         
-        is_curriculum = self.tipo_entrada == TIPO_ENTRADA_CURRICULUM
+        is_curriculum = len(self._curriculum) > 1
         lines.extend(["", f"🔄 PIPELINE{' CURRICULUM' if is_curriculum else ''}:"])
         lines.append(f"  Etapas: {len(self._curriculum)}")
         
@@ -1002,7 +971,7 @@ class YamlTreinamento:
             return {}
     
     def __repr__(self) -> str:
-        return f"YamlTreinamento(yaml_path='{self.yaml_path}', tipo_entrada='{self.tipo_entrada}')"
+        return f"YamlTreinamento(yaml_path='{self.yaml_path}')"
 
 
 # ---------------------------------------------------------------------------
@@ -1020,21 +989,18 @@ from treinar_unsloth_dicas import injetar_dicas_yaml, DICAS_YAML
 
 
 
-def criar_yaml_exemplo_pastas(caminho: str) -> None:
-    """Cria um arquivo YAML de exemplo para modo 'pastas'."""
+def criar_yaml_exemplo_curriculum(caminho: str) -> None:
+    """Cria um arquivo YAML de exemplo para modo curriculum."""
     template = {
-        "formatos": {
-            "tipo_entrada": "pastas",
-            "formato_saida": "json"
-        },
-        "pastas": {
+        "curriculum": {
             "predicao": {
                 "pasta": "./saidas/predicoes",
                 "mascara": r"^(.+)\.txt$"
             },
-            "dataset": {
+            "saida": {
                 "pasta": "./saidas/gold",
-                "mascara": "*.txt"
+                "mascara": "*.txt",
+                "formato": "json"
             },
             "entrada": {
                 "pasta": "./saidas/textos",
@@ -1042,18 +1008,23 @@ def criar_yaml_exemplo_pastas(caminho: str) -> None:
                 "prompt_template": "./prompts/template.txt",
                 "tag_texto": "<<TEXTO>>"
             },
-            "divisao": {
-                "arquivo": "./saidas/divisao.csv",
-                "proporcao": [
-                    {"treino": 0.7},
-                    {"validacao": 0.1},
-                    {"teste": 0.2}
-                ],
-                "seed": 42
-            },
+            "divisao": [
+                {
+                    "arquivo": "./divisao_facil.csv",
+                    "alias": "facil",
+                    "tipo": "lora",
+                    "pace_epochs": 2,
+                    "max_seq_length": 1024,
+                    "proporcao": [
+                        {"treino": 0.70},
+                        {"validacao": 0.10},
+                        {"teste": 0.20}
+                    ]
+                }
+            ],
             "validacao": {
                 "exigir_json_valido": True,
-                "skip_invalidos": False
+                "exigir_ids_pareados": True
             }
         },
         "modelo": {
@@ -1085,56 +1056,7 @@ def criar_yaml_exemplo_pastas(caminho: str) -> None:
     }
     
     yaml_str = yaml.safe_dump(template, sort_keys=False, allow_unicode=True, default_flow_style=False)
-    yaml_com_dicas = _injetar_dicas_yaml(yaml_str, DICAS_YAML)
-    
-    with open(caminho, "w", encoding="utf-8") as fp:
-        fp.write(yaml_com_dicas)
-
-
-def criar_yaml_exemplo_dataset(caminho: str) -> None:
-    """Cria um arquivo YAML de exemplo para modo 'dataset'."""
-    template = {
-        "formatos": {
-            "tipo_entrada": "dataset",
-            "formato_saida": "texto"
-        },
-        "dataset": {
-            "train_prompt_col": "messages",
-            "eval_prompt_col": "",
-            "train_file": "./dados/treino.parquet",
-            "eval_file": "./dados/avaliacao.parquet",
-            "test_file": ""
-        },
-        "modelo": {
-            "base_model_name": "unsloth/Qwen2.5-1.5B-Instruct",
-            "saida": "./modelos/meu_modelo"
-        },
-        "treinamento": {
-            "eval_steps": "15%",
-            "batch_size": 2,
-            "grad_batch_size": 5,
-            "num_train_epochs": 1,
-            "max_seq_length": 4096,
-            "learning_rate": 0.0002,
-            "save_checkpoints": True,
-            "resume_from_checkpoint": True,
-            "warmup_steps": 5,
-            "nbits": 4,
-            "train_on_responses_only": True
-        },
-        "lora": {
-            "r": 8,
-            "alpha": 32,
-            "dropout": 0.05,
-            "target_modules": [
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj"
-            ]
-        }
-    }
-    
-    yaml_str = yaml.safe_dump(template, sort_keys=False, allow_unicode=True, default_flow_style=False)
-    yaml_com_dicas = _injetar_dicas_yaml(yaml_str, DICAS_YAML)
+    yaml_com_dicas = injetar_dicas_yaml(yaml_str, DICAS_YAML)
     
     with open(caminho, "w", encoding="utf-8") as fp:
         fp.write(yaml_com_dicas)
@@ -1315,31 +1237,29 @@ class ValidadorInterativo:
         return bool(saida)
     
     def validar_pastas_entrada(self) -> bool:
-        """Valida pastas de entrada e gold dataset para modo pastas/curriculum."""
-        formatos = self._config.get("formatos", {})
-        tipo = formatos.get("tipo_entrada")
-        if tipo not in ("pastas", "curriculum"):
+        """Valida pastas de entrada e gold dataset para modo curriculum."""
+        curriculum = self._config.get("curriculum", {})
+        if not curriculum:
             return True
         
-        # Para curriculum, lê da seção 'curriculum'; para pastas, lê de 'pastas'
-        secao = "curriculum" if tipo == "curriculum" else "pastas"
-        pastas = self._config.get(secao, {})
         problemas = []
         
-        # Verifica pasta do gold dataset (saídas esperadas para treino)
-        gold_pasta = pastas.get("dataset", {}).get("pasta", "")
+        # Verifica pasta/dataframe da saída (gold dataset)
+        saida_cfg = curriculum.get("saida", {})
+        gold_pasta = saida_cfg.get("pasta", "")
         gold_abs = self._resolver_caminho(gold_pasta) if gold_pasta else ""
         if gold_pasta and not os.path.isdir(gold_abs):
-            problemas.append(("gold dataset", gold_pasta, gold_abs, ["pastas", "dataset", "pasta"]))
+            problemas.append(("gold/saída", gold_pasta, gold_abs, ["curriculum", "saida", "pasta"]))
         
         # Verifica pasta de entrada
-        ent_pasta = pastas.get("entrada", {}).get("pasta", "")
+        ent_cfg = curriculum.get("entrada", {})
+        ent_pasta = ent_cfg.get("pasta", "")
         ent_abs = self._resolver_caminho(ent_pasta) if ent_pasta else ""
         if ent_pasta and not os.path.isdir(ent_abs):
-            problemas.append(("entrada", ent_pasta, ent_abs, ["pastas", "entrada", "pasta"]))
+            problemas.append(("entrada", ent_pasta, ent_abs, ["curriculum", "entrada", "pasta"]))
         
         # Verifica template de prompt
-        template = pastas.get("entrada", {}).get("prompt_template", "")
+        template = ent_cfg.get("prompt_template", "")
         template_abs = self._resolver_caminho(template) if template else ""
         if template and not os.path.isfile(template_abs):
             print(f"\n⚠️  Template de prompt não encontrado: {template_abs}")
@@ -1352,14 +1272,14 @@ class ValidadorInterativo:
                 ]
             )
             if opcao == 0:
-                self._config.setdefault("pastas", {}).setdefault("entrada", {})["prompt_template"] = ""
-                self._config["pastas"]["entrada"]["tag_texto"] = ""
+                self._config.setdefault("curriculum", {}).setdefault("entrada", {})["prompt_template"] = ""
+                self._config["curriculum"]["entrada"]["tag_texto"] = ""
                 self._modificado = True
                 print("✅ Template removido. Arquivos de entrada serão usados diretamente como prompt.")
             elif opcao == 1:
                 novo = self._perguntar_texto("Informe o caminho do template")
                 if novo:
-                    self._config.setdefault("pastas", {}).setdefault("entrada", {})["prompt_template"] = novo
+                    self._config.setdefault("curriculum", {}).setdefault("entrada", {})["prompt_template"] = novo
                     self._modificado = True
         
         for nome, rel, absoluto, chaves in problemas:
@@ -1376,7 +1296,6 @@ class ValidadorInterativo:
             if opcao == 0:
                 novo = self._perguntar_texto(f"Informe o caminho da pasta de {nome}")
                 if novo:
-                    # Navega até a chave correta
                     obj = self._config
                     for chave in chaves[:-1]:
                         obj = obj.setdefault(chave, {})
@@ -1389,52 +1308,25 @@ class ValidadorInterativo:
         return True
     
     def validar_divisao(self) -> bool:
-        """Valida arquivo de divisão para modo pastas/curriculum."""
-        formatos = self._config.get("formatos", {})
-        tipo = formatos.get("tipo_entrada")
-        if tipo not in ("pastas", "curriculum"):
+        """Valida divisão para modo curriculum (lista de etapas)."""
+        curriculum = self._config.get("curriculum", {})
+        if not curriculum:
             return True
         
-        # Para curriculum, divisao é uma lista de etapas — validação será feita no pipeline
-        if tipo == "curriculum":
+        divisao = curriculum.get("divisao", [])
+        if isinstance(divisao, list):
+            # Modo curriculum com etapas: validação feita pelo pipeline
+            if not divisao:
+                print("\n⚠️  curriculum.divisao está vazio (nenhuma etapa configurada)")
             return True
         
-        pastas = self._config.get("pastas", {})
-        divisao = pastas.get("divisao", {})
-        arquivo = divisao.get("arquivo", "")
-        
-        if not arquivo:
-            if self._perguntar_sim_nao("\n📊 Deseja configurar arquivo de divisão treino/teste/avaliação?"):
-                arquivo = self._perguntar_texto(
-                    "Informe o caminho do arquivo CSV",
-                    "./divisao_dataset.csv"
-                )
-                if arquivo:
-                    self._config.setdefault("pastas", {}).setdefault("divisao", {})["arquivo"] = arquivo
-                    self._modificado = True
-        
+        # divisao como dict (etapa única): valida arquivo
+        arquivo = divisao.get("arquivo", "") if isinstance(divisao, dict) else ""
         arquivo_abs = self._resolver_caminho(arquivo) if arquivo else ""
+        
         if arquivo and not os.path.isfile(arquivo_abs):
             print(f"\n📊 Arquivo de divisão não existe: {arquivo_abs}")
             print("   Será criado automaticamente na primeira execução do treinamento.")
-            
-            proporcao = divisao.get("proporcao", [0.7, 0.15, 0.15])
-            print(f"   Proporções atuais: treino={proporcao[0]:.0%}, teste={proporcao[1]:.0%}, avaliação={proporcao[2]:.0%}")
-            
-            if self._perguntar_sim_nao("Deseja ajustar as proporções?", False):
-                try:
-                    treino = float(self._perguntar_texto("Proporção treino (0-1)", str(proporcao[0])))
-                    teste = float(self._perguntar_texto("Proporção teste (0-1)", str(proporcao[1])))
-                    avaliacao = 1.0 - treino - teste
-                    if avaliacao < 0:
-                        print("⚠️  Proporções inválidas. Usando padrão.")
-                    else:
-                        nova_prop = [treino, teste, round(avaliacao, 2)]
-                        self._config.setdefault("pastas", {}).setdefault("divisao", {})["proporcao"] = nova_prop
-                        self._modificado = True
-                        print(f"✅ Proporções: treino={treino:.0%}, teste={teste:.0%}, avaliação={avaliacao:.0%}")
-                except ValueError:
-                    print("⚠️  Valor inválido. Mantendo proporções atuais.")
         
         return True
     
@@ -1493,21 +1385,15 @@ class ValidadorInterativo:
 def _perguntar_criar_exemplo(yaml_path: str) -> bool:
     """Pergunta ao usuário se deseja criar um arquivo YAML de exemplo."""
     print(f"\n⚠️  Arquivo não encontrado: {yaml_path}")
-    print("\nDeseja criar um arquivo YAML de exemplo?")
-    print("  [1] Modo 'pastas' (arquivos de texto/JSON em diretórios)")
-    print("  [2] Modo 'dataset' (arquivos parquet)")
-    print("  [N] Não criar (sair)")
+    print("\nDeseja criar um arquivo YAML de exemplo (curriculum)?")
+    print("  [S] Sim — criar exemplo")
+    print("  [N] Não — sair")
     
     try:
-        resposta = input("\nEscolha [1/2/N]: ").strip().lower()
+        resposta = input("\nEscolha [S/N]: ").strip().lower()
         
-        if resposta == "1":
-            criar_yaml_exemplo_pastas(yaml_path)
-            print(f"\n✅ Arquivo de exemplo criado: {yaml_path}")
-            print("   Edite o arquivo com suas configurações e execute novamente.")
-            return True
-        elif resposta == "2":
-            criar_yaml_exemplo_dataset(yaml_path)
+        if resposta in ("s", "sim", "y", "yes", ""):
+            criar_yaml_exemplo_curriculum(yaml_path)
             print(f"\n✅ Arquivo de exemplo criado: {yaml_path}")
             print("   Edite o arquivo com suas configurações e execute novamente.")
             return True
@@ -1529,33 +1415,20 @@ if __name__ == "__main__":
 Exemplos de uso:
   %(prog)s config.yaml                    Valida o arquivo YAML
   %(prog)s config.yaml --interativo       Valida e corrige interativamente
-  %(prog)s config.yaml --listar-arquivos  Lista arquivos pareados (modo pastas)
-  %(prog)s config.yaml --criar-divisao    Cria arquivo de divisão (modo pastas)
-  %(prog)s --criar-exemplo-pastas novo.yaml
+  %(prog)s --criar-exemplo novo.yaml      Cria arquivo YAML de exemplo
         """
     )
     parser.add_argument("yaml", nargs="?", help="Arquivo YAML para validar")
     parser.add_argument("--interativo", "-i", action="store_true", 
                         help="Modo interativo: valida e pergunta sobre ajustes")
-    parser.add_argument("--criar-exemplo-pastas", type=str, metavar="ARQUIVO",
-                        help="Cria YAML de exemplo para modo pastas")
-    parser.add_argument("--criar-exemplo-dataset", type=str, metavar="ARQUIVO",
-                        help="Cria YAML de exemplo para modo dataset")
-    parser.add_argument("--listar-arquivos", action="store_true", 
-                        help="Lista arquivos pareados (modo pastas)")
-    parser.add_argument("--criar-divisao", action="store_true", 
-                        help="Cria arquivo de divisão (modo pastas)")
+    parser.add_argument("--criar-exemplo", type=str, metavar="ARQUIVO",
+                        help="Cria YAML de exemplo (curriculum)")
     
     args = parser.parse_args()
     
-    if args.criar_exemplo_pastas:
-        criar_yaml_exemplo_pastas(args.criar_exemplo_pastas)
-        print(f"✅ Exemplo criado: {args.criar_exemplo_pastas}")
-        sys.exit(0)
-    
-    if args.criar_exemplo_dataset:
-        criar_yaml_exemplo_dataset(args.criar_exemplo_dataset)
-        print(f"✅ Exemplo criado: {args.criar_exemplo_dataset}")
+    if args.criar_exemplo:
+        criar_yaml_exemplo_curriculum(args.criar_exemplo)
+        print(f"✅ Exemplo criado: {args.criar_exemplo}")
         sys.exit(0)
     
     if not args.yaml:
@@ -1565,7 +1438,6 @@ Exemplos de uso:
     # Verifica se o arquivo existe antes de tentar carregar
     if not os.path.isfile(args.yaml):
         if _perguntar_criar_exemplo(args.yaml):
-            # Se criou o exemplo, pergunta se quer executar modo interativo
             try:
                 resposta = input("\nDeseja configurar o arquivo agora? [S/n]: ").strip().lower()
                 if resposta in ("", "s", "sim", "y", "yes"):
@@ -1593,23 +1465,10 @@ Exemplos de uso:
     try:
         config = YamlTreinamento(args.yaml, validar_caminhos=True)
         print(config.info())
-        
-        if args.listar_arquivos and config.tipo_entrada == TIPO_ENTRADA_PASTAS:
-            print("\n📁 ARQUIVOS PAREADOS:")
-            pares = config.parear_arquivos()
-            for par in pares[:10]:  # Mostra apenas os 10 primeiros
-                print(f"  - {par['id']}")
-            if len(pares) > 10:
-                print(f"  ... e mais {len(pares) - 10} arquivos")
-        
-        if args.criar_divisao and config.tipo_entrada == TIPO_ENTRADA_PASTAS:
-            config.carregar_ou_criar_divisao()
-        
         print("\n✅ Configuração válida!")
         
     except Exception as e:
         print(f"❌ Erro: {e}")
-        # Se houver erro de validação, sugere modo interativo
         print("\n💡 Dica: Use --interativo para corrigir problemas de configuração")
         print(f"   python {sys.argv[0]} {args.yaml} --interativo")
         sys.exit(1)

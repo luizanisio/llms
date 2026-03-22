@@ -446,6 +446,108 @@ def print_cores(*args, color_auto: bool = True, sep: str = ' ', end: str = '\n',
         mensagem = aplicar_cores(mensagem)
     print(mensagem, end=end, file=file, flush=flush)
 
+
+def exibir_menu_opcoes(titulo: str, itens: list, notas: list = None, prompt: str = "❓ Digite o número ou nome da ação") -> str:
+    """
+    Exibe um menu formatado como tabela visual (sem bordas) e retorna a escolha do usuário.
+
+    Args:
+        titulo: Título do menu (ex: '📋 AÇÕES DE AVALIAÇÃO')
+        itens: Lista de tuplas descrevendo cada linha do menu. Formatos aceitos:
+            - (tecla, nome, descricao)              → item normal
+            - (tecla, nome, descricao, cor)          → item com cor (tag ex: 'amarelo')
+            - (tecla, nome, descricao, cor, nivel)   → item sub-indentado (nivel=1)
+            - ('---', 'TITULO DA SEÇÃO')             → cabeçalho de seção
+            - ('---',)  ou  ('---', '')              → linha em branco (separador)
+        notas: Lista de strings para exibir como observações ao final.
+        prompt: Texto do prompt de entrada.
+
+    Returns:
+        String digitada pelo usuário (strip + lower).
+
+    Exemplo:
+        escolha = exibir_menu_opcoes(
+            titulo='📋 AÇÕES',
+            itens=[
+                ('1', 'info',    'Informações detalhadas'),
+                ('2', 'treinar', 'Iniciar treinamento'),
+                ('---', '📦 EXPORTAÇÃO'),
+                ('3', 'merge',   'Exportar modelo', '', 0),
+                ('3u', 'gguf',   'Exportar GGUF', 'amarelo', 1),
+            ],
+            notas=['unsloth não instalado.'],
+        )
+    """
+    cinza = CORES_ANSI['cinza']
+    reset = CORES_ANSI['reset']
+
+    # --- Calcular larguras para alinhamento ---
+    max_tecla = 0
+    max_nome = 0
+    for item in itens:
+        if not item or item[0] == '---':
+            continue
+        tecla = item[0]
+        nome = item[1] if len(item) > 1 else ''
+        nivel = item[4] if len(item) > 4 else 0
+        # Largura visual da tecla (sem indentação de sub-nível)
+        if len(tecla) > max_tecla:
+            max_tecla = len(tecla)
+        if len(nome) > max_nome:
+            max_nome = len(nome)
+
+    col_tecla = max_tecla + 1   # +1 para o ponto após a tecla
+    col_nome = max_nome + 1     # +1 para espaçamento extra
+    indent_base = 3             # indentação base do menu
+    indent_sub = 6              # indentação de sub-itens
+
+    # --- Título ---
+    print_cores(f"\n {titulo}", color_auto=False)
+
+    # --- Itens ---
+    for item in itens:
+        if not item:
+            continue
+
+        # Separador ou cabeçalho de seção
+        if item[0] == '---':
+            label = item[1] if len(item) > 1 and item[1] else ''
+            if label:
+                print_cores(f"\n {label}", color_auto=False)
+            else:
+                print()
+            continue
+
+        tecla = item[0]
+        nome = item[1] if len(item) > 1 else ''
+        descricao = item[2] if len(item) > 2 else ''
+        cor = item[3] if len(item) > 3 else ''
+        nivel = item[4] if len(item) > 4 else 0
+
+        indent = ' ' * (indent_sub if nivel else indent_base)
+        tecla_fmt = f"{tecla}.".ljust(col_tecla + 1)
+        nome_fmt = nome.ljust(col_nome)
+
+        linha = f"{indent}{tecla_fmt} {nome_fmt} {cinza}-{reset} {descricao}"
+
+        # Aplica cor à linha inteira (exceto indentação)
+        if cor:
+            conteudo = f"{tecla_fmt} {nome_fmt} {cinza}-{reset} <{cor}>{descricao}</{cor}>"
+            linha = f"{indent}{conteudo}"
+
+        print_cores(linha, color_auto=False)
+
+    # --- Notas ---
+    if notas:
+        print_cores(f"\n   <amarelo>⚠️  Observação:</amarelo>", color_auto=False)
+        for nota in notas:
+            print_cores(f"      - {nota}", color_auto=False)
+
+    # --- Prompt ---
+    print()
+    escolha = input(f"{prompt}: ").strip().lower()
+    return escolha
+
 def print_linha_simples(mensagem: str, pid: bool = True, include_thread: bool = False, timestamp: bool = False):
     """
     Impressão simples de uma linha com identificação de processo.

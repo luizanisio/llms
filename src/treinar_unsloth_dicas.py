@@ -19,20 +19,11 @@ from typing import Dict, List, Optional
 
 DICAS_YAML = {
     # Seções Principais
-    "formatos": """#| =========================================================================
-#| FORMATOS
+    "curriculum": """#| =========================================================================
+#| CURRICULUM
 #| =========================================================================
-#| Configuração dos formatos de entrada e saída de dados.""",
-    
-    "dataset": """#| =========================================================================
-#| DATASET (PARQUET)
-#| =========================================================================
-#| Configuração para carregamento de dados via arquivos parquet.""",
-    
-    "pastas": """#| =========================================================================
-#| DATASET (PASTAS)
-#| =========================================================================
-#| Configuração para carregamento de dados via estrutura de pastas (arquivos txt/json).""",
+#| Configuração única de entrada de dados (predição, saída, entrada, validação, divisão).
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.""",
     
     "modelo": """#| =========================================================================
 #| MODELO
@@ -54,6 +45,10 @@ DICAS_YAML = {
 #| MISCELÂNEA
 #| =========================================================================
 #| Configurações diversas (logs, variáveis de ambiente).""",
+
+    # Dicas Específicas - Curriculum/Validação
+    "curriculum/validacao": """#| exigir_json_valido: Se `true`, durante a validação, o sistema rejeitará exemplos que falharem na validação JSON. Se `false`, ignora JSONs inválidos, o que pode ser útil em fases iniciais de teste.
+#| exigir_ids_pareados: Exige que os IDs do dataframe de entrada tenham correspondentes no gold dataset (saida). Se true, o sistema verificará se cada ID presente no dataframe de entrada tem um arquivo correspondente no gold dataset, garantindo que o modelo seja treinado apenas com exemplos completos e pareados.""",
 
     # Dicas Específicas - Treinamento
     "treinamento/eval_steps": "#| Frequência de avaliação (ex: '15%' das steps ou número inteiro).",

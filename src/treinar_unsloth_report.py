@@ -63,7 +63,7 @@ class GeradorRelatorio:
         template_tokens_base = 0
         has_template = False
         try:
-            cfg_entrada = self.yaml_config.pastas.entrada
+            cfg_entrada = self.yaml_config.curriculum_config.entrada
             if cfg_entrada.prompt_template and os.path.isfile(cfg_entrada.prompt_template):
                 with open(cfg_entrada.prompt_template, 'r', encoding='utf-8') as f:
                     template_content = f.read()
@@ -192,7 +192,7 @@ class GeradorRelatorio:
         conteudo.append(f"**Data:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         conteudo.append(f"**Modelo Base:** `{cfg.modelo.base}`")
         conteudo.append(f"**Diretório de Saída:** `{self.output_dir}`")
-        conteudo.append(f"**Tipo de entrada:** {cfg.tipo_entrada}")
+        conteudo.append(f"**Modo:** curriculum")
         
         # --- 1. Configuração ---
         # Valores originais do YAML (antes de overrides de curriculum/batch_auto)
@@ -251,42 +251,25 @@ class GeradorRelatorio:
         conteudo.append(f"| LR scheduler | {cfg.treinamento.lr_scheduler_type} |")
         conteudo.append(f"| Quantização (nbits) | {cfg.treinamento.nbits} |")
         
-        # --- Seção de dados: adaptada ao tipo de entrada ---
-        from treinar_unsloth_util import TIPOS_BASEADOS_EM_PASTAS, TIPO_ENTRADA_CURRICULUM
-        
-        is_curriculum = cfg.tipo_entrada == TIPO_ENTRADA_CURRICULUM
-        is_pastas = cfg.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS
-        
-        if is_pastas:
-            conteudo.append("\n### Pastas de Dados")
-            conteudo.append(f"- **Gold Dataset:** `{cfg.pastas.dataset.pasta}`")
-            if cfg.pastas.entrada.pasta:
-                conteudo.append(f"- **Entrada (textos):** `{cfg.pastas.entrada.pasta}`")
-            conteudo.append(f"- **Predição:** `{cfg.pastas.predicao.pasta or '(será criado)'}`")
-            
-            if not is_curriculum:
-                # Modo pastas simples: mostra divisão e proporções
-                conteudo.append(f"- **Divisão:** `{cfg.pastas.divisao.arquivo or '(será criado)'}`")
-                prop = cfg.pastas.divisao.proporcao
-                conteudo.append(f"- **Proporções (yaml):** treino={prop[0]}, validação={prop[1]}, teste={prop[2]}")
-                if cfg.pastas.divisao.proporcao_reais:
-                    pr = cfg.pastas.divisao.proporcao_reais
-                    conteudo.append(f"- **Proporções (efetivas):** treino={pr[0]:.2f}, validação={pr[1]:.2f}, teste={pr[2]:.2f}")
-        else:
-            # Modo dataset (parquet)
-            conteudo.append("\n### Arquivos de Dataset")
-            conteudo.append(f"- **Treino:** `{cfg.dataset.train_file}`")
-            if cfg.dataset.eval_file:
-                conteudo.append(f"- **Avaliação:** `{cfg.dataset.eval_file}`")
-            if cfg.dataset.test_file:
-                conteudo.append(f"- **Teste:** `{cfg.dataset.test_file}`")
+        # --- Seção de dados: curriculum ---
+        conteudo.append("\n### Dados (Curriculum)")
+        cc = cfg.curriculum_config
+        if cc.entrada.pasta:
+            conteudo.append(f"- **Entrada (pasta):** `{cc.entrada.pasta}`")
+        elif cc.entrada.dataframe:
+            conteudo.append(f"- **Entrada (dataframe):** `{cc.entrada.dataframe}` col=`{cc.entrada.dataframe_col}`")
+        if cc.saida.pasta:
+            conteudo.append(f"- **Saída (pasta):** `{cc.saida.pasta}`")
+        elif cc.saida.dataframe:
+            conteudo.append(f"- **Saída (dataframe):** `{cc.saida.dataframe}` col=`{cc.saida.dataframe_col}`")
+        conteudo.append(f"- **Predição:** `{cc.predicao.pasta or '(será criado)'}`")
         
         # --- Pipeline / Curriculum ---
         etapas = cfg.curriculum
-        conteudo.append(f"\n### Pipeline{' Curriculum' if is_curriculum else ''}")
+        conteudo.append(f"\n### Pipeline Curriculum")
         conteudo.append(f"**Etapas:** {len(etapas)}")
         
-        if is_curriculum and len(etapas) > 1:
+        if len(etapas) > 1:
             # Tabela detalhada das etapas do curriculum
             # Usa valores originais do YAML como fallback (não os mutados por _aplicar_etapa_curriculum)
             conteudo.append("")

@@ -4,8 +4,8 @@ Autor: Luiz Anísio
 Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Pipeline Universal para treinamento com suporte a Curriculum Learning.
-Normaliza qualquer configuração (dataset, pastas ou curriculum) em uma
-lista universal de etapas e gerencia rastreamento unificado de estado e métricas.
+Normaliza a configuração YAML em uma lista universal de etapas
+e gerencia rastreamento unificado de estado e métricas.
 
 Classes:
     - CurriculumTracker: Rastreamento de estado e métricas do pipeline
@@ -194,9 +194,8 @@ def arredondar_seq_length(max_tokens: int, margem_minima: int = 256) -> int:
 def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
     """Normaliza a configuração YAML em uma lista de etapas do curriculum.
     
-    Para tipo_entrada 'dataset' ou 'pastas': gera uma etapa única com alias='Principal'.
-    Para tipo_entrada 'curriculum': interpreta a seção curriculum do YAML.
-    Cada entrada do curriculum corresponde a uma divisão (arquivo CSV) com parâmetros extras.
+    Interpreta a seção 'curriculum.divisao' do YAML. Se for uma lista,
+    cada item vira uma etapa. Se for um dict (etapa única), gera uma etapa com alias='Principal'.
     
     Args:
         yaml_config: Instância de YamlTreinamento
@@ -205,55 +204,58 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
         Lista de EtapaCurriculum (sempre >= 1 elemento)
     """
     raw = yaml_config._raw_config
-    tipo_entrada = yaml_config.formatos.tipo_entrada
     treinamento = yaml_config.treinamento
     lora = yaml_config.lora
     tipo_padrao = "lora" if lora.r not in (0, None, False) else "full"
     
-    # Modo curriculum: interpreta lista de etapas do YAML (curriculum.divisao)
     curriculum_raw = raw.get("curriculum", {})
-    if isinstance(curriculum_raw, dict) and tipo_entrada == "curriculum":
-        divisao_list = curriculum_raw.get("divisao", [])
-        if not isinstance(divisao_list, list) or not divisao_list:
-            raise ValueError("Seção 'curriculum.divisao' deve ser uma lista com pelo menos uma etapa")
-        
-        etapas = []
-        for i, item in enumerate(divisao_list):
-            if not isinstance(item, dict):
-                raise ValueError(f"Etapa {i} do curriculum deve ser um dicionário, recebido: {type(item)}")
-            
-            alias = item.get("alias", f"etapa_{i}")
-            arquivo = item.get("arquivo", "")
-            if arquivo:
-                arquivo = yaml_config._resolver_caminho(arquivo)
-            
-            etapa = EtapaCurriculum(
-                alias=alias,
-                arquivo=arquivo,
-                tipo=item.get("tipo", tipo_padrao),
-                pace_epochs=int(item.get("pace_epochs", treinamento.epochs)),
-                pace_loss=float(item.get("pace_loss", 0.0)),
-                max_seq_length=int(item.get("max_seq_length", 0)),
-                learning_rate=float(item.get("learning_rate", 0.0)),
-            )
-            etapas.append(etapa)
-        
-        if not etapas:
-            raise ValueError("Seção 'curriculum.divisao' está vazia no YAML")
-        
-        logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s)</azul>")
-        for i, e in enumerate(etapas):
-            logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}</cinza>")
-        
-        return etapas
+    if not isinstance(curriculum_raw, dict):
+        raise ValueError("Seção 'curriculum' é obrigatória e deve ser um dicionário")
     
-    # Etapa única padrão (dataset ou pastas)
-    etapa = EtapaCurriculum(
-        alias="Principal",
-        tipo=tipo_padrao,
-        pace_epochs=treinamento.epochs,
-        max_seq_length=treinamento.max_seq_length,
-        learning_rate=treinamento.learning_rate,
-    )
+    divisao_raw = curriculum_raw.get("divisao", [])
     
-    return [etapa]
+    # Se divisao é um dict (etapa única), converte em lista com um item
+    if isinstance(divisao_raw, dict):
+        divisao_list = [divisao_raw]
+    elif isinstance(divisao_raw, list):
+        divisao_list = divisao_raw
+    else:
+        divisao_list = []
+    
+    if not divisao_list:
+        # Sem divisao explícita: gera etapa padrão única
+        etapa = EtapaCurriculum(
+            alias="Principal",
+            tipo=tipo_padrao,
+            pace_epochs=treinamento.epochs,
+            max_seq_length=treinamento.max_seq_length,
+            learning_rate=treinamento.learning_rate,
+        )
+        return [etapa]
+    
+    etapas = []
+    for i, item in enumerate(divisao_list):
+        if not isinstance(item, dict):
+            raise ValueError(f"Etapa {i} do curriculum deve ser um dicionário, recebido: {type(item)}")
+        
+        alias = item.get("alias", f"etapa_{i}" if len(divisao_list) > 1 else "Principal")
+        arquivo = item.get("arquivo", "")
+        if arquivo:
+            arquivo = yaml_config._resolver_caminho(arquivo)
+        
+        etapa = EtapaCurriculum(
+            alias=alias,
+            arquivo=arquivo,
+            tipo=item.get("tipo", tipo_padrao),
+            pace_epochs=int(item.get("pace_epochs", treinamento.epochs)),
+            pace_loss=float(item.get("pace_loss", 0.0)),
+            max_seq_length=int(item.get("max_seq_length", 0)),
+            learning_rate=float(item.get("learning_rate", 0.0)),
+        )
+        etapas.append(etapa)
+    
+    logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s)</azul>")
+    for i, e in enumerate(etapas):
+        logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}</cinza>")
+    
+    return etapas

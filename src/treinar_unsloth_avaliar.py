@@ -24,7 +24,7 @@ Ações:
 
 Opções:
     --base              Força uso do modelo base (ignora LoRA treinado)
-    --quant METODO      Quantização para merge (16bit, 4bit, q4_k_m, q8_0, f16)
+    --quant METODO      Formato de merge (16bit, 4bit)
     --log-level LEVEL   Nível de log (DEBUG, INFO, WARNING, ERROR)
 """
 
@@ -44,8 +44,9 @@ import torch
 import util  # garante que a pasta src está no sys.path
 from util import UtilEnv, Util
 from treinar_unsloth_logging import get_logger, configurar_logging, log_separador, log_bloco
+from util_print import print_cores, exibir_menu_opcoes
 from treinar_unsloth_util import (
-    YamlTreinamento, TIPO_ENTRADA_PASTAS, TIPO_ENTRADA_DATASET, TIPOS_BASEADOS_EM_PASTAS, FORMATO_SAIDA_JSON
+    YamlTreinamento, FORMATO_SAIDA_JSON
 )
 from treinar_unsloth_actions import (
     _exibir_cabecalho_modelo,
@@ -397,34 +398,30 @@ def executar_stats(yaml_path: str) -> None:
     # Estrutura para armazenar dados por subset
     stats_por_subset = {}
     
-    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-        # Modo pastas/curriculum
-        for alvo, nome in [("treino", "Treino"), ("validacao", "Validação"), ("teste", "Teste")]:
-            try:
-                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
-                if mensagens:
-                    stats_por_subset[alvo] = {
-                        'nome': nome,
-                        'registros': len(mensagens),
-                        'entrada': [],
-                        'saida': []
-                    }
-                    logger.info(f"<cinza>   {nome}: {len(mensagens)} registros</cinza>")
-                    
-                    for msg in mensagens:
-                        if isinstance(msg, dict) and 'messages' in msg:
-                            for m in msg['messages']:
-                                texto = m.get('content', '')
-                                tokens = len(texto.split())
-                                if m.get('role') == 'user':
-                                    stats_por_subset[alvo]['entrada'].append(tokens)
-                                elif m.get('role') == 'assistant':
-                                    stats_por_subset[alvo]['saida'].append(tokens)
-            except Exception as e:
-                logger.warning(f"<amarelo>   ⚠️ Erro ao carregar {alvo}: {e}</amarelo>")
-    else:
-        logger.info("   Modo dataset: use --info para ver estatísticas do dataset")
-        return
+    # Carrega dados do curriculum por subset
+    for alvo, nome in [("treino", "Treino"), ("validacao", "Validação"), ("teste", "Teste")]:
+        try:
+            mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=alvo)
+            if mensagens:
+                stats_por_subset[alvo] = {
+                    'nome': nome,
+                    'registros': len(mensagens),
+                    'entrada': [],
+                    'saida': []
+                }
+                logger.info(f"<cinza>   {nome}: {len(mensagens)} registros</cinza>")
+                
+                for msg in mensagens:
+                    if isinstance(msg, dict) and 'messages' in msg:
+                        for m in msg['messages']:
+                            texto = m.get('content', '')
+                            tokens = len(texto.split())
+                            if m.get('role') == 'user':
+                                stats_por_subset[alvo]['entrada'].append(tokens)
+                            elif m.get('role') == 'assistant':
+                                stats_por_subset[alvo]['saida'].append(tokens)
+        except Exception as e:
+            logger.warning(f"<amarelo>   ⚠️ Erro ao carregar {alvo}: {e}</amarelo>")
     
     if not stats_por_subset:
         logger.warning("   Nenhum dado encontrado para gerar estatísticas.")
@@ -598,18 +595,14 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
             logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
             log_separador(caractere="-", largura=60)
             
-            if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-                try:
-                    mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
-                    if not mensagens:
-                        logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
-                        continue
-                    logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
-                except Exception as e:
-                    logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
+            try:
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                if not mensagens:
+                    logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
-            else:
-                logger.warning(f"   ⚠️ Modo dataset não suportado para predict ainda")
+                logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+            except Exception as e:
+                logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                 continue
             
             # Cria diretório do subset (limpa arquivos .json e .txt se já existir)
@@ -768,17 +761,23 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     log_separador(caractere="=", largura=80)
 
 
+# ---------------------------------------------------------------------------
+# Merge / Exportação de Modelos
+# ---------------------------------------------------------------------------
+
 def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     """
     Realiza merge do modelo treinado com o base.
     Salva em {output_dir}(merged_FORMATO)/
     
+    Exporta HF safetensors (16bit ou 4bit) usando transformers + PEFT.
+    Sem dependência de unsloth. Para converter para GGUF (Ollama), use llama.cpp.
+    Gera Modelfile e README_OLLAMA.md com instruções de conversão.
+    
     Args:
         yaml_path: Caminho para o arquivo YAML de configuração
-        quantizacao: Opcional. '16bit', '4bit', 'q4_k_m', 'q8_0', 'f16'.
+        quantizacao: Opcional. '16bit' ou '4bit'.
     """
-    from unsloth import FastLanguageModel
-    
     logger.info("\n")
     log_separador(caractere="=", largura=80)
     logger.info("<azul>>> MODO MERGE - INTEGRANDO LORA ADAPTERS</azul>")
@@ -795,23 +794,21 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     
     mapa_quant = {
         '1': '16bit',
-        '2': '4bit',
-        '3': 'q4_k_m',
-        '4': 'q8_0',
-        '5': 'f16'
+        '2': '4bit'
     }
     
     if not quantizacao:
         if sys.stdin.isatty():
-            logger.info("\n📦 Escolha o formato de Exportação/Merge:")
-            print("   1) ☁️  16-bit .safetensors (Padrão - vLLM/HF)")
-            print("   2) 📉 4-bit  .safetensors (Compacto - vLLM/HF)")
-            print("   3) 🦙 GGUF Q4_K_M (Ollama - Balanceado)")
-            print("   4) 🦙 GGUF Q8_0   (Ollama - Alta Qualidade)")
-            print("   5) 🦙 GGUF F16    (Ollama - Full Precision)")
-            
+            itens_quant = [
+                ('1', '16bit',  '☁️  HF safetensors 16-bit (Padrão - vLLM/HF/llama.cpp) ⭐'),
+                ('2', '4bit',   '📉 HF safetensors 4-bit (Compacto)'),
+            ]
             try:
-                escolha = input("\nOpção [1]: ").strip()
+                escolha = exibir_menu_opcoes(
+                    titulo='<azul>📦 Formato de Exportação/Merge:</azul>',
+                    itens=itens_quant,
+                    prompt='Opção [1]',
+                )
                 if not escolha:
                     escolha = '1'
                 quantizacao = mapa_quant.get(escolha, '16bit')
@@ -826,14 +823,8 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     dirname = f"{output_dir}(merged_{quantizacao})"
         
     logger.info(f"<cinza>\n📂 Diretório de destino: {dirname}</cinza>")
-    logger.info(f"<cinza>⚙️  Formato: {quantizacao}</cinza>")
-
-    # Gera stats antes do merge
-    logger.info("<azul>\n📊 Verificando estatísticas...</azul>")
-    try:
-        executar_stats(yaml_path)
-    except Exception as e:
-        logger.warning(f"<amarelo>⚠️  Erro ao gerar estatísticas (o merge continuará): {e}</amarelo>")
+    logger.info(f"<cinza>⚙️  Formato: {quantizacao} (HF safetensors)</cinza>")
+    logger.info("<cinza>📦 Motor: transformers + PEFT (sem unsloth)</cinza>")
 
     if os.path.exists(dirname):
         logger.warning(f"⚠️  O diretório já existe.")
@@ -851,23 +842,7 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     logger.info("   Isso pode levar alguns instantes...")
     
     try:
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=output_dir,
-            max_seq_length=yaml_config.treinamento.max_seq_length,
-            dtype=None,
-            load_in_4bit=yaml_config.treinamento.nbits == 4,
-        )
-        
-        is_gguf = quantizacao in ['q4_k_m', 'q8_0', 'f16'] or 'gguf' in quantizacao
-        
-        if is_gguf:
-            logger.info(f"💾 Convertendo para GGUF ({quantizacao})...")
-            logger.warning("   ⚠️  Isso pode demorar e consumir memória significativa.")
-            model.save_pretrained_gguf(dirname, tokenizer, quantization_method=quantizacao)
-        else:
-            method = "merged_4bit_forced" if quantizacao == '4bit' else "merged_16bit"
-            logger.info(f"💾 Salvando merge ({method})...")
-            model.save_pretrained_merged(dirname, tokenizer, save_method=method)
+        _executar_merge_hf(yaml_config, output_dir, dirname, quantizacao)
         
         src_treinamento = os.path.join(output_dir, "treinamento")
         dst_treinamento = os.path.join(dirname, "treinamento")
@@ -876,11 +851,47 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
             logger.info("📋 Copiando relatórios e gráficos...")
             shutil.copytree(src_treinamento, dst_treinamento, dirs_exist_ok=True)
         
+        # Gera Modelfile e README_OLLAMA.md para facilitar importação no Ollama
+        try:
+            from treinar_to_ollama import gerar_modelfile_ollama
+            gerar_modelfile_ollama(dirname, yaml_config, quantizacao)
+        except Exception as e:
+            logger.warning(f"<amarelo>⚠️  Erro ao gerar Modelfile: {e}</amarelo>")
+        
         logger.info("<verde>✅ Merge concluído com sucesso!</verde>")
         logger.info(f"<cinza>   Modelo pronto em: {dirname}</cinza>")
         
     except Exception as e:
         logger.error(f"<vermelho>❌ Erro ao realizar merge/exportação: {e}</vermelho>")
+
+
+def _executar_merge_hf(yaml_config, output_dir: str, dirname: str, quantizacao: str) -> None:
+    """Merge HF safetensors usando transformers + PEFT (sem dependência do unsloth).
+    
+    Carrega o modelo em full precision (16-bit) para o merge,
+    independente da quantização usada no treinamento.
+    Para converter para GGUF (Ollama), use llama.cpp após o merge.
+    Veja treinar_ollama_readme.md para instruções detalhadas.
+    """
+    from treinar_model_loader import ModelLoader, QuantizationConfig
+    
+    # Para 4bit, usa BitsAndBytes para reduzir tamanho do safetensors
+    # Para 16bit (padrão), carrega em full precision
+    if quantizacao == '4bit':
+        quant_cfg = QuantizationConfig(nbits=4)
+        logger.info("💾 Merge com quantização 4-bit (BitsAndBytes)...")
+    else:
+        quant_cfg = None
+        logger.info("💾 Merge em full precision (16-bit safetensors)...")
+    
+    model, tokenizer = ModelLoader.load_lora_model(
+        base_model_name=yaml_config.modelo.base,
+        lora_model_path=output_dir,
+        max_seq_length=yaml_config.treinamento.max_seq_length,
+        quant_config=quant_cfg,
+    )
+    
+    ModelLoader.save_merged_model(model, dirname, tokenizer)
 
 
 def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False) -> None:
@@ -1042,18 +1053,14 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
             logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
             log_separador(caractere="-", largura=60)
 
-            if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-                try:
-                    mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
-                    if not mensagens:
-                        logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
-                        continue
-                    logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
-                except Exception as e:
-                    logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
+            try:
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                if not mensagens:
+                    logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
-            else:
-                logger.warning(f"   ⚠️ Modo dataset não suportado para predict vLLM")
+                logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+            except Exception as e:
+                logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                 continue
 
             # Cria diretório do subset
@@ -1233,17 +1240,13 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
     # ---- Carrega exemplos do dataset ----
     logger.info("<azul>\n📂 Carregando exemplos do dataset de treino...</azul>")
 
-    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-        try:
-            mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
-            if not mensagens:
-                logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
-                return
-        except Exception as e:
-            logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
+    try:
+        mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+        if not mensagens:
+            logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
             return
-    else:
-        logger.warning("⚠️  Modo dataset ainda não suportado para teste vLLM. Use modo pastas.")
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
         return
 
     n_exemplos = min(n_exemplos, len(mensagens))
@@ -1451,17 +1454,13 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
     # ---- Carrega exemplos do dataset ----
     logger.info("<azul>\n📂 Carregando exemplos do dataset de treino...</azul>")
 
-    if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-        try:
-            mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
-            if not mensagens:
-                logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
-                return
-        except Exception as e:
-            logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
+    try:
+        mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+        if not mensagens:
+            logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
             return
-    else:
-        logger.warning("⚠️  Modo dataset ainda não suportado para teste unsloth. Use modo pastas.")
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
         return
 
     n_exemplos = min(n_exemplos, len(mensagens))
@@ -1705,18 +1704,14 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
             logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
             log_separador(caractere="-", largura=60)
 
-            if yaml_config.tipo_entrada in TIPOS_BASEADOS_EM_PASTAS:
-                try:
-                    mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
-                    if not mensagens:
-                        logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
-                        continue
-                    logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
-                except Exception as e:
-                    logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
+            try:
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                if not mensagens:
+                    logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
-            else:
-                logger.warning(f"   ⚠️ Modo dataset não suportado para predict unsloth")
+                logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+            except Exception as e:
+                logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                 continue
 
             # Cria diretório do subset
@@ -1842,81 +1837,6 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
 
 
 # ---------------------------------------------------------------------------
-# Exportação para GGUF
-# ---------------------------------------------------------------------------
-
-def executar_exportar_gguf(yaml_path: str) -> None:
-    """Exporta modelo para formato GGUF usando unsloth.
-
-    Args:
-        yaml_path: Caminho para o arquivo YAML de configuração
-    """
-    logger.info("\n")
-    log_separador(caractere="=", largura=80)
-    logger.info("<azul>>> EXPORTAÇÃO PARA GGUF (Ollama/llama.cpp) COM UNSLOTH</azul>")
-    log_separador(caractere="=", largura=80)
-
-    try:
-        from unsloth import FastLanguageModel
-    except ImportError:
-        logger.error("❌ Módulo unsloth não encontrado!")
-        logger.info("   Instale com: pip install unsloth")
-        return
-
-    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
-    _exibir_cabecalho_modelo(yaml_config)
-
-    output_dir = yaml_config.modelo.saida
-
-    if not _verificar_modelo_treinado(yaml_config):
-        logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
-        return
-
-    # Pergunta método de quantização
-    logger.info("\n📦 Escolha o método de quantização GGUF:")
-    print("   1) q4_k_m   - Balanceado, recomendado (~3.5GB para 7B) ⭐")
-    print("   2) q8_0     - Alta qualidade (~7GB para 7B)")
-    print("   3) f16      - Máxima qualidade (~14GB para 7B)")
-    print("   4) q4_0     - Mais compacto (~3.2GB para 7B)")
-    print("   5) q5_k_m   - Balanceado intermediário (~4.5GB para 7B)")
-
-    try:
-        escolha = input("\nOpção [1]: ").strip()
-        if not escolha:
-            escolha = '1'
-
-        mapa_quant = {
-            '1': 'q4_k_m',
-            '2': 'q8_0',
-            '3': 'f16',
-            '4': 'q4_0',
-            '5': 'q5_k_m',
-        }
-
-        quantization = mapa_quant.get(escolha, 'q4_k_m')
-    except (KeyboardInterrupt, EOFError):
-        logger.info("\nOperação cancelada.")
-        return
-
-    logger.info(f"\n🔄 Iniciando exportação GGUF ({quantization}) com unsloth...")
-    logger.info(f"   Modelo: {output_dir}")
-
-    try:
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=output_dir,
-            max_seq_length=yaml_config.treinamento.max_seq_length,
-            dtype=None,
-            load_in_4bit=yaml_config.treinamento.nbits == 4,
-        )
-        dirname = f"{output_dir}(merged_{quantization})"
-        model.save_pretrained_gguf(dirname, tokenizer, quantization_method=quantization)
-        logger.info(f"\n✅ Exportação GGUF concluída com sucesso! Salvo em: {dirname}")
-    except Exception as e:
-        logger.error(f"\n❌ Erro durante exportação GGUF via unsloth: {e}")
-
-
-
-# ---------------------------------------------------------------------------
 # Menu interativo de avaliação
 # ---------------------------------------------------------------------------
 
@@ -1934,94 +1854,88 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
     tem_modelo = _verificar_modelo_treinado(yaml_config)
     tem_checkpoints, qtd_checkpoints = _verificar_checkpoints_existem(yaml_config)
     
-    logger.info("\n📊 STATUS ATUAL:")
+    print_cores("\n📊 STATUS ATUAL:", color_auto=False)
     if tem_modelo:
-        logger.info(f"   ✅ Modelo LoRA treinado encontrado")
+        print_cores("   ✅ Modelo LoRA treinado encontrado", color_auto=False)
     else:
-        logger.info(f"   ❌ Nenhum modelo treinado encontrado")
+        print_cores("   ❌ Nenhum modelo treinado encontrado", color_auto=False)
     
     if tem_checkpoints:
-        logger.info(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)")
+        print_cores(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)", color_auto=False)
     else:
-        logger.info(f"   💾 Nenhum checkpoint encontrado")
+        print_cores("   💾 Nenhum checkpoint encontrado", color_auto=False)
     
-    # Verifica se vLLM está disponível
-    try:
-        from treinar_vllm_inference import VLLM_AVAILABLE
-        vllm_ok = VLLM_AVAILABLE
-    except:
-        vllm_ok = False
+    # Verifica disponibilidade sem importar módulos pesados
+    import importlib.util
+    vllm_ok = importlib.util.find_spec("vllm") is not None
+    unsloth_ok = importlib.util.find_spec("unsloth") is not None
 
-    # Verifica se unsloth está disponível
-    try:
-        import unsloth
-        unsloth_ok = True
-    except ImportError:
-        unsloth_ok = False
+    # --- Monta itens do menu dinamicamente ---
+    itens = [
+        ('1', 'info',    'Informações detalhadas da configuração e datasets'),
+        ('2', 'stats',   'Relatório estatístico (tokens, loss, hardware) com gráficos'),
+    ]
 
-    # Menu
-    logger.info("\n📋 AÇÕES DE AVALIAÇÃO:")
-    logger.info("   1. info         - Informações detalhadas da configuração e datasets")
-    logger.info("   2. stats        - Relatório estatístico (tokens, loss, hardware) com gráficos")
     if tem_modelo:
-        logger.info("   3. predict      - Gerar predições com modelo treinado (todos os subsets)")
+        itens.append(('3', 'predict',      'Gerar predições com modelo treinado (todos os subsets)'))
         if unsloth_ok:
-            logger.info("   3u. predict-unsloth - ⚡ Predições com unsloth (2x mais rápido)")
+            itens.append(('3u', 'predict-unsloth', '⚡ Predições com unsloth (2x mais rápido)', 'amarelo', 1))
         if vllm_ok:
-            logger.info("   3v. predict-vllm - 🚀 Predições RÁPIDAS com vLLM (até 24x mais rápido)")
-        logger.info("   4. predict-base - Gerar predições com modelo BASE (todos os subsets)")
-        logger.info("   5. modelo       - Testar inferência com modelo treinado (N exemplos)")
-        
+            itens.append(('3v', 'predict-vllm',    '🚀 Predições RÁPIDAS com vLLM (até 24x mais rápido)', 'verde', 1))
+        itens.append(('4', 'predict-base',  'Gerar predições com modelo BASE (todos os subsets)'))
         if unsloth_ok:
-            logger.info("   5u. modelo-unsloth - ⚡ Testar inferência com unsloth (2x mais rápido)")
-        else:
-            logger.info("   5u. modelo-unsloth - (Inativo) Depende do pacote unsloth")
+            itens.append(('4u', 'predict-base-unsloth', '⚡ Predições BASE com unsloth (2x mais rápido)', 'amarelo', 1))
         if vllm_ok:
-            logger.info("   5v. modelo-vllm  - Testar inferência com vLLM (🚀 RÁPIDO)")
-        else:
-            logger.info("   5v. modelo-vllm  - (Inativo) Depende do pacote vLLM")
-            
-        logger.info("   6. modelo-base  - Testar inferência com modelo BASE (N exemplos)")
-        
+            itens.append(('4v', 'predict-base-vllm',    '🚀 Predições BASE com vLLM (até 24x mais rápido)', 'verde', 1))
+        itens.append(('5', 'modelo',        'Testar inferência com modelo treinado (N exemplos)'))
         if unsloth_ok:
-            logger.info("   6u. modelo-base-unsloth - ⚡ Testar BASE com unsloth (2x mais rápido)")
+            itens.append(('5u', 'modelo-unsloth', '⚡ Testar inferência com unsloth (2x mais rápido)', 'amarelo', 1))
         else:
-            logger.info("   6u. modelo-base-unsloth - (Inativo) Depende do pacote unsloth")
+            itens.append(('5u', 'modelo-unsloth', '(Inativo) Depende do pacote unsloth', 'cinza', 1))
         if vllm_ok:
-            logger.info("   6v. modelo-base-vllm - Testar BASE com vLLM (🚀 RÁPIDO)")
+            itens.append(('5v', 'modelo-vllm',    '🚀 Testar inferência com vLLM (RÁPIDO)', 'verde', 1))
         else:
-            logger.info("   6v. modelo-base-vllm - (Inativo) Depende do pacote vLLM")
-            
-        logger.info("\n   📦 EXPORTAÇÃO:")
-        logger.info("   7. merge        - Exportar modelo (merge LoRA + Base → HF format)")
+            itens.append(('5v', 'modelo-vllm',    '(Inativo) Depende do pacote vLLM', 'cinza', 1))
+        itens.append(('6', 'modelo-base',   'Testar inferência com modelo BASE (N exemplos)'))
         if unsloth_ok:
-            logger.info("   8. gguf         - Exportar para GGUF usando unsloth (Ollama/llama.cpp)")
+            itens.append(('6u', 'modelo-base-unsloth', '⚡ Testar BASE com unsloth (2x mais rápido)', 'amarelo', 1))
         else:
-            logger.info("   8. gguf         - (Inativo) Depende do pacote unsloth para gerar versão GGUF")
-    else:
-        logger.info("   3. predict-base - Gerar predições com modelo BASE (todos os subsets)")
-        logger.info("   4. modelo-base  - Testar inferência com modelo BASE (N exemplos)")
-        
-        if unsloth_ok:
-            logger.info("   4u. modelo-base-unsloth - ⚡ Testar BASE com unsloth (2x mais rápido)")
-        else:
-            logger.info("   4u. modelo-base-unsloth - (Inativo) Depende do pacote unsloth")
+            itens.append(('6u', 'modelo-base-unsloth', '(Inativo) Depende do pacote unsloth', 'cinza', 1))
         if vllm_ok:
-            logger.info("   4v. modelo-base-vllm - Testar BASE com vLLM (🚀 RÁPIDO)")
+            itens.append(('6v', 'modelo-base-vllm',    '🚀 Testar BASE com vLLM (RÁPIDO)', 'verde', 1))
         else:
-            logger.info("   4v. modelo-base-vllm - (Inativo) Depende do pacote vLLM")
-            
-    if not vllm_ok or not unsloth_ok:
-        logger.info("\n   ⚠️  Observação:")
-        if not unsloth_ok:
-            logger.info("      - unsloth não instalado. Instale-o para ativar opções ⚡ (2x) e geração GGUF.")
-        if not vllm_ok:
-            logger.info("      - vLLM não instalado. Use 'pip install vllm' para ativar as opções 🚀.")
+            itens.append(('6v', 'modelo-base-vllm',    '(Inativo) Depende do pacote vLLM', 'cinza', 1))
 
-    logger.info("\n   0. sair         - Cancelar e sair")
-    
+        itens.append(('---', '<azul>📦 EXPORTAÇÃO:</azul>'))
+        itens.append(('7', 'merge',  'Exportar modelo (HF safetensors → converta para GGUF/Ollama)'))
+    else:
+        itens.append(('3', 'predict-base', 'Gerar predições com modelo BASE (todos os subsets)'))
+        itens.append(('4', 'modelo-base',  'Testar inferência com modelo BASE (N exemplos)'))
+        if unsloth_ok:
+            itens.append(('4u', 'modelo-base-unsloth', '⚡ Testar BASE com unsloth (2x mais rápido)', 'amarelo', 1))
+        else:
+            itens.append(('4u', 'modelo-base-unsloth', '(Inativo) Depende do pacote unsloth', 'cinza', 1))
+        if vllm_ok:
+            itens.append(('4v', 'modelo-base-vllm',    '🚀 Testar BASE com vLLM (RÁPIDO)', 'verde', 1))
+        else:
+            itens.append(('4v', 'modelo-base-vllm',    '(Inativo) Depende do pacote vLLM', 'cinza', 1))
+
+    itens.append(('---',))
+    itens.append(('0', 'sair', 'Cancelar e sair'))
+
+    # --- Notas de disponibilidade ---
+    notas = []
+    if not unsloth_ok:
+        notas.append("unsloth não instalado. Instale-o para ativar opções ⚡ (2x).")
+    if not vllm_ok:
+        notas.append("vLLM não instalado. Use 'pip install vllm' para ativar as opções 🚀.")
+
     try:
-        escolha = input("\n❓ Digite o número ou nome da ação: ").strip().lower()
+        escolha = exibir_menu_opcoes(
+            titulo='<azul>📋 AÇÕES DE AVALIAÇÃO:</azul>',
+            itens=itens,
+            notas=notas if notas else None,
+        )
         
         if tem_modelo:
             mapa_acoes = {
@@ -2031,6 +1945,8 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
                 '3u': 'predict-unsloth', 'predict-unsloth': 'predict-unsloth',
                 '3v': 'predict-vllm', 'predict-vllm': 'predict-vllm',
                 '4': 'predict-base', 'predict-base': 'predict-base',
+                '4u': 'predict-base-unsloth', 'predict-base-unsloth': 'predict-base-unsloth',
+                '4v': 'predict-base-vllm', 'predict-base-vllm': 'predict-base-vllm',
                 '5': 'modelo', 'modelo': 'modelo',
                 '5u': 'modelo-unsloth', 'modelo-unsloth': 'modelo-unsloth',
                 '5v': 'modelo-vllm', 'modelo-vllm': 'modelo-vllm',
@@ -2038,7 +1954,6 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
                 '6u': 'modelo-base-unsloth', 'modelo-base-unsloth': 'modelo-base-unsloth',
                 '6v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
                 '7': 'merge', 'merge': 'merge', 'export': 'merge',
-                '8': 'gguf', 'gguf': 'gguf', 'exportar-gguf': 'gguf',
                 '0': None, 'sair': None, 'exit': None, 'quit': None,
             }
         else:
@@ -2054,11 +1969,11 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         
         acao = mapa_acoes.get(escolha)
         
-        if acao in ['predict-vllm', 'modelo-vllm', 'modelo-base-vllm'] and not vllm_ok:
+        if acao in ['predict-vllm', 'predict-base-vllm', 'modelo-vllm', 'modelo-base-vllm'] and not vllm_ok:
             logger.warning("Opção indisponível: vLLM não está instalado.")
             return None
 
-        if acao in ['predict-unsloth', 'modelo-unsloth', 'modelo-base-unsloth', 'gguf'] and not unsloth_ok:
+        if acao in ['predict-unsloth', 'predict-base-unsloth', 'modelo-unsloth', 'modelo-base-unsloth'] and not unsloth_ok:
             logger.warning("Opção indisponível: unsloth não está instalado.")
             return None
         
@@ -2097,6 +2012,10 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
         executar_predict_unsloth(yaml_path, subsets=predict_subsets, usar_base=usar_base)
     elif acao == 'predict-base':
         executar_predict(yaml_path, subsets=predict_subsets, usar_base=True)
+    elif acao == 'predict-base-unsloth':
+        executar_predict_unsloth(yaml_path, subsets=predict_subsets, usar_base=True)
+    elif acao == 'predict-base-vllm':
+        executar_predict_vllm(yaml_path, subsets=predict_subsets, usar_base=True)
     elif acao == 'modelo':
         executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
     elif acao == 'modelo-unsloth':
@@ -2111,8 +2030,6 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
         executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
     elif acao == 'merge':
         executar_merge(yaml_path, quantizacao=quant)
-    elif acao == 'gguf':
-        executar_exportar_gguf(yaml_path)
     else:
         logger.error(f"Ação desconhecida: '{acao}'")
 
@@ -2166,7 +2083,7 @@ Exemplos:
   %(prog)s config.yaml --predict    # Gera predições de todos os subsets
   %(prog)s config.yaml --predict --base  # Predições com modelo base
   %(prog)s config.yaml --modelo 5   # Testa 5 predições interativas
-  %(prog)s config.yaml --merge --quant q4_k_m  # Exporta GGUF Q4
+  %(prog)s config.yaml --merge --quant 16bit   # Exporta safetensors 16-bit
 """
     )
     parser.add_argument("config", nargs='?', default=None,
@@ -2194,7 +2111,7 @@ Exemplos:
     parser.add_argument("--base", action="store_true",
                         help="Força o uso do modelo base (ignora LoRA treinado)")
     parser.add_argument("--quant", type=str, default=None,
-                        help="Método de quantização para merge: 16bit, 4bit, q4_k_m, q8_0, f16")
+                        help="Formato de merge: 16bit (padrão, recomendado), 4bit (compacto)")
     parser.add_argument("--log-level", type=str, default=None,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         help="Nível de log (sobrescreve misc.log_level do YAML)")
