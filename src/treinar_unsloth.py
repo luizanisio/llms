@@ -533,6 +533,10 @@ class LLMsTrainer:
         self._yaml_config.validar_max_seq_length()
         
         # Carrega modelo e tokenizer
+        # Nota: O modelo é carregado com seu max_position_embeddings nativo
+        # (ex: Qwen2.5 = 32768 com rope_theta=1e6 suportando até 131072).
+        # O max_seq_length de treinamento controla apenas a truncagem de dados
+        # via SFTConfig.max_length, não a arquitetura do modelo.
         self.model, self.tokenizer = self._load_model()
         
         # Gerenciador de templates de chat
@@ -1279,14 +1283,13 @@ class LLMsTrainer:
         if etapa.max_seq_length > 0:
             treino.max_seq_length = etapa.max_seq_length
 
-        # Recarga dinâmica: se max_seq_length mudou, recarrega modelo e tokenizer
+        # Log da mudança de max_seq_length (afeta truncagem de dados no SFTConfig)
+        # NÃO recarrega o modelo: ele usa max_position_embeddings nativo (ex: 32768)
+        # e não precisa ser recarregado quando max_seq_length de treinamento muda.
         msl_atual = treino.max_seq_length
-        if msl_atual != msl_anterior and step_index > 0:
-            logger.info(f"🔄 max_seq_length mudou: {msl_anterior} → {msl_atual}. Recarregando modelo...")
-            print(f"🔄 Recarga dinâmica: max_seq_length {msl_anterior} → {msl_atual}")
-            self.model, self.tokenizer = self._load_model()
-            self.chat_handler = TreinarChatTemplate(self.tokenizer, self._yaml_config.modelo.base)
-            self.tokenizer = self.chat_handler.tokenizer
+        if msl_atual != msl_anterior:
+            logger.info(f"🔄 max_seq_length mudou: {msl_anterior} → {msl_atual} "
+                        f"(etapa '{etapa.alias}' - afeta truncagem de dados, não a arquitetura do modelo)")
 
         # Exibe informações de tokens da divisão da etapa
         info_tokens = self._yaml_config._ler_info_tokens_divisao(etapa.arquivo)

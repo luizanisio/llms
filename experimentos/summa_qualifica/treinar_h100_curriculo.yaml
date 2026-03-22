@@ -1,12 +1,9 @@
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum Learning)
 # ==========================================================================
-# Ambiente atual: 1x RTX 3060 (12GB VRAM)
-# 
-# SUGESTÕES PARA ESCALONAMENTO:
-# - Máquina maior (2x H100 80GB): veja comentários com [H100]
-# - Modelo maior (Qwen 7B): veja comentários com [7B]
+# Ambiente: 2x H100 80GB (CUDA_VISIBLE_DEVICES="2,3")
+# Modo: curriculum (fácil → médio → difícil → completo)
 # ==========================================================================
 
 #| =========================================================================
@@ -90,17 +87,22 @@ curriculum:
       alias: "fácil"
       tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
-      max_seq_length: 14336  # [Opcional] Pode sobrepor config geral.
+      max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/divisao_medio.csv
       alias: "médio"
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
-      max_seq_length: 15360  # [Opcional] Pode sobrepor config geral.
+      max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/divisao_dificil.csv
       alias: "difícil"
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
-      max_seq_length: 16360  # [Opcional] Pode sobrepor config geral.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/divisao_unica.csv
+      alias: "completo"
+      tipo: "lora"
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
 #| DATASET (PARQUET)
@@ -121,10 +123,11 @@ modelo:
   # Modelo atual: Qwen 2.5 1.5B (suporta GPU de 12GB com 4-bit)
   #| Slug HuggingFace ou caminho local.
   #| [7B] Ex: Qwen/Qwen2.5-7B-Instruct (requer ~24GB VRAM em 4-bit)
-  base_model_name: Qwen/Qwen2.5-1.5B-Instruct
+  #base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #base_model_name: unsloth/Qwen2.5-1.5B-Instruct-unsloth-bnb-4bit
+  base_model_name: Qwen/Qwen2.5-3B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-1.5B-Instruct_simples
+  saida: ./treino_simples/Qwen2.5-3B-Instruct_simples_direto
 
 #| =========================================================================
 #| TREINAMENTO
@@ -137,26 +140,30 @@ treinamento:
   
   #| Amostras por GPU. Menor gasta menos VRAM.
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
-  #| [7B] Com 4-bit (RTX 3060): use 1.
-  #| [H100] Pode usar 8-16.
-  batch_size: 8
+  #| ⚠️ Com sequências longas (30k+), o tensor de logits (batch × seq × vocab × 4B)
+  #|    é o maior consumidor de memória. Para Qwen2.5 (vocab=151936):
+  #|    - batch=2, seq=35k → logits ≈ 43 GB (pode causar OOM)
+  #|    - batch=1, seq=35k → logits ≈ 22 GB (seguro em H100 80GB)
+  #| [H100] Com sequências longas: use 1. Com sequências curtas (<8k): pode usar 4-8.
+  batch_size: 1
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
-  #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
-  #| [7B] Aumente para 20-40 se batch_size=1.
-  grad_batch_size: 2
-  # Batch efetivo: 2 * 10 = 20
+  #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16-24).
+  #| [H100] Com batch_size=1 e 2 GPUs: grad_batch_size=12 → efetivo = 1*12*2 = 24.
+  grad_batch_size: 12
+  # Batch efetivo: 1 * 12 * 2 GPUs = 24
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
   #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
   #| [H100] Mais poder = mais épocas viáveis; pode experimentar 5-10.
   num_train_epochs: 1
   
-  #| Contexto máximo. Qwen/Llama suportam long context, mas 2048-4096 é comum.
-  #| Valor maior consome mais VRAM.
-  #| [7B] Suporta até 128k, mas 4096-8192 é prático.
+  #| Contexto máximo para truncagem de dados. NÃO altera a arquitetura do modelo.
+  #| O modelo usa seu max_position_embeddings nativo (Qwen2.5 = 32768, com
+  #| rope_theta=1e6 suportando até 131072 tokens via RoPE estendido).
+  #| Este valor controla apenas o max_length do SFTTrainer (truncagem/padding).
+  #| Em modo curriculum, cada etapa pode sobrepor este valor (ver curriculum.divisao).
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
-  #| ⚠️ RTX 3060 12GB: use 2048-4096. Valores maiores podem causar OOM. 
-  #|    - 6144 (6k) é o máximo conseguido sem erro com 12Gb e modelo 1.5B em 4-bit
+  #| ⚠️ Com sequências longas, reduza batch_size para 1 e aumente grad_batch_size.
   max_seq_length: 4098
   
   #| Validação de tokens segura. Recomendado: true.
@@ -203,11 +210,11 @@ treinamento:
 lora:
   #| Rank: 8, 16, 32, 64, 128. Recomendado: 16 ou 32.
   #| Maior rank = mais capacidade, mas usa mais VRAM e pode overfitar.
-  #| [7B/H100] Pode aumentar para 32, 64 ou 128.
-  r: 4
+  #| [H100] Com memória ampla, r=16 ou 32 oferece melhor qualidade.
+  r: 16
   #| Alpha: Escala do ajuste. Recomendado: igual a r ou 2*r.
   #| Ex: r=16 -> alpha=32.
-  alpha: 8   # ratio alpha/r = 2 (padrão recomendado)
+  alpha: 32   # ratio alpha/r = 2 (padrão recomendado)
   #| Regularização. Unsloth otimizado para 0, mas use 0.1 se notar overfitting.
   dropout: 0.05
   

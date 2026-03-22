@@ -132,6 +132,11 @@ class ModelLoader:
         # Dtype padrão (se não quantizado)
         torch_dtype = torch.bfloat16 if quant_config is None else None
 
+        # IMPORTANTE: NÃO passamos max_position_embeddings ao from_pretrained().
+        # Esse parâmetro altera a arquitetura RoPE do modelo, sobrescrevendo o valor
+        # nativo (ex: Qwen2.5 = 32768 com rope_theta=1e6 que suporta até 131072).
+        # O max_seq_length de treinamento é aplicado apenas na truncagem de dados
+        # (via SFTConfig.max_length), não na arquitetura do modelo.
         # Tenta usar flash_attention_2 se disponível, senão fallback para sdpa
         try:
             model = AutoModelForCausalLM.from_pretrained(
@@ -142,7 +147,6 @@ class ModelLoader:
                 trust_remote_code=trust_remote_code,
                 attn_implementation=attn_implementation,
                 use_cache=use_cache,
-                max_position_embeddings=max_seq_length,
             )
         except Exception as e:
             logger.warning(f"Falha ao carregar com attn_implementation={attn_implementation}: {e}")
@@ -155,14 +159,15 @@ class ModelLoader:
                 trust_remote_code=trust_remote_code,
                 attn_implementation="sdpa",
                 use_cache=use_cache,
-                max_position_embeddings=max_seq_length,
             )
 
-        # Tokenizer
+        # Tokenizer — NÃO sobrescreve model_max_length.
+        # O tokenizer nativo já tem o valor correto (ex: Qwen2.5 = 131072).
+        # Forçar model_max_length=max_seq_length causava mensagens falsas de
+        # "janela de contexto menor que o contexto dos dados".
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=trust_remote_code,
-            model_max_length=max_seq_length,
         )
 
         # Configura pad_token se não existir
@@ -170,11 +175,26 @@ class ModelLoader:
             tokenizer.pad_token = tokenizer.eos_token
             tokenizer.pad_token_id = tokenizer.eos_token_id
 
+        # Informações nativas do modelo vs configuração de treinamento
+        native_max_pos = getattr(model.config, 'max_position_embeddings', 'N/A')
+        native_rope_theta = getattr(model.config, 'rope_theta', 'N/A')
+        tokenizer_max = getattr(tokenizer, 'model_max_length', 'N/A')
+
         print_cores(f"<verde>✅ Modelo base carregado: {type(model).__name__}</verde>", color_auto=False)
         print(f"  - Parâmetros totais: {model.num_parameters():,}")
         print(f"  - Quantização: {quant_config.nbits if quant_config else 16}-bit")
         print(f"  - Device map: {device_map}")
-        print(f"  - Max seq length: {max_seq_length}")
+        print(f"  - Contexto nativo: max_position_embeddings={native_max_pos}, rope_theta={native_rope_theta}")
+        print(f"  - Tokenizer max length (nativo): {tokenizer_max}")
+        print(f"  - Max seq length (treinamento): {max_seq_length}")
+
+        # Alerta se max_seq_length excede o contexto nativo do modelo
+        if isinstance(native_max_pos, int) and max_seq_length > native_max_pos:
+            logger.warning(
+                f"⚠️  max_seq_length ({max_seq_length}) > max_position_embeddings nativo ({native_max_pos}). "
+                f"O modelo pode lidar com sequências mais longas via RoPE (rope_theta={native_rope_theta}), "
+                f"mas a qualidade pode degradar além do comprimento pré-treinado."
+            )
 
         return model, tokenizer
 
@@ -409,8 +429,13 @@ class ModelLoader:
             print(f"  - Parâmetros totais: {total:,}")
             print(f"  - Parâmetros treináveis: {trainable:,}")
 
+        # Informações de contexto do modelo
+        base_config = model.config if not is_peft else getattr(model, 'config', model.peft_config)
+        native_max_pos = getattr(base_config, 'max_position_embeddings', 'N/A')
+
         print(f"\n  - Tokenizer: {type(tokenizer).__name__}")
         print(f"  - Vocab size: {len(tokenizer)}")
-        print(f"  - Model max length: {tokenizer.model_max_length}")
+        print(f"  - Tokenizer max length: {tokenizer.model_max_length}")
+        print(f"  - Contexto nativo (max_position_embeddings): {native_max_pos}")
         print(f"  - Pad token: {tokenizer.pad_token} (id={tokenizer.pad_token_id})")
         print()
