@@ -11,6 +11,10 @@
 6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com toda a lógica de avaliação, inferência e exportação. CLI de treino simplificado.
 7.  **Separação `dataset` / `predicao` no YAML**: Nova seção `pastas.dataset` para o gold dataset (entrada obrigatória). `pastas.predicao` agora é apenas pasta de saída das predições (criada automaticamente se não existir).
 8.  **Menu Interativo YAML**: Ambos os scripts usam `util_menu_opcoes.escolher_yaml()` quando YAML é omitido, com menus de ação específicos para cada script.
+9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
+10. **Geração Automática de Gráficos Pós-Treinamento**: Função `gerar_graficos_estatisticos()` extraída e reutilizada por `--stats` e `executar_treinar()`. Gera loss, tokens, hardware e relatório .md automaticamente ao final do treino.
+11. **Limpeza de Artefatos Antigos**: `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores ao iniciar novo treinamento, evitando confusão com dados de treinos passados.
+12. **Batch Size Automático (Curriculum)**: Nova seção `curriculum.batch_size` com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente, mantendo o batch efetivo constante independente do número de GPUs.
 
 ### Próximo Passo de Desenvolvimento
 > pace de treinamento (Curriculum Learning) e simplificação do código
@@ -92,11 +96,13 @@ curriculum:
 1. **Pacing / Early Stopping Configurable:**
     * Programar `TrainerCallback` customizado plugado no Unsloth, que intercepta pós gatilhos `on_evaluate()`.
     * Checar `eval_loss <= pace_loss` ou total epochs se aproximarem de `pace_epochs`, injetar `control.should_training_stop = True` finalizando imediatamente aquela frente do currículo para poupar horas de servidor.
-2. **Métricas de Eficiência Analíticas Estendidas:** Em cada finalização de passo (`curriculum_metrics.jsonl`), adicionar logs em cada etapa englobando *Tamanho em instâncias geradas (Utilização e Validação do target)*, *eval_loss absoluto que atestou o fim da etapa*, *Tempo Real Clocked Time*, *VRAM Peak* na fase cruzada.
-3. **Legendagem Visual do Gráfico (Loss):** Redesenhar e adaptar o método `GraficoTreinamento.evolucao_loss()` usando a engine base. Ele deve ler o tracker consolidado lido, identificar onde ocorreu a transição dos aliases e traçar linhas demarcatórias cruzando e assinalando como legenda "Etapa Fácil", "Etapa Médio", nos boxes e boxplots (em `--stats`).
-4. **Controle de Conclusão e Retomada:**
-    * Implementar trava estrutural bloqueando continuações indevidas. Se um treinamento for acionado em uma pasta onde a última etapa do curriculum (ou o número de épocas planejadas em modo simples) já foi dada como completa, o sistema deve abortar graciosamente informando: "✅ Treinamento já foi concluído e atingiu seu objetivo final."
-    * Evitar retreinar ou estender o treinamento de um modelo que já bateu as metas de parada. Caso o desenvolvedor queira estender, deverá aumentar os parâmetros no `.yaml` (o qual fará o status voltar para `incompleto`) ou acionar o `--reset`.
+2. ✅ **Métricas de Eficiência Analíticas Estendidas:** `MetricsLoggerCallback` registra em `training_metrics.jsonl`: loss, lr, grad_norm, eval_loss, instâncias acumuladas, tokens acumulados, hardware (CPU, RAM, GPU), etapa do curriculum, step/epoch global. Gráficos de eficiência (tokens/instâncias) e hardware (memória) são gerados automaticamente.
+3. ✅ **Legendagem Visual do Gráfico (Loss):** Implementado em `GraficoTreinamento.evolucao_loss()` e `construir_marcadores_etapas()`. Linhas violeta marcam transições entre etapas do curriculum com legendas dos aliases. Gráficos de eficiência e hardware também exibem marcadores de etapas.
+4. ✅ **Controle de Conclusão e Retomada:** Trava estrutural implementada via `CurriculumTracker` em `treinar_unsloth_pipeline.py`. Bloqueia continuações de treinos já concluídos com `is_concluido()` + verificação de `target_epochs`. Liberação automática ao adicionar etapas ou aumentar épocas no YAML.
+5. ✅ **Geração Automática de Gráficos Pós-Treinamento:** Função `gerar_graficos_estatisticos()` extraída em `treinar_unsloth_avaliar.py` e chamada automaticamente ao final de `executar_treinar()` em `treinar_unsloth_actions.py`. Gera loss, tokens, hardware e relatório .md sem necessidade de rodar `--stats` manualmente.
+6. ✅ **Limpeza de Artefatos Antigos:** Ao iniciar novo treinamento (`etapa_index == 0`), o `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores junto com a truncagem do `training_metrics.jsonl`.
+7. ✅ **Validação Fail-Fast de Criptografia:** `ConfigMisc.__post_init__` verifica se a variável de ambiente de criptografia existe quando configurada no YAML (`misc.env_chave_criptografia`). `_carregar_dataframe_entrada` em `treinar_unsloth_dataset.py` levanta `EnvironmentError` em vez de silenciosamente continuar com dados criptografados.
+8. ✅ **Batch Size Automático:** Nova `ConfigBatchSize` em `treinar_unsloth_util.py`. Seção `curriculum.batch_size` com `efetivo` (batch desejado) e `batch_size` (por GPU). `_aplicar_batch_size_auto()` calcula `grad_batch_size` com base no nº de GPUs detectado via `torch.cuda.device_count()`, sobrescrevendo `treinamento.batch_size` e `treinamento.grad_batch_size` de forma transparente.
 * **⏱️ Teste Intermediário Final:** Processar múltiplos estágios usando Curriculum completo. Embutir propositalmente uma meta `pace_loss = 1.5` de fácil alcance numa das passagens e testar os limites do Early-Stopping e o respectivo avanço para a etapa 2. Constatar a divisão formatada do gráfico unificado renderizado em `.png` ao encerramento pleno.
 
 #### Backlog Múltiplas GPUs

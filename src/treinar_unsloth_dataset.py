@@ -345,14 +345,23 @@ class DatasetTreinamento:
         if self.misc and self.misc.env_chave_criptografia:
             import os as _os
             chave = _os.getenv(self.misc.env_chave_criptografia)
-            if chave:
-                try:
-                    from util import UtilCriptografia
-                    _os.environ['CHAVE_CRIPT'] = chave # Fallback para compatibilidade se Util precisar
-                    cripto = UtilCriptografia()
-                    print("CHAVE FERNET CARREGADA _o/")
-                except ImportError:
-                    pass
+            if not chave or not chave.strip():
+                raise EnvironmentError(
+                    f"❌ Variável de ambiente '{self.misc.env_chave_criptografia}' não está "
+                    f"definida ou está vazia. Sem a chave de criptografia, o treinamento "
+                    f"será feito com texto criptografado (ilegível). "
+                    f"Defina a variável: export {self.misc.env_chave_criptografia}=\"sua_chave_fernet\""
+                )
+            try:
+                from util import UtilCriptografia
+                _os.environ['CHAVE_CRIPT'] = chave  # Fallback para compatibilidade se Util precisar
+                cripto = UtilCriptografia()
+                print("CHAVE FERNET CARREGADA _o/")
+            except ImportError as e:
+                raise ImportError(
+                    f"❌ Não foi possível importar UtilCriptografia. "
+                    f"O módulo 'util' é necessário para decriptografar os dados. Erro: {e}"
+                )
         
         mapa_textos = {}
         for _, row in df.iterrows():

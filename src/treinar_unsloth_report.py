@@ -195,16 +195,49 @@ class GeradorRelatorio:
         conteudo.append(f"**Tipo de entrada:** {cfg.tipo_entrada}")
         
         # --- 1. Configuração ---
+        # Valores originais do YAML (antes de overrides de curriculum/batch_auto)
+        treino_raw = cfg._raw_config.get("treinamento", {})
+        yaml_epochs = int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1)
+        yaml_lr = float(treino_raw.get("learning_rate", 2e-4))
+        yaml_msl = int(treino_raw.get("max_seq_length", 4096))
+        yaml_bs = int(treino_raw.get("batch_size", 2))
+        yaml_grad = int(treino_raw.get("grad_batch_size", 5))
+        
+        # Valores efetivos (após batch_size_auto e overrides da 1ª etapa curriculum)
+        bs_efetivo = cfg.treinamento.batch_size
+        grad_efetivo = cfg.treinamento.grad_batch_size
+        
+        # Cálculo do batch efetivo total
+        import torch
+        n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
+        batch_total = bs_efetivo * grad_efetivo * n_gpus
+        
         conteudo.append("\n## 1. Configuração do Treinamento")
         conteudo.append("")
         conteudo.append("| Parâmetro | Valor |")
         conteudo.append("|---|---|")
-        conteudo.append(f"| Batch size | {cfg.treinamento.batch_size} |")
-        conteudo.append(f"| Grad accumulation | {cfg.treinamento.grad_batch_size} |")
+        
+        # Batch size: mostra efetivo e, se auto-calculado, indica
+        batch_auto = getattr(cfg, 'batch_size_auto', None)
+        if batch_auto and batch_auto.efetivo > 0:
+            conteudo.append(f"| Batch size (por GPU) | {bs_efetivo} |")
+            conteudo.append(f"| Grad accumulation | {grad_efetivo} (auto: efetivo_alvo={batch_auto.efetivo}) |")
+            conteudo.append(f"| **Batch efetivo total** | **{batch_total}** ({bs_efetivo} × {grad_efetivo} × {n_gpus} GPU) |")
+            if batch_total != batch_auto.efetivo:
+                conteudo.append(f"| ⚠️ Arredondamento | alvo={batch_auto.efetivo}, real={batch_total} |")
+        else:
+            conteudo.append(f"| Batch size (por GPU) | {bs_efetivo} |")
+            conteudo.append(f"| Grad accumulation | {grad_efetivo} |")
+            conteudo.append(f"| **Batch efetivo total** | **{batch_total}** ({bs_efetivo} × {grad_efetivo} × {n_gpus} GPU) |")
+        
+        # Épocas e max_seq_length: mostra o efetivo da etapa atual
+        # Em modo curriculum, os valores por etapa aparecem na tabela abaixo
         conteudo.append(f"| Épocas | {cfg.treinamento.epochs} |")
-        auto = ""
-        conteudo.append(f"| Max seq length | {cfg.treinamento.max_seq_length}{auto} |")
+        conteudo.append(f"| Max seq length | {cfg.treinamento.max_seq_length} |")
         conteudo.append(f"| LoRA r | {cfg.lora.r} |")
+        conteudo.append(f"| LoRA alpha | {cfg.lora.alpha} |")
+        conteudo.append(f"| LoRA dropout | {cfg.lora.dropout} |")
+        conteudo.append(f"| LoRA target modules | {', '.join(cfg.lora.target_modules)} |")
         conteudo.append(f"| Learning rate | {cfg.treinamento.learning_rate} |")
         conteudo.append(f"| Train on responses only | {cfg.treinamento.train_on_responses_only} |")
         conteudo.append(f"| Warmup steps | {cfg.treinamento.warmup_steps} |")
@@ -250,14 +283,15 @@ class GeradorRelatorio:
         
         if is_curriculum and len(etapas) > 1:
             # Tabela detalhada das etapas do curriculum
+            # Usa valores originais do YAML como fallback (não os mutados por _aplicar_etapa_curriculum)
             conteudo.append("")
             conteudo.append("| # | Alias | Tipo | Epochs | LR | Max Seq | Divisão | Treino | Valid. | Teste |")
             conteudo.append("|---|-------|------|--------|----|---------|---------|--------|--------|-------|")
             
             for i, etapa in enumerate(etapas):
-                ep = etapa.pace_epochs if etapa.pace_epochs > 0 else cfg.treinamento.epochs
-                lr = etapa.learning_rate if etapa.learning_rate > 0 else cfg.treinamento.learning_rate
-                msl = etapa.max_seq_length if etapa.max_seq_length > 0 else cfg.treinamento.max_seq_length
+                ep = etapa.pace_epochs if etapa.pace_epochs > 0 else yaml_epochs
+                lr = etapa.learning_rate if etapa.learning_rate > 0 else yaml_lr
+                msl = etapa.max_seq_length if etapa.max_seq_length > 0 else yaml_msl
                 divisao_nome = os.path.basename(etapa.arquivo) if etapa.arquivo else "-"
                 
                 # Conta instâncias por alvo no CSV da etapa

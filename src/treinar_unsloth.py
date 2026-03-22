@@ -253,6 +253,18 @@ class MetricsLoggerCallback(TrainerCallback):
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
         if etapa_index == 0:
             open(self.metrics_file, "w").close()
+            # Remove gráficos e relatório estatístico anteriores para evitar
+            # confusão com dados de um treinamento passado (serão regenerados ao final)
+            _dir_treinamento = os.path.dirname(self.metrics_file)
+            for _arq_antigo in (
+                "treinamento_loss.png",
+                "treinamento_tokens.png",
+                "hardware_memoria.png",
+                "relatorio_estatistico.md",
+            ):
+                _caminho = os.path.join(_dir_treinamento, _arq_antigo)
+                if os.path.isfile(_caminho):
+                    os.remove(_caminho)
         
     def _registrar(self, registro: dict):
         """Salva registro no arquivo JSONL.
@@ -724,7 +736,7 @@ class LLMsTrainer:
                     r=self._yaml_config.lora.r,
                     lora_alpha=self._yaml_config.lora.alpha,
                     lora_dropout=self._yaml_config.lora.dropout,
-                    target_modules=None,  # Auto-detecta
+                    target_modules=self._yaml_config.lora.target_modules,
                     bias="none",
                 )
             elif self.force_base:

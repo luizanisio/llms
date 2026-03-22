@@ -11,15 +11,20 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 | Arquivo | Descrição |
 |---------|-----------|
 | `treinar_unsloth.py` | Script de treinamento e CLI (`LLMsTrainer`, `--treinar`, `--reset`) |
-| `treinar_unsloth_avaliar.py` | Script de avaliação, inferência e exportação (`--info`, `--stats`, `--predict`, `--modelo`, `--merge`) |
+| `treinar_unsloth_avaliar.py` | Script de avaliação, inferência e exportação (`--info`, `--stats`, `--predict`, `--modelo`, `--merge`, `gerar_graficos_estatisticos`) |
 | `treinar_unsloth_actions.py` | Ações de treinamento (`executar_treinar`, `executar_reset`, `executar_injetar_dicas`) |
-| `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`, `ConfigGold`, `ConfigPredicao`) e helpers |
-| `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, divisão, validação (`DatasetTreinamento`) |
+| `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`, `ConfigMisc`, `ConfigGold`, `ConfigPredicao`) e helpers |
+| `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, divisão, validação, criptografia (`DatasetTreinamento`) |
+| `treinar_unsloth_pipeline.py` | Pipeline Universal: construção de etapas e `CurriculumTracker` (trava de conclusão) |
+| `treinar_unsloth_graficos.py` | Gráficos: loss, eficiência (tokens), hardware (memória), boxplots de tokens |
 | `treinar_unsloth_historico.py` | Histórico de treinamento: exemplos, info do modelo, eventos e versionamento YAML |
 | `treinar_unsloth_logging.py` | Sistema centralizado de logging com níveis configuráveis |
 | `treinar_unsloth_monitor.py` | Monitoramento contínuo de RAM/GPU |
 | `treinar_unsloth_report.py` | Geração de relatórios em Markdown |
+| `treinar_chat_templates.py` | Chat templates automáticos por modelo e `train_on_responses_only` |
+| `treinar_unsloth_dicas.py` | Injeção de comentários de dicas no YAML (`--dicas`) |
 | `treinar_unsloth.md` | Esta documentação |
+| `treinar_TODO_PLANEJAMENTO.md` | Planejamento e roadmap de desenvolvimento |
 
 ---
 
@@ -40,9 +45,15 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Divisão automática de datasets (treino, validação, teste) via YAML ou CSV
 - [x] Chat template automático baseado no modelo
 - [x] Criptografia de dados sensíveis (Fernet)
+- [x] Validação fail-fast da chave de criptografia (erro fatal se `misc.env_chave_criptografia` aponta para variável de ambiente inexistente)
 - [x] Validação automática de consistência de dados (IDs e arquivos pareados)
-- [x] Implementar exportação de modelo (GGUF, Merge).
-- [x] Gerar gráficos de evolução de Loss (treino vs validação) ao final do treino.
+- [x] Implementar exportação de modelo (GGUF, Merge)
+- [x] Gerar gráficos de evolução de Loss (treino vs validação) ao final do treino
+- [x] Geração automática de gráficos estatísticos pós-treinamento (loss, tokens, hardware, relatório .md)
+- [x] Limpeza automática de gráficos anteriores ao iniciar novo treinamento (evita confusão com dados antigos)
+- [x] Trava de conclusão: impede reexecução de treino já finalizado (com liberação via YAML)
+- [x] Curriculum Learning: transições de etapas com legendas visuais nos gráficos
+- [x] Curriculum Learning: cálculo automático de `grad_batch_size` para manter batch efetivo constante independente do nº de GPUs
 
 ---
 
@@ -170,6 +181,14 @@ pastas:
     validar_ids: true # Opcional: Verifica a integridade dos IDs (Padrão: true)
 ```
 
+#### Criptografia de Dados (`misc.env_chave_criptografia`)
+Quando os dados de entrada (dataframe parquet) estão criptografados com Fernet, configure o nome da variável de ambiente que contém a chave:
+```yaml
+misc:
+  env_chave_criptografia: CHAVE_CRIPT  # Nome da variável de ambiente
+```
+**Validação fail-fast:** Se esta configuração existir no YAML, o sistema verifica imediatamente (no carregamento da configuração) se a variável de ambiente está definida e não está vazia. Caso contrário, levanta `EnvironmentError` com mensagem orientando a correção, impedindo que o treinamento prossiga com texto criptografado (ilegível).
+
 #### Train on Responses Only
 Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário. (sugerido no unsloth)
 ```yaml
@@ -195,6 +214,9 @@ curriculum:
     dataframe_id: id_peca
   validacao:
     exigir_json_valido: true
+  batch_size:
+    efetivo: 16   # Batch efetivo desejado (ajusta grad_batch_size automaticamente)
+    batch_size: 2  # Batch por GPU (fixo, determinado empiricamente para evitar OOM)
   divisao:
     - arquivo: ./divisao_facil.csv
       alias: "fácil"
@@ -206,6 +228,20 @@ curriculum:
       pace_epochs: 2
 ```
 
+##### Batch Size Automático (`curriculum.batch_size`)
+Quando configurado, o sistema calcula `grad_batch_size` automaticamente para atingir o batch efetivo desejado, independente do número de GPUs. O `batch_size` por GPU é fixo (determinado empiricamente para evitar OOM).
+
+**Fórmula:** `grad_batch_size = round(efetivo / (batch_size × n_gpus))`, mínimo 1.
+
+| GPUs | batch_size | efetivo desejado | grad_batch_size calculado | efetivo real |
+|------|-----------|-----------------|--------------------------|-------------|
+| 1    | 2         | 16              | 8                        | 16          |
+| 2    | 2         | 16              | 4                        | 16          |
+| 3    | 2         | 16              | 3                        | 18 ≈ 16     |
+| 4    | 2         | 16              | 2                        | 16          |
+
+> **Nota:** Quando `batch_size.efetivo` está configurado, os valores de `treinamento.batch_size` e `treinamento.grad_batch_size` são sobrescritos automaticamente. Se a seção `batch_size` não existir ou `efetivo` for 0, os valores manuais de `treinamento` são usados normalmente.
+
 ---
 
 ## Arquivos de Saída e Métricas
@@ -216,9 +252,17 @@ Durante o treinamento e testes, diversos arquivos são gerados na pasta de saíd
 |---------------|----------|
 | `adapter_model.safetensors` | Pesos do LoRA treinado |
 | `treinamento/training_metrics.jsonl` | Métricas unificadas: treino (loss, lr, epoch) + hardware (CPU, RAM, GPU, Disco) |
+| `treinamento/relatorio_estatistico.md` | Relatório estatístico (gerado automaticamente pós-treino e via `--stats`) |
+| `treinamento/treinamento_loss.png` | Gráfico de evolução do loss (treino vs validação, com marcadores de curriculum) |
+| `treinamento/treinamento_tokens.png` | Gráfico de custo computacional (tokens e instâncias acumulados) |
+| `treinamento/hardware_memoria.png` | Gráfico de uso de memória (RAM + GPU VRAM) durante o treinamento |
+| `treinamento/stats_tokens_boxplot.png` | Boxplots comparativos de tokens por subset (gerado apenas via `--stats`) |
 | `treinamento/memoria_predicao.png` | Gráfico de uso de memória gerado durante teste (`--modelo`) |
+| `chkpt/` | Checkpoints do treinamento (zero-padded: `checkpoint-00001`) |
 | `predict/` | Resultados da predição com modelo treinado |
 | `predict_base/` | Resultados da predição com modelo base (`--base`) |
+
+> **Nota:** Ao iniciar um novo treinamento, os gráficos (`treinamento_loss.png`, `treinamento_tokens.png`, `hardware_memoria.png`) e o `relatorio_estatistico.md` são automaticamente removidos para evitar confusão com dados de treinos anteriores. Eles são regenerados ao final do treinamento.
 
 ---
 
@@ -272,6 +316,10 @@ Para evitar o retrabalho indevido ou degradação de um modelo que já teve suce
 6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com toda a lógica de avaliação, inferência e exportação. CLI de treino simplificado.
 7.  **Separação `dataset` / `predicao` no YAML**: Nova seção `pastas.dataset` para o gold dataset (entrada obrigatória). `pastas.predicao` agora é apenas pasta de saída das predições (criada automaticamente se não existir).
 8.  **Menu Interativo YAML**: Ambos os scripts usam `util_menu_opcoes.escolher_yaml()` quando YAML é omitido, com menus de ação específicos para cada script.
+9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
+10. **Geração Automática de Gráficos Pós-Treinamento**: Função `gerar_graficos_estatisticos()` extraída e reutilizada por `--stats` e `executar_treinar()`. Gera loss, tokens, hardware e relatório .md automaticamente ao final do treino.
+11. **Limpeza de Artefatos Antigos**: `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores ao iniciar novo treinamento, evitando confusão com dados de treinos passados.
+12. **Batch Size Automático (Curriculum)**: Nova seção `curriculum.batch_size` com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente, mantendo o batch efetivo constante independente do número de GPUs.
 
 ### Próximo Passo de Desenvolvimento
 > pace de treinamento (Curriculum Learning) e simplificação do código
@@ -362,6 +410,10 @@ curriculum:
 1. **Pacing / Early Stopping Configurable:**
     * Programar `TrainerCallback` customizado plugado no Unsloth, que intercepta pós gatilhos `on_evaluate()`.
     * Checar `eval_loss <= pace_loss` ou total epochs se aproximarem de `pace_epochs`, injetar `control.should_training_stop = True` finalizando imediatamente aquela frente do currículo para poupar horas de servidor.
-2. **Métricas de Eficiência Analíticas Estendidas:** Em cada finalização de passo (`curriculum_metrics.jsonl`), adicionar logs em cada etapa englobando *Tamanho em instâncias geradas (Utilização e Validação do target)*, *eval_loss absoluto que atestou o fim da etapa*, *Tempo Real Clocked Time*, *VRAM Peak* na fase cruzada.
-3. **Legendagem Visual do Gráfico (Loss):** Redesenhar e adaptar o método `GraficoTreinamento.evolucao_loss()` usando a engine base. Ele deve ler o tracker consolidado lido, identificar onde ocorreu a transição dos aliases e traçar linhas demarcatórias cruzando e assinalando como legenda "Etapa Fácil", "Etapa Médio", nos boxes e boxplots (em `--stats`).
+2. ✅ **Métricas de Eficiência Analíticas Estendidas:** `MetricsLoggerCallback` registra em `training_metrics.jsonl`: loss, lr, grad_norm, eval_loss, instâncias acumuladas, tokens acumulados, hardware (CPU, RAM, GPU), etapa do curriculum, step/epoch global. Gráficos de eficiência (tokens/instâncias) e hardware (memória) são gerados automaticamente.
+3. ✅ **Legendagem Visual do Gráfico (Loss):** Implementado em `GraficoTreinamento.evolucao_loss()` e `construir_marcadores_etapas()`. Linhas violeta marcam transições entre etapas do curriculum com legendas dos aliases. Gráficos de eficiência e hardware também exibem marcadores de etapas.
+4. ✅ **Controle de Conclusão e Retomada:** Trava estrutural implementada via `CurriculumTracker`. Bloqueia continuações de treinos já concluídos. Liberação automática ao adicionar etapas ou aumentar épocas no YAML.
+5. ✅ **Geração Automática de Gráficos Pós-Treinamento:** Função `gerar_graficos_estatisticos()` em `treinar_unsloth_avaliar.py` é chamada automaticamente ao final de `executar_treinar()`. Gera loss, tokens, hardware e relatório .md sem necessidade de rodar `--stats` manualmente.
+6. ✅ **Limpeza de Artefatos Antigos:** Ao iniciar novo treinamento (`etapa_index == 0`), o `MetricsLoggerCallback` remove gráficos e relatório estatístico anteriores (`treinamento_loss.png`, `treinamento_tokens.png`, `hardware_memoria.png`, `relatorio_estatistico.md`) junto com a truncagem do `training_metrics.jsonl`.
+7. ✅ **Validação Fail-Fast de Criptografia:** `ConfigMisc.__post_init__` verifica se a variável de ambiente de criptografia existe quando configurada no YAML. `_carregar_dataframe_entrada` levanta erros em vez de silenciosamente continuar com dados criptografados.
 * **⏱️ Teste Intermediário Final:** Processar múltiplos estágios usando Curriculum completo. Embutir propositalmente uma meta `pace_loss = 1.5` de fácil alcance numa das passagens e testar os limites do Early-Stopping e o respectivo avanço para a etapa 2. Constatar a divisão formatada do gráfico unificado renderizado em `.png` ao encerramento pleno.

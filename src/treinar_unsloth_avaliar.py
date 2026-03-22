@@ -58,6 +58,161 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Geração de gráficos/estatísticas reutilizável (pós-treinamento e --stats)
+# ---------------------------------------------------------------------------
+
+def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
+                                stats_report: list = None) -> Optional[str]:
+    """
+    Gera gráficos e relatório estatístico a partir das métricas de treinamento
+    já salvas em disco (training_metrics.jsonl, checkpoints, hardware).
+
+    Pode ser chamada tanto pelo --stats quanto automaticamente ao final do
+    treinamento, sem necessidade de recarregar o dataset.
+
+    Args:
+        yaml_config: Instância de YamlTreinamento já carregada.
+        silencioso: Se True, reduz mensagens de log (útil no pós-treinamento).
+        stats_report: Lista existente de linhas do relatório para estender.
+                      Se None, cria um relatório novo com cabeçalho próprio.
+
+    Returns:
+        Caminho do relatório gerado ou None se não havia dados suficientes.
+    """
+    from treinar_unsloth_graficos import GraficoTreinamento, GraficoEficiencia, GraficoHardware
+
+    report_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
+    os.makedirs(report_dir, exist_ok=True)
+
+    if not silencioso:
+        logger.info("<azul>\n📈 Gerando gráficos estatísticos do treinamento...</azul>")
+
+    # ---- Métricas de loss (prioriza training_metrics.jsonl) ----
+    treinamento_dir = report_dir
+    metricas_jsonl = GraficoTreinamento.carregar_training_metrics(treinamento_dir)
+
+    chkpt_dir = os.path.join(yaml_config.modelo.saida, "chkpt")
+    if not os.path.exists(chkpt_dir) or not any(
+        d.startswith("checkpoint-") for d in os.listdir(chkpt_dir)
+        if os.path.isdir(os.path.join(chkpt_dir, d))
+    ):
+        chkpt_dir = yaml_config.modelo.saida
+    checkpoints = GraficoTreinamento.listar_checkpoints(chkpt_dir)
+
+    if metricas_jsonl:
+        train_data = metricas_jsonl["train_data"]
+        eval_data = metricas_jsonl["eval_data"]
+        etapas_curriculum = metricas_jsonl["etapas"]
+    else:
+        train_data, eval_data, etapas_curriculum = [], [], []
+        trainer_state = GraficoTreinamento.carregar_trainer_state(chkpt_dir)
+        if trainer_state:
+            train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
+
+    if not train_data and not eval_data:
+        if not silencioso:
+            logger.info("📊 Nenhum dado de loss encontrado (sem training_metrics.jsonl nem checkpoints).")
+        return None
+
+    # ---- Monta relatório ----
+    report_proprio = stats_report is None
+    if stats_report is None:
+        stats_report = []
+        stats_report.append("# Relatório Estatístico do Treinamento\n")
+        stats_report.append(f"**Modelo Base:** `{yaml_config.modelo.base}`\n")
+        stats_report.append(f"**Modelo Saída:** `{yaml_config.modelo.saida}`\n")
+        stats_report.append(f"**Data:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    # ---- Gráfico de Loss ----
+    if train_data or eval_data:
+        if not silencioso:
+            logger.info("<cinza>   📊 Gerando gráfico de loss...</cinza>")
+
+        stats_report.append("\n## Métricas de Treinamento\n")
+        stats_report.append(f"**Checkpoints encontrados:** {len(checkpoints)}\n")
+        if etapas_curriculum:
+            nomes = [et["alias"] for et in etapas_curriculum]
+            stats_report.append(f"**Etapas do curriculum:** {' → '.join(nomes)}\n")
+
+        stats_report.append("\n### Evolução do Loss\n")
+        tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data)
+        stats_report.extend(tabela_loss)
+
+        loss_graph_path = os.path.join(report_dir, "treinamento_loss.png")
+        if GraficoTreinamento.evolucao_loss(
+            train_data, eval_data, checkpoints, loss_graph_path,
+            etapas_curriculum=etapas_curriculum
+        ):
+            logger.info("<verde>   ✅ Gráfico de loss salvo: treinamento_loss.png</verde>")
+            stats_report.append("\n### Gráfico de Evolução do Loss\n")
+            stats_report.append("![Loss de Treinamento](treinamento_loss.png)\n")
+            legenda = "*Linhas verdes: fim de época | Cinzas: checkpoints"
+            if etapas_curriculum and len(etapas_curriculum) > 1:
+                legenda += " | Violeta: transição de etapa curriculum"
+            legenda += "*\n"
+            stats_report.append(legenda)
+        else:
+            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de loss.</amarelo>")
+
+    # ---- Gráfico de Eficiência (tokens/instâncias acumulados) ----
+    if train_data:
+        if not silencioso:
+            logger.info("<cinza>   📊 Gerando gráfico de eficiência (tokens)...</cinza>")
+
+        tokens_graph_path = os.path.join(report_dir, "treinamento_tokens.png")
+        if GraficoEficiencia.evolucao_tokens(
+            train_data, tokens_graph_path,
+            etapas_curriculum=etapas_curriculum
+        ):
+            logger.info("<verde>   ✅ Gráfico de tokens salvo: treinamento_tokens.png</verde>")
+            stats_report.append("\n### Custo Computacional\n")
+            stats_report.append("![Tokens Acumulados](treinamento_tokens.png)\n")
+            stats_report.append("*Azul: tokens processados (custo computacional) | Laranja: instâncias treinadas*\n")
+        else:
+            if not silencioso:
+                logger.info("<cinza>   ℹ️ Gráfico de tokens não gerado (sem dados de tokens_acumulados).</cinza>")
+
+    # ---- Métricas de Hardware ----
+    hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)
+
+    if hardware_metricas:
+        if not silencioso:
+            logger.info("<azul>\n📊 Processando métricas de hardware...</azul>")
+
+        stats_report.append("\n## Métricas de Hardware\n")
+        stats_report.append(f"**Amostras coletadas:** {len(hardware_metricas)}\n")
+
+        stats_report.append("\n### Resumo de Uso de Recursos\n")
+        tabela_hw = GraficoHardware.tabela_resumo_markdown(hardware_metricas)
+        stats_report.extend(tabela_hw)
+
+        if not silencioso:
+            logger.info("<cinza>   📊 Gerando gráfico de memória...</cinza>")
+        mem_graph_path = os.path.join(report_dir, "hardware_memoria.png")
+
+        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path, train_data=train_data, etapas_curriculum=etapas_curriculum):
+            logger.info("<verde>   ✅ Gráfico de memória salvo: hardware_memoria.png</verde>")
+            stats_report.append("\n### Gráfico de Uso de Memória\n")
+            stats_report.append("![Uso de Memória](hardware_memoria.png)\n")
+        else:
+            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de memória.</amarelo>")
+    else:
+        if not silencioso:
+            logger.info("\n📊 Nenhuma métrica de hardware disponível (sem dados em training_metrics.jsonl).")
+
+    # ---- Resumo Consolidado ----
+    _gerar_resumo_consolidado(stats_report, train_data, eval_data, etapas_curriculum, hardware_metricas)
+
+    # ---- Salva relatório ----
+    report_path = os.path.join(report_dir, "relatorio_estatistico.md")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(stats_report))
+
+    logger.info(f"<verde>📝 Relatório estatístico salvo em: {report_path}</verde>")
+    return report_path
+
+
+# ---------------------------------------------------------------------------
 # Ações de Avaliação
 # ---------------------------------------------------------------------------
 
@@ -346,119 +501,10 @@ def executar_stats(yaml_path: str) -> None:
         else:
             logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de tokens.</amarelo>")
 
-    # Métricas de treinamento (loss) — prioriza training_metrics.jsonl
-    from treinar_unsloth_graficos import GraficoTreinamento
-    
-    treinamento_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
-    metricas_jsonl = GraficoTreinamento.carregar_training_metrics(treinamento_dir)
-    
-    chkpt_dir = os.path.join(yaml_config.modelo.saida, "chkpt")
-    if not os.path.exists(chkpt_dir) or not any(
-        d.startswith("checkpoint-") for d in os.listdir(chkpt_dir) 
-        if os.path.isdir(os.path.join(chkpt_dir, d))
-    ):
-        chkpt_dir = yaml_config.modelo.saida
-    checkpoints = GraficoTreinamento.listar_checkpoints(chkpt_dir)
-    
-    if metricas_jsonl:
-        train_data = metricas_jsonl["train_data"]
-        eval_data = metricas_jsonl["eval_data"]
-        etapas_curriculum = metricas_jsonl["etapas"]
-    else:
-        train_data, eval_data, etapas_curriculum = [], [], []
-        trainer_state = GraficoTreinamento.carregar_trainer_state(chkpt_dir)
-        if trainer_state:
-            train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
-    
-    if train_data or eval_data:
-        logger.info("<azul>\n📈 Processando métricas de treinamento...</azul>")
-        
-        stats_report.append("\n## Métricas de Treinamento\n")
-        stats_report.append(f"**Checkpoints encontrados:** {len(checkpoints)}\n")
-        if etapas_curriculum:
-            nomes = [et["alias"] for et in etapas_curriculum]
-            stats_report.append(f"**Etapas do curriculum:** {' → '.join(nomes)}\n")
-        
-        stats_report.append("\n### Evolução do Loss\n")
-        tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data)
-        stats_report.extend(tabela_loss)
-        
-        logger.info("<cinza>   📊 Gerando gráfico de loss...</cinza>")
-        loss_graph_path = os.path.join(report_dir, "treinamento_loss.png")
-        
-        if GraficoTreinamento.evolucao_loss(
-            train_data, eval_data, checkpoints, loss_graph_path,
-            etapas_curriculum=etapas_curriculum
-        ):
-            logger.info("<verde>   ✅ Gráfico de loss salvo: treinamento_loss.png</verde>")
-            stats_report.append(f"\n### Gráfico de Evolução do Loss\n")
-            stats_report.append(f"![Loss de Treinamento](treinamento_loss.png)\n")
-            legenda = "*Linhas verdes: fim de época | Cinzas: checkpoints"
-            if etapas_curriculum and len(etapas_curriculum) > 1:
-                legenda += " | Violeta: transição de etapa curriculum"
-            legenda += "*\n"
-            stats_report.append(legenda)
-        else:
-            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de loss.</amarelo>")
-    else:
-        logger.info("\n📊 Nenhum dado de loss encontrado (sem training_metrics.jsonl nem checkpoints).")
-
-    # Gráfico de eficiência (tokens e instâncias acumulados)
-    if train_data:
-        from treinar_unsloth_graficos import GraficoEficiencia
-        
-        logger.info("<cinza>   📊 Gerando gráfico de eficiência (tokens)...</cinza>")
-        tokens_graph_path = os.path.join(report_dir, "treinamento_tokens.png")
-        
-        if GraficoEficiencia.evolucao_tokens(
-            train_data, tokens_graph_path,
-            etapas_curriculum=etapas_curriculum
-        ):
-            logger.info("<verde>   ✅ Gráfico de tokens salvo: treinamento_tokens.png</verde>")
-            stats_report.append(f"\n### Custo Computacional\n")
-            stats_report.append(f"![Tokens Acumulados](treinamento_tokens.png)\n")
-            legenda_tok = "*Azul: tokens processados (custo computacional) | Laranja: instâncias treinadas*\n"
-            stats_report.append(legenda_tok)
-        else:
-            logger.info("<cinza>   ℹ️ Gráfico de tokens não gerado (sem dados de tokens_acumulados).</cinza>")
-
-    # Métricas de hardware
-    from treinar_unsloth_graficos import GraficoHardware
-    
-    treinamento_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
-    hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)
-    
-    if hardware_metricas:
-        logger.info("<azul>\n📊 Processando métricas de hardware...</azul>")
-        
-        stats_report.append("\n## Métricas de Hardware\n")
-        stats_report.append(f"**Amostras coletadas:** {len(hardware_metricas)}\n")
-        
-        stats_report.append("\n### Resumo de Uso de Recursos\n")
-        tabela_hw = GraficoHardware.tabela_resumo_markdown(hardware_metricas)
-        stats_report.extend(tabela_hw)
-        
-        logger.info("<cinza>   📊 Gerando gráfico de memória...</cinza>")
-        mem_graph_path = os.path.join(report_dir, "hardware_memoria.png")
-        
-        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path, train_data=train_data, etapas_curriculum=etapas_curriculum):
-            logger.info("<verde>   ✅ Gráfico de memória salvo: hardware_memoria.png</verde>")
-            stats_report.append(f"\n### Gráfico de Uso de Memória\n")
-            stats_report.append(f"![Uso de Memória](hardware_memoria.png)\n")
-        else:
-            logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de memória.</amarelo>")
-    else:
-        logger.info("\n📊 Nenhuma métrica de hardware disponível (sem dados em training_metrics.jsonl).")
-
-    # Resumo Consolidado do Treinamento
-    _gerar_resumo_consolidado(stats_report, train_data, eval_data, etapas_curriculum, hardware_metricas)
-
-    # Salva relatório
-    report_path = os.path.join(report_dir, "relatorio_estatistico.md")
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(stats_report))
-    
-    logger.info(f"<verde>\n📝 Relatório estatístico salvo em: {report_path}</verde>")
+    # Gera gráficos de treinamento (loss, eficiência, hardware, resumo consolidado)
+    # via função reutilizável (mesma usada no pós-treinamento automático)
+    # Passa stats_report para estender o relatório existente (tokens + treino num só arquivo)
+    gerar_graficos_estatisticos(yaml_config, stats_report=stats_report)
     
     log_separador(caractere="=", largura=80)
     logger.info("<verde>✅ STATS COMPLETO - RELATÓRIO GERADO</verde>")

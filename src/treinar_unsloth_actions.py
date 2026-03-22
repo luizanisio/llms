@@ -299,6 +299,21 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
     trainer = LLMsTrainer(yaml_path)
     trainer.train()
     
+    # Gera gráficos e relatório estatístico automaticamente pós-treinamento
+    logger.info("\n")
+    log_separador(caractere="-", largura=80)
+    logger.info("<azul>📊 Gerando gráficos estatísticos pós-treinamento...</azul>")
+    try:
+        from treinar_unsloth_avaliar import gerar_graficos_estatisticos
+        report_path = gerar_graficos_estatisticos(trainer._yaml_config, silencioso=True)
+        if report_path:
+            logger.info(f"<verde>✅ Relatório estatístico gerado automaticamente: {report_path}</verde>")
+        else:
+            logger.info("<cinza>ℹ️ Sem dados de métricas suficientes para gerar gráficos.</cinza>")
+    except Exception as e:
+        logger.warning(f"<amarelo>⚠️ Não foi possível gerar gráficos pós-treinamento: {e}</amarelo>")
+    log_separador(caractere="-", largura=80)
+    
     # Libera memória para permitir execução subsequente (ex: predict)
     del trainer
     gc.collect()

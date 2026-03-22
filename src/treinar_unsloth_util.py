@@ -168,6 +168,34 @@ class ConfigTreinamento:
 
 
 @dataclass
+class ConfigBatchSize:
+    """Configuração de cálculo automático de batch size.
+    
+    Quando efetivo > 0, o sistema calcula automaticamente grad_batch_size
+    para atingir o batch efetivo desejado, independente do número de GPUs.
+    
+    Fórmula: grad_batch_size = round(efetivo / (batch_size × n_gpus))
+    
+    Exemplo (YAML):
+        curriculum:
+          batch_size:
+            efetivo: 16   # Batch efetivo desejado
+            batch_size: 2 # Batch por GPU (fixo, determinado empiricamente)
+    
+    Com 2 GPUs: grad_batch_size = round(16 / (2 × 2)) = 4 → efetivo real = 16
+    Com 3 GPUs: grad_batch_size = round(16 / (2 × 3)) = 3 → efetivo real = 18
+    """
+    efetivo: int = 0       # Batch efetivo desejado (0 = desativado, usa batch_size/grad_batch_size manuais)
+    batch_size: int = 2    # Batch por GPU (determinado empiricamente para evitar OOM)
+    
+    def __post_init__(self):
+        if self.efetivo < 0:
+            raise ValueError(f"batch_size.efetivo deve ser >= 0, recebido: {self.efetivo}")
+        if self.efetivo > 0 and self.batch_size <= 0:
+            raise ValueError(f"batch_size.batch_size deve ser > 0 quando efetivo > 0, recebido: {self.batch_size}")
+
+
+@dataclass
 class ConfigFormatos:
     """Configuração de formatos de entrada/saída."""
     tipo_entrada: str = TIPO_ENTRADA_DATASET
@@ -191,6 +219,25 @@ class ConfigMisc:
         if self.log_level.upper() not in niveis_validos:
             raise ValueError(f"log_level deve ser um de {niveis_validos}, recebido: '{self.log_level}'")
         self.log_level = self.log_level.upper()  # Normaliza para maiúsculas
+        
+        # Valida que a variável de ambiente de criptografia existe quando configurada.
+        # Sem ela, o treinamento usaria o texto criptografado (lixo) como entrada.
+        if self.env_chave_criptografia:
+            import os as _os
+            valor = _os.getenv(self.env_chave_criptografia)
+            if not valor or not valor.strip():
+                raise EnvironmentError(
+                    f"\n{'='*70}\n"
+                    f"❌ ERRO CRÍTICO: Variável de ambiente '{self.env_chave_criptografia}' "
+                    f"não está definida ou está vazia.\n\n"
+                    f"O YAML configurou 'misc.env_chave_criptografia: {self.env_chave_criptografia}',\n"
+                    f"mas essa variável não foi encontrada no ambiente atual.\n\n"
+                    f"Sem a chave de criptografia, o treinamento será feito com o texto\n"
+                    f"criptografado (ilegível), gerando um modelo inutilizável.\n\n"
+                    f"Para corrigir, defina a variável antes de executar:\n"
+                    f"  export {self.env_chave_criptografia}=\"sua_chave_fernet_aqui\"\n"
+                    f"{'='*70}"
+                )
 
 
 @dataclass
@@ -364,7 +411,9 @@ class YamlTreinamento:
         self.treinamento: ConfigTreinamento = self._processar_treinamento()
         self.lora: ConfigLora = self._processar_lora()
         
-
+        # Batch automático para curriculum (calcula grad_batch_size com base no nº de GPUs)
+        self.batch_size_auto: Optional[ConfigBatchSize] = self._processar_batch_size_auto()
+        self._aplicar_batch_size_auto()
         
         # Gerenciador de datasets
         from treinar_unsloth_dataset import DatasetTreinamento
@@ -380,10 +429,20 @@ class YamlTreinamento:
         self._curriculum: list = construir_etapas(self)
         
         # Para curriculum: usa o arquivo da primeira etapa como divisao padrão
+        # e aplica overrides da primeira etapa em treinamento (max_seq_length,
+        # epochs, learning_rate) para que todo o código downstream (exibição
+        # de info do modelo, carga de datasets, etc.) já reflita os valores efetivos.
         if self.tipo_entrada == TIPO_ENTRADA_CURRICULUM and self.pastas and self._curriculum:
             primeira = self._curriculum[0]
             if primeira.arquivo and not self.pastas.divisao.arquivo:
                 self.pastas.divisao.arquivo = self._resolver_caminho(primeira.arquivo)
+            # Aplica overrides da 1ª etapa para que treinamento reflita o efetivo
+            if primeira.pace_epochs > 0:
+                self.treinamento.epochs = primeira.pace_epochs
+            if primeira.learning_rate > 0:
+                self.treinamento.learning_rate = primeira.learning_rate
+            if primeira.max_seq_length > 0:
+                self.treinamento.max_seq_length = primeira.max_seq_length
     
     @property
     def curriculum(self) -> list:
@@ -648,6 +707,9 @@ class YamlTreinamento:
             nbits=nbits,
             seed=int(treino_raw.get("seed", 3407)),
             train_on_responses_only=treino_raw.get("train_on_responses_only", True) in {True, "true", "True", 1, "1", "sim"},
+            weight_decay=float(treino_raw.get("weight_decay", 0.01)),
+            optim=str(treino_raw.get("optim", "adamw_8bit")),
+            lr_scheduler_type=str(treino_raw.get("lr_scheduler_type", "linear")),
         )
 
     def _processar_lora(self) -> ConfigLora:
@@ -664,9 +726,73 @@ class YamlTreinamento:
         return ConfigLora(
             r=int(lora_raw.get("r", 8)),
             alpha=int(lora_raw.get("alpha", 32)),
+            dropout=float(lora_raw.get("dropout", 0.05)),
+            target_modules=target_modules,
         )
     
+    def _processar_batch_size_auto(self) -> Optional[ConfigBatchSize]:
+        """Processa a seção 'curriculum.batch_size' do YAML (cálculo automático de batches).
+        
+        Retorna ConfigBatchSize se configurado, ou None se não aplicável.
+        Só é ativado quando tipo_entrada='curriculum' e a seção existe com efetivo > 0.
+        """
+        if self.tipo_entrada != TIPO_ENTRADA_CURRICULUM:
+            return None
+        
+        curriculum_raw = self._raw_config.get("curriculum", {})
+        if not isinstance(curriculum_raw, dict):
+            return None
+        
+        batch_raw = curriculum_raw.get("batch_size", {})
+        if not isinstance(batch_raw, dict) or not batch_raw:
+            return None
+        
+        efetivo = int(batch_raw.get("efetivo", 0))
+        if efetivo <= 0:
+            return None
+        
+        return ConfigBatchSize(
+            efetivo=efetivo,
+            batch_size=int(batch_raw.get("batch_size", 2))
+        )
     
+    def _aplicar_batch_size_auto(self) -> None:
+        """Calcula grad_batch_size automaticamente para atingir o batch efetivo desejado.
+        
+        Sobrescreve treinamento.batch_size e treinamento.grad_batch_size de forma
+        transparente, para que todo o código downstream (SFTConfig, eval_steps,
+        MetricsLoggerCallback) funcione sem alterações.
+        """
+        if not self.batch_size_auto or self.batch_size_auto.efetivo <= 0:
+            return
+        
+        import torch
+        n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
+        
+        bs = self.batch_size_auto.batch_size
+        efetivo_desejado = self.batch_size_auto.efetivo
+        
+        # grad_batch_size = efetivo / (batch_size × n_gpus), mínimo 1
+        grad = max(1, round(efetivo_desejado / (bs * n_gpus)))
+        efetivo_real = bs * grad * n_gpus
+        
+        # Sobrescreve configuração de treinamento (downstream usa estes valores)
+        self.treinamento.batch_size = bs
+        self.treinamento.grad_batch_size = grad
+        
+        # Log informativo
+        from treinar_unsloth_logging import get_logger
+        _logger = get_logger(__name__)
+        if efetivo_real == efetivo_desejado:
+            _logger.info(
+                f"<verde>📊 Batch automático: batch_size={bs} × grad_accum={grad} × "
+                f"{n_gpus} GPU(s) = {efetivo_real} (efetivo desejado: {efetivo_desejado})</verde>"
+            )
+        else:
+            _logger.info(
+                f"<amarelo>📊 Batch automático (arredondado): batch_size={bs} × grad_accum={grad} × "
+                f"{n_gpus} GPU(s) = {efetivo_real} (efetivo desejado: {efetivo_desejado})</amarelo>"
+            )
     
     # ---------------------------------------------------------------------------
     # Métodos Públicos
