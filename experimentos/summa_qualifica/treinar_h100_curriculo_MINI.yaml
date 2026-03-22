@@ -7,55 +7,12 @@
 # ==========================================================================
 
 #| =========================================================================
-#| FORMATOS
-#| =========================================================================
-#| Configuração dos formatos de entrada e saída de dados.
-formatos:
-  tipo_entrada: curriculum
-  formato_saida: json
-
-#| =========================================================================
 #| MISCELÂNEA
 #| =========================================================================
 #| Configurações diversas (logs, variáveis de ambiente).
 misc:
   log_level: DEBUG
   env_chave_criptografia: CHAVE_CRIPT
-
-#| =========================================================================
-#| DATASET (PASTAS)
-#| =========================================================================
-#| Configuração para carregamento de dados via estrutura de pastas (arquivos txt/json).
-#| Para tipo_entrada 'curriculum', as chaves predicao, dataset, entrada e validacao
-#| são compartilhadas entre todas as etapas. A divisão vem da seção 'curriculum'.
-pastas:
-  predicao:
-    #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
-    pasta: ./treino_simples/predict/ext_qwen1_5b_11
-  dataset:
-    #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
-    #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
-    pasta: ./saidas_fold11/ext_qwen235b_11
-    mascara: "*.txt"
-  entrada:
-    #pasta: ./saidas/acordaos_raw
-    #mascara: "*.txt"
-    dataframe: ./summa_data/pecas_exportadas_textos.parquet
-    dataframe_col: texto
-    dataframe_id: id_peca
-    prompt_template: './summa_data/prompt_summa_raw.txt'
-    tag_texto: '<<--TEXTO-->>'
-  divisao:
-    arquivo: ./treino_simples/divisao_unica.csv
-    validar_ids: false
-    proporcao:
-      - treino: 0.70
-      - validacao: 0.10
-      - teste: 0.20
-    seed: 42
-  validacao:
-    exigir_json_valido: true
-    skip_invalidos: false
 
 #| =========================================================================
 #| CURRICULUM
@@ -66,11 +23,13 @@ curriculum:
   predicao:
     #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
     pasta: ./treino_simples/predict/ext_qwen1_5b_11
-  dataset:
+  saida:
     #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
     #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
     pasta: ./saidas_fold11/ext_qwen235b_11
     mascara: "*.txt"
+    formato: json
+    texto_criptografado: false
   entrada:
     #pasta: ./saidas/acordaos_raw
     #mascara: "*.txt"
@@ -79,9 +38,11 @@ curriculum:
     dataframe_id: id_peca
     prompt_template: './summa_data/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: true
+    prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    skip_invalidos: false
+    exigir_ids_pareados: true
   divisao:
     - arquivo: ./treino_simples/_divisao_alguns/divisao_facil.csv
       alias: "fácil"
@@ -103,17 +64,6 @@ curriculum:
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
-
-#| =========================================================================
-#| DATASET (PARQUET)
-#| =========================================================================
-#| Configuração para carregamento de dados via arquivos parquet.
-dataset:
-  train_prompt_col: messages
-  eval_prompt_col: ''
-  train_file: ./saidas/ext_qwen235b_11_train.parquet
-  eval_file: ./saidas/ext_qwen235b_11_eval.parquet
-  test_file: ./saidas/ext_qwen235b_11_test.parquet
 
 #| =========================================================================
 #| MODELO

@@ -10,14 +10,6 @@
 # ==========================================================================
 
 #| =========================================================================
-#| FORMATOS
-#| =========================================================================
-#| Configuração dos formatos de entrada e saída de dados.
-formatos:
-  tipo_entrada: pastas
-  formato_saida: json
-
-#| =========================================================================
 #| MISCELÂNEA
 #| =========================================================================
 #| Configurações diversas (logs, variáveis de ambiente).
@@ -26,20 +18,22 @@ misc:
   env_chave_criptografia: CHAVE_CRIPT
 
 #| =========================================================================
-#| DATASET (PASTAS)
+#| CURRICULUM
 #| =========================================================================
-#| Configuração para carregamento de dados via estrutura de pastas (arquivos txt/json).
-#| Para tipo_entrada 'curriculum', as chaves predicao, dataset, entrada e validacao
-#| são compartilhadas entre todas as etapas. A divisão vem da seção 'curriculum'.
-pastas:
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
   predicao:
     #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
-    pasta: ./treino_simples/predict/ext_qwen1_5b_11_direto
-  dataset:
+    pasta: ./treino_simples/predict/ext_qwen1_5b_11
+  saida:
     #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
     #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
+    #| Pode ser um dataframe seguindo o mesmo padrao da entrada (dataframe, dataframe_col, dataframe_id) ou uma pasta com arquivos txt/json.
     pasta: ./saidas_fold11/ext_qwen235b_11
     mascara: "*.txt"
+    formato: json
+    texto_criptografado: false
   entrada:
     #pasta: ./saidas/acordaos_raw
     #mascara: "*.txt"
@@ -48,19 +42,21 @@ pastas:
     dataframe_id: id_peca
     prompt_template: './summa_data/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
-  divisao:
-    arquivo: ./treino_simples/divisao_unica.csv
-    validar_ids: false
-    proporcao:
-      - treino: 0.70
-      - validacao: 0.10
-      - teste: 0.20
-    seed: 42
+    texto_criptografado: true
+    prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    skip_invalidos: false
-
-
+    exigir_ids_pareados: false
+  divisao:
+    - arquivo: ./treino_simples/divisao_unica.csv
+      alias: "completo"
+      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 1024  # [Opcional] Pode sobrepor config geral.
+      proporcao: # quando existir a chave `proporcao` e náo existir o arquivo de divisão, a divisão será feita com base na proporção definida e o arquivo será criado
+        - treino: 0.70
+        - validacao: 0.10
+        - teste: 0.20
 #| =========================================================================
 #| MODELO
 #| =========================================================================
@@ -72,7 +68,7 @@ modelo:
   base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #base_model_name: unsloth/Qwen2.5-1.5B-Instruct-unsloth-bnb-4bit
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-1.5B-Instruct_simples_direto
+  saida: ./treino_simples/Qwen2.5-1.5B-Instruct_simples (direto)
 
 #| =========================================================================
 #| TREINAMENTO
@@ -85,9 +81,14 @@ treinamento:
   
   #| Amostras por GPU. Menor gasta menos VRAM.
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
-  #| [7B] Com 4-bit (RTX 3060): use 1.
-  #| [H100] Pode usar 8-16.
-  batch_size: 1
+  #| ⚠️ Com sequências longas (30k+), o tensor de logits (batch × seq × vocab × 4B)
+  #|    é o maior consumidor de memória. Para Qwen2.5 (vocab=151936):
+  #|    - batch=2, seq=35k → logits ≈ 43 GB (pode causar OOM)
+  #|    - batch=1, seq=35k → logits ≈ 22 GB (seguro em H100 80GB)
+  #| [H100] Com sequências longas: use 1. Com sequências curtas (<8k): pode usar 4-8.
+  batch_size:
+    efetivo: 16  # Batch efetivo (ajusta batch_size e grad_batch_size automaticamente)
+    batch_size: 1  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
   #| [7B] Aumente para 20-40 se batch_size=1.

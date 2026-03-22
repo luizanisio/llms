@@ -3,16 +3,8 @@
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
 # ==========================================================================
 # Ambiente: 2x H100 80GB (CUDA_VISIBLE_DEVICES="2,3")
-# Modo: pastas (treino direto, sem curriculum learning)
+# Modo: curriculum (etapa única, treino direto)
 # ==========================================================================
-
-#| =========================================================================
-#| FORMATOS
-#| =========================================================================
-#| Configuração dos formatos de entrada e saída de dados.
-formatos:
-  tipo_entrada: pastas
-  formato_saida: json
 
 #| =========================================================================
 #| MISCELÂNEA
@@ -23,20 +15,21 @@ misc:
   env_chave_criptografia: CHAVE_CRIPT
 
 #| =========================================================================
-#| DATASET (PASTAS)
+#| CURRICULUM
 #| =========================================================================
-#| Configuração para carregamento de dados via estrutura de pastas (arquivos txt/json).
-#| Para tipo_entrada 'curriculum', as chaves predicao, dataset, entrada e validacao
-#| são compartilhadas entre todas as etapas. A divisão vem da seção 'curriculum'.
-pastas:
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
   predicao:
     #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
     pasta: ./treino_simples/predict/ext_qwen1_5b_11_direto
-  dataset:
+  saida:
     #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
     #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
     pasta: ./saidas_fold11/ext_qwen235b_11
     mascara: "*.txt"
+    formato: json
+    texto_criptografado: false
   entrada:
     #pasta: ./saidas/acordaos_raw
     #mascara: "*.txt"
@@ -45,17 +38,21 @@ pastas:
     dataframe_id: id_peca
     prompt_template: './summa_data/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
-  divisao:
-    arquivo: ./treino_simples/divisao_unica.csv
-    validar_ids: false
-    proporcao:
-      - treino: 0.70
-      - validacao: 0.10
-      - teste: 0.20
-    seed: 42
+    texto_criptografado: true
+    prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    skip_invalidos: false
+    exigir_ids_pareados: true
+  divisao:
+    - arquivo: ./treino_simples/divisao_unica.csv
+      alias: "direto"
+      tipo: "lora"
+      pace_epochs: 4
+      max_seq_length: 35840
+      proporcao:
+        - treino: 0.70
+        - validacao: 0.10
+        - teste: 0.20
 
 #| =========================================================================
 #| MODELO
