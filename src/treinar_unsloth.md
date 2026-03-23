@@ -12,7 +12,8 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 |---------|-----------|
 | `treinar_unsloth.py` | Script de treinamento e CLI (`LLMsTrainer`, `--treinar`, `--reset`) |
 | `treinar_unsloth_avaliar.py` | Script de avaliação e estatísticas (`--info`, `--stats`, `gerar_graficos_estatisticos`) + CLI/menu interativo de avaliação |
-| `treinar_unsloth_export.py` | Exportação e inferência (`executar_predict`, `executar_modelo`, `executar_merge` — motores HF, vLLM e Unsloth) |
+| `treinar_realizar_predicoes.py` | Predição e inferência OOP: `UtilPredicao` (ABC) → `UtilPredicaoHF`, `UtilPredicaoVLLM`, `UtilPredicaoUnsloth`, `UtilPredicaoOllama` + CLI (`--engine`) |
+| `treinar_unsloth_export.py` | Exportação (`executar_merge`) e helpers de predição (`_registro_ja_exportado`, `_construir_mapa_etapas`, `_copiar_para_pastas_etapas`) |
 | `treinar_unsloth_actions.py` | Ações de treinamento (`executar_treinar`, `executar_reset`, `executar_injetar_dicas`) |
 | `treinar_unsloth_util.py` | Utilitários de configuração (`YamlTreinamento`, `ConfigCurriculum`, `ConfigSaida`, `ConfigEntrada`, `ConfigPredicao`) e helpers |
 | `treinar_unsloth_dataset.py` | Gerenciamento de datasets: carga, divisão, validação, criptografia (`DatasetTreinamento`) |
@@ -57,6 +58,8 @@ O pacote `treinar_unsloth.py` é uma ferramenta completa para fine-tuning de mod
 - [x] Curriculum Learning: treinamento multietapa com transições e legendas visuais nos gráficos
 - [x] Cálculo automático de `grad_batch_size` para manter batch efetivo constante independente do nº de GPUs
 - [x] Formato unificado: seção `curriculum` como único formato de configuração de dados (entrada/saída suportam pasta ou dataframe)
+- [x] Predição/Inferência via Ollama (API local) com `modelo.ollama` e `modelo.ollama_base`
+- [x] Hierarquia OOP de motores de predição (`UtilPredicao` → HF, vLLM, Unsloth, Ollama) com saída padronizada e CLI unificado
 
 ---
 
@@ -78,6 +81,28 @@ python treinar_unsloth.py [CONFIG.yaml] [AÇÃO]
 | `--reset --treinar` | Limpa e treina do zero |
 | `--dicas` | Injeta comentários de dicas no YAML de configuração |
 | `--log-level LEVEL` | Define nível de log (DEBUG, INFO, WARNING, ERROR) |
+
+### treinar_realizar_predicoes.py — Predição e Inferência (4 motores)
+
+```bash
+python treinar_realizar_predicoes.py [CONFIG.yaml] --engine {hf,vllm,unsloth,ollama} [AÇÃO]
+```
+
+| Ação | Descrição |
+|------|-----------|
+| `--predict` | Gera predições em lote para subsets |
+| `--modelo N` | Inferência interativa com N exemplos |
+| `--engine ENGINE` | Motor: `hf` (padrão), `vllm`, `unsloth`, `ollama` |
+| `--base` | Força uso do modelo base |
+| `--subsets LISTA` | Subsets específicos (ex: `teste,validacao`) |
+
+```bash
+# Exemplos:
+python treinar_realizar_predicoes.py config.yaml --engine ollama --predict
+python treinar_realizar_predicoes.py config.yaml --engine ollama --modelo 3
+python treinar_realizar_predicoes.py config.yaml --engine vllm --predict --subsets teste
+python treinar_realizar_predicoes.py config.yaml --engine hf --modelo 1 --base
+```
 
 ### treinar_unsloth_avaliar.py — Avaliação, Inferência e Exportação
 
@@ -221,6 +246,22 @@ curriculum:
 ```
 **Validação fail-fast:** Se qualquer flag `*_criptografado` estiver ativo, o sistema verifica imediatamente se a variável de ambiente (`misc.env_chave_criptografia`) está definida e não está vazia. Caso contrário, levanta `EnvironmentError` impedindo que o treinamento prossiga com texto criptografado.
 
+#### Modelo Ollama (`modelo.ollama` / `modelo.ollama_base`)
+Para usar o Ollama como motor de predição/inferência, configure os nomes dos modelos na seção `modelo`:
+```yaml
+modelo:
+  base_model_name: Qwen/Qwen2.5-1.5B-Instruct
+  saida: ./treino_simples/Qwen2.5-1.5B-Instruct_simples
+  ollama: meu-modelo-treinado:latest   # Modelo treinado (convertido para GGUF e importado no Ollama)
+  ollama_base: qwen2.5:1.5b            # Modelo base (não treinado, disponível no Ollama)
+  ollama_url:                           # URL da API Ollama (opcional, padrão: http://localhost:11434/api)
+```
+- **`ollama`**: Nome do modelo treinado no Ollama. Ativa as opções `3o` (predict) e `5o` (modelo) no menu interativo.
+- **`ollama_base`**: Nome do modelo base no Ollama. Ativa as opções `4o` (predict-base) e `6o` (modelo-base) no menu.
+- **`ollama_url`**: URL customizada da API Ollama (para servidores remotos). Se vazio, usa `http://localhost:11434/api`.
+- O timeout da API é configurável via variável de ambiente `OLLAMA_TIMEOUT` (padrão: 600 segundos).
+- A janela de contexto (`num_ctx`) é automaticamente configurada como `max_seq_length × 2`.
+
 #### Train on Responses Only
 Treina o modelo apenas nas respostas do assistente, ignorando o loss dos prompts do usuário. (sugerido no unsloth)
 ```yaml
@@ -356,7 +397,9 @@ Para evitar o retrabalho indevido ou degradação de um modelo que já teve suce
 12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
 13. **Simplificação do YAML — Curriculum como Formato Único**: Removidos os modos `pastas` e `dataset` (`formatos.tipo_entrada`). Seção `curriculum` é o único formato de configuração de dados. Entrada e saída suportam pasta de arquivos OU dataframe parquet. Criptografia granular por campo. Classes removidas: `ConfigFormatos`, `ConfigGold`, `ConfigPastas`, `ConfigDataset`. Classes adicionadas: `ConfigSaida`, `ConfigCurriculum`.
 14. **Menus Padronizados com `exibir_menu_opcoes`**: Função reutilizável em `util_print.py` que renderiza menus como tabela visual alinhada. Menus de treinamento e avaliação unificados, eliminando formatação manual.
-15. **Separação Exportação/Inferência**: Módulo `treinar_unsloth_export.py` criado com 13 funções extraídas de `treinar_unsloth_avaliar.py`: predict (HF, vLLM, Unsloth), merge/zip, inferência interativa e helpers (skip de registros exportados, cópia para pastas de etapas do curriculum). `treinar_unsloth_avaliar.py` mantém apenas avaliação, estatísticas e CLI (~900 linhas → redução de ~65%).
+15. **Separação Exportação/Inferência**: Módulo `treinar_unsloth_export.py` criado com funções de merge/zip e helpers (skip de registros exportados, cópia para pastas de etapas do curriculum). `treinar_unsloth_avaliar.py` mantém apenas avaliação, estatísticas e CLI.
+16. **Refatoração OOP de Predição/Inferência**: Módulo `treinar_realizar_predicoes.py` (~1100 linhas) com hierarquia de classes `UtilPredicao` (ABC) → `UtilPredicaoHF`, `UtilPredicaoVLLM`, `UtilPredicaoUnsloth`, `UtilPredicaoOllama`. Elimina duplicação de código entre os motores. Saída padronizada compatível com `get_resposta()`. CLI independente via `--engine`. `treinar_unsloth_avaliar.py` despacha para classes.
+17. **Suporte a Ollama base model**: Chave `modelo.ollama_base` no YAML para inferência com modelo base via Ollama. Menu com opções `4o`/`6o` com detecção independente de disponibilidade.
 
 ### Histórico de Desenvolvimento
 > Curriculum Learning, simplificação do código e unificação de formatos
@@ -369,8 +412,8 @@ O desenvolvimento foi dividido nas seguintes etapas incrementais:
 **Objetivo:** Desacoplar a inferência do motor de treinamento para blindar e otimizar o código base do Treinador, centralizando o treinamento para focar *apenas Treinar e dar Merge*, e melhorar a experiência CLI.
 
 **Implementado:**
-1. ✅ **Extração da Avaliação/Inferência:** Funções de avaliação (`executar_info`, `executar_stats`, `gerar_graficos_estatisticos`) em `treinar_unsloth_avaliar.py`. Funções de exportação/inferência (`executar_predict`, `executar_merge`, `executar_modelo` — HF, vLLM, Unsloth) em `treinar_unsloth_export.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
-2. ✅ **Dois Módulos Independentes:** `treinar_unsloth_avaliar.py` (~900 linhas) com CLI/menu interativo e funções de avaliação/estatísticas. `treinar_unsloth_export.py` (~1750 linhas) com todas as funções de exportação e inferência (3 motores: HF, vLLM, Unsloth).
+1. ✅ **Extração da Avaliação/Inferência:** Funções de avaliação (`executar_info`, `executar_stats`, `gerar_graficos_estatisticos`) em `treinar_unsloth_avaliar.py`. Predição e inferência via hierarquia OOP em `treinar_realizar_predicoes.py` (`UtilPredicao` → HF, vLLM, Unsloth, Ollama). Exportação (`executar_merge`) e helpers em `treinar_unsloth_export.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
+2. ✅ **Três Módulos Independentes:** `treinar_unsloth_avaliar.py` (~950 linhas) com CLI/menu interativo e funções de avaliação/estatísticas. `treinar_realizar_predicoes.py` (~1100 linhas) com classes de predição/inferência (4 motores + CLI). `treinar_unsloth_export.py` com merge e helpers.
 3. ✅ **Menu Interativo (CLI):** Ambos os scripts usam `util_menu_opcoes.escolher_yaml(chave_obrigatoria='modelo')`. Argumento `config` é `nargs='?'` (opcional). Menu de ações específico: treino (treinar, reset+treinar, reset) e avaliação (info, stats, predict, modelo, merge).
 4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório, validação de existência). `ConfigPredicao` é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `curriculum.saida` como fonte do gold.
 * **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.

@@ -79,6 +79,9 @@ modelo:
   #base_model_name: unsloth/Qwen2.5-1.5B-Instruct-unsloth-bnb-4bit
   #| Diretório de saída para o adaptador LoRA.
   saida: ./treino_simples/Qwen2.5-1.5B-Instruct_simples (curriculum)
+  ollama_base: qwen2.5:1.5b
+  ollama_url: 
+  ollama:
 
 #| =========================================================================
 #| TREINAMENTO

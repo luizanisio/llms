@@ -44,22 +44,22 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
   divisao:
-    - arquivo: ./treino_simples/divisao_facil.csv
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
       alias: "fácil"
       tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/divisao_medio.csv
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_medio.csv
       alias: "médio"
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/divisao_dificil.csv
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_dificil.csv
       alias: "difícil"
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/divisao_unica.csv
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
       alias: "completo"
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
@@ -79,6 +79,9 @@ modelo:
   base_model_name: Qwen/Qwen2.5-7B-Instruct
   #| Diretório de saída para o adaptador LoRA.
   saida: ./treino_simples/Qwen2.5-7B-Instruct(curriculum)
+  ollama: QwenCurriculum:latest
+  ollama_base: qwen2.5:7b
+  ollama_url: 
 
 #| =========================================================================
 #| TREINAMENTO

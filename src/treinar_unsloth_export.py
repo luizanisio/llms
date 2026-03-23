@@ -48,7 +48,7 @@ from treinar_unsloth_actions import (
     _verificar_modelo_treinado,
     _perguntar_confirmacao,
 )
-
+from util import UtilEnv
 logger = get_logger(__name__)
 
 
@@ -1504,6 +1504,338 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
 
     log_separador(caractere="=", largura=80)
     logger.info("<verde>✅ TESTE DE INFERÊNCIA UNSLOTH COMPLETO</verde>")
+    log_separador(caractere="=", largura=80)
+
+
+# ---------------------------------------------------------------------------
+# Predições com Ollama (API local)
+# ---------------------------------------------------------------------------
+
+def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
+    """Gera predições usando Ollama via API local.
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        subsets: Lista de subsets para processar ('treino', 'validacao', 'teste').
+                 Se None, processa todos.
+    """
+    from util_openai import UtilOllama
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info("<azul>>> MODO PREDICT - OLLAMA 🦙 (API LOCAL)</azul>")
+    log_separador(caractere="=", largura=80)
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
+    yaml_config.validar_max_seq_length()
+    _exibir_cabecalho_modelo(yaml_config)
+
+    # Verifica se o modelo Ollama está configurado
+    if not hasattr(yaml_config.modelo, 'ollama') or not yaml_config.modelo.ollama:
+        logger.error("<vermelho>❌ Chave 'modelo.ollama' não configurada no YAML</vermelho>")
+        logger.info("   Configure o nome do modelo Ollama no YAML (ex: modelo.ollama: QwenDireto)")
+        return
+
+    modelo_ollama = yaml_config.modelo.ollama
+    ollama_url = getattr(yaml_config.modelo, 'ollama_url', None) or None
+
+    # Verifica formato de saída
+    formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
+    logger.info(f"<cinza>\n📋 Formato de saída: {yaml_config.formato_saida}</cinza>")
+    logger.info(f"<cinza>🦙 Modelo Ollama: {modelo_ollama}</cinza>")
+    if ollama_url:
+        logger.info(f"<cinza>🌐 API URL: {ollama_url}</cinza>")
+
+    # Verifica status do Ollama
+    try:
+        status = UtilOllama.status(api_url=ollama_url)
+        if not status.get('api'):
+            logger.error("<vermelho>❌ Ollama API não está disponível</vermelho>")
+            logger.info(f"   Verifique se o Ollama está rodando em {ollama_url or 'http://localhost:11434/api'}")
+            return
+        logger.info(f"<verde>✅ Ollama versão: {status.get('versao', '?')}</verde>")
+        if modelo_ollama not in status.get('modelos', []):
+            logger.warning(f"<amarelo>⚠️ Modelo '{modelo_ollama}' não encontrado localmente</amarelo>")
+            logger.info(f"   Modelos disponíveis: {', '.join(status.get('modelos', []))}")
+            if not _perguntar_confirmacao("Deseja continuar mesmo assim?", padrao=False):
+                return
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao verificar status do Ollama: {e}</vermelho>")
+        return
+
+    # Define subsets a processar (padrão: apenas teste)
+    if subsets is None:
+        subsets = ['teste']
+
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
+
+    # Cria diretório de predições
+    predict_dir = os.path.join(yaml_config.modelo.saida, "predict_ollama")
+    os.makedirs(predict_dir, exist_ok=True)
+
+    max_seq_length = yaml_config.treinamento.max_seq_length
+
+    # Mapa de etapas para cópia em pastas por divisão (curriculum multi-etapa)
+    mapa_etapas = _construir_mapa_etapas(yaml_config)
+
+    uso_total = {'input_tokens': 0, 'output_tokens': 0, 'total_registros': 0, 'tempo_total_s': 0}
+
+    try:
+        for subset in subsets:
+            logger.info(f"<azul>\n📂 Processando subset: {subset}</azul>")
+            log_separador(caractere="-", largura=60)
+
+            try:
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                if not mensagens:
+                    logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
+                    continue
+                logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+            except Exception as e:
+                logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
+                continue
+
+            # Cria diretório do subset (preserva arquivos existentes para continuação)
+            subset_dir = os.path.join(predict_dir, subset)
+            os.makedirs(subset_dir, exist_ok=True)
+
+            total = len(mensagens)
+            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0, 'registros_skip': 0}
+            ini_subset = time.time()
+
+            for idx, msg in enumerate(mensagens):
+                try:
+                    if isinstance(msg, dict) and 'messages' in msg:
+                        messages = msg['messages']
+                        prompt_texto = ""
+                        for m in messages:
+                            if m.get('role') == 'user':
+                                prompt_texto = m.get('content', '')
+                                break
+                    else:
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    if not prompt_texto:
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    registro_id = msg.get('id', f'{subset}_{idx:04d}')
+
+                    # Skip se já exportado (permite continuação de exportações incompletas)
+                    if _registro_ja_exportado(subset_dir, registro_id):
+                        subset_stats['registros_skip'] += 1
+                        _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
+                        continue
+
+                    # Chama Ollama via UtilOllama
+                    tempo_inicio = time.time()
+                    resultado = UtilOllama.chat_completion_padronizado(
+                        messages=messages,
+                        modelo=modelo_ollama,
+                        temperature=0.01,
+                        max_tokens=max_seq_length,
+                        num_ctx=max_seq_length * 2,  # janela de contexto 2x para acomodar entrada+saída
+                        as_json=formato_json,
+                        raw=False,
+                        timeout=300,
+                        api_url=ollama_url,
+                    )
+                    tempo_pred = time.time() - tempo_inicio
+
+                    # Verifica se houve erro
+                    if 'erro' in resultado:
+                        logger.error(f"<vermelho>   ❌ Erro no registro {idx}: {resultado['erro']}</vermelho>")
+                        subset_stats['registros_erro'] += 1
+                        continue
+
+                    resposta_modelo = resultado.get('resposta', '')
+                    if isinstance(resposta_modelo, dict) and formato_json:
+                        resposta_modelo = json.dumps(resposta_modelo, ensure_ascii=False, indent=2)
+                    elif not isinstance(resposta_modelo, str):
+                        resposta_modelo = str(resposta_modelo)
+
+                    input_tokens = resultado.get('usage', {}).get('prompt_tokens', 0)
+                    output_tokens = resultado.get('usage', {}).get('completion_tokens', 0)
+
+                    output_txt = os.path.join(subset_dir, f"{registro_id}.txt")
+                    with open(output_txt, 'w', encoding='utf-8') as f:
+                        f.write(resposta_modelo)
+
+                    usage_data = {
+                        'id': registro_id,
+                        'input_tokens': input_tokens,
+                        'output_tokens': output_tokens,
+                        'time_s': round(tempo_pred, 3),
+                        'model': resultado.get('model', modelo_ollama),
+                    }
+                    output_json = os.path.join(subset_dir, f"{registro_id}.json")
+                    with open(output_json, 'w', encoding='utf-8') as f:
+                        json.dump(usage_data, f, ensure_ascii=False, indent=2)
+
+                    # Copia para pastas de etapa (curriculum multi-etapa)
+                    _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
+
+                    subset_stats['input_tokens'] += input_tokens
+                    subset_stats['output_tokens'] += output_tokens
+                    subset_stats['registros_ok'] += 1
+
+                    if (idx + 1) % 10 == 0 or (idx + 1) == total:
+                        logger.info(f"   Progresso: {idx + 1}/{total} ({100*(idx+1)//total}%)")
+
+                except Exception as e:
+                    logger.error(f"<vermelho>   ❌ Erro no registro {idx}: {e}</vermelho>")
+                    subset_stats['registros_erro'] += 1
+                    continue
+
+            tempo_subset = time.time() - ini_subset
+            skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
+            logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
+
+            uso_total['input_tokens'] += subset_stats['input_tokens']
+            uso_total['output_tokens'] += subset_stats['output_tokens']
+            uso_total['total_registros'] += subset_stats['registros_ok']
+            uso_total['tempo_total_s'] += tempo_subset
+
+    finally:
+        pass
+
+    log_separador(caractere="=", largura=80)
+    logger.info(f"<verde>✅ PREDICT OLLAMA COMPLETO - Resultados em: {predict_dir}</verde>")
+    logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, {uso_total['input_tokens']} + {uso_total['output_tokens']} tokens ({uso_total['tempo_total_s']:.1f}s)</cinza>")
+    log_separador(caractere="=", largura=80)
+
+
+# ---------------------------------------------------------------------------
+# Inferência interativa com Ollama (API local)
+# ---------------------------------------------------------------------------
+
+def executar_modelo_ollama(yaml_path: str, n_exemplos: int = 1) -> None:
+    """Testa inferência interativa com N exemplos usando Ollama via API local.
+
+    Args:
+        yaml_path: Caminho para o arquivo YAML de configuração
+        n_exemplos: Número de exemplos para testar
+    """
+    from util_openai import UtilOllama
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    logger.info(f"<azul>>> MODO MODELO - OLLAMA 🦙 TESTANDO INFERÊNCIA ({n_exemplos} exemplo(s))</azul>")
+    log_separador(caractere="=", largura=80)
+
+    yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
+    _exibir_cabecalho_modelo(yaml_config)
+
+    if not hasattr(yaml_config.modelo, 'ollama') or not yaml_config.modelo.ollama:
+        logger.error("<vermelho>❌ Chave 'modelo.ollama' não configurada no YAML</vermelho>")
+        return
+
+    modelo_ollama = yaml_config.modelo.ollama
+    ollama_url = getattr(yaml_config.modelo, 'ollama_url', None) or None
+    max_seq_length = yaml_config.treinamento.max_seq_length
+    formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
+
+    logger.info(f"<cinza>🦙 Modelo Ollama: {modelo_ollama}</cinza>")
+    if ollama_url:
+        logger.info(f"<cinza>🌐 API URL: {ollama_url}</cinza>")
+
+    # Verifica status do Ollama
+    try:
+        status = UtilOllama.status(api_url=ollama_url)
+        if not status.get('api'):
+            logger.error("<vermelho>❌ Ollama API não está disponível</vermelho>")
+            logger.info(f"   Verifique se o Ollama está rodando em {ollama_url or 'http://localhost:11434/api'}")
+            return
+        logger.info(f"<verde>✅ Ollama versão: {status.get('versao', '?')}</verde>")
+        if modelo_ollama not in status.get('modelos', []):
+            logger.warning(f"<amarelo>⚠️ Modelo '{modelo_ollama}' não encontrado localmente</amarelo>")
+            logger.info(f"   Modelos disponíveis: {', '.join(status.get('modelos', []))}")
+            if not _perguntar_confirmacao("Deseja continuar mesmo assim?", padrao=False):
+                return
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao verificar status do Ollama: {e}</vermelho>")
+        return
+
+    # Carrega exemplos do dataset de treino
+    logger.info("<azul>\n📂 Carregando exemplos do dataset de treino...</azul>")
+    try:
+        mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
+        if not mensagens:
+            logger.error("<vermelho>❌ Nenhum dado de treino encontrado.</vermelho>")
+            return
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao carregar dados de treino: {e}</vermelho>")
+        return
+
+    n_exemplos = min(n_exemplos, len(mensagens))
+    logger.info(f"<cinza>   📊 {len(mensagens)} registros disponíveis, testando {n_exemplos}</cinza>")
+
+    for idx in range(n_exemplos):
+        log_separador(caractere="-", largura=60)
+        msg = mensagens[idx]
+        logger.info(f"<azul>📌 Exemplo {idx + 1}/{n_exemplos}</azul>")
+
+        if not (isinstance(msg, dict) and 'messages' in msg):
+            logger.error(f"<vermelho>   ❌ Formato de mensagem inválido no exemplo {idx}</vermelho>")
+            continue
+
+        messages = msg['messages']
+
+        for m in messages:
+            if m.get('role') == 'user':
+                conteudo = m.get('content', '')
+                preview = conteudo[:300] + ('...' if len(conteudo) > 300 else '')
+                logger.info(f"<cinza>📥 Prompt (user):\n{preview}</cinza>")
+                break
+
+        for m in messages:
+            if m.get('role') == 'assistant':
+                conteudo = m.get('content', '')
+                preview = conteudo[:300] + ('...' if len(conteudo) > 300 else '')
+                logger.info(f"<cinza>🎯 Esperado:\n{preview}</cinza>")
+                break
+
+        logger.info(f"<azul>🚀 Gerando resposta via Ollama ({modelo_ollama})...</azul>")
+        tempo_inicio = time.time()
+        try:
+            resultado = UtilOllama.chat_completion_padronizado(
+                messages=messages,
+                modelo=modelo_ollama,
+                temperature=0.01,
+                max_tokens=max_seq_length,
+                num_ctx=max_seq_length * 2,
+                as_json=formato_json,
+                raw=False,
+                timeout=UtilEnv.get_int('OLLAMA_TIMEOUT', 600),
+                api_url=ollama_url,
+            )
+        except Exception as e:
+            logger.error(f"<vermelho>   ❌ Erro na chamada Ollama: {e}</vermelho>")
+            continue
+
+        tempo_pred = time.time() - tempo_inicio
+
+        if 'erro' in resultado:
+            logger.error(f"<vermelho>   ❌ Erro Ollama: {resultado['erro']}</vermelho>")
+            continue
+
+        resposta = resultado.get('resposta', '')
+        if isinstance(resposta, dict):
+            resposta = json.dumps(resposta, ensure_ascii=False, indent=2)
+        elif not isinstance(resposta, str):
+            resposta = str(resposta)
+
+        input_tokens  = resultado.get('usage', {}).get('prompt_tokens', 0)
+        output_tokens = resultado.get('usage', {}).get('completion_tokens', 0)
+
+        preview_resp = resposta[:500] + ('...' if len(resposta) > 500 else '')
+        logger.info(f"<verde>📤 Resposta Ollama:\n{preview_resp}</verde>")
+        logger.info(f"<cinza>   ⏱️  {tempo_pred:.2f}s | tokens: {input_tokens} entrada + {output_tokens} saída</cinza>")
+
+    log_separador(caractere="=", largura=80)
+    logger.info("<verde>✅ TESTE DE INFERÊNCIA OLLAMA COMPLETO</verde>")
     log_separador(caractere="=", largura=80)
 
 

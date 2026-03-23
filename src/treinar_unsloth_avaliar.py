@@ -57,13 +57,13 @@ from treinar_unsloth_actions import (
 )
 from treinar_unsloth_export import (
     _perguntar_subsets_predict,
-    executar_predict,
-    executar_predict_vllm,
-    executar_predict_unsloth,
     executar_merge,
-    executar_modelo,
-    executar_modelo_vllm,
-    executar_modelo_unsloth,
+)
+from treinar_realizar_predicoes import (
+    UtilPredicaoHF,
+    UtilPredicaoVLLM,
+    UtilPredicaoUnsloth,
+    UtilPredicaoOllama,
 )
 
 logger = get_logger(__name__)
@@ -526,92 +526,180 @@ def executar_stats(yaml_path: str) -> None:
 def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
     """
     Exibe menu interativo com ações de avaliação.
-    
+
+    A estrutura do menu é sempre a mesma — itens indisponíveis aparecem
+    em cinza com indicação do motivo na seção de notas.
+
     Returns:
         Nome da ação escolhida ou None se cancelou
     """
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
     _exibir_cabecalho_modelo(yaml_config)
-    
-    # Status atual
+
+    # --- Verifica disponibilidade ---
     tem_modelo = _verificar_modelo_treinado(yaml_config)
     tem_checkpoints, qtd_checkpoints = _verificar_checkpoints_existem(yaml_config)
-    
-    print_cores("\n📊 STATUS ATUAL:", color_auto=False)
-    if tem_modelo:
-        print_cores("   ✅ Modelo LoRA treinado encontrado", color_auto=False)
-    else:
-        print_cores("   ❌ Nenhum modelo treinado encontrado", color_auto=False)
-    
-    if tem_checkpoints:
-        print_cores(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)", color_auto=False)
-    else:
-        print_cores("   💾 Nenhum checkpoint encontrado", color_auto=False)
-    
-    # Verifica disponibilidade sem importar módulos pesados
+
     import importlib.util
-    vllm_ok = importlib.util.find_spec("vllm") is not None
+    vllm_ok    = importlib.util.find_spec("vllm")    is not None
     unsloth_ok = importlib.util.find_spec("unsloth") is not None
 
-    # --- Monta itens do menu dinamicamente ---
-    itens = [
-        ('1', 'info',    'Informações detalhadas da configuração e datasets'),
-        ('2', 'stats',   'Relatório estatístico (tokens, loss, hardware) com gráficos'),
-    ]
+    ollama_ok = False
+    ollama_base_ok = False
+    try:
+        ollama_ok = hasattr(yaml_config.modelo, 'ollama') and bool(yaml_config.modelo.ollama)
+        ollama_base_ok = hasattr(yaml_config.modelo, 'ollama_base') and bool(yaml_config.modelo.ollama_base)
+    except Exception:
+        pass
 
-    if tem_modelo:
-        itens.append(('3', 'predict',      'Exportar predições com modelo treinado'))
-        if unsloth_ok:
-            itens.append(('3u', 'predict-unsloth', '⚡ Predições com unsloth (2x mais rápido)', 'amarelo', 1))
-        if vllm_ok:
-            itens.append(('3v', 'predict-vllm',    '🚀 Predições RÁPIDAS com vLLM (até 24x mais rápido)', 'verde', 1))
-        itens.append(('4', 'predict-base',  'Exportar predições com modelo BASE'))
-        if unsloth_ok:
-            itens.append(('4u', 'predict-base-unsloth', '⚡ Predições BASE com unsloth (2x mais rápido)', 'amarelo', 1))
-        if vllm_ok:
-            itens.append(('4v', 'predict-base-vllm',    '🚀 Predições BASE com vLLM (até 24x mais rápido)', 'verde', 1))
-        itens.append(('5', 'modelo',        'Testar inferência com modelo treinado (N exemplos)'))
-        if unsloth_ok:
-            itens.append(('5u', 'modelo-unsloth', '⚡ Testar inferência com unsloth (2x mais rápido)', 'amarelo', 1))
-        else:
-            itens.append(('5u', 'modelo-unsloth', '(Inativo) Depende do pacote unsloth', 'cinza', 1))
-        if vllm_ok:
-            itens.append(('5v', 'modelo-vllm',    '🚀 Testar inferência com vLLM (RÁPIDO)', 'verde', 1))
-        else:
-            itens.append(('5v', 'modelo-vllm',    '(Inativo) Depende do pacote vLLM', 'cinza', 1))
-        itens.append(('6', 'modelo-base',   'Testar inferência com modelo BASE (N exemplos)'))
-        if unsloth_ok:
-            itens.append(('6u', 'modelo-base-unsloth', '⚡ Testar BASE com unsloth (2x mais rápido)', 'amarelo', 1))
-        else:
-            itens.append(('6u', 'modelo-base-unsloth', '(Inativo) Depende do pacote unsloth', 'cinza', 1))
-        if vllm_ok:
-            itens.append(('6v', 'modelo-base-vllm',    '🚀 Testar BASE com vLLM (RÁPIDO)', 'verde', 1))
-        else:
-            itens.append(('6v', 'modelo-base-vllm',    '(Inativo) Depende do pacote vLLM', 'cinza', 1))
+    ollama_api_ok    = False
+    ollama_modelo_ok = False
+    ollama_base_modelo_ok = False
+    if ollama_ok or ollama_base_ok:
+        try:
+            from util_openai import UtilOllama
+            _ollama_url = getattr(yaml_config.modelo, 'ollama_url', None) or None
+            _status = UtilOllama.status(api_url=_ollama_url)
+            ollama_api_ok    = _status.get('api', False)
+            if ollama_api_ok:
+                _modelos_disp = _status.get('modelos', [])
+                if ollama_ok:
+                    ollama_modelo_ok = yaml_config.modelo.ollama in _modelos_disp
+                if ollama_base_ok:
+                    ollama_base_modelo_ok = yaml_config.modelo.ollama_base in _modelos_disp
+        except Exception:
+            pass
 
-        itens.append(('---', '<azul>📦 EXPORTAÇÃO:</azul>'))
-        itens.append(('7', 'merge',  'Exportar modelo (HF safetensors → converta para GGUF/Ollama)'))
+    # --- STATUS ATUAL ---
+    print_cores("\n📊 STATUS ATUAL:", color_auto=False)
+    print_cores(f"   {'✅' if tem_modelo else '❌'} Modelo LoRA treinado"
+                f"{'' if tem_modelo else ' não encontrado na pasta de saída'}", color_auto=False)
+    if tem_checkpoints:
+        print_cores(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)", color_auto=False)
+    if ollama_ok:
+        if ollama_api_ok and ollama_modelo_ok:
+            print_cores(f"   🦙 Ollama '{yaml_config.modelo.ollama}' ✅ disponível", color_auto=False)
+        elif ollama_api_ok:
+            print_cores(f"   🦙 Ollama API ✅ | modelo '{yaml_config.modelo.ollama}' ⚠️ não encontrado", color_auto=False)
+        else:
+            print_cores(f"   🦙 Ollama '{yaml_config.modelo.ollama}' ❌ API indisponível", color_auto=False)
+
+    # ---------------------------------------------------------------------------
+    # Monta itens do menu com estrutura FIXA — indisponíveis em cinza
+    # ---------------------------------------------------------------------------
+    def _cor(disponivel: bool) -> str:
+        return '' if disponivel else 'cinza'
+
+    def _sufixos(*pares) -> str:
+        """Inline sub-options: [(label, ok), ...] → ' (Xu:⚡, Yv:🚀)'"""
+        ativos = [label for label, ok in pares if ok]
+        return f" ({', '.join(ativos)})" if ativos else ""
+
+    _nome_ollama = yaml_config.modelo.ollama if ollama_ok else 'Ollama'
+    _ollama_disp = ollama_ok and ollama_api_ok   # configurado + API acessível
+    if not ollama_ok:
+        _ollama_nota = ' [não configurado — adicione modelo.ollama no YAML]'
+    elif not ollama_api_ok:
+        _ollama_nota = ' [API indisponível — execute: ollama serve]'
+    elif not ollama_modelo_ok:
+        _ollama_nota = f' [modelo não encontrado — execute: ollama pull {_nome_ollama}]'
     else:
-        itens.append(('3', 'predict-base', 'Exportar predições com modelo BASE'))
-        itens.append(('4', 'modelo-base',  'Testar inferência com modelo BASE (N exemplos)'))
-        if unsloth_ok:
-            itens.append(('4u', 'modelo-base-unsloth', '⚡ Testar BASE com unsloth (2x mais rápido)', 'amarelo', 1))
-        else:
-            itens.append(('4u', 'modelo-base-unsloth', '(Inativo) Depende do pacote unsloth', 'cinza', 1))
-        if vllm_ok:
-            itens.append(('4v', 'modelo-base-vllm',    '🚀 Testar BASE com vLLM (RÁPIDO)', 'verde', 1))
-        else:
-            itens.append(('4v', 'modelo-base-vllm',    '(Inativo) Depende do pacote vLLM', 'cinza', 1))
+        _ollama_nota = ''
 
-    itens.append(('---',))
-    itens.append(('0', 'sair', 'Cancelar e sair'))
+    _nome_ollama_base = yaml_config.modelo.ollama_base if ollama_base_ok else 'Ollama'
+    _ollama_base_disp = ollama_base_ok and ollama_api_ok
+    if not ollama_base_ok:
+        _ollama_base_nota = ' [não configurado — adicione modelo.ollama_base no YAML]'
+    elif not ollama_api_ok:
+        _ollama_base_nota = ' [API indisponível — execute: ollama serve]'
+    elif not ollama_base_modelo_ok:
+        _ollama_base_nota = f' [modelo não encontrado — execute: ollama pull {_nome_ollama_base}]'
+    else:
+        _ollama_base_nota = ''
+
+    itens = [
+        ('1',  'info',  'Informações detalhadas da configuração e datasets'),
+        ('2',  'stats', 'Relatório estatístico (tokens, loss, hardware) com gráficos'),
+        ('---', '<azul>📂 PREDIÇÕES (exporta todos os IDs do subset):</azul>'),
+        ('3',  'predict',
+         f'Predições: modelo TREINADO{_sufixos(("3u:⚡unsloth", unsloth_ok), ("3v:🚀vLLM", vllm_ok))}',
+         _cor(tem_modelo)),
+        ('3o', 'predict-ollama',
+         f'Predições: 🦙 {_nome_ollama}{_ollama_nota}',
+         _cor(_ollama_disp)),
+        ('4',  'predict-base',
+         f'Predições: modelo BASE{_sufixos(("4u:⚡unsloth", unsloth_ok), ("4v:🚀vLLM", vllm_ok))}'),
+        ('4o', 'predict-base-ollama',
+         f'Predições BASE: 🦙 {_nome_ollama_base}{_ollama_base_nota}',
+         _cor(_ollama_base_disp)),
+        ('---', '<azul>🔍 INFERÊNCIA INTERATIVA (N exemplos):</azul>'),
+        ('5',  'modelo',
+         f'Inferência: modelo TREINADO{_sufixos(("5u:⚡unsloth", unsloth_ok), ("5v:🚀vLLM", vllm_ok))}',
+         _cor(tem_modelo)),
+        ('5o', 'modelo-ollama',
+         f'Inferência: 🦙 {_nome_ollama}{_ollama_nota}',
+         _cor(_ollama_disp)),
+        ('6',  'modelo-base',
+         f'Inferência: modelo BASE{_sufixos(("6u:⚡unsloth", unsloth_ok), ("6v:🚀vLLM", vllm_ok))}'),
+        ('6o', 'modelo-base-ollama',
+         f'Inferência BASE: 🦙 {_nome_ollama_base}{_ollama_base_nota}',
+         _cor(_ollama_base_disp)),
+        ('---', '<azul>📦 EXPORTAÇÃO:</azul>'),
+        ('7',  'merge',
+         'Exportar modelo (HF safetensors → converta para GGUF/Ollama)',
+         _cor(tem_modelo)),
+        ('---',),
+        ('0',  'sair', 'Cancelar e sair'),
+    ]
 
     # --- Notas de disponibilidade ---
     notas = []
+    if not tem_modelo:
+        notas.append("🔒 Opções 3, 5, 7 desabilitadas: nenhum modelo treinado encontrado na pasta de saída.")
     if not unsloth_ok:
-        notas.append("unsloth não instalado. Instale-o para ativar opções ⚡ (2x).")
+        notas.append("⚡ unsloth não instalado. Use 'pip install unsloth' para ativar opções ⚡.")
     if not vllm_ok:
-        notas.append("vLLM não instalado. Use 'pip install vllm' para ativar as opções 🚀.")
+        notas.append("🚀 vLLM não instalado. Use 'pip install vllm' para ativar opções 🚀.")
+    if not ollama_ok and not ollama_base_ok:
+        notas.append("🦙 Opções 3o, 4o, 5o, 6o desabilitadas: configure 'modelo.ollama' e/ou 'modelo.ollama_base' no YAML.")
+    else:
+        if not ollama_ok:
+            notas.append("🦙 Opções 3o e 5o desabilitadas: configure 'modelo.ollama' no YAML.")
+        if not ollama_base_ok:
+            notas.append("🦙 Opções 4o e 6o desabilitadas: configure 'modelo.ollama_base' no YAML.")
+        if (ollama_ok or ollama_base_ok) and not ollama_api_ok:
+            notas.append("🦙 Ollama API indisponível. Execute 'ollama serve'.")
+        else:
+            if ollama_ok and not ollama_modelo_ok:
+                notas.append(f"🦙 Modelo '{_nome_ollama}' não encontrado. "
+                             f"Execute 'ollama pull {_nome_ollama}'.")
+            if ollama_base_ok and not ollama_base_modelo_ok:
+                notas.append(f"🦙 Modelo base '{_nome_ollama_base}' não encontrado. "
+                             f"Execute 'ollama pull {_nome_ollama_base}'.")
+
+    # --- Mapa fixo de ações ---
+    mapa_acoes = {
+        '1':  'info',                 'info':                 'info',
+        '2':  'stats',                'stats':                'stats',
+        '3':  'predict',              'predict':              'predict',
+        '3u': 'predict-unsloth',      'predict-unsloth':      'predict-unsloth',
+        '3v': 'predict-vllm',         'predict-vllm':         'predict-vllm',
+        '3o': 'predict-ollama',       'predict-ollama':       'predict-ollama',
+        '4':  'predict-base',         'predict-base':         'predict-base',
+        '4u': 'predict-base-unsloth', 'predict-base-unsloth': 'predict-base-unsloth',
+        '4v': 'predict-base-vllm',    'predict-base-vllm':    'predict-base-vllm',
+        '4o': 'predict-base-ollama',  'predict-base-ollama':  'predict-base-ollama',
+        '5':  'modelo',               'modelo':               'modelo',
+        '5u': 'modelo-unsloth',       'modelo-unsloth':       'modelo-unsloth',
+        '5v': 'modelo-vllm',          'modelo-vllm':          'modelo-vllm',
+        '5o': 'modelo-ollama',        'modelo-ollama':        'modelo-ollama',
+        '6':  'modelo-base',          'modelo-base':          'modelo-base',
+        '6u': 'modelo-base-unsloth',  'modelo-base-unsloth':  'modelo-base-unsloth',
+        '6v': 'modelo-base-vllm',     'modelo-base-vllm':     'modelo-base-vllm',
+        '6o': 'modelo-base-ollama',   'modelo-base-ollama':   'modelo-base-ollama',
+        '7':  'merge',                'merge':                'merge',  'export': 'merge',
+        '0':  None, 'sair': None, 'exit': None, 'quit': None,
+    }
 
     try:
         escolha = exibir_menu_opcoes(
@@ -619,52 +707,44 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
             itens=itens,
             notas=notas if notas else None,
         )
-        
-        if tem_modelo:
-            mapa_acoes = {
-                '1': 'info', 'info': 'info',
-                '2': 'stats', 'stats': 'stats',
-                '3': 'predict', 'predict': 'predict',
-                '3u': 'predict-unsloth', 'predict-unsloth': 'predict-unsloth',
-                '3v': 'predict-vllm', 'predict-vllm': 'predict-vllm',
-                '4': 'predict-base', 'predict-base': 'predict-base',
-                '4u': 'predict-base-unsloth', 'predict-base-unsloth': 'predict-base-unsloth',
-                '4v': 'predict-base-vllm', 'predict-base-vllm': 'predict-base-vllm',
-                '5': 'modelo', 'modelo': 'modelo',
-                '5u': 'modelo-unsloth', 'modelo-unsloth': 'modelo-unsloth',
-                '5v': 'modelo-vllm', 'modelo-vllm': 'modelo-vllm',
-                '6': 'modelo-base', 'modelo-base': 'modelo-base',
-                '6u': 'modelo-base-unsloth', 'modelo-base-unsloth': 'modelo-base-unsloth',
-                '6v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
-                '7': 'merge', 'merge': 'merge', 'export': 'merge',
-                '0': None, 'sair': None, 'exit': None, 'quit': None,
-            }
-        else:
-            mapa_acoes = {
-                '1': 'info', 'info': 'info',
-                '2': 'stats', 'stats': 'stats',
-                '3': 'predict-base', 'predict-base': 'predict-base',
-                '4': 'modelo-base', 'modelo-base': 'modelo-base',
-                '4u': 'modelo-base-unsloth', 'modelo-base-unsloth': 'modelo-base-unsloth',
-                '4v': 'modelo-base-vllm', 'modelo-base-vllm': 'modelo-base-vllm',
-                '0': None, 'sair': None, 'exit': None, 'quit': None,
-            }
-        
-        acao = mapa_acoes.get(escolha)
-        
-        if acao in ['predict-vllm', 'predict-base-vllm', 'modelo-vllm', 'modelo-base-vllm'] and not vllm_ok:
-            logger.warning("Opção indisponível: vLLM não está instalado.")
-            return None
 
-        if acao in ['predict-unsloth', 'predict-base-unsloth', 'modelo-unsloth', 'modelo-base-unsloth'] and not unsloth_ok:
-            logger.warning("Opção indisponível: unsloth não está instalado.")
-            return None
-        
         if escolha not in mapa_acoes:
             logger.warning(f"Opção inválida: '{escolha}'")
             return None
-        
+
+        acao = mapa_acoes.get(escolha)
+
+        # --- Guards de disponibilidade ---
+        _requer_modelo = ('predict', 'predict-unsloth', 'predict-vllm',
+                          'modelo',  'modelo-unsloth',  'modelo-vllm', 'merge')
+        if acao in _requer_modelo and not tem_modelo:
+            logger.warning("⚠️  Opção indisponível: nenhum modelo treinado encontrado na pasta de saída.")
+            return None
+
+        _requer_vllm = ('predict-vllm', 'predict-base-vllm', 'modelo-vllm', 'modelo-base-vllm')
+        if acao in _requer_vllm and not vllm_ok:
+            logger.warning("⚠️  Opção indisponível: vLLM não está instalado.")
+            return None
+
+        _requer_unsloth = ('predict-unsloth', 'predict-base-unsloth',
+                           'modelo-unsloth',  'modelo-base-unsloth')
+        if acao in _requer_unsloth and not unsloth_ok:
+            logger.warning("⚠️  Opção indisponível: unsloth não está instalado.")
+            return None
+
+        _requer_ollama = ('predict-ollama', 'modelo-ollama')
+        if acao in _requer_ollama and not ollama_ok:
+            logger.warning("⚠️  Opção indisponível: configure 'modelo.ollama' no YAML.")
+            return None
+        if acao in _requer_ollama and ollama_ok and not ollama_api_ok:
+            # Avisa mas deixa a função tratar o erro detalhadamente
+            logger.warning("⚠️  Ollama API indisponível — a função exibirá o erro detalhado.")
+
         return acao
+
+    except (KeyboardInterrupt, EOFError):
+        logger.info("\nOperação cancelada pelo usuário.")
+        return None
         
     except (KeyboardInterrupt, EOFError):
         logger.info("\nOperação cancelada pelo usuário.")
@@ -684,47 +764,55 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
                            predict_subsets: list = None, quant: str = None,
                            gerar_zip: bool = False) -> None:
     """Despacha a ação de avaliação escolhida.
-    
+
     Para ações de predict no modo interativo (predict_subsets=None),
     exibe menu de seleção de subsets antes de executar.
     """
     # Para ações de predict, pergunta qual subset se não veio da CLI
-    if acao in ('predict', 'predict-vllm', 'predict-unsloth',
-                'predict-base', 'predict-base-vllm', 'predict-base-unsloth'):
+    if acao in ('predict', 'predict-vllm', 'predict-unsloth', 'predict-ollama',
+                'predict-base', 'predict-base-vllm', 'predict-base-unsloth', 'predict-base-ollama'):
         if predict_subsets is None:
             predict_subsets = _perguntar_subsets_predict()
             if predict_subsets is None:
                 logger.info("Operação cancelada.")
                 return
-    
+
     if acao == 'info':
         executar_info(yaml_path)
     elif acao == 'stats':
         executar_stats(yaml_path)
     elif acao == 'predict':
-        executar_predict(yaml_path, subsets=predict_subsets, usar_base=usar_base)
+        UtilPredicaoHF(yaml_path, usar_base=usar_base).executar_predict(subsets=predict_subsets)
     elif acao == 'predict-vllm':
-        executar_predict_vllm(yaml_path, subsets=predict_subsets)
+        UtilPredicaoVLLM(yaml_path, usar_base=usar_base).executar_predict(subsets=predict_subsets)
     elif acao == 'predict-unsloth':
-        executar_predict_unsloth(yaml_path, subsets=predict_subsets, usar_base=usar_base)
+        UtilPredicaoUnsloth(yaml_path, usar_base=usar_base).executar_predict(subsets=predict_subsets)
+    elif acao == 'predict-ollama':
+        UtilPredicaoOllama(yaml_path).executar_predict(subsets=predict_subsets)
     elif acao == 'predict-base':
-        executar_predict(yaml_path, subsets=predict_subsets, usar_base=True)
+        UtilPredicaoHF(yaml_path, usar_base=True).executar_predict(subsets=predict_subsets)
     elif acao == 'predict-base-unsloth':
-        executar_predict_unsloth(yaml_path, subsets=predict_subsets, usar_base=True)
+        UtilPredicaoUnsloth(yaml_path, usar_base=True).executar_predict(subsets=predict_subsets)
     elif acao == 'predict-base-vllm':
-        executar_predict_vllm(yaml_path, subsets=predict_subsets, usar_base=True)
+        UtilPredicaoVLLM(yaml_path, usar_base=True).executar_predict(subsets=predict_subsets)
+    elif acao == 'predict-base-ollama':
+        UtilPredicaoOllama(yaml_path, usar_base=True).executar_predict(subsets=predict_subsets)
     elif acao == 'modelo':
-        executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
+        UtilPredicaoHF(yaml_path, usar_base=usar_base).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'modelo-unsloth':
-        executar_modelo_unsloth(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
+        UtilPredicaoUnsloth(yaml_path, usar_base=usar_base).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'modelo-vllm':
-        executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=usar_base)
+        UtilPredicaoVLLM(yaml_path, usar_base=usar_base).executar_modelo(n_exemplos=_perguntar_n_exemplos())
+    elif acao == 'modelo-ollama':
+        UtilPredicaoOllama(yaml_path).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'modelo-base':
-        executar_modelo(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
+        UtilPredicaoHF(yaml_path, usar_base=True).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'modelo-base-unsloth':
-        executar_modelo_unsloth(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
+        UtilPredicaoUnsloth(yaml_path, usar_base=True).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'modelo-base-vllm':
-        executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
+        UtilPredicaoVLLM(yaml_path, usar_base=True).executar_modelo(n_exemplos=_perguntar_n_exemplos())
+    elif acao == 'modelo-base-ollama':
+        UtilPredicaoOllama(yaml_path, usar_base=True).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'merge':
         executar_merge(yaml_path, quantizacao=quant, gerar_zip=gerar_zip)
     else:
@@ -877,7 +965,7 @@ Exemplos:
         executar_merge(cfg_path, quantizacao=args.quant, gerar_zip=getattr(args, 'zip', False))
     elif args.modelo is not None:
         n_exemplos = args.modelo if isinstance(args.modelo, int) else 1
-        executar_modelo(cfg_path, n_exemplos=n_exemplos, usar_base=args.base)
+        UtilPredicaoHF(cfg_path, usar_base=args.base).executar_modelo(n_exemplos=n_exemplos)
     else:
         # Predições
         predict_subsets = None
@@ -892,7 +980,7 @@ Exemplos:
             predict_subsets.append('teste')
         # --predict sem subset específico → padrão ['teste']
         
-        executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
+        UtilPredicaoHF(cfg_path, usar_base=args.base).executar_predict(subsets=predict_subsets)
 
 
 if __name__ == "__main__":

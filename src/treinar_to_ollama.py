@@ -141,13 +141,22 @@ PARAMETER top_k 20
 
 def gerar_modelfile_ollama(dirname: str, yaml_config, quantizacao: str) -> None:
     """Gera Modelfile na pasta de merge para futura importação no Ollama.
-    
+
     O Modelfile é gerado com placeholder FROM <./MeuModelo.gguf>.
     O usuário deve converter para GGUF com llama.cpp e ajustar o FROM.
+
+    Se modelo.ollama estiver configurado no YAML, usa esse nome no Modelfile.
     """
     modelo_base = yaml_config.modelo.base
     max_seq = yaml_config.treinamento.max_seq_length
-    nome_modelo = os.path.basename(dirname).replace('(', '_').replace(')', '')
+
+    # Usa modelo.ollama se configurado, senão gera nome a partir do diretório
+    if hasattr(yaml_config.modelo, 'ollama') and yaml_config.modelo.ollama:
+        nome_modelo = yaml_config.modelo.ollama
+        logger.info(f"<cinza>   📋 Usando nome do modelo.ollama: {nome_modelo}</cinza>")
+    else:
+        nome_modelo = os.path.basename(dirname).replace('(', '_').replace(')', '')
+        logger.info(f"<cinza>   📋 Nome do modelo gerado automaticamente: {nome_modelo}</cinza>")
 
     template_name, template_str = detectar_template_ollama(modelo_base)
 

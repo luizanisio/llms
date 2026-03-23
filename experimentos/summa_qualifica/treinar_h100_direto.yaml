@@ -76,6 +76,9 @@ modelo:
   base_model_name: Qwen/Qwen2.5-7B-Instruct
   #| Diretório de saída para o adaptador LoRA.
   saida: ./treino_simples/Qwen2.5-7B-Instruct(direto)
+  ollama: QwenDireto:latest
+  ollama_base: qwen2.5:7b
+  ollama_url: 
 
 #| =========================================================================
 #| TREINAMENTO

@@ -98,7 +98,10 @@ class ConfigModelo:
     """Configuração do modelo."""
     base: str = ""
     saida: str = ""  # output_dir
-    
+    ollama: str = ""  # Nome do modelo no Ollama (opcional)
+    ollama_base: str = ""  # Nome do modelo base no Ollama (opcional, para usar_base=True)
+    ollama_url: str = ""  # URL customizada da API Ollama (opcional)
+
     def __post_init__(self):
         if not self.base:
             raise ValueError("modelo.base é obrigatório")
@@ -649,10 +652,13 @@ class YamlTreinamento:
         saida = modelo_raw.get("saida", "")
         if saida:
             saida = self._resolver_caminho(saida)
-        
+
         return ConfigModelo(
             base=modelo_raw.get("base", "") or modelo_raw.get("base_model_name", ""),
-            saida=saida
+            saida=saida,
+            ollama=modelo_raw.get("ollama", ""),
+            ollama_base=modelo_raw.get("ollama_base", ""),
+            ollama_url=modelo_raw.get("ollama_url", "")
         )
 
     def _processar_treinamento(self) -> ConfigTreinamento:
