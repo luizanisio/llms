@@ -15,7 +15,7 @@ Uso:
 Ações:
     --info              Informações da configuração, datasets e modelo
     --stats             Relatório estatístico (tokens, loss, hardware) com gráficos
-    --predict           Predições em massa para todos os subsets (treino, validação, teste)
+    --predict           Exportar predições (padrão: subset teste; menu interativo no modo sem args)
     --predict-treino    Predições apenas do subset de treino
     --predict-validacao Predições apenas do subset de validação
     --predict-teste     Predições apenas do subset de teste
@@ -26,6 +26,9 @@ Opções:
     --base              Força uso do modelo base (ignora LoRA treinado)
     --quant METODO      Formato de merge (16bit, 4bit)
     --log-level LEVEL   Nível de log (DEBUG, INFO, WARNING, ERROR)
+
+Nota: Itens já exportados (com .txt e .json válidos) são ignorados
+      automaticamente, permitindo continuação de exportações incompletas.
 """
 
 import argparse
@@ -508,6 +511,74 @@ def executar_stats(yaml_path: str) -> None:
     log_separador(caractere="=", largura=80)
 
 
+# ---------------------------------------------------------------------------
+# Helpers de Predict (menu de subsets + skip de itens já exportados)
+# ---------------------------------------------------------------------------
+
+def _perguntar_subsets_predict() -> Optional[list]:
+    """Exibe menu interativo para selecionar quais subsets exportar.
+    
+    Returns:
+        Lista de subsets selecionados, ou None se cancelou.
+    """
+    itens = [
+        ('1', 'teste',     'Apenas teste (padrão)'),
+        ('2', 'validacao', 'Apenas validação'),
+        ('3', 'treino',    'Apenas treino'),
+        ('4', 'todos',     'Todos os subsets (treino + validação + teste)'),
+        ('---',),
+        ('0', 'cancelar',  'Cancelar'),
+    ]
+    
+    try:
+        escolha = exibir_menu_opcoes(
+            titulo='<azul>📂 SUBSETS PARA EXPORTAÇÃO:</azul>',
+            itens=itens,
+            prompt="❓ Escolha o subset [1]",
+        )
+        
+        if not escolha or escolha in ('1', 'teste', ''):
+            return ['teste']
+        elif escolha in ('2', 'validacao', 'validação'):
+            return ['validacao']
+        elif escolha in ('3', 'treino'):
+            return ['treino']
+        elif escolha in ('4', 'todos'):
+            return ['treino', 'validacao', 'teste']
+        elif escolha in ('0', 'cancelar', 'sair'):
+            return None
+        else:
+            logger.warning(f"Opção inválida: '{escolha}'. Usando padrão (teste).")
+            return ['teste']
+    except (KeyboardInterrupt, EOFError):
+        return None
+
+
+def _registro_ja_exportado(subset_dir: str, registro_id: str, min_bytes: int = 10) -> bool:
+    """Verifica se um registro já foi exportado com sucesso (txt + json válidos).
+    
+    Um registro é considerado exportado se AMBOS os arquivos existem
+    e têm tamanho >= min_bytes (evita considerar arquivos vazios/corrompidos).
+    
+    Args:
+        subset_dir: Diretório do subset (ex: predict/teste/)
+        registro_id: ID do registro (ex: 'teste_0001')
+        min_bytes: Tamanho mínimo em bytes para considerar válido (padrão: 10)
+    
+    Returns:
+        True se ambos .txt e .json existem com tamanho válido.
+    """
+    txt_path = os.path.join(subset_dir, f"{registro_id}.txt")
+    json_path = os.path.join(subset_dir, f"{registro_id}.json")
+    
+    try:
+        if not os.path.exists(txt_path) or not os.path.exists(json_path):
+            return False
+        return os.path.getsize(txt_path) >= min_bytes and os.path.getsize(json_path) >= min_bytes
+    except OSError:
+        return False
+
+
 def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = False) -> None:
     """
     Gera predições do modelo para os subsets especificados.
@@ -556,9 +627,9 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     
     modelo_usado = yaml_config.modelo.base if usar_base else yaml_config.modelo.saida
     
-    # Define subsets a processar
+    # Define subsets a processar (padrão: apenas teste)
     if subsets is None:
-        subsets = ['treino', 'validacao', 'teste']
+        subsets = ['teste']
     
     logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
     
@@ -605,15 +676,8 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
                 logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                 continue
             
-            # Cria diretório do subset (limpa arquivos .json e .txt se já existir)
+            # Cria diretório do subset (preserva arquivos existentes para continuação)
             subset_dir = os.path.join(predict_dir, subset)
-            if os.path.exists(subset_dir):
-                for f in os.listdir(subset_dir):
-                    if f.endswith('.json') or f.endswith('.txt'):
-                        try:
-                            os.remove(os.path.join(subset_dir, f))
-                        except Exception as e:
-                            logger.warning(f"   ⚠️ Não foi possível remover {f}: {e}")
             os.makedirs(subset_dir, exist_ok=True)
             
             subset_stats = {
@@ -621,6 +685,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
                 'output_tokens': 0,
                 'registros_ok': 0,
                 'registros_erro': 0,
+                'registros_skip': 0,
                 'tempo_s': 0
             }
             
@@ -648,6 +713,11 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
                         continue
                     
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
+                    
+                    # Skip se já exportado (permite continuação de exportações incompletas)
+                    if _registro_ja_exportado(subset_dir, registro_id):
+                        subset_stats['registros_skip'] += 1
+                        continue
                     
                     # Usa LLMsTrainer.prompt() — mesmo caminho de executar_modelo
                     tempo_inicio = time.time()
@@ -722,8 +792,9 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
             with open(resumo_file, 'w', encoding='utf-8') as f:
                 json.dump(resumo_subset, f, ensure_ascii=False, indent=2)
             
+            skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
-            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída</cinza>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída{skip_msg}</cinza>")
             
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -1205,19 +1276,12 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
                 logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                 continue
 
-            # Cria diretório do subset
+            # Cria diretório do subset (preserva arquivos existentes para continuação)
             subset_dir = os.path.join(predict_dir, subset)
-            if os.path.exists(subset_dir):
-                for f in os.listdir(subset_dir):
-                    if f.endswith('.json') or f.endswith('.txt'):
-                        try:
-                            os.remove(os.path.join(subset_dir, f))
-                        except Exception:
-                            pass
             os.makedirs(subset_dir, exist_ok=True)
 
             total = len(mensagens)
-            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0}
+            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0, 'registros_skip': 0}
             ini_subset = time.time()
 
             max_input_len = max_seq_length - 256
@@ -1239,6 +1303,13 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
 
                     if not prompt_texto:
                         subset_stats['registros_erro'] += 1
+                        continue
+
+                    registro_id = msg.get('id', f'{subset}_{idx:04d}')
+                    
+                    # Skip se já exportado (permite continuação de exportações incompletas)
+                    if _registro_ja_exportado(subset_dir, registro_id):
+                        subset_stats['registros_skip'] += 1
                         continue
 
                     # Estruturar prompt simples (estilo chat_template já feito na base caso necessário)
@@ -1313,8 +1384,9 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
                 logger.error(f"<vermelho>   ❌ Erro no batch inference: {e}</vermelho>")
 
             tempo_subset = time.time() - ini_subset
+            skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
-            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s)</cinza>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
 
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -1843,9 +1915,9 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Define subsets a processar
+    # Define subsets a processar (padrão: apenas teste)
     if subsets is None:
-        subsets = ['treino', 'validacao', 'teste']
+        subsets = ['teste']
 
     logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
 
@@ -1871,19 +1943,12 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
                 logger.error(f"<vermelho>   ❌ Erro ao carregar {subset}: {e}</vermelho>")
                 continue
 
-            # Cria diretório do subset
+            # Cria diretório do subset (preserva arquivos existentes para continuação)
             subset_dir = os.path.join(predict_dir, subset)
-            if os.path.exists(subset_dir):
-                for f in os.listdir(subset_dir):
-                    if f.endswith('.json') or f.endswith('.txt'):
-                        try:
-                            os.remove(os.path.join(subset_dir, f))
-                        except Exception:
-                            pass
             os.makedirs(subset_dir, exist_ok=True)
 
             total = len(mensagens)
-            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0}
+            subset_stats = {'input_tokens': 0, 'output_tokens': 0, 'registros_ok': 0, 'registros_erro': 0, 'registros_skip': 0}
             ini_subset = time.time()
 
             for idx, msg in enumerate(mensagens):
@@ -1904,6 +1969,11 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
                         continue
 
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
+
+                    # Skip se já exportado (permite continuação de exportações incompletas)
+                    if _registro_ja_exportado(subset_dir, registro_id):
+                        subset_stats['registros_skip'] += 1
+                        continue
 
                     # Tokeniza usando chat template
                     chat_msgs = [{"role": "user", "content": prompt_texto}]
@@ -1976,8 +2046,9 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
                     continue
 
             tempo_subset = time.time() - ini_subset
+            skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
-            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s)</cinza>")
+            logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
 
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -2037,12 +2108,12 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
     ]
 
     if tem_modelo:
-        itens.append(('3', 'predict',      'Gerar predições com modelo treinado (todos os subsets)'))
+        itens.append(('3', 'predict',      'Exportar predições com modelo treinado'))
         if unsloth_ok:
             itens.append(('3u', 'predict-unsloth', '⚡ Predições com unsloth (2x mais rápido)', 'amarelo', 1))
         if vllm_ok:
             itens.append(('3v', 'predict-vllm',    '🚀 Predições RÁPIDAS com vLLM (até 24x mais rápido)', 'verde', 1))
-        itens.append(('4', 'predict-base',  'Gerar predições com modelo BASE (todos os subsets)'))
+        itens.append(('4', 'predict-base',  'Exportar predições com modelo BASE'))
         if unsloth_ok:
             itens.append(('4u', 'predict-base-unsloth', '⚡ Predições BASE com unsloth (2x mais rápido)', 'amarelo', 1))
         if vllm_ok:
@@ -2069,7 +2140,7 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         itens.append(('---', '<azul>📦 EXPORTAÇÃO:</azul>'))
         itens.append(('7', 'merge',  'Exportar modelo (HF safetensors → converta para GGUF/Ollama)'))
     else:
-        itens.append(('3', 'predict-base', 'Gerar predições com modelo BASE (todos os subsets)'))
+        itens.append(('3', 'predict-base', 'Exportar predições com modelo BASE'))
         itens.append(('4', 'modelo-base',  'Testar inferência com modelo BASE (N exemplos)'))
         if unsloth_ok:
             itens.append(('4u', 'modelo-base-unsloth', '⚡ Testar BASE com unsloth (2x mais rápido)', 'amarelo', 1))
@@ -2160,7 +2231,20 @@ def _perguntar_n_exemplos() -> int:
 def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
                            predict_subsets: list = None, quant: str = None,
                            gerar_zip: bool = False) -> None:
-    """Despacha a ação de avaliação escolhida."""
+    """Despacha a ação de avaliação escolhida.
+    
+    Para ações de predict no modo interativo (predict_subsets=None),
+    exibe menu de seleção de subsets antes de executar.
+    """
+    # Para ações de predict, pergunta qual subset se não veio da CLI
+    if acao in ('predict', 'predict-vllm', 'predict-unsloth',
+                'predict-base', 'predict-base-vllm', 'predict-base-unsloth'):
+        if predict_subsets is None:
+            predict_subsets = _perguntar_subsets_predict()
+            if predict_subsets is None:
+                logger.info("Operação cancelada.")
+                return
+    
     if acao == 'info':
         executar_info(yaml_path)
     elif acao == 'stats':
@@ -2227,21 +2311,24 @@ def _cli_avaliar() -> None:
 Ações disponíveis:
   --info            Informações detalhadas da configuração, datasets e modelo
   --stats           Relatório estatístico (tokens, loss, hardware) com gráficos
-  --predict         Gera predições para todos os subsets (treino, validacao, teste)
-  --predict-treino  Gera predições apenas do subset de treino
-  --predict-validacao  Gera predições apenas do subset de validação
-  --predict-teste   Gera predições apenas do subset de teste
+  --predict         Exportar predições (padrão: teste; no interativo exibe menu de subsets)
+  --predict-treino  Predições apenas do subset de treino
+  --predict-validacao  Predições apenas do subset de validação
+  --predict-teste   Predições apenas do subset de teste
   --modelo N        Testa inferência interativa com N exemplos (padrão: 1)
   --merge           Exporta modelo (merge LoRA + Base)
   
 Sem argumentos: modo interativo (seleciona YAML e ação via menu).
+Itens já exportados (com .txt e .json válidos) são ignorados, permitindo
+continuação de exportações interrompidas.
 
 Exemplos:
   %(prog)s                          # Modo interativo completo
   %(prog)s config.yaml              # Seleciona ação via menu
   %(prog)s config.yaml --info       # Informações detalhadas
   %(prog)s config.yaml --stats      # Relatório estatístico
-  %(prog)s config.yaml --predict    # Gera predições de todos os subsets
+  %(prog)s config.yaml --predict    # Exporta predições (subset teste)
+  %(prog)s config.yaml --predict-treino --predict-teste  # Treino + teste
   %(prog)s config.yaml --predict --base  # Predições com modelo base
   %(prog)s config.yaml --modelo 5   # Testa 5 predições interativas
   %(prog)s config.yaml --merge --quant 16bit   # Exporta safetensors 16-bit
@@ -2257,13 +2344,13 @@ Exemplos:
     parser.add_argument("--stats", action="store_true",
                         help="Relatório estatístico (tokens, loss, hardware) com gráficos")
     parser.add_argument("--predict", action="store_true",
-                        help="Gera predições para todos os subsets")
+                        help="Exportar predições (padrão: subset teste)")
     parser.add_argument("--predict-treino", action="store_true",
-                        help="Gera predições apenas do subset de treino")
+                        help="Exportar predições do subset de treino")
     parser.add_argument("--predict-validacao", action="store_true",
-                        help="Gera predições apenas do subset de validação")
+                        help="Exportar predições do subset de validação")
     parser.add_argument("--predict-teste", action="store_true",
-                        help="Gera predições apenas do subset de teste")
+                        help="Exportar predições do subset de teste")
     parser.add_argument("--modelo", type=int, nargs='?', const=1,
                         help="Testa inferência interativa com N exemplos (padrão: 1)")
     parser.add_argument("--merge", action="store_true",
@@ -2351,7 +2438,7 @@ Exemplos:
         if getattr(args, 'predict_teste', False):
             predict_subsets = predict_subsets or []
             predict_subsets.append('teste')
-        # --predict sem subset específico → todos
+        # --predict sem subset específico → padrão ['teste']
         
         executar_predict(cfg_path, subsets=predict_subsets, usar_base=args.base)
 
