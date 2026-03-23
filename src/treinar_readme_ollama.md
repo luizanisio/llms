@@ -23,7 +23,7 @@ experimentos/summa_qualifica/merged_google_gemma-3-4b-it_(16bit)/
 ├── config.json
 ├── model*.safetensors
 ├── tokenizer.json
-├── Modelfile           ← gerado automaticamente
+├── Modelfile           ⬅️ gerado automaticamente 
 └── ...
 ```
 
@@ -61,6 +61,7 @@ pip install -r requirements.txt
 
 ### 2d. Compilar llama-quantize (opcional, para quantização)
 
+⚠️ não funcionou
 ```bash
 cd ~/llama.cpp
 cmake -B build
@@ -136,6 +137,7 @@ FROM ./modelo-q4_k_m.gguf
 ## 6. Importar no Ollama
 
 ```bash
+# entrar na pasta que contém o modelo e o Modelfile
 cd /caminho/para/merged_modelo_(16bit)
 
 # Criar modelo no Ollama

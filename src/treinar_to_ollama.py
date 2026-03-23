@@ -119,8 +119,9 @@ def _gerar_modelfile(modelo_base: str, nome_modelo: str, pasta: str,
 #
 # === INSTRUÇÕES ===
 # 1. Converta o modelo para GGUF usando llama.cpp (veja treinar_ollama_readme.md)
+#    python convert_hf_to_gguf.py /<caminho_safetensors> --outfile /<caminho_safetensors>/<./MeuModelo.gguf> --outtype f16
 # 2. Substitua <./MeuModelo.gguf> abaixo pelo nome real do arquivo gerado
-# 3. Execute:
+# 3. Execute (dentro da pasta com o ModelFile e o .gguf):
 #      ollama create {nome_modelo} -f Modelfile
 #      ollama run {nome_modelo}
 
@@ -132,9 +133,9 @@ FROM <./MeuModelo.gguf>
 # O modelo merged preserva o contexto nativo do modelo base — que pode ser maior.
 # Ajuste conforme necessidade e VRAM disponível.
 PARAMETER num_ctx {max_seq}
-PARAMETER temperature 0.7
+PARAMETER temperature 0.01
 PARAMETER top_p 0.9
-PARAMETER top_k 40
+PARAMETER top_k 20
 '''
 
 
