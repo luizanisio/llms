@@ -42,7 +42,7 @@ curriculum:
     prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    exigir_ids_pareados: true
+    exigir_ids_pareados: false
   divisao:
     - arquivo: ./treino_simples/divisao_facil.csv
       alias: "fácil"

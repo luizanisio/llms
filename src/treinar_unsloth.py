@@ -1549,6 +1549,13 @@ class LLMsTrainer:
         _attention_mask = self._place_inputs(inputs.get('attention_mask', torch.ones_like(inputs['input_ids'])))
         input_length = _inputs.shape[1]  # comprimento da sequência de entrada
         
+        # Cap max_new_tokens ao espaço restante do contexto do modelo
+        # (evita "input length + max_new_tokens exceeds maximum sequence length")
+        model_max = getattr(self.model.config, 'max_position_embeddings', None)
+        if model_max and (input_length + max_new_tokens) > model_max:
+            max_new_tokens = max(256, model_max - input_length)
+        gen_cfg.max_new_tokens = max_new_tokens
+        
         with torch.inference_mode():
              outputs = self.model.generate(_inputs, 
                                         attention_mask=_attention_mask,

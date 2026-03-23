@@ -13,6 +13,7 @@ incluindo Gemma, Qwen, DeepSeek, Llama e outros, com suporte a Unsloth.
 """
 
 from typing import Union
+import os
 import torch
 import json
 from copy import deepcopy
@@ -101,7 +102,7 @@ class Prompt:
     >>> json_resp = p.prompt_to_json('Liste 3 linguagens: {"linguagens": [...]}}')
     >>> print(json_resp['linguagens'])
     """
-    def __init__(self, modelo:str, max_seq_length:int = 4096, cache_dir:Union[str, None] = None, usar_unsloth:bool = False):
+    def __init__(self, modelo:str, max_seq_length:int = 4096, cache_dir:Union[str, None] = None, usar_unsloth:bool = False, lora_path:str = None):
         # identificando o modelo
         modelo = UtilLLM.atalhos_modelos(modelo)
         self.modelo = modelo.value if isinstance(modelo, Modelos) else modelo
@@ -110,10 +111,13 @@ class Prompt:
         self._num_gpus = torch.cuda.device_count()
         _device = f' {self._num_gpus} x {self._device}' if self._device != 'cpu' else 'cpu'
         print(f'Modelo selecionado: {self.modelo}{_unsloth} | device: {_device}')
+        if lora_path:
+            print(f'LoRA adapter: {lora_path}')
         self.otimiza_torch()
         self.max_seq_length = max_seq_length
         self.cache_dir = cache_dir
         self.usar_unsloth = usar_unsloth
+        self._lora_path = lora_path
         self._model = None
         self._tokenizer = None
         self._configurar_separadores()
@@ -201,6 +205,22 @@ class Prompt:
                 #    model.to(self._device)
         except Exception as e:
             UtilLLM.controle_erros(e)
+        
+        # Carrega LoRA adapter se especificado
+        if self._lora_path:
+            try:
+                from peft import PeftModel
+                print(f'Carregando LoRA adapter de: {self._lora_path}')
+                model = PeftModel.from_pretrained(model, self._lora_path)
+                model = model.merge_and_unload()
+                print('LoRA adapter merged com sucesso.')
+            except ImportError:
+                print('AVISO: peft não disponível. Instale com: pip install peft')
+                raise
+            except Exception as e:
+                print(f'Erro ao carregar LoRA adapter: {e}')
+                raise
+        
         self._model = model
         self._tokenizer = tokenizer
         print(f'Modelo carregado ({next(model.parameters()).device}): {time()-ini:.1f}s')
@@ -232,6 +252,12 @@ class Prompt:
         gen_cfg.temperature = float(_temperatura)
         gen_cfg.top_k = 20 if _temperatura > 0.3 else 2
         gen_cfg.do_sample = bool(_temperatura > 0.3)
+        # Cap max_new_tokens ao espaço restante do contexto do modelo
+        input_length = inputs["input_ids"].size(1)
+        model_max = getattr(self._model.config, 'max_position_embeddings', None)
+        if model_max and (input_length + max_new_tokens) > model_max:
+            max_new_tokens = max(256, model_max - input_length)
+            gen_cfg.max_new_tokens = max_new_tokens
         # predição
         with torch.inference_mode():
              outputs = self._model.generate(**inputs, 
@@ -317,6 +343,21 @@ class Prompt:
         self._system      = ''
         self._end_system  = ''
         self._tipo_modelo =''
+        
+        # Para modelos locais (treinados/merged), tenta detectar o tipo pelo config.json
+        # Ex: modelo treinado em /path/output(merged_16bit)/ teria "model_type": "qwen2"
+        if os.path.isdir(self.modelo):
+            try:
+                config_path = os.path.join(self.modelo, 'config.json')
+                if os.path.exists(config_path):
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                    model_type = cfg.get('model_type', '').lower()
+                    # Complementa nome_modelo com model_type para match abaixo
+                    nome_modelo = f"{nome_modelo} {model_type}"
+            except Exception:
+                pass
+        
         if 'gemma' in nome_modelo:
             self._tipo_modelo = 'gemma'
             self._start_user = '<start_of_turn>user'   # início da pergunta do usuário
@@ -334,6 +375,11 @@ class Prompt:
             self._start_user = '<|im_start|>user'      # início da pergunta do usuário
             self._start_asst = '<|im_start|>assistant' # início da resposta do modelo
             self._end_turn   = '<|im_end|>'           
+        elif 'llama' in nome_modelo:
+            self._tipo_modelo = 'llama'
+            self._start_user = '<|start_header_id|>user<|end_header_id|>'
+            self._start_asst = '<|start_header_id|>assistant<|end_header_id|>'
+            self._end_turn   = '<|eot_id|>'
         elif 'gpt' in nome_modelo and 'oss' in nome_modelo:
             self._tipo_modelo = 'gptoss'
             self._system = '<|start|>system<|message|>'

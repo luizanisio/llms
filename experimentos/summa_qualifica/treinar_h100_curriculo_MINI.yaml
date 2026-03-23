@@ -42,11 +42,11 @@ curriculum:
     prompt_criptografado: false
   validacao:
     exigir_json_valido: true
-    exigir_ids_pareados: true
+    exigir_ids_pareados: false
   divisao:
     - arquivo: ./treino_simples/_divisao_alguns/divisao_facil.csv
-      alias: "fácil"
-      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      alias: "fácil-full"
+      tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_alguns/divisao_medio.csv

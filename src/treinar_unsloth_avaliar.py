@@ -653,7 +653,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
                     tempo_inicio = time.time()
                     resultado = trainer.prompt(
                         prompt_texto,
-                        temperatura=0.02,
+                        temperatura=0.01,
                         max_new_tokens=max_new_tokens
                     )
                     tempo_pred = time.time() - tempo_inicio
@@ -765,10 +765,10 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
 # Merge / Exportação de Modelos
 # ---------------------------------------------------------------------------
 
-def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
+def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = False) -> None:
     """
     Realiza merge do modelo treinado com o base.
-    Salva em {output_dir}(merged_FORMATO)/
+    Salva em {output_dir}(merged_FORMATO)/ ou {output_dir}(merged_FORMATO).zip
     
     Exporta HF safetensors (16bit ou 4bit) usando transformers + PEFT.
     Sem dependência de unsloth. Para converter para GGUF (Ollama), use llama.cpp.
@@ -776,7 +776,8 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     
     Args:
         yaml_path: Caminho para o arquivo YAML de configuração
-        quantizacao: Opcional. '16bit' ou '4bit'.
+        quantizacao: Opcional. '16bit', '4bit', '16bit_zip', '4bit_zip'.
+        gerar_zip: Se True, compacta e remove o diretório temporário.
     """
     logger.info("\n")
     log_separador(caractere="=", largura=80)
@@ -794,14 +795,18 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
     
     mapa_quant = {
         '1': '16bit',
-        '2': '4bit'
+        '2': '4bit',
+        '1z': '16bit_zip',
+        '2z': '4bit_zip',
     }
     
     if not quantizacao:
         if sys.stdin.isatty():
             itens_quant = [
-                ('1', '16bit',  '☁️  HF safetensors 16-bit (Padrão - vLLM/HF/llama.cpp) ⭐'),
-                ('2', '4bit',   '📉 HF safetensors 4-bit (Compacto)'),
+                ('1',  '16bit',     '☁️  HF safetensors 16-bit (Padrão - vLLM/HF/llama.cpp) ⭐'),
+                ('1z', '16bit+zip', '📦 HF 16-bit → .zip (merge temporário, exporta só o .zip)'),
+                ('2',  '4bit',      '📉 HF safetensors 4-bit (Compacto)'),
+                ('2z', '4bit+zip',  '📦 HF 4-bit  → .zip (merge temporário, exporta só o .zip)'),
             ]
             try:
                 escolha = exibir_menu_opcoes(
@@ -820,8 +825,71 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
 
     quantizacao = quantizacao.lower()
     
+    # Detecta modo zip (via menu _zip ou flag --zip)
+    if quantizacao.endswith('_zip'):
+        gerar_zip = True
+        quantizacao = quantizacao.replace('_zip', '')  # '16bit_zip' → '16bit'
+    
     dirname = f"{output_dir}(merged_{quantizacao})"
+    zip_path = f"{dirname}.zip"
+    
+    # Modo zip: merge em tempfile.TemporaryDirectory → zip → limpeza automática
+    # Modo normal: merge direto no destino final
+    if gerar_zip:
+        logger.info(f"<cinza>\n📦 Modo ZIP: merge em diretório temporário → compactação</cinza>")
+        logger.info(f"<cinza>   Destino final: {zip_path}</cinza>")
+        logger.info(f"<cinza>⚙️  Formato: {quantizacao} (HF safetensors)</cinza>")
+        logger.info("<cinza>📦 Motor: transformers + PEFT (sem unsloth)</cinza>")
         
+        if os.path.exists(zip_path):
+            logger.warning(f"⚠️  Arquivo .zip já existe: {zip_path}")
+            if not _perguntar_confirmacao("Deseja sobrescrever?", padrao=False):
+                logger.info("Operação cancelada.")
+                return
+            os.remove(zip_path)
+        
+        logger.info(f"<azul>\n🔄 Carregando modelo LoRA de: {output_dir}</azul>")
+        logger.info("   Isso pode levar alguns instantes...")
+        
+        import tempfile
+        # Nome base que aparecerá como raiz dentro do .zip
+        base_name = os.path.basename(dirname)
+        
+        try:
+            with tempfile.TemporaryDirectory(prefix="merge_") as tmpdir:
+                merge_dir = os.path.join(tmpdir, base_name)
+                os.makedirs(merge_dir, exist_ok=True)
+                
+                logger.info(f"<cinza>   📁 Diretório temporário: {tmpdir}</cinza>")
+                
+                _executar_merge_hf(yaml_config, output_dir, merge_dir, quantizacao)
+                
+                src_treinamento = os.path.join(output_dir, "treinamento")
+                dst_treinamento = os.path.join(merge_dir, "treinamento")
+                
+                if os.path.exists(src_treinamento):
+                    logger.info("📋 Copiando relatórios e gráficos...")
+                    shutil.copytree(src_treinamento, dst_treinamento, dirs_exist_ok=True)
+                
+                try:
+                    from treinar_to_ollama import gerar_modelfile_ollama
+                    gerar_modelfile_ollama(merge_dir, yaml_config, quantizacao)
+                except Exception as e:
+                    logger.warning(f"<amarelo>⚠️  Erro ao gerar Modelfile: {e}</amarelo>")
+                
+                logger.info("<verde>✅ Merge concluído com sucesso!</verde>")
+                
+                # Compacta do tmpdir para o destino final
+                _compactar_modelo_zip(merge_dir, zip_destino=zip_path)
+                logger.info(f"<verde>📦 Exportação finalizada: {zip_path}</verde>")
+                # TemporaryDirectory limpa automaticamente ao sair do with
+                
+        except Exception as e:
+            logger.error(f"<vermelho>❌ Erro ao realizar merge/exportação: {e}</vermelho>")
+        
+        return
+    
+    # --- Modo normal (sem zip): merge direto no destino final ---
     logger.info(f"<cinza>\n📂 Diretório de destino: {dirname}</cinza>")
     logger.info(f"<cinza>⚙️  Formato: {quantizacao} (HF safetensors)</cinza>")
     logger.info("<cinza>📦 Motor: transformers + PEFT (sem unsloth)</cinza>")
@@ -863,6 +931,80 @@ def executar_merge(yaml_path: str, quantizacao: str = None) -> None:
         
     except Exception as e:
         logger.error(f"<vermelho>❌ Erro ao realizar merge/exportação: {e}</vermelho>")
+
+
+def _compactar_modelo_zip(dirname: str, zip_destino: str = None) -> None:
+    """Compacta o diretório merged em um arquivo .zip.
+    
+    Args:
+        dirname: Diretório de origem contendo o modelo merged.
+        zip_destino: Caminho completo do .zip de destino. Se None, cria
+                     no mesmo nível do diretório com o mesmo nome.
+                     Ex: ./modelo(merged_16bit)/ → ./modelo(merged_16bit).zip
+    
+    Usa zipfile com compressão ZIP_DEFLATED (compatível com qualquer OS).
+    Safetensors já são bastante compactos, então o ganho de compressão é mínimo,
+    mas o .zip facilita o transporte (arquivo único) e verificação de integridade.
+    """
+    import zipfile
+    
+    zip_path = zip_destino or f"{dirname}.zip"
+    
+    if os.path.exists(zip_path):
+        logger.warning(f"⚠️  Arquivo já existe: {zip_path}")
+        if not _perguntar_confirmacao("Deseja sobrescrever?", padrao=False):
+            logger.info("Compactação cancelada.")
+            return
+        os.remove(zip_path)
+    
+    logger.info(f"<azul>\n📦 Compactando modelo em .zip...</azul>")
+    logger.info(f"<cinza>   Origem: {dirname}</cinza>")
+    logger.info(f"<cinza>   Destino: {zip_path}</cinza>")
+    
+    ini = time.time()
+    total_bytes = 0
+    n_arquivos = 0
+    
+    try:
+        # Calcula tamanho total para progresso
+        todos_arquivos = []
+        for root, dirs, files in os.walk(dirname):
+            for f in files:
+                filepath = os.path.join(root, f)
+                todos_arquivos.append(filepath)
+                total_bytes += os.path.getsize(filepath)
+        
+        logger.info(f"<cinza>   Arquivos: {len(todos_arquivos)} | Tamanho: {total_bytes / (1024**3):.2f} GB</cinza>")
+        
+        # Nome base do diretório (para preservar a estrutura relativa dentro do .zip)
+        base_name = os.path.basename(dirname)
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+            for filepath in todos_arquivos:
+                # Caminho relativo dentro do zip: base_name/subdir/arquivo
+                arcname = os.path.join(base_name, os.path.relpath(filepath, dirname))
+                zf.write(filepath, arcname)
+                n_arquivos += 1
+                
+                if n_arquivos % 5 == 0 or n_arquivos == len(todos_arquivos):
+                    logger.info(f"   Progresso: {n_arquivos}/{len(todos_arquivos)} arquivos")
+        
+        zip_size = os.path.getsize(zip_path)
+        tempo = time.time() - ini
+        ratio = (zip_size / total_bytes * 100) if total_bytes > 0 else 100
+        
+        logger.info(f"<verde>✅ .zip criado com sucesso!</verde>")
+        logger.info(f"<cinza>   📦 {zip_path}</cinza>")
+        logger.info(f"<cinza>   📊 {zip_size / (1024**3):.2f} GB ({ratio:.0f}% do original) | {tempo:.1f}s</cinza>")
+        
+    except Exception as e:
+        logger.error(f"<vermelho>❌ Erro ao compactar: {e}</vermelho>")
+        # Remove zip parcial se existir
+        if os.path.exists(zip_path):
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
 
 
 def _executar_merge_hf(yaml_config, output_dir: str, dirname: str, quantizacao: str) -> None:
@@ -928,7 +1070,7 @@ def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False
     trainer = LLMsTrainer(yaml_path, force_base=usar_base)
     resultado = trainer.testar_predicoes(
         n_exemplos=n_exemplos, 
-        temperatura=0.2, 
+        temperatura=0.01, 
         max_new_tokens=512
     )
     
@@ -1130,7 +1272,7 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
                 resultados_vllm = engine.generate_batch(
                     prompts=prompts_batch,
                     max_tokens=tokens_para_gerar,
-                    temperature=0.02,
+                    temperature=0.01,
                     top_k=2,
                     n=1
                 )
@@ -1275,7 +1417,7 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
 
     # ---- Processa exemplos ----
     max_new_tokens = yaml_config.treinamento.max_seq_length
-    temperatura = 0.2
+    temperatura = 0.01
     resultados = []
 
     for i in range(n_exemplos):
@@ -1434,6 +1576,11 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
     base_model = yaml_config.modelo.base
     max_seq_length = yaml_config.treinamento.max_seq_length
 
+    # Para inferência com Unsloth, o contexto total (input + output) deve caber
+    # no max_seq_length passado a from_pretrained. Usamos 2× para acomodar
+    # prompts longos + respostas completas (Unsloth faz RoPE scaling interno).
+    unsloth_context = max_seq_length * 2
+
     # Decide qual modelo carregar
     if usar_base:
         model_name = base_model
@@ -1468,11 +1615,12 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
 
     # ---- Carrega modelo com unsloth ----
     logger.info("<azul>\n⚡ Carregando modelo com unsloth...</azul>")
+    logger.info(f"<cinza>   Contexto Unsloth: {unsloth_context} (2× max_seq_length para acomodar input+output)</cinza>")
     ini_carga = time.time()
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_name,
-            max_seq_length=max_seq_length,
+            max_seq_length=unsloth_context,
             dtype=None,
             load_in_4bit=yaml_config.treinamento.nbits == 4,
         )
@@ -1489,7 +1637,7 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
         tokenizer.pad_token = tokenizer.eos_token
 
     # ---- Processa exemplos ----
-    temperatura = 0.2
+    temperatura = 0.01
     resultados = []
 
     for i in range(n_exemplos):
@@ -1540,8 +1688,8 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
                 return_tensors="pt",
             ).to(model.device)
 
-            # Trunca se exceder max_seq_length (reservando espaço para geração)
-            max_input_len = max_seq_length - 256  # reserva 256 tokens para resposta
+            # Trunca se exceder contexto (reservando max_seq_length para geração)
+            max_input_len = unsloth_context - max_seq_length  # = max_seq_length
             if inputs.shape[1] > max_input_len:
                 logger.warning(f"   ⚠️ Prompt truncado: {inputs.shape[1]} → {max_input_len} tokens")
                 inputs = inputs[:, :max_input_len]
@@ -1549,12 +1697,15 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
             input_length = inputs.shape[1]
             attention_mask = torch.ones_like(inputs)
 
+            # max_new_tokens = espaço restante no contexto Unsloth (input + output ≤ unsloth_context)
+            max_new_tokens = max(256, unsloth_context - input_length)
+
             tempo_inicio = time.time()
             with torch.inference_mode():
                 outputs = model.generate(
                     input_ids=inputs,
                     attention_mask=attention_mask,
-                    max_new_tokens=max_seq_length,
+                    max_new_tokens=max_new_tokens,
                     temperature=max(temperatura, 0.01),
                     top_k=20 if temperatura > 0.3 else 2,
                     do_sample=bool(temperatura > 0.3),
@@ -1646,6 +1797,11 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
     base_model = yaml_config.modelo.base
     max_seq_length = yaml_config.treinamento.max_seq_length
 
+    # Para inferência com Unsloth, o contexto total (input + output) deve caber
+    # no max_seq_length passado a from_pretrained. Usamos 2× para acomodar
+    # prompts longos + respostas completas (Unsloth faz RoPE scaling interno).
+    unsloth_context = max_seq_length * 2
+
     # Verifica formato de saída
     formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
     logger.info(f"<cinza>\n📋 Formato de saída: {yaml_config.formato_saida}</cinza>")
@@ -1669,11 +1825,12 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
 
     # Carrega modelo com unsloth
     logger.info("<azul>\n⚡ Carregando modelo com unsloth...</azul>")
+    logger.info(f"<cinza>   Contexto Unsloth: {unsloth_context} (2× max_seq_length para acomodar input+output)</cinza>")
     ini_carga = time.time()
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_name,
-            max_seq_length=max_seq_length,
+            max_seq_length=unsloth_context,
             dtype=None,
             load_in_4bit=yaml_config.treinamento.nbits == 4,
         )
@@ -1757,21 +1914,24 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
                         return_tensors="pt",
                     ).to(model.device)
 
-                    # Trunca se exceder max_seq_length
-                    max_input_len = max_seq_length - 256
+                    # Trunca se exceder contexto (reservando max_seq_length para geração)
+                    max_input_len = unsloth_context - max_seq_length  # = max_seq_length
                     if inputs.shape[1] > max_input_len:
                         inputs = inputs[:, :max_input_len]
 
                     input_length = inputs.shape[1]
                     attention_mask = torch.ones_like(inputs)
 
+                    # max_new_tokens = espaço restante no contexto Unsloth (input + output ≤ unsloth_context)
+                    max_new_tokens = max(256, unsloth_context - input_length)
+
                     tempo_inicio = time.time()
                     with torch.inference_mode():
                         outputs = model.generate(
                             input_ids=inputs,
                             attention_mask=attention_mask,
-                            max_new_tokens=max_seq_length,
-                            temperature=0.02,
+                            max_new_tokens=max_new_tokens,
+                            temperature=0.01,
                             top_k=2,
                             do_sample=False,
                         )
@@ -1998,7 +2158,8 @@ def _perguntar_n_exemplos() -> int:
 
 
 def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
-                           predict_subsets: list = None, quant: str = None) -> None:
+                           predict_subsets: list = None, quant: str = None,
+                           gerar_zip: bool = False) -> None:
     """Despacha a ação de avaliação escolhida."""
     if acao == 'info':
         executar_info(yaml_path)
@@ -2029,7 +2190,7 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
     elif acao == 'modelo-base-vllm':
         executar_modelo_vllm(yaml_path, n_exemplos=_perguntar_n_exemplos(), usar_base=True)
     elif acao == 'merge':
-        executar_merge(yaml_path, quantizacao=quant)
+        executar_merge(yaml_path, quantizacao=quant, gerar_zip=gerar_zip)
     else:
         logger.error(f"Ação desconhecida: '{acao}'")
 
@@ -2084,6 +2245,7 @@ Exemplos:
   %(prog)s config.yaml --predict --base  # Predições com modelo base
   %(prog)s config.yaml --modelo 5   # Testa 5 predições interativas
   %(prog)s config.yaml --merge --quant 16bit   # Exporta safetensors 16-bit
+  %(prog)s config.yaml --merge --zip           # Exporta e compacta em .zip
 """
     )
     parser.add_argument("config", nargs='?', default=None,
@@ -2112,6 +2274,8 @@ Exemplos:
                         help="Força o uso do modelo base (ignora LoRA treinado)")
     parser.add_argument("--quant", type=str, default=None,
                         help="Formato de merge: 16bit (padrão, recomendado), 4bit (compacto)")
+    parser.add_argument("--zip", action="store_true",
+                        help="Compacta o modelo merged em .zip após exportação")
     parser.add_argument("--log-level", type=str, default=None,
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         help="Nível de log (sobrescreve misc.log_level do YAML)")
@@ -2161,7 +2325,8 @@ Exemplos:
         # Modo interativo: menu de ações
         acao = _modo_interativo_avaliar(cfg_path)
         if acao:
-            _executar_acao_avaliar(acao, cfg_path, usar_base=args.base, quant=args.quant)
+            _executar_acao_avaliar(acao, cfg_path, usar_base=args.base, quant=args.quant,
+                                   gerar_zip=getattr(args, 'zip', False))
         sys.exit(0)
     
     # Ações explícitas via CLI
@@ -2170,7 +2335,7 @@ Exemplos:
     elif args.stats:
         executar_stats(cfg_path)
     elif args.merge:
-        executar_merge(cfg_path, quantizacao=args.quant)
+        executar_merge(cfg_path, quantizacao=args.quant, gerar_zip=getattr(args, 'zip', False))
     elif args.modelo is not None:
         n_exemplos = args.modelo if isinstance(args.modelo, int) else 1
         executar_modelo(cfg_path, n_exemplos=n_exemplos, usar_base=args.base)
