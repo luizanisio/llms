@@ -393,11 +393,11 @@ class YamlTreinamento:
         from treinar_unsloth_pipeline import construir_etapas
         self._curriculum: list = construir_etapas(self)
         
-        # Usa o arquivo da primeira etapa como divisao padrão e aplica overrides
-        # da primeira etapa em treinamento (max_seq_length, epochs, learning_rate)
-        # para que o código downstream reflita os valores efetivos.
-        if self._curriculum:
-            primeira = self._curriculum[0]
+        # Usa o arquivo da primeira etapa treinável como divisao padrão e aplica
+        # overrides (max_seq_length, epochs, learning_rate) para que o código
+        # downstream reflita os valores efetivos.
+        primeira = next((e for e in self._curriculum if e.is_treinavel), None)
+        if primeira:
             if primeira.arquivo and not self.curriculum_config.divisao.arquivo:
                 self.curriculum_config.divisao.arquivo = self._resolver_caminho(primeira.arquivo)
             if primeira.pace_epochs > 0:
@@ -409,8 +409,13 @@ class YamlTreinamento:
     
     @property
     def curriculum(self) -> list:
-        """Retorna lista de etapas do curriculum (sempre >= 1 elemento)."""
+        """Retorna lista de TODAS as etapas do curriculum (inclui somente-predict)."""
         return self._curriculum
+
+    @property
+    def curriculum_treino(self) -> list:
+        """Retorna apenas etapas treináveis (tipo não-vazio). Usada pelo loop de treino."""
+        return [e for e in self._curriculum if e.is_treinavel]
     
     @property
     def formato_saida(self) -> str:
@@ -893,23 +898,28 @@ class YamlTreinamento:
         
         # --- Seção pipeline/curriculum ---
         
-        is_curriculum = len(self._curriculum) > 1
+        treinaveis = [e for e in self._curriculum if e.is_treinavel]
+        somente_predict = len(self._curriculum) - len(treinaveis)
+        is_curriculum = len(treinaveis) > 1
         lines.extend(["", f"🔄 PIPELINE{' CURRICULUM' if is_curriculum else ''}:"])
-        lines.append(f"  Etapas: {len(self._curriculum)}")
+        lines.append(f"  Etapas treináveis: {len(treinaveis)}" + (f" (+{somente_predict} somente predict)" if somente_predict else ""))
         
         for i, etapa in enumerate(self._curriculum):
             # Linha principal com alias e tipo
-            partes = [f"alias='{etapa.alias}'", f"tipo={etapa.tipo}"]
-            # Inclui overrides apenas quando diferem do valor global (>0)
+            partes = [f"alias='{etapa.alias}'", f"tipo={etapa.tipo or '(somente predict)'}"]
+            if not etapa.is_treinavel:
+                partes = [f"alias='{etapa.alias}'", "📋 somente predict (não treina)"]
+            else:
+                # Inclui overrides apenas quando diferem do valor global (>0)
+                if etapa.max_seq_length > 0:
+                    partes.append(f"max_seq_length={etapa.max_seq_length}")
+                if etapa.pace_epochs > 0:
+                    partes.append(f"epochs={etapa.pace_epochs}")
+                if etapa.learning_rate > 0:
+                    partes.append(f"lr={etapa.learning_rate}")
+                if etapa.pace_loss > 0:
+                    partes.append(f"pace_loss={etapa.pace_loss}")
             msl_etapa = etapa.max_seq_length if etapa.max_seq_length > 0 else self.treinamento.max_seq_length
-            if etapa.max_seq_length > 0:
-                partes.append(f"max_seq_length={etapa.max_seq_length}")
-            if etapa.pace_epochs > 0:
-                partes.append(f"epochs={etapa.pace_epochs}")
-            if etapa.learning_rate > 0:
-                partes.append(f"lr={etapa.learning_rate}")
-            if etapa.pace_loss > 0:
-                partes.append(f"pace_loss={etapa.pace_loss}")
             lines.append(f"  [{i}] {', '.join(partes)}")
             
             # Sub-detalhes da etapa (divisão e contagens)

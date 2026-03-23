@@ -45,7 +45,7 @@ curriculum:
     exigir_ids_pareados: false
   divisao:
     - arquivo: ./treino_simples/divisao_unica.csv
-      alias: "direto"
+      alias: "completo"
       tipo: "lora"
       pace_epochs: 4
       max_seq_length: 35840
@@ -53,6 +53,15 @@ curriculum:
         - treino: 0.70
         - validacao: 0.10
         - teste: 0.20
+    - arquivo: ./treino_simples/divisao_facil.csv
+      alias: "fácil"
+      tipo: "" # tipo vazio permite dividir no predict sendo ignorado no treino
+    - arquivo: ./treino_simples/divisao_medio.csv
+      alias: "médio"
+      tipo: ""
+    - arquivo: ./treino_simples/divisao_dificil.csv
+      alias: "difícil"
+      tipo: ""
 
 #| =========================================================================
 #| MODELO

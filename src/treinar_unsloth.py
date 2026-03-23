@@ -526,8 +526,10 @@ class LLMsTrainer:
         os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
         
         # Pipeline Universal: etapas e rastreamento unificado
+        # Usa apenas etapas treináveis (tipo não-vazio); etapas com tipo vazio
+        # são usadas apenas pelo predict para cópia de predições por etapa.
         from treinar_unsloth_pipeline import CurriculumTracker
-        self._etapas = self._yaml_config.curriculum
+        self._etapas = self._yaml_config.curriculum_treino
         self._tracker = CurriculumTracker(self._yaml_config.modelo.saida)
         
         # Histórico de treinamento

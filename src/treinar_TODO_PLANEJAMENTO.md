@@ -8,7 +8,7 @@
 3.  **Segurança**: Limpeza seletiva em `--predict`.
 4.  **Flexibilidade**: Adição de flag `--base` e suporte a múltiplos subsets em stats.
 5.  **Qualidade**: Correção de logs duplicados e bugs de formatação em relatórios.
-6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com toda a lógica de avaliação, inferência e exportação. CLI de treino simplificado.
+6.  **Separação Treino/Avaliação (Passo 1)**: Script `treinar_unsloth_avaliar.py` criado com lógica de avaliação, estatísticas e CLI interativo. Funções de exportação/inferência em `treinar_unsloth_export.py`.
 7.  **Separação `saida` / `predicao` no YAML**: `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório). `ConfigPredicao` é pasta de saída das predições (criada automaticamente se não existir).
 8.  **Menu Interativo YAML**: Ambos os scripts usam `util_menu_opcoes.escolher_yaml()` quando YAML é omitido, com menus de ação específicos para cada script.
 9.  **Validação Fail-Fast de Criptografia**: `ConfigMisc.__post_init__` e `_carregar_dataframe_entrada` levantam erro fatal se `misc.env_chave_criptografia` está configurada no YAML mas a variável de ambiente não existe, impedindo treinamento com dados criptografados.
@@ -17,6 +17,7 @@
 12. **Batch Size Automático**: Seção `treinamento.batch_size` (dict) com `efetivo` e `batch_size`. O sistema calcula `grad_batch_size = round(efetivo / (batch_size × n_gpus))` automaticamente.
 13. **Simplificação do YAML — Curriculum como Formato Único**: Removidos os modos `pastas` e `dataset` (`formatos.tipo_entrada`). Agora o YAML possui apenas a seção `curriculum` com subcampos `entrada`, `saida`, `predicao`, `divisao` e `validacao`. Tanto `entrada` quanto `saida` suportam pasta de arquivos OU dataframe parquet. Criptografia por campo (`entrada.texto_criptografado`, `entrada.prompt_criptografado`, `saida.texto_criptografado`). Classes removidas: `ConfigFormatos`, `ConfigGold`, `ConfigPastas`, `ConfigDataset`. Classes adicionadas: `ConfigSaida`, `ConfigCurriculum`. CLI simplificado: `--criar-exemplo` substitui `--criar-exemplo-pastas`/`--criar-exemplo-dataset`.
 14. **Menus Padronizados com `exibir_menu_opcoes`**: Função reutilizável em `util_print.py` que renderiza menus como tabela visual alinhada (colunas de tecla, nome e descrição). Suporta sub-itens indentados (nível 1), cores por item, cabeçalhos de seção e notas. Menus de treinamento (`treinar_unsloth.py`) e avaliação (`treinar_unsloth_avaliar.py`) unificados usando esta função, eliminando formatação manual com `logger.info()`.
+15. **Separação Exportação/Inferência**: Módulo `treinar_unsloth_export.py` extraído de `treinar_unsloth_avaliar.py` com 13 funções de exportação e inferência: `executar_predict` (HF, vLLM, Unsloth), `executar_modelo` (HF, vLLM, Unsloth), `executar_merge`, `_compactar_modelo_zip`, `_executar_merge_hf` e helpers (`_perguntar_subsets_predict`, `_registro_ja_exportado`, `_construir_mapa_etapas`, `_copiar_para_pastas_etapas`). `treinar_unsloth_avaliar.py` mantém avaliação, estatísticas e CLI (~900 linhas, redução de ~65%).
 
 ### Histórico de Desenvolvimento
 > Curriculum Learning, simplificação do código e unificação de formatos
@@ -29,8 +30,8 @@ O desenvolvimento foi dividido nas seguintes etapas incrementais:
 **Objetivo:** Desacoplar a inferência do motor de treinamento para blindar e otimizar o código base do Treinador, centralizando o treinamento para focar *apenas Treinar e dar Merge*, e melhorar a experiência CLI.
 
 **Implementado:**
-1. ✅ **Extração da Avaliação/Inferência:** Funções `executar_info`, `executar_stats`, `executar_predict`, `executar_merge`, `executar_modelo` movidas para `treinar_unsloth_avaliar.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
-2. ✅ **Novo Script Independente:** `treinar_unsloth_avaliar.py` criado (~830 linhas) com CLI próprio, modo interativo e funções completas de avaliação.
+1. ✅ **Extração da Avaliação/Inferência:** Funções de avaliação (`executar_info`, `executar_stats`, `gerar_graficos_estatisticos`) em `treinar_unsloth_avaliar.py`. Funções de exportação/inferência (`executar_predict`, `executar_merge`, `executar_modelo` — HF, vLLM, Unsloth) em `treinar_unsloth_export.py`. Removidas de `treinar_unsloth_actions.py` (que agora contém apenas `executar_treinar`, `executar_reset`, `executar_injetar_dicas` e funções auxiliares compartilhadas).
+2. ✅ **Dois Módulos Independentes:** `treinar_unsloth_avaliar.py` (~900 linhas) com CLI/menu interativo e funções de avaliação/estatísticas. `treinar_unsloth_export.py` (~1750 linhas) com todas as funções de exportação e inferência (3 motores: HF, vLLM, Unsloth).
 3. ✅ **Menu Interativo (CLI):** Ambos os scripts usam `util_menu_opcoes.escolher_yaml(chave_obrigatoria='modelo')`. Argumento `config` é `nargs='?'` (opcional). Menu de ações específico: treino (treinar, reset+treinar, reset) e avaliação (info, stats, predict, modelo, merge).
 4. ✅ **Separação `dataset`/`predicao`:** Nova `ConfigSaida` para o gold dataset (saídas esperadas, obrigatório, validação de existência). `ConfigPredicao` é pasta de saída (auto-criada). `parear_arquivos()` em `treinar_unsloth_dataset.py` usa `curriculum.saida` como fonte do gold.
 * **⏱️ Teste Intermediário:** `--help` de ambos os scripts funciona. `--info` executa corretamente. Import de todos os módulos validado. Falta: teste completo de treinamento end-to-end e predição em massa.

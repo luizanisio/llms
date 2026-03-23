@@ -46,12 +46,12 @@ curriculum:
   divisao:
     - arquivo: ./treino_simples/_divisao_alguns/divisao_facil.csv
       alias: "fácil-full"
-      tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_alguns/divisao_medio.csv
       alias: "médio"
-      tipo: "lora"
+      tipo: ""
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_alguns/divisao_dificil.csv
@@ -59,9 +59,9 @@ curriculum:
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_alguns/divisao_unica.csv
-      alias: "completo"
-      tipo: "lora"
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_teste.csv
+      alias: "testes"
+      tipo: ""
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 

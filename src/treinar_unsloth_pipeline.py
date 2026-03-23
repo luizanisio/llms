@@ -33,14 +33,23 @@ class EtapaCurriculum:
     
     Para entradas simples (dataset/pastas), o sistema gera automaticamente
     uma lista com uma única etapa com alias='Principal'.
+    
+    Se ``tipo`` for vazio, a etapa é ignorada no treinamento (não existe como
+    etapa treinável). Isso permite que o predict divida a exportação copiando
+    predições para pastas separadas por etapa, sem afetar o treino.
     """
     alias: str = "Principal"
     arquivo: str = ""          # Arquivo de divisão ou dataset específico da etapa
-    tipo: str = "lora"         # "lora" ou "full"
+    tipo: str = "lora"         # "lora", "full" ou "" (somente predict)
     pace_epochs: int = 0       # 0 = usa epochs global do YAML
     pace_loss: float = 0.0     # 0 = sem early stopping por loss
     max_seq_length: int = 0    # 0 = usa valor global
     learning_rate: float = 0.0 # 0 = usa valor global
+
+    @property
+    def is_treinavel(self) -> bool:
+        """Retorna True se a etapa participa do treinamento (tipo não-vazio)."""
+        return bool(self.tipo)
 
 
 # ---------------------------------------------------------------------------
@@ -243,10 +252,17 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
         if arquivo:
             arquivo = yaml_config._resolver_caminho(arquivo)
         
+        # tipo: se a chave existe no YAML, usa o valor literal (inclusive "")
+        # se a chave não existe, usa tipo_padrao (lora ou full conforme LoRA.r)
+        if "tipo" in item:
+            tipo_etapa = str(item["tipo"] or "")
+        else:
+            tipo_etapa = tipo_padrao
+        
         etapa = EtapaCurriculum(
             alias=alias,
             arquivo=arquivo,
-            tipo=item.get("tipo", tipo_padrao),
+            tipo=tipo_etapa,
             pace_epochs=int(item.get("pace_epochs", treinamento.epochs)),
             pace_loss=float(item.get("pace_loss", 0.0)),
             max_seq_length=int(item.get("max_seq_length", 0)),
@@ -254,8 +270,12 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
         )
         etapas.append(etapa)
     
-    logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s)</azul>")
+    treinaveis = [e for e in etapas if e.is_treinavel]
+    somente_predict = len(etapas) - len(treinaveis)
+    sufixo = f" ({somente_predict} somente predict)" if somente_predict else ""
+    logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s){sufixo}</azul>")
     for i, e in enumerate(etapas):
-        logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}</cinza>")
+        tag = "" if e.is_treinavel else " <cinza>(somente predict)</cinza>"
+        logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo or '(vazio)'}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}{tag}</cinza>")
     
     return etapas
