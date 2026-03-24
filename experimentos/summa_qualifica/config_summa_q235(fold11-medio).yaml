@@ -1,0 +1,116 @@
+# Configuração para comparação de extrações - Experimento Summa Qualifica
+# Executar com: python comparar_extracoes.py --config config_summa.yaml
+
+# Configuração Global de Saída
+saida:
+  pasta: "./saidas_fold11/analises_comparacao_summa_q235 (fold11-médio)"
+  arquivo_base: "comparacao_summa"
+  regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
+  linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
+
+# Configurações de Execução
+execucao:
+  max_workers: 10
+  teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
+  gerar_graficos: true 
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: true
+  divisao:
+    treino: 0.70
+    validacao: 0.10
+    teste: 0.20
+ 
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  pasta: "./saidas_fold11/ext_qwen235b_11"
+  rotulo: "Qwen235b"
+  familia: "Qwen-235B"
+
+# Modelos Comparados
+modelos_comparacao:
+  - pasta: "./saidas_fold11/ext_qwen235b_11"
+    rotulo: "Qwen235b*"
+    familia: "Qwen-235B"
+
+  - pasta: "./saidas_fold11/treina7b(cur)/treina7b(cur-médio)"
+    rotulo: "Qwen7b(cur-médio)"
+    familia: "Qwen-7B"
+
+  - pasta: "./saidas_fold11/treina7b(all)/treina7b(all-médio)"
+    rotulo: "Qwen7b(all-médio)"
+    familia: "Qwen-7B"
+
+  - pasta: "./saidas_fold11/treina7b(base)/treina7b(médio)"
+    rotulo: "Qwen7b(base-médio)"
+    familia: "Qwen-7B"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  nivel_campos: 1
+  padronizar_simbolos: true
+  rouge_stemmer: true
+  
+  # Configuração do campo ID
+  nome_campo_id: "id"  # Nome interno do campo de ID (usado em DataFrames, gráficos, etc)
+  rotulo_campo_id: "ID"  # Rótulo de exibição do campo ID (usado em relatórios)
+  
+  # Máscaras de arquivos (Regex ou Sufixo)
+  # Se começar com '^', é tratado como Regex.
+  # Se não, é tratado como sufixo e o script adiciona '^(.+)' antes e escape no sufixo.
+  mascaras:
+    extracao: "^(.+)\\.txt$"
+    tokens: ".json" 
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Mapeamento de campos para métricas
+  campos:
+    bertscore:
+      - "(global)"
+      - "Materia"
+      - "Resumo"
+      - "Dispositivo"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Decisao"
+      - "Temas.Explicacao"
+      - "Temas.Normas"
+      - "Temas.Jurisprudencia"
+      - "Temas"
+
+    rouge_1:
+
+    rouge_2:
+      - "Partes"
+      - "Partes.Tipo"
+      - "Partes.Nome"
+
+    rouge_l:
+      - "(global)"
+      - "Materia"
+      - "Resumo"
+      - "DataJulgamento"
+      - "Partes"
+
+    levenshtein:
+      - "Tipo"
+      - "DataJulgamento"
+
+    sbert_pequeno:
+      - "(global)"
+      - "Dispositivo"
+      - "Materia"
+      - "Resumo"      
+      - "Temas"
+      - "Partes"
+      - "Temas.Explicacao"
+
+    sbert_grande:
+      - "(global)"
+      - "Dispositivo"
+      - "Materia"
+      - "Resumo"      
+      - "Temas"
+      - "Partes"
+      - "Temas.Explicacao"
