@@ -107,9 +107,10 @@ class JsonAnaliseDados:
             AssertionError: Se validações básicas falharem
         """
         # Validações básicas
-        assert dados is not None and len(dados) > 0, "dados não pode ser vazio"
+        assert dados is not None, "dados não pode ser None"
         assert rotulos is not None and len(rotulos) >= 2, "rotulos deve ter ao menos 2 elementos: ['id', 'True']"
-        assert len(rotulos) == len(dados[0]), f"Número de rótulos ({len(rotulos)}) deve corresponder ao número de chaves em dados ({len(dados[0])})"
+        if len(dados) > 0:
+            assert len(rotulos) == len(dados[0]), f"Número de rótulos ({len(rotulos)}) deve corresponder ao número de chaves em dados ({len(dados[0])})"
         
         # Atributos principais
         self.dados = dados

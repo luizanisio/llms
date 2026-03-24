@@ -363,7 +363,7 @@ def main():
             chave_obrigatoria=['modelo_base', 'modelos_comparacao'],
             titulo="Arquivos de configuração encontrados:",
             padrao_recente=True,
-            limite=5,
+            limite=10,
             opcoes_extras=[
                 ("Criar um novo arquivo de configuração", "CRIAR_NOVO"),
                 ("Sair sem escolher", None)
@@ -439,6 +439,11 @@ def main():
     if not os.path.isdir(origem):
         print(f"❌ Pasta base não encontrada: {origem}")
         sys.exit(1)
+        
+    for p_dest, r_dest in zip(pastas_destinos, rotulos_destinos):
+        if not os.path.isdir(p_dest):
+            print(f"❌ Pasta de destino não encontrada para o modelo '{r_dest}': {p_dest}")
+            sys.exit(1)
     
     # 4. Configuração das Métricas
     config_comparacao = configurar_metricas(config)

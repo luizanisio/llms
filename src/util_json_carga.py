@@ -480,7 +480,7 @@ class CargaDadosComparacao():
 
         # Fallback de tempo se vazio
         if not dados and resumo:
-            tempo_resumo = resumo.get('time') or resumo.get('tempo') or resumo.get(f'{rotulo}_tempo')
+            tempo_resumo = resumo.get('_tempo') or resumo.get('time_s') or resumo.get('time') or resumo.get('tempo') or resumo.get(f'{rotulo}_tempo')
             if tempo_resumo is not None:
                 dados = {f'{rotulo}_SEG': int(round(tempo_resumo)) if isinstance(tempo_resumo, (int, float)) else tempo_resumo}
         
@@ -508,7 +508,7 @@ class CargaDadosComparacao():
         total_tokens = dados.get('total_tokens') or 0
         
         # Tempo geralmente está na raiz, mas pode estar no bloco de tokens
-        tempo = dados_full.get('time') or dados_full.get('tempo') or dados.get('time') or dados.get('tempo') or None
+        tempo = dados_full.get('time_s') or dados_full.get('time') or dados_full.get('tempo') or dados.get('time_s') or dados.get('time') or dados.get('tempo') or None
         
         return {
             f'{rotulo}_input': input_tokens,

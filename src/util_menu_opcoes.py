@@ -84,11 +84,24 @@ class _C:
 # ============================================================================
 
 def _preparar_lista(itens_todos, limite, padrao_recente):
-    '''Ordena alfabeticamente, aplica limite e retorna (lista, idx_padrao base-0).'''
-    itens = sorted(itens_todos)[:limite]
+    '''Seleciona os itens mais recentes (se padrao_recente), ordena alfabeticamente, aplica limite e retorna (lista, idx_padrao base-0).'''
+    if not itens_todos:
+        return [], -1
+        
+    if padrao_recente:
+        # Pega os 'limite' itens mais recentes
+        itens_selecionados = sorted(itens_todos, key=lambda f: os.path.getmtime(f), reverse=True)[:limite]
+    else:
+        # Pega os primeiros 'limite' alfabeticamente
+        itens_selecionados = sorted(itens_todos)[:limite]
+        
+    # Ordena alfabeticamente para a exibição no menu
+    itens = sorted(itens_selecionados)
+    
     idx_padrao = -1
     if padrao_recente and itens:
         idx_padrao = max(range(len(itens)), key=lambda i: os.path.getmtime(itens[i]))
+        
     return itens, idx_padrao
 
 
