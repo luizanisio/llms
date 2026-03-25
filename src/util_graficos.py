@@ -18,6 +18,8 @@ try:
     from pandas.api.types import is_integer_dtype
 except ImportError as e:
     raise ImportError("Pandas não está instalado. Instale com 'pip install pandas'") from e
+import matplotlib
+matplotlib.use('Agg')  # Backend não-interativo: evita erros X11 em ambiente headless/SSH
 import matplotlib.pyplot as plt
 import seaborn as sns
 from enum import Enum
@@ -100,6 +102,7 @@ class UtilGraficos:
                 'drop_zero': bool        # opcional, remove valores <= 0 (padrão: False)
                 'mostrar_legenda': bool  # opcional, exibe legenda (padrão: True para 'quantidade')
                 'rotacao_labels': int    # opcional, ângulo de rotação dos labels do eixo X
+                'nota': str              # opcional, texto informativo exibido no canto superior esquerdo
             }
         - plots_por_linha: quantos subplots/gráficos por linha no layout (padrão: 2)
         - paleta_cores: paleta padrão Cores.PuBuGn (pode ser sobrescrita em cfg['paleta'])
@@ -296,6 +299,13 @@ class UtilGraficos:
             ax.set_title(titulo, fontsize=12, fontweight='bold')
             ax.set_xlabel(xlabel, fontsize=10)
             ax.set_ylabel(ylabel, fontsize=10)
+
+            # Nota informativa (caixa estilo wheat no canto superior esquerdo)
+            nota = cfg.get('nota')
+            if nota:
+                ax.text(0.02, 0.98, nota, transform=ax.transAxes, fontsize=9,
+                        verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             
             # Configurar limites do eixo Y se especificado
             if 'ylim' in cfg:
@@ -476,7 +486,8 @@ class UtilGraficos:
                       arquivo_saida: str = None, 
                       paleta_cores=Cores.PuBuGn,
                       mostrar_valores: bool = True,
-                      rotacao_labels: int = 45):
+                      rotacao_labels: int = 45,
+                      nota: str = None):
         """
         Gera um gráfico de boxplot simplificado a partir de um dicionário de listas.
         
@@ -489,6 +500,7 @@ class UtilGraficos:
             paleta_cores: Paleta de cores a utilizar
             mostrar_valores: Se deve mostrar valores (não aplicável a boxplot padrão, mantido para compatibilidade)
             rotacao_labels: Rotação dos rótulos do eixo X
+            nota: Texto informativo exibido no canto superior esquerdo do gráfico (opcional)
         """
         if not dados:
             print("⚠️  Aviso: Sem dados para gerar boxplot")
@@ -510,7 +522,8 @@ class UtilGraficos:
                 'y': ylabel,
                 'agregacao': 'boxplot',
                 'paleta': paleta_cores,
-                'rotacao_labels': rotacao_labels
+                'rotacao_labels': rotacao_labels,
+                'nota': nota,
             }
         }
         

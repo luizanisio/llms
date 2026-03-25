@@ -351,6 +351,82 @@ class DatasetTreinamento:
         
         return self._dados_divisao
     
+    def carregar_divisao_completa(self, etapas) -> Dict[str, Dict[str, Any]]:
+        """Constrói dicionário unificado de divisão para todas as etapas do curriculum.
+
+        Retorna um dicionário indexado por ``id_arquivo``::
+
+            {
+                "123": {"alvo": "teste",    "divisoes": ["facil", "completo"], "etapas": 4},
+                "456": {"alvo": "treino",   "divisoes": ["medio"],             "etapas": 4},
+                "789": {"alvo": "validacao", "divisoes": [],                   "etapas": 1},
+            }
+
+        - ``alvo``: subset (treino / validacao / teste)
+        - ``divisoes``: aliases das etapas a que pertence (vazio se 1 etapa)
+        - ``etapas``: número total de etapas do curriculum (permite ao caller
+          decidir se há multi-etapa sem conhecer o contexto externo)
+
+        Com 1 etapa, ``divisoes`` fica ``[]`` para todos os IDs.
+        Com N etapas, ``divisoes`` contém os aliases para cópia de predições.
+
+        Args:
+            etapas: Lista de EtapaCurriculum (todas, incluindo somente-predict).
+
+        Returns:
+            Dicionário ``{id_arquivo: {"alvo": str, "divisoes": list, "etapas": int}}``.
+            Retorna ``{}`` se nenhum CSV válido for encontrado.
+        """
+        multi_etapa = len(etapas) > 1
+        n_etapas = len(etapas)
+        resultado: Dict[str, Dict[str, Any]] = {}
+
+        csvs_lidos = 0
+        for etapa in etapas:
+            if not etapa.arquivo or not os.path.isfile(etapa.arquivo):
+                continue
+            try:
+                df = pd.read_csv(etapa.arquivo, sep=None, engine='python')
+                df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+                # Migração de colunas (mesmo padrão de carregar_ou_criar_divisao)
+                if "id_arquivo" not in df.columns and "id" in df.columns:
+                    df.rename(columns={"id": "id_arquivo"}, inplace=True)
+                if "alvo" not in df.columns:
+                    for col_antiga in ("divisão", "divisao", "divisões", "divisoes", "grupo"):
+                        if col_antiga in df.columns:
+                            df.rename(columns={col_antiga: "alvo"}, inplace=True)
+                            break
+                if "id_arquivo" not in df.columns or "alvo" not in df.columns:
+                    continue
+                # Migração de valores de alvo
+                mask = df["alvo"].isin(["avaliacao", "avaliação", "eval"])
+                if mask.any():
+                    df.loc[mask, "alvo"] = "validacao"
+
+                csvs_lidos += 1
+                for _, row in df.iterrows():
+                    id_val = str(row["id_arquivo"]).strip()
+                    alvo_val = str(row["alvo"]).strip()
+                    if not id_val or not alvo_val:
+                        continue
+                    if id_val not in resultado:
+                        resultado[id_val] = {"alvo": alvo_val, "divisoes": [], "etapas": n_etapas}
+                    if multi_etapa and etapa.alias and etapa.alias not in resultado[id_val]["divisoes"]:
+                        resultado[id_val]["divisoes"].append(etapa.alias)
+            except Exception as e:
+                print(f"⚠️  Erro ao ler CSV da etapa '{etapa.alias}': {e}")
+                continue
+
+        if not resultado:
+            return {}
+
+        aliases_all = [et.alias for et in etapas if et.arquivo and os.path.isfile(et.arquivo)]
+        if multi_etapa:
+            print(f"📋 Divisão unificada ({' + '.join(aliases_all)}): {len(resultado)} instâncias")
+        else:
+            print(f"📋 Divisão carregada: {len(resultado)} instâncias")
+        return resultado
+
     def _carregar_conteudo_arquivo(self, caminho: str) -> str:
         try:
             with open(caminho, "r", encoding="utf-8") as f:
@@ -467,13 +543,27 @@ class DatasetTreinamento:
         
         return template + "\n\n" + conteudo_entrada
 
-    def carregar_mensagens_de_pastas(self, alvo: str = "treino") -> List[Dict[str, Any]]:
-        """Carrega mensagens formatadas para treinamento a partir das configurações do curriculum."""
+    def carregar_mensagens_de_pastas(self, alvo: str = "treino",
+                                     divisao: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        """Carrega mensagens formatadas para treinamento a partir das configurações do curriculum.
+
+        Args:
+            alvo: Subset a filtrar ('treino', 'validacao', 'teste').
+            divisao: Dicionário de divisão unificado ``{id: {alvo, divisoes, etapas}}``
+                     retornado por ``carregar_divisao_completa``. Se None, usa
+                     ``carregar_ou_criar_divisao()`` (modo treino padrão).
+        """
         cc = self.curriculum
-        divisao = self.carregar_ou_criar_divisao()
-        
+
         # Filtra IDs pelo alvo
-        ids_alvo = set(divisao[divisao["alvo"] == alvo]["id_arquivo"])
+        if divisao is not None:
+            ids_alvo = set(
+                id_arq for id_arq, info in divisao.items()
+                if info["alvo"] == alvo
+            )
+        else:
+            df_divisao = self.carregar_ou_criar_divisao()
+            ids_alvo = set(df_divisao[df_divisao["alvo"] == alvo]["id_arquivo"])
         
         arquivos_pareados = self.parear_arquivos()
         arquivos_filtrados = [p for p in arquivos_pareados if p["id"] in ids_alvo]

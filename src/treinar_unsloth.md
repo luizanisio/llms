@@ -380,6 +380,70 @@ Para evitar o retrabalho indevido ou degradação de um modelo que já teve suce
 
 ---
 
+## Limitações Conhecidas
+
+### 1. vLLM + Modelos Instruct — Chat Template Obrigatório
+
+Modelos instruct (e.g. Qwen2.5-7B-**Instruct**, Llama-3-**Instruct**) esperam receber o prompt formatado com tokens especiais de chat (`<|im_start|>user\n...<|im_end|>\n<|im_start|>assistant\n` no caso do Qwen). Se o texto bruto é enviado ao vLLM sem `apply_chat_template()`, o modelo gera EOS imediatamente — resultando em predições vazias com `output_tokens=1`.
+
+**Mitigação implementada:** Todos os motores vLLM (OOP e legacy) aplicam `apply_chat_template(chat_msgs, tokenize=False, add_generation_prompt=True)` antes da inferência, filtrando mensagens de role `assistant` e preservando tokens especiais na truncagem (`skip_special_tokens=False`).
+
+> **Nota:** Esse comportamento é específico de modelos **instruct**. Modelos base (sem sufixo Instruct/Chat) podem aceitar texto bruto, mas a prática recomendada é sempre usar o chat template do tokenizer.
+
+### 2. vLLM + `max_position_embeddings` (Qwen e outros)
+
+O vLLM, por padrão, recusa alocar `max_model_len` superior ao `max_position_embeddings` declarado no `config.json` do modelo. Se a estimativa de contexto (`estimar_contexto_predict()`) produz um valor maior — por exemplo, 33.792 contra 32.768 do Qwen2.5 — o vLLM levanta `ValueError`.
+
+**Mitigação implementada:** A variável `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1` é definida via `os.environ.setdefault()` antes da inicialização do `LLM()` em `treinar_vllm_inference.py`. Isso habilita RoPE scaling automático, permitindo que o vLLM aceite contextos acima do `max_position_embeddings` sem abortar. O `estimar_contexto_predict()` **não limita** o contexto estimado — apenas loga um aviso informativo quando o valor excede `max_position_embeddings`.
+
+> **Nota:** O erro `RuntimeError: cancelled` que ocorria com contextos grandes era na verdade causado pelo `tensor_parallel_size > 1` (ver limitação 3 abaixo), não pelo tamanho do contexto em si.
+
+**Valores de referência:**
+
+| Modelo | `max_position_embeddings` |
+|--------|--------------------------|
+| Qwen2.5-7B-Instruct | 32.768 |
+| Qwen2.5-1.5B-Instruct | 32.768 |
+| Llama-3.1-8B-Instruct | 131.072 |
+| Gemma-3-4B-IT | 131.072 |
+
+### 3. vLLM + Tensor Parallelism (Multi-GPU) — `RuntimeError: cancelled`
+
+Com `tensor_parallel_size > 1`, o vLLM utiliza o `multiproc_executor` para coordenar múltiplas GPUs via shared memory (NCCL + `shm_broadcast`). Durante a inicialização do KV cache (`_initialize_kv_caches` → `determine_available_memory`), se um dos processos worker falha, o processo pai recebe `RuntimeError: cancelled` seguido de vazamentos de semáforos e shared memory.
+
+**Causa raiz:** Para modelos ≤7B, tensor parallelism é **desnecessário** — o modelo inteiro (~14 GB em FP16) cabe confortavelmente em uma única GPU moderna (≥16 GB). O TP>1 para modelos pequenos adiciona overhead de coordenação inter-GPU sem ganho real de throughput, e introduz pontos de falha na comunicação NCCL/shared memory.
+
+**Sintoma típico:**
+```
+(EngineCore pid=...) File ".../vllm/v1/executor/multiproc_executor.py", line 397, in collective_rpc
+(EngineCore pid=...) File ".../vllm/distributed/device_communicators/shm_broadcast.py", line 677, in acquire_read
+(EngineCore pid=...)     raise RuntimeError("cancelled")
+resource_tracker: There appear to be 2 leaked semaphore objects to clean up at shutdown
+```
+
+**Mitigação implementada:**
+
+| Ação | Descrição |
+|------|-----------|
+| **TP=1 para 7B** | `get_recommended_config()` retorna `tensor_parallel_size=1` para modelos 7B independente do número de GPUs disponíveis |
+| **`enforce_eager=True` para TP>1** | Configurações de modelos maiores (13B, 70B) que usam TP>1 desabilitam CUDA graphs (`enforce_eager=True`) para evitar picos de memória durante a captura dos grafos |
+
+> **Nota:** Se o modelo crescer para 13B+ e TP>1 for necessário, verifique que todas as GPUs estejam livres antes de inicializar o vLLM. Processos residuais de execuções anteriores podem ocupar memória e causar falha na coordenação. Use `nvidia-smi` para verificar e `kill` para limpar processos órfãos.
+
+### 4. `_ler_max_position_embeddings()` — Apenas Modelos Locais
+
+O método `_ler_max_position_embeddings()` lê o arquivo `config.json` diretamente do caminho em `modelo.base`. Se esse caminho for um identificador do HuggingFace Hub (e.g. `Qwen/Qwen2.5-7B-Instruct`) em vez de um diretório local, o método retorna `0` e o contexto **não é limitado automaticamente**.
+
+**Recomendação:** Para predição via vLLM, configure `modelo.base` apontando para o diretório local do modelo (onde o `config.json` está presente). Se estiver usando diretamente do Hub, a 2ª camada (`VLLM_ALLOW_LONG_MAX_MODEL_LEN=1`) ainda oferece proteção parcial.
+
+### 5. Estimativa de Contexto — Dependência de Colunas CSV
+
+O método `estimar_contexto_predict()` depende das colunas `token_total` e `token_output` nos arquivos CSV de divisão do curriculum. Se essas colunas não existirem, o sistema utiliza o fallback `2× max_seq_length`, que pode ser insuficiente ou excessivo dependendo da distribuição real dos dados.
+
+**Recomendação:** Sempre gere os CSVs de divisão com as colunas de contagem de tokens. O comando `--stats` exibe a distribuição de tokens e ajuda a validar se as estimativas estão adequadas.
+
+---
+
 ## Desenvolvimento e Manutenção
 
 ### Pendências Concluídas Recentemente ✅

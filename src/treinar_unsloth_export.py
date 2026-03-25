@@ -26,7 +26,6 @@ Helpers internos:
     - _executar_merge_hf()         — Merge HF safetensors (transformers + PEFT)
 """
 
-import csv
 import os
 import sys
 import json
@@ -120,77 +119,38 @@ def _registro_ja_exportado(subset_dir: str, registro_id: str, min_bytes: int = 1
         return False
 
 
-def _construir_mapa_etapas(yaml_config) -> dict:
-    """Constrói mapa de etapas do curriculum para cópia de predições.
+def _construir_mapa_etapas(divisao_dict: dict) -> dict:
+    """Extrai mapa de etapas do dicionário de divisão unificado.
 
-    Para curriculum multi-etapa, lê os CSVs de divisão de cada etapa e
-    monta um dicionário ``{(id_arquivo, alvo): [alias1, alias2, ...]}``.
-    Se o curriculum tiver apenas uma etapa, retorna ``None`` (sem cópias).
+    Converte o dicionário retornado por ``carregar_divisao_completa`` em um
+    mapa ``{(id_arquivo, alvo): [alias1, alias2, ...]}`` usado por
+    ``_copiar_para_pastas_etapas``.
 
     Args:
-        yaml_config: Instância de YamlTreinamento.
+        divisao_dict: Dicionário ``{id: {"alvo": str, "divisoes": list, "etapas": int}}``.
 
     Returns:
-        Dicionário de mapeamento ou None se etapa única.
+        Dicionário de mapeamento ou None se não há multi-etapa (etapas <= 1
+        ou nenhum ID com divisões preenchidas).
     """
-    etapas = yaml_config.curriculum
-    if len(etapas) <= 1:
+    if not divisao_dict:
         return None
 
-    mapa = {}  # {(id_arquivo, alvo): [alias, ...]}
-
-    for etapa in etapas:
-        if not etapa.arquivo or not os.path.isfile(etapa.arquivo):
-            continue
-
-        try:
-            with open(etapa.arquivo, 'r', encoding='utf-8-sig') as f:
-                amostra = f.read(4096)
-                f.seek(0)
-                try:
-                    dialeto = csv.Sniffer().sniff(amostra)
-                except csv.Error:
-                    dialeto = 'excel'
-                reader = csv.DictReader(f, dialect=dialeto)
-
-                # Detecta colunas (com tolerância a nomes antigos)
-                campos = {c.strip(): c for c in (reader.fieldnames or [])}
-                col_id = None
-                col_alvo = None
-                for nome_limpo, nome_original in campos.items():
-                    if nome_limpo in ('id_arquivo', 'id') and col_id is None:
-                        col_id = nome_original
-                    if nome_limpo in ('alvo', 'divisão', 'divisao', 'grupo') and col_alvo is None:
-                        col_alvo = nome_original
-
-                if not col_id or not col_alvo:
-                    logger.warning(f"⚠️  CSV de etapa '{etapa.alias}' sem colunas id/alvo: {etapa.arquivo}")
-                    continue
-
-                for row in reader:
-                    id_val = str(row.get(col_id, '')).strip()
-                    alvo_val = str(row.get(col_alvo, '')).strip()
-
-                    # Normaliza alvos antigos
-                    if alvo_val in ('avaliacao', 'avaliação', 'eval'):
-                        alvo_val = 'validacao'
-
-                    if id_val and alvo_val:
-                        chave = (id_val, alvo_val)
-                        if chave not in mapa:
-                            mapa[chave] = []
-                        if etapa.alias not in mapa[chave]:
-                            mapa[chave].append(etapa.alias)
-
-        except Exception as e:
-            logger.warning(f"⚠️  Erro ao ler CSV da etapa '{etapa.alias}': {e}")
-            continue
+    mapa = {}
+    for id_arq, info in divisao_dict.items():
+        if info["divisoes"]:
+            mapa[(id_arq, info["alvo"])] = info["divisoes"]
 
     if not mapa:
         return None
 
-    aliases = [et.alias for et in etapas]
-    logger.info(f"<cinza>📋 Curriculum multi-etapa ({' → '.join(aliases)}): cópias por etapa habilitadas</cinza>")
+    # Descobre aliases únicos para log (preserva ordem de aparição)
+    aliases_set = []
+    for als in mapa.values():
+        for a in als:
+            if a not in aliases_set:
+                aliases_set.append(a)
+    logger.info(f"<cinza>📋 Curriculum multi-etapa ({' → '.join(aliases_set)}): cópias por etapa habilitadas</cinza>")
     return mapa
 
 
@@ -224,6 +184,169 @@ def _copiar_para_pastas_etapas(
             dst = os.path.join(pasta_etapa, f"{registro_id}{ext}")
             if os.path.isfile(src) and not os.path.isfile(dst):
                 shutil.copy2(src, dst)
+
+
+def _todas_predicoes_exportadas(
+    predict_dir: str, subsets: list, divisao_dict: dict, mapa_etapas: dict
+) -> bool:
+    """Verifica se todas as predições já foram exportadas (pré-check rápido).
+
+    Itera pelos IDs esperados em cada subset (extraídos do ``divisao_dict``)
+    e verifica se os arquivos ``.txt`` e ``.json`` já existem.  Quando todos
+    existem, garante também as cópias para pastas de etapa (curriculum
+    multi-etapa) e retorna ``True`` para permitir saída antecipada **sem
+    carregar o modelo**.
+
+    Args:
+        predict_dir: Diretório raiz de predições.
+        subsets: Lista de subsets a verificar.
+        divisao_dict: Dicionário de divisão unificada.
+        mapa_etapas: Mapa de etapas ou None.
+
+    Returns:
+        True se todas as predições já existem (nada a gerar).
+    """
+    total_exportados = 0
+    total_pendentes = 0
+
+    for subset in subsets:
+        subset_dir = os.path.join(predict_dir, subset)
+        ids_subset = [id_arq for id_arq, info in divisao_dict.items()
+                      if info["alvo"] == subset]
+        for id_arq in ids_subset:
+            if _registro_ja_exportado(subset_dir, id_arq):
+                total_exportados += 1
+                _copiar_para_pastas_etapas(predict_dir, subset, id_arq, mapa_etapas)
+            else:
+                total_pendentes += 1
+
+    if total_pendentes == 0 and total_exportados > 0:
+        logger.info(f"<verde>\n✅ Todas as {total_exportados} predições já exportadas — nada a gerar.</verde>")
+        return True
+
+    if total_exportados > 0:
+        logger.info(f"<cinza>📋 Pré-check: {total_exportados} já exportadas, {total_pendentes} pendentes</cinza>")
+
+    return False
+
+
+def gerar_estatisticas_predicoes(pasta: str) -> bool:
+    """Varre JSONs de predição em uma pasta e gera CSV + gráficos de análise.
+
+    Lê todos os arquivos ``{id}.json`` da *pasta* (excluindo ``resumo.json``
+    e ``resumo_geral.json``), extrai ``id``, ``input_tokens``, ``output_tokens``
+    e ``time_s``, e produz:
+
+    * ``predicoes.csv``        — tabela com id, input_tokens, output_tokens, time_s
+    * ``predicoes_tokens.png`` — boxplots lado-a-lado de tokens de entrada e saída
+    * ``predicoes_tempo.png``  — boxplot com tempos de geração (segundos)
+
+    É seguro chamar várias vezes (sobrescreve artefatos anteriores).
+
+    Args:
+        pasta: Diretório contendo os ``{id}.json`` de predição.
+
+    Returns:
+        True se gerou ao menos o CSV, False se a pasta está vazia ou falhou.
+    """
+    if not os.path.isdir(pasta):
+        return False
+
+    # Coleta dados dos JSONs
+    registros = []
+    for nome in sorted(os.listdir(pasta)):
+        if not nome.endswith('.json'):
+            continue
+        if nome in ('resumo.json', 'resumo_geral.json'):
+            continue
+        caminho = os.path.join(pasta, nome)
+        try:
+            with open(caminho, 'r', encoding='utf-8') as f:
+                dados = json.load(f)
+            registros.append({
+                'id': dados.get('id', nome.replace('.json', '')),
+                'input_tokens': int(dados.get('input_tokens', 0)),
+                'output_tokens': int(dados.get('output_tokens', 0)),
+                'time_s': float(dados.get('time_s', 0)),
+            })
+        except Exception:
+            continue
+
+    if not registros:
+        return False
+
+    # --- CSV ---
+    import csv as _csv
+    csv_path = os.path.join(pasta, 'predicoes.csv')
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = _csv.DictWriter(f, fieldnames=['id', 'input_tokens', 'output_tokens', 'time_s'])
+        writer.writeheader()
+        writer.writerows(registros)
+    logger.info(f"<cinza>   📄 CSV gerado: {csv_path} ({len(registros)} registros)</cinza>")
+
+    # --- Gráficos (boxplots) ---
+    try:
+        from util_graficos import UtilGraficos
+
+        inputs  = [r['input_tokens'] for r in registros]
+        outputs = [r['output_tokens'] for r in registros]
+        totais  = [r['input_tokens'] + r['output_tokens'] for r in registros]
+        tempos  = [r['time_s'] for r in registros]
+
+        # Boxplot de tokens (entrada + saída + total)
+        nota_maximos = (f"max(entrada)={max(inputs):,}  "
+                        f"max(saída)={max(outputs):,}  "
+                        f"max(total)={max(totais):,}").replace(',', '.')
+        tokens_png = os.path.join(pasta, 'predicoes_tokens.png')
+        UtilGraficos.gerar_boxplot(
+            dados={'Entrada': inputs, 'Saída': outputs, 'Total': totais},
+            titulo='Distribuição de Tokens — Predições',
+            ylabel='Tokens',
+            arquivo_saida=tokens_png,
+            nota=nota_maximos,
+        )
+        logger.info(f"<cinza>   📊 Boxplot tokens: {tokens_png}</cinza>")
+
+        # Boxplot de tempo
+        t_sorted = sorted(tempos)
+        q1_tempo = t_sorted[len(t_sorted) // 4] if len(t_sorted) >= 4 else t_sorted[0]
+        nota_tempo = (f"min={min(tempos):.1f}s  "
+                      f"Q1={q1_tempo:.1f}s (75% acima)  "
+                      f"max={max(tempos):.1f}s")
+        tempo_png = os.path.join(pasta, 'predicoes_tempo.png')
+        UtilGraficos.gerar_boxplot(
+            dados={'Tempo (s)': tempos},
+            titulo='Distribuição de Tempo de Geração — Predições',
+            ylabel='Segundos',
+            arquivo_saida=tempo_png,
+            nota=nota_tempo,
+        )
+        logger.info(f"<cinza>   ⏱️  Boxplot tempo: {tempo_png}</cinza>")
+    except Exception as e:
+        logger.warning(f"<amarelo>   ⚠️ Não foi possível gerar gráficos: {e}</amarelo>")
+
+    return True
+
+
+def gerar_estatisticas_predicoes_etapas(predict_dir: str, subset: str) -> None:
+    """Gera estatísticas para pastas de etapa do curriculum (se existirem).
+
+    Procura subpastas com padrão ``{subset} ({alias})`` dentro de
+    *predict_dir* e chama :func:`gerar_estatisticas_predicoes` em cada uma.
+
+    Args:
+        predict_dir: Diretório raiz de predições.
+        subset: Nome do subset (treino, validacao, teste).
+    """
+    if not os.path.isdir(predict_dir):
+        return
+    prefixo = f"{subset} ("
+    for nome in sorted(os.listdir(predict_dir)):
+        if nome.startswith(prefixo) and nome.endswith(')'):
+            pasta_etapa = os.path.join(predict_dir, nome)
+            if os.path.isdir(pasta_etapa):
+                logger.info(f"<cinza>   📂 Estatísticas etapa: {nome}</cinza>")
+                gerar_estatisticas_predicoes(pasta_etapa)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +412,14 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     predict_dir = os.path.join(yaml_config.modelo.saida, nome_pasta)
     os.makedirs(predict_dir, exist_ok=True)
     
+    # Divisão unificada: dicionário {id: {alvo, divisoes, etapas}}
+    divisao_dict = yaml_config.dataset_manager.carregar_divisao_completa(yaml_config.curriculum)
+    mapa_etapas = _construir_mapa_etapas(divisao_dict)
+
+    # Pré-check: se todas as predições já existem, sai sem carregar o modelo
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+        return
+    
     # Carrega modelo via LLMsTrainer (mesmo caminho que executar_modelo)
     logger.info("<azul>\n🔄 Carregando modelo via LLMsTrainer...</azul>")
     ini_carga = time.time()
@@ -301,9 +432,6 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
         return
     
     max_new_tokens = yaml_config.treinamento.max_seq_length
-    
-    # Mapa de etapas para cópia em pastas por divisão (curriculum multi-etapa)
-    mapa_etapas = _construir_mapa_etapas(yaml_config)
     
     # Estatísticas globais
     uso_total = {
@@ -321,7 +449,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
             log_separador(caractere="-", largura=60)
             
             try:
-                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset, divisao=divisao_dict)
                 if not mensagens:
                     logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
@@ -453,6 +581,8 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
             skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
             logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída{skip_msg}</cinza>")
+            gerar_estatisticas_predicoes(subset_dir)
+            gerar_estatisticas_predicoes_etapas(predict_dir, subset)
             
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -889,10 +1019,35 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
     logger.info(f"🎮 GPUs disponíveis: {num_gpus}")
 
     # Configuração recomendada
+    # Contexto estimado a partir dos dados reais de tokens (CSVs do curriculum)
+    ctx_info = yaml_config.estimar_contexto_predict()
+    vllm_context = ctx_info["contexto"]
+    vllm_max_new_tokens = ctx_info["max_new_tokens"]
     config = get_recommended_config(num_gpus=num_gpus, model_size="7B")
-    config.max_model_len = max_seq_length
+    config.max_model_len = vllm_context
     logger.info(f"⚙️  Tensor Parallel: {config.tensor_parallel_size} GPU(s)")
-    logger.info(f"⚙️  GPU Memory Utilization: {config.gpu_memory_utilization*100:.0f}%\n")
+    logger.info(f"⚙️  GPU Memory Utilization: {config.gpu_memory_utilization*100:.0f}%")
+    logger.info(f"⚙️  Max Model Len: {config.max_model_len} ({ctx_info['fonte']})")
+    logger.info(f"⚙️  Max New Tokens: {vllm_max_new_tokens}\n")
+
+    # Define subsets a processar
+    if subsets is None:
+        subsets = ['treino', 'validacao', 'teste']
+
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
+
+    # Cria diretório de predições
+    nome_pasta = "predict_base_vllm" if usar_base else "predict_vllm"
+    predict_dir = os.path.join(output_dir, nome_pasta)
+    os.makedirs(predict_dir, exist_ok=True)
+
+    # Divisão unificada: dicionário {id: {alvo, divisoes, etapas}}
+    divisao_dict = yaml_config.dataset_manager.carregar_divisao_completa(yaml_config.curriculum)
+    mapa_etapas = _construir_mapa_etapas(divisao_dict)
+
+    # Pré-check: se todas as predições já existem, sai sem carregar o modelo
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+        return
 
     # Inicializa vLLM (modelo base + LoRA adapter opcional)
     try:
@@ -910,20 +1065,6 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
     if getattr(vllm_tokenizer, "pad_token", None) is None:
         vllm_tokenizer.pad_token = vllm_tokenizer.eos_token
 
-    # Define subsets a processar
-    if subsets is None:
-        subsets = ['treino', 'validacao', 'teste']
-
-    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
-
-    # Cria diretório de predições
-    nome_pasta = "predict_base_vllm" if usar_base else "predict_vllm"
-    predict_dir = os.path.join(output_dir, nome_pasta)
-    os.makedirs(predict_dir, exist_ok=True)
-
-    # Mapa de etapas para cópia em pastas por divisão (curriculum multi-etapa)
-    mapa_etapas = _construir_mapa_etapas(yaml_config)
-
     uso_total = {'input_tokens': 0, 'output_tokens': 0, 'total_registros': 0, 'tempo_total_s': 0}
 
     try:
@@ -932,7 +1073,7 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
             log_separador(caractere="-", largura=60)
 
             try:
-                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset, divisao=divisao_dict)
                 if not mensagens:
                     logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
@@ -978,14 +1119,18 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
                         _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
                         continue
 
-                    # Estruturar prompt simples (estilo chat_template já feito na base caso necessário)
-                    prompt_ids = vllm_tokenizer.encode(prompt_texto)
+                    # Formata com chat template (exclui assistant = resposta esperada)
+                    chat_msgs = [m for m in messages if m.get('role') != 'assistant']
+                    formatted_prompt = vllm_tokenizer.apply_chat_template(
+                        chat_msgs, tokenize=False, add_generation_prompt=True
+                    )
+                    prompt_ids = vllm_tokenizer.encode(formatted_prompt)
                     if len(prompt_ids) > max_input_len:
                         prompt_ids = prompt_ids[:max_input_len]
-                        prompt_texto = vllm_tokenizer.decode(prompt_ids, skip_special_tokens=True)
+                        formatted_prompt = vllm_tokenizer.decode(prompt_ids, skip_special_tokens=False)
 
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
-                    prompts_batch.append(prompt_texto)
+                    prompts_batch.append(formatted_prompt)
                     registros_batch.append({
                         'id': registro_id,
                         'input_tokens': len(prompt_ids),
@@ -1003,7 +1148,7 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
                 # vLLM lidando com o fluxo - pegamos min do limite para gerar
                 # Para inferir tokens_para_gerar (tamanho seguro) iteramos maximos
                 max_len_batch = max(reg['input_tokens'] for reg in registros_batch)
-                tokens_para_gerar = min(max_seq_length, config.max_model_len - max_len_batch)
+                tokens_para_gerar = min(vllm_max_new_tokens, config.max_model_len - max_len_batch)
 
                 tempo_inicio = time.time()
                 resultados_vllm = engine.generate_batch(
@@ -1056,6 +1201,8 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
             skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
             logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
+            gerar_estatisticas_predicoes(subset_dir)
+            gerar_estatisticas_predicoes_etapas(predict_dir, subset)
 
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -1145,10 +1292,13 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
     logger.info(f"\n🎮 GPUs disponíveis: {num_gpus}")
 
     config = get_recommended_config(num_gpus=num_gpus, model_size="7B")
-    config.max_model_len = yaml_config.treinamento.max_seq_length
+    # Contexto estimado a partir dos dados reais de tokens (CSVs do curriculum)
+    ctx_info = yaml_config.estimar_contexto_predict()
+    config.max_model_len = ctx_info["contexto"]
     logger.info(f"⚙️  Tensor Parallel: {config.tensor_parallel_size} GPU(s)")
     logger.info(f"⚙️  GPU Memory Utilization: {config.gpu_memory_utilization*100:.0f}%")
-    logger.info(f"⚙️  Max Model Len: {config.max_model_len}")
+    logger.info(f"⚙️  Max Model Len: {config.max_model_len} ({ctx_info['fonte']})")
+    logger.info(f"⚙️  Max New Tokens: {ctx_info['max_new_tokens']}")
 
     logger.info("<azul>\n🚀 Inicializando vLLM...</azul>")
     try:
@@ -1162,7 +1312,7 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
         return
 
     # ---- Processa exemplos ----
-    max_new_tokens = yaml_config.treinamento.max_seq_length
+    max_new_tokens = ctx_info["max_new_tokens"]
     temperatura = 0.01
     resultados = []
 
@@ -1205,21 +1355,25 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
 
         # Gera predição com vLLM
         try:
-            # Trunca prompt se exceder max_seq_length (reserva 256 tokens para resposta)
-            max_input_len = config.max_model_len - 256
+            # Formata com chat template (exclui assistant = resposta esperada)
             vllm_tokenizer = engine.llm.get_tokenizer()
-            prompt_ids = vllm_tokenizer.encode(prompt_texto)
+            chat_msgs = [m for m in messages if m.get('role') != 'assistant']
+            formatted_prompt = vllm_tokenizer.apply_chat_template(
+                chat_msgs, tokenize=False, add_generation_prompt=True
+            )
+            prompt_ids = vllm_tokenizer.encode(formatted_prompt)
+            max_input_len = config.max_model_len - 256
             if len(prompt_ids) > max_input_len:
                 logger.warning(f"   ⚠️ Prompt truncado: {len(prompt_ids)} → {max_input_len} tokens")
                 prompt_ids = prompt_ids[:max_input_len]
-                prompt_texto = vllm_tokenizer.decode(prompt_ids, skip_special_tokens=True)
+                formatted_prompt = vllm_tokenizer.decode(prompt_ids, skip_special_tokens=False)
 
             # vLLM restringe: prompt_len + max_tokens <= max_model_len
             tokens_para_gerar = min(max_new_tokens, config.max_model_len - len(prompt_ids))
 
             tempo_inicio = time.time()
             resultado = engine.generate_batch(
-                prompts=[prompt_texto],
+                prompts=[formatted_prompt],
                 max_tokens=tokens_para_gerar,
                 temperature=max(temperatura, 0.01),
                 top_k=20 if temperatura > 0.3 else 2,
@@ -1323,9 +1477,10 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
     max_seq_length = yaml_config.treinamento.max_seq_length
 
     # Para inferência com Unsloth, o contexto total (input + output) deve caber
-    # no max_seq_length passado a from_pretrained. Usamos 2× para acomodar
-    # prompts longos + respostas completas (Unsloth faz RoPE scaling interno).
-    unsloth_context = max_seq_length * 2
+    # no max_seq_length passado a from_pretrained.
+    # Estima a partir dos dados reais de tokens (CSVs do curriculum).
+    ctx_info = yaml_config.estimar_contexto_predict()
+    unsloth_context = ctx_info["contexto"]
 
     # Decide qual modelo carregar
     if usar_base:
@@ -1361,7 +1516,7 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
 
     # ---- Carrega modelo com unsloth ----
     logger.info("<azul>\n⚡ Carregando modelo com unsloth...</azul>")
-    logger.info(f"<cinza>   Contexto Unsloth: {unsloth_context} (2× max_seq_length para acomodar input+output)</cinza>")
+    logger.info(f"<cinza>   Contexto Unsloth: {unsloth_context} ({ctx_info['fonte']})</cinza>")
     ini_carga = time.time()
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
@@ -1546,6 +1701,32 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
     if ollama_url:
         logger.info(f"<cinza>🌐 API URL: {ollama_url}</cinza>")
 
+    # Define subsets a processar (padrão: apenas teste)
+    if subsets is None:
+        subsets = ['teste']
+
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
+
+    # Cria diretório de predições
+    predict_dir = os.path.join(yaml_config.modelo.saida, "predict_ollama")
+    os.makedirs(predict_dir, exist_ok=True)
+
+    max_seq_length = yaml_config.treinamento.max_seq_length
+
+    # Contexto estimado a partir dos dados reais de tokens (CSVs do curriculum)
+    ctx_info = yaml_config.estimar_contexto_predict()
+    ollama_context = ctx_info["contexto"]
+    ollama_max_tokens = ctx_info["max_new_tokens"]
+    logger.info(f"<cinza>⚙️  Contexto: num_ctx={ollama_context}, max_tokens={ollama_max_tokens} ({ctx_info['fonte']})</cinza>")
+
+    # Divisão unificada: dicionário {id: {alvo, divisoes, etapas}}
+    divisao_dict = yaml_config.dataset_manager.carregar_divisao_completa(yaml_config.curriculum)
+    mapa_etapas = _construir_mapa_etapas(divisao_dict)
+
+    # Pré-check: se todas as predições já existem, sai sem conectar ao Ollama
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+        return
+
     # Verifica status do Ollama
     try:
         status = UtilOllama.status(api_url=ollama_url)
@@ -1563,21 +1744,6 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
         logger.error(f"<vermelho>❌ Erro ao verificar status do Ollama: {e}</vermelho>")
         return
 
-    # Define subsets a processar (padrão: apenas teste)
-    if subsets is None:
-        subsets = ['teste']
-
-    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
-
-    # Cria diretório de predições
-    predict_dir = os.path.join(yaml_config.modelo.saida, "predict_ollama")
-    os.makedirs(predict_dir, exist_ok=True)
-
-    max_seq_length = yaml_config.treinamento.max_seq_length
-
-    # Mapa de etapas para cópia em pastas por divisão (curriculum multi-etapa)
-    mapa_etapas = _construir_mapa_etapas(yaml_config)
-
     uso_total = {'input_tokens': 0, 'output_tokens': 0, 'total_registros': 0, 'tempo_total_s': 0}
 
     try:
@@ -1586,7 +1752,7 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
             log_separador(caractere="-", largura=60)
 
             try:
-                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset, divisao=divisao_dict)
                 if not mensagens:
                     logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
@@ -1634,8 +1800,8 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
                         messages=messages,
                         modelo=modelo_ollama,
                         temperature=0.01,
-                        max_tokens=max_seq_length,
-                        num_ctx=max_seq_length * 2,  # janela de contexto 2x para acomodar entrada+saída
+                        max_tokens=ollama_max_tokens,
+                        num_ctx=ollama_context,
                         as_json=formato_json,
                         raw=False,
                         timeout=300,
@@ -1692,6 +1858,8 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
             skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
             logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
+            gerar_estatisticas_predicoes(subset_dir)
+            gerar_estatisticas_predicoes_etapas(predict_dir, subset)
 
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -1737,9 +1905,15 @@ def executar_modelo_ollama(yaml_path: str, n_exemplos: int = 1) -> None:
     max_seq_length = yaml_config.treinamento.max_seq_length
     formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
 
+    # Contexto estimado a partir dos dados reais de tokens (CSVs do curriculum)
+    ctx_info = yaml_config.estimar_contexto_predict()
+    ollama_context = ctx_info["contexto"]
+    ollama_max_tokens = ctx_info["max_new_tokens"]
+
     logger.info(f"<cinza>🦙 Modelo Ollama: {modelo_ollama}</cinza>")
     if ollama_url:
         logger.info(f"<cinza>🌐 API URL: {ollama_url}</cinza>")
+    logger.info(f"<cinza>⚙️  Contexto: num_ctx={ollama_context}, max_tokens={ollama_max_tokens} ({ctx_info['fonte']})</cinza>")
 
     # Verifica status do Ollama
     try:
@@ -1804,8 +1978,8 @@ def executar_modelo_ollama(yaml_path: str, n_exemplos: int = 1) -> None:
                 messages=messages,
                 modelo=modelo_ollama,
                 temperature=0.01,
-                max_tokens=max_seq_length,
-                num_ctx=max_seq_length * 2,
+                max_tokens=ollama_max_tokens,
+                num_ctx=ollama_context,
                 as_json=formato_json,
                 raw=False,
                 timeout=UtilEnv.get_int('OLLAMA_TIMEOUT', 600),
@@ -1880,9 +2054,11 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
     max_seq_length = yaml_config.treinamento.max_seq_length
 
     # Para inferência com Unsloth, o contexto total (input + output) deve caber
-    # no max_seq_length passado a from_pretrained. Usamos 2× para acomodar
-    # prompts longos + respostas completas (Unsloth faz RoPE scaling interno).
-    unsloth_context = max_seq_length * 2
+    # no max_seq_length passado a from_pretrained.
+    # Estima a partir dos dados reais de tokens (CSVs do curriculum).
+    ctx_info = yaml_config.estimar_contexto_predict()
+    unsloth_context = ctx_info["contexto"]
+    unsloth_max_new_tokens = ctx_info["max_new_tokens"]
 
     # Verifica formato de saída
     formato_json = yaml_config.formato_saida == FORMATO_SAIDA_JSON
@@ -1905,9 +2081,28 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
         model_name = output_dir
         logger.info(f"<verde>✅ Usando modelo treinado: {model_name}</verde>")
 
+    # Define subsets a processar (padrão: apenas teste)
+    if subsets is None:
+        subsets = ['teste']
+
+    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
+
+    # Cria diretório de predições
+    nome_pasta = "predict_base_unsloth" if usar_base else "predict_unsloth"
+    predict_dir = os.path.join(output_dir, nome_pasta)
+    os.makedirs(predict_dir, exist_ok=True)
+
+    # Divisão unificada: dicionário {id: {alvo, divisoes, etapas}}
+    divisao_dict = yaml_config.dataset_manager.carregar_divisao_completa(yaml_config.curriculum)
+    mapa_etapas = _construir_mapa_etapas(divisao_dict)
+
+    # Pré-check: se todas as predições já existem, sai sem carregar o modelo
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+        return
+
     # Carrega modelo com unsloth
     logger.info("<azul>\n⚡ Carregando modelo com unsloth...</azul>")
-    logger.info(f"<cinza>   Contexto Unsloth: {unsloth_context} (2× max_seq_length para acomodar input+output)</cinza>")
+    logger.info(f"<cinza>   Contexto Unsloth: {unsloth_context} ({ctx_info['fonte']})</cinza>")
     ini_carga = time.time()
     try:
         model, tokenizer = FastLanguageModel.from_pretrained(
@@ -1925,20 +2120,6 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Define subsets a processar (padrão: apenas teste)
-    if subsets is None:
-        subsets = ['teste']
-
-    logger.info(f"<cinza>\n📋 Subsets a processar: {', '.join(subsets)}</cinza>")
-
-    # Cria diretório de predições
-    nome_pasta = "predict_base_unsloth" if usar_base else "predict_unsloth"
-    predict_dir = os.path.join(output_dir, nome_pasta)
-    os.makedirs(predict_dir, exist_ok=True)
-
-    # Mapa de etapas para cópia em pastas por divisão (curriculum multi-etapa)
-    mapa_etapas = _construir_mapa_etapas(yaml_config)
-
     uso_total = {'input_tokens': 0, 'output_tokens': 0, 'total_registros': 0, 'tempo_total_s': 0}
 
     try:
@@ -1947,7 +2128,7 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
             log_separador(caractere="-", largura=60)
 
             try:
-                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                mensagens = yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset, divisao=divisao_dict)
                 if not mensagens:
                     logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                     continue
@@ -1998,8 +2179,8 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
                         return_tensors="pt",
                     ).to(model.device)
 
-                    # Trunca se exceder contexto (reservando max_seq_length para geração)
-                    max_input_len = unsloth_context - max_seq_length  # = max_seq_length
+                    # Trunca se exceder contexto (reservando max_new_tokens estimados para geração)
+                    max_input_len = max(128, unsloth_context - unsloth_max_new_tokens)
                     if inputs.shape[1] > max_input_len:
                         inputs = inputs[:, :max_input_len]
 
@@ -2066,6 +2247,8 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
             skip_msg = f", {subset_stats['registros_skip']} já exportados" if subset_stats['registros_skip'] else ""
             logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
             logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, {subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
+            gerar_estatisticas_predicoes(subset_dir)
+            gerar_estatisticas_predicoes_etapas(predict_dir, subset)
 
             uso_total['input_tokens'] += subset_stats['input_tokens']
             uso_total['output_tokens'] += subset_stats['output_tokens']

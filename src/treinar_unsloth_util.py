@@ -849,7 +849,108 @@ class YamlTreinamento:
             }
         except Exception:
             return {}
-    
+
+    def estimar_contexto_predict(self, margem: float = 1.1) -> dict:
+        """Estima contexto ideal para predição com base nos dados reais de tokens.
+
+        Lê ``token_total`` e ``token_output`` de todos os CSVs do curriculum
+        e calcula:
+        - ``max_input``: max(token_total − token_output) observado nos dados
+        - ``max_output``: max(token_output) observado nos dados
+        - ``contexto``: max_input + max_output × margem (margem para saídas
+          um pouco maiores que o visto no treino)
+        - ``max_new_tokens``: max_output × margem
+
+        Quando os CSVs não têm as colunas de token, usa fallback ``2 × max_seq_length``.
+
+        Args:
+            margem: Fator de folga sobre max_output (padrão 1.1 = 10% extra).
+
+        Returns:
+            Dict ``{"contexto": int, "max_new_tokens": int, "fonte": str}``
+        """
+        import pandas as pd
+        msl = self.treinamento.max_seq_length
+
+        max_total_obs = 0
+        max_output_obs = 0
+        tem_colunas = False
+
+        for etapa in self._curriculum:
+            arq = etapa.arquivo
+            if not arq or not os.path.isfile(arq):
+                continue
+            try:
+                df = pd.read_csv(arq, sep=None, engine='python')
+                if 'token_total' not in df.columns:
+                    continue
+                totais = pd.to_numeric(df['token_total'], errors='coerce').dropna()
+                if totais.empty:
+                    continue
+                tem_colunas = True
+                max_total_obs = max(max_total_obs, int(totais.max()))
+
+                if 'token_output' in df.columns:
+                    outputs = pd.to_numeric(df['token_output'], errors='coerce').dropna()
+                    if not outputs.empty:
+                        max_output_obs = max(max_output_obs, int(outputs.max()))
+            except Exception:
+                continue
+
+        if tem_colunas and max_total_obs > 0:
+            # Calcula input observado (total − output)
+            max_input_obs = max_total_obs - max_output_obs if max_output_obs > 0 else max_total_obs
+            # Aplica margem sobre o output para permitir respostas um pouco maiores
+            max_new = int(max_output_obs * margem) if max_output_obs > 0 else msl
+            contexto = max_input_obs + max_new
+            # Garante mínimo do max_seq_length (treinamento pode ter limitado)
+            contexto = max(contexto, msl)
+            fonte = (f"dados reais: max_input≈{max_input_obs}, "
+                     f"max_output={max_output_obs} × {margem:.0%} → {max_new}")
+        else:
+            contexto = msl * 2
+            max_new = msl
+            fonte = f"fallback 2× max_seq_length (CSVs sem coluna token_total)"
+
+        # Arredonda para múltiplo de 128 (ceil) — alinhamento típico de hardware GPU
+        def _ceil128(v: int) -> int:
+            return ((v + 127) // 128) * 128
+
+        contexto = _ceil128(contexto)
+        max_new = _ceil128(max_new)
+
+        # Informa se excede max_position_embeddings (vLLM aceita via
+        # VLLM_ALLOW_LONG_MAX_MODEL_LEN=1, que habilita RoPE scaling)
+        max_pos = self._ler_max_position_embeddings()
+        if max_pos and contexto > max_pos:
+            fonte += f", acima de max_position_embeddings={max_pos} (RoPE scaling)"
+
+        return {
+            "contexto": contexto,
+            "max_new_tokens": max_new,
+            "fonte": fonte,
+        }
+
+    def _ler_max_position_embeddings(self) -> int:
+        """Lê max_position_embeddings do config.json do modelo base.
+
+        Returns:
+            Valor de max_position_embeddings ou 0 se não encontrado.
+        """
+        modelo_base = self.modelo.base
+        if not modelo_base:
+            return 0
+        config_path = os.path.join(modelo_base, "config.json")
+        if not os.path.isfile(config_path):
+            return 0
+        try:
+            import json as _json
+            with open(config_path, 'r', encoding='utf-8') as f:
+                cfg = _json.load(f)
+            return int(cfg.get("max_position_embeddings", 0))
+        except Exception:
+            return 0
+
     
     def info(self) -> str:
         """Retorna string com resumo da configuração."""

@@ -99,6 +99,9 @@ class VLLMInferenceEngine:
         print(f"   Tensor Parallel: {self.config.tensor_parallel_size} GPU(s)")
 
         # Inicializa vLLM
+        # Permite contextos acima de max_position_embeddings (RoPE scaling)
+        # em ambiente controlado de experimento com valores conhecidos
+        os.environ.setdefault("VLLM_ALLOW_LONG_MAX_MODEL_LEN", "1")
         try:
             self.llm = LLM(
                 model=model_path,
@@ -302,22 +305,29 @@ def get_recommended_config(num_gpus: int = 1, model_size: str = "7B") -> VLLMCon
     Returns:
         VLLMConfig otimizado
     """
+    return VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=1, enforce_eager=True)
     # Configs baseadas em benchmarks vLLM
+    # Nota: 7B sempre TP=1 — cabe em qualquer GPU moderna (≥16 GB).
+    # TP>1 para modelos pequenos adiciona overhead de multiproc (NCCL,
+    # shared memory) sem ganho real, e causa RuntimeError: cancelled
+    # no multiproc_executor ao tentar alocar KV cache entre GPUs.
+    # Para TP>1, enforce_eager=True desabilita CUDA graphs e evita
+    # picos de memória durante a captura dos grafos.
     configs = {
         "7B": {
-            1: VLLMConfig(gpu_memory_utilization=0.9, tensor_parallel_size=1),
-            2: VLLMConfig(gpu_memory_utilization=0.95, tensor_parallel_size=2),
-            4: VLLMConfig(gpu_memory_utilization=0.95, tensor_parallel_size=4),
+            1: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=1),
+            2: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=1),
+            4: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=1),
         },
         "13B": {
-            1: VLLMConfig(gpu_memory_utilization=0.85, tensor_parallel_size=1),
-            2: VLLMConfig(gpu_memory_utilization=0.9, tensor_parallel_size=2),
-            4: VLLMConfig(gpu_memory_utilization=0.95, tensor_parallel_size=4),
+            1: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=1),
+            2: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=2, enforce_eager=True),
+            4: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=4, enforce_eager=True),
         },
         "70B": {
-            2: VLLMConfig(gpu_memory_utilization=0.9, tensor_parallel_size=2),
-            4: VLLMConfig(gpu_memory_utilization=0.95, tensor_parallel_size=4),
-            8: VLLMConfig(gpu_memory_utilization=0.95, tensor_parallel_size=8),
+            2: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=2, enforce_eager=True),
+            4: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=4, enforce_eager=True),
+            8: VLLMConfig(gpu_memory_utilization=0.8, tensor_parallel_size=8, enforce_eager=True),
         },
     }
 

@@ -64,6 +64,9 @@ from treinar_unsloth_export import (
     _construir_mapa_etapas,
     _copiar_para_pastas_etapas,
     _registro_ja_exportado,
+    _todas_predicoes_exportadas,
+    gerar_estatisticas_predicoes,
+    gerar_estatisticas_predicoes_etapas,
 )
 from util import UtilEnv
 
@@ -342,8 +345,13 @@ class UtilPredicao(ABC):
         predict_dir = os.path.join(self.yaml_config.modelo.saida, self.nome_pasta_predict())
         os.makedirs(predict_dir, exist_ok=True)
 
-        # Mapa de etapas curriculum
-        mapa_etapas = _construir_mapa_etapas(self.yaml_config)
+        # Divisão unificada: dicionário {id: {alvo, divisoes, etapas}}
+        divisao_dict = self.yaml_config.dataset_manager.carregar_divisao_completa(self.yaml_config.curriculum)
+        mapa_etapas = _construir_mapa_etapas(divisao_dict)
+
+        # Pré-check: se todas as predições já existem, sai sem carregar o modelo
+        if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+            return
 
         # Garante modelo carregado
         modelo_proprio = not self._modelo_carregado
@@ -366,7 +374,7 @@ class UtilPredicao(ABC):
                 log_separador(caractere="-", largura=60)
 
                 try:
-                    mensagens = self.yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset)
+                    mensagens = self.yaml_config.dataset_manager.carregar_mensagens_de_pastas(alvo=subset, divisao=divisao_dict)
                     if not mensagens:
                         logger.warning(f"<amarelo>   ⚠️ Nenhum dado encontrado para {subset}</amarelo>")
                         continue
@@ -458,6 +466,8 @@ class UtilPredicao(ABC):
                 logger.info(f"<verde>   ✅ {subset_stats['registros_ok']} predições salvas em: {subset_dir}</verde>")
                 logger.info(f"<cinza>   📊 Tokens: {subset_stats['input_tokens']} entrada, "
                             f"{subset_stats['output_tokens']} saída ({tempo_subset:.1f}s){skip_msg}</cinza>")
+                gerar_estatisticas_predicoes(subset_dir)
+                gerar_estatisticas_predicoes_etapas(predict_dir, subset)
 
                 uso_total['input_tokens'] += subset_stats['input_tokens']
                 uso_total['output_tokens'] += subset_stats['output_tokens']
@@ -735,10 +745,14 @@ class UtilPredicaoVLLM(UtilPredicao):
         logger.info(f"\n🎮 GPUs disponíveis: {num_gpus}")
 
         self._config = get_recommended_config(num_gpus=num_gpus, model_size="7B")
-        self._config.max_model_len = self.max_seq_length
+        # Contexto estimado a partir dos dados reais de tokens (CSVs do curriculum)
+        ctx_info = self.yaml_config.estimar_contexto_predict()
+        self._config.max_model_len = ctx_info["contexto"]
+        self._vllm_max_new_tokens = ctx_info["max_new_tokens"]
         logger.info(f"⚙️  Tensor Parallel: {self._config.tensor_parallel_size} GPU(s)")
         logger.info(f"⚙️  GPU Memory Utilization: {self._config.gpu_memory_utilization * 100:.0f}%")
-        logger.info(f"⚙️  Max Model Len: {self._config.max_model_len}")
+        logger.info(f"⚙️  Max Model Len: {self._config.max_model_len} ({ctx_info['fonte']})")
+        logger.info(f"⚙️  Max New Tokens: {self._vllm_max_new_tokens}")
 
         logger.info("<azul>\n🚀 Inicializando vLLM...</azul>")
         ini = time.time()
@@ -758,16 +772,21 @@ class UtilPredicaoVLLM(UtilPredicao):
         """Predição unitária via vLLM (usado pela inferência interativa)."""
         tempo_inicio = time.time()
         try:
-            prompt_ids = self._vllm_tokenizer.encode(prompt_texto)
+            # Formata com chat template (exclui assistant = resposta esperada)
+            chat_msgs = [m for m in messages if m.get('role') != 'assistant']
+            formatted_prompt = self._vllm_tokenizer.apply_chat_template(
+                chat_msgs, tokenize=False, add_generation_prompt=True
+            )
+            prompt_ids = self._vllm_tokenizer.encode(formatted_prompt)
             max_input_len = self._config.max_model_len - 256
             if len(prompt_ids) > max_input_len:
                 prompt_ids = prompt_ids[:max_input_len]
-                prompt_texto = self._vllm_tokenizer.decode(prompt_ids, skip_special_tokens=True)
+                formatted_prompt = self._vllm_tokenizer.decode(prompt_ids, skip_special_tokens=False)
 
-            tokens_para_gerar = min(self.max_seq_length, self._config.max_model_len - len(prompt_ids))
+            tokens_para_gerar = min(self._vllm_max_new_tokens, self._config.max_model_len - len(prompt_ids))
 
             resultado = self._engine.generate_batch(
-                prompts=[prompt_texto],
+                prompts=[formatted_prompt],
                 max_tokens=tokens_para_gerar,
                 temperature=0.01,
                 top_k=2,
@@ -796,20 +815,24 @@ class UtilPredicaoVLLM(UtilPredicao):
         metas_batch = []
 
         for reg in registros:
-            prompt_texto = reg['prompt_texto']
-            prompt_ids = self._vllm_tokenizer.encode(prompt_texto)
+            # Formata com chat template (exclui assistant = resposta esperada)
+            chat_msgs = [m for m in reg['messages'] if m.get('role') != 'assistant']
+            formatted_prompt = self._vllm_tokenizer.apply_chat_template(
+                chat_msgs, tokenize=False, add_generation_prompt=True
+            )
+            prompt_ids = self._vllm_tokenizer.encode(formatted_prompt)
             max_input_len = self._config.max_model_len - 256
             if len(prompt_ids) > max_input_len:
                 prompt_ids = prompt_ids[:max_input_len]
-                prompt_texto = self._vllm_tokenizer.decode(prompt_ids, skip_special_tokens=True)
-            prompts_batch.append(prompt_texto)
+                formatted_prompt = self._vllm_tokenizer.decode(prompt_ids, skip_special_tokens=False)
+            prompts_batch.append(formatted_prompt)
             metas_batch.append({'input_tokens': len(prompt_ids)})
 
         if not prompts_batch:
             return []
 
         max_len_batch = max(m['input_tokens'] for m in metas_batch)
-        tokens_para_gerar = min(self.max_seq_length, self._config.max_model_len - max_len_batch)
+        tokens_para_gerar = min(self._vllm_max_new_tokens, self._config.max_model_len - max_len_batch)
 
         logger.info(f"<cinza>   🚀 vLLM batch: {len(prompts_batch)} prompts, max_tokens={tokens_para_gerar}</cinza>")
 
@@ -859,8 +882,11 @@ class UtilPredicaoUnsloth(UtilPredicao):
     def __init__(self, yaml_path: str, usar_base: bool = False):
         super().__init__(yaml_path, usar_base)
         self._tokenizer = None
-        # Contexto 2x para acomodar input + output
-        self._unsloth_context = self.max_seq_length * 2
+        # Contexto estimado a partir dos dados reais de tokens (CSVs do curriculum)
+        ctx_info = self.yaml_config.estimar_contexto_predict()
+        self._unsloth_context = ctx_info["contexto"]
+        self._unsloth_max_new_tokens = ctx_info["max_new_tokens"]
+        self._ctx_fonte = ctx_info["fonte"]
 
     def _preparar_para_execucao(self) -> bool:
         try:
@@ -885,7 +911,7 @@ class UtilPredicaoUnsloth(UtilPredicao):
 
         model_name = self.yaml_config.modelo.base if self.usar_base else self.yaml_config.modelo.saida
         logger.info(f"<azul>\n⚡ Carregando modelo com unsloth...</azul>")
-        logger.info(f"<cinza>   Contexto: {self._unsloth_context} (2× max_seq_length)</cinza>")
+        logger.info(f"<cinza>   Contexto Unsloth: {self._unsloth_context} ({self._ctx_fonte})</cinza>")
 
         ini = time.time()
         model, tokenizer = FastLanguageModel.from_pretrained(
@@ -918,8 +944,8 @@ class UtilPredicaoUnsloth(UtilPredicao):
                 return_tensors="pt",
             ).to(self._modelo.device)
 
-            # Trunca se exceder contexto
-            max_input_len = self._unsloth_context - self.max_seq_length
+            # Trunca se exceder contexto (reservando max_new_tokens estimados para geração)
+            max_input_len = max(128, self._unsloth_context - self._unsloth_max_new_tokens)
             if inputs.shape[1] > max_input_len:
                 inputs = inputs[:, :max_input_len]
 
@@ -971,6 +997,11 @@ class UtilPredicaoOllama(UtilPredicao):
         self._ollama_url = getattr(self.yaml_config.modelo, 'ollama_url', None) or None
         self._modelo_ollama = self._resolver_nome_modelo()
         self._timeout = UtilEnv.get_int('OLLAMA_TIMEOUT', 600)
+        # Contexto estimado a partir dos dados reais de tokens
+        ctx_info = self.yaml_config.estimar_contexto_predict()
+        self._ollama_context = ctx_info["contexto"]
+        self._ollama_max_tokens = ctx_info["max_new_tokens"]
+        self._ctx_fonte = ctx_info["fonte"]
 
     def _resolver_nome_modelo(self) -> str:
         """Resolve nome do modelo Ollama com base em usar_base."""
@@ -1026,8 +1057,8 @@ class UtilPredicaoOllama(UtilPredicao):
                 messages=messages,
                 modelo=self._modelo_ollama,
                 temperature=0.01,
-                max_tokens=self.max_seq_length,
-                num_ctx=self.max_seq_length * 2,
+                max_tokens=self._ollama_max_tokens,
+                num_ctx=self._ollama_context,
                 as_json=self.formato_json,
                 raw=False,
                 timeout=self._timeout,
