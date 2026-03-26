@@ -275,7 +275,6 @@ class ConfigEntrada:
     dataframe: str = ""  # Caminho para arquivo parquet com textos
     dataframe_col: str = "texto"  # Coluna do dataframe com o texto (padrão: texto)
     dataframe_id: str = "id_peca"  # Coluna do dataframe com o ID (padrão: id_peca)
-    dataset_filtro: Optional[Dict[str, Any]] = None  # Filtro JSON aplicado ao dataframe ao carregar (ex: {"fold": 11})
     texto_criptografado: bool = False  # Se True, texto de entrada será descriptografado
     prompt_criptografado: bool = False  # Se True, template de prompt será descriptografado
     _validar_caminhos: bool = field(default=True, repr=False)
@@ -541,7 +540,6 @@ class YamlTreinamento:
             dataframe=dataframe_entrada,
             dataframe_col=entrada_raw.get("dataframe_col", "texto"),
             dataframe_id=entrada_raw.get("dataframe_id", "id_peca"),
-            dataset_filtro=self._processar_dataset_filtro(entrada_raw.get("dataset_filtro", None)),
             texto_criptografado=entrada_raw.get("texto_criptografado", False) in {True, "true", "True", 1, "1", "sim"},
             prompt_criptografado=entrada_raw.get("prompt_criptografado", False) in {True, "true", "True", 1, "1", "sim"},
             _validar_caminhos=self.validar_caminhos
@@ -570,28 +568,6 @@ class YamlTreinamento:
             validacao=validacao
         )
     
-    def _processar_dataset_filtro(self, filtro_raw) -> Optional[Dict[str, Any]]:
-        """Processa dataset_filtro do YAML em dicionário de filtros.
-
-        Aceita:
-        - Dicionário YAML nativo: ``{fold: 11}``
-        - String JSON: ``'{"fold": 11}'``
-        - None ou vazio → retorna None
-        """
-        if not filtro_raw:
-            return None
-        if isinstance(filtro_raw, dict):
-            return filtro_raw
-        if isinstance(filtro_raw, str):
-            try:
-                resultado = json.loads(filtro_raw)
-                if isinstance(resultado, dict):
-                    return resultado
-            except json.JSONDecodeError:
-                pass
-            raise ValueError(f"dataset_filtro deve ser JSON válido, recebido: {filtro_raw!r}")
-        raise ValueError(f"dataset_filtro deve ser dict ou string JSON, recebido: {type(filtro_raw).__name__}")
-
     def _processar_proporcao(self, proporcao_raw) -> List[float]:
         """Processa proporções de divisão em diversos formatos YAML."""
         proporcao = [0.0, 0.0, 0.0]

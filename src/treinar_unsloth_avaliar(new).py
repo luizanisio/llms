@@ -116,10 +116,8 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
         train_data = metricas_jsonl["train_data"]
         eval_data = metricas_jsonl["eval_data"]
         etapas_curriculum = metricas_jsonl["etapas"]
-        eval_global_data = metricas_jsonl.get("eval_global_data", [])
     else:
         train_data, eval_data, etapas_curriculum = [], [], []
-        eval_global_data = []
         trainer_state = GraficoTreinamento.carregar_trainer_state(chkpt_dir)
         if trainer_state:
             train_data, eval_data = GraficoTreinamento.extrair_metricas(trainer_state)
@@ -650,14 +648,8 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         ('6o', 'modelo-base-ollama',
          f'Inferência BASE: 🦙 {_nome_ollama_base}{_ollama_base_nota}',
          _cor(_ollama_base_disp)),
-        ('---', '<azul>📦 EXPORTAÇÃO DATASET (todos os itens do dataset carregado):</azul>'),
-        ('7',  'predict-dataset',
-         f'Dataset: modelo BASE{_sufixos(("7u:⚡unsloth", unsloth_ok), ("7v:🚀vLLM", vllm_ok))}'),
-        ('7o', 'predict-dataset-ollama',
-         f'Dataset: 🦙 {_nome_ollama_base}{_ollama_base_nota}',
-         _cor(_ollama_base_disp)),
-        ('---', '<azul>📦 EXPORTAÇÃO MODELO:</azul>'),
-        ('8',  'merge',
+        ('---', '<azul>📦 EXPORTAÇÃO:</azul>'),
+        ('7',  'merge',
          'Exportar modelo (HF safetensors → converta para GGUF/Ollama)',
          _cor(tem_modelo)),
         ('---',),
@@ -667,7 +659,7 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
     # --- Notas de disponibilidade ---
     notas = []
     if not tem_modelo:
-        notas.append("🔒 Opções 3, 5, 8 desabilitadas: nenhum modelo treinado encontrado na pasta de saída.")
+        notas.append("🔒 Opções 3, 5, 7 desabilitadas: nenhum modelo treinado encontrado na pasta de saída.")
     if not unsloth_ok:
         notas.append("⚡ unsloth não instalado. Use 'pip install unsloth' para ativar opções ⚡.")
     if not vllm_ok:
@@ -709,11 +701,7 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         '6u': 'modelo-base-unsloth',  'modelo-base-unsloth':  'modelo-base-unsloth',
         '6v': 'modelo-base-vllm',     'modelo-base-vllm':     'modelo-base-vllm',
         '6o': 'modelo-base-ollama',   'modelo-base-ollama':   'modelo-base-ollama',
-        '7':  'predict-dataset',              'predict-dataset':              'predict-dataset',
-        '7u': 'predict-dataset-unsloth',      'predict-dataset-unsloth':      'predict-dataset-unsloth',
-        '7v': 'predict-dataset-vllm',         'predict-dataset-vllm':         'predict-dataset-vllm',
-        '7o': 'predict-dataset-ollama',       'predict-dataset-ollama':       'predict-dataset-ollama',
-        '8':  'merge',                'merge':                'merge',  'export': 'merge',
+        '7':  'merge',                'merge':                'merge',  'export': 'merge',
         '0':  None, 'sair': None, 'exit': None, 'quit': None,
     }
 
@@ -737,15 +725,13 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
             logger.warning("⚠️  Opção indisponível: nenhum modelo treinado encontrado na pasta de saída.")
             return None
 
-        _requer_vllm = ('predict-vllm', 'predict-base-vllm', 'modelo-vllm', 'modelo-base-vllm',
-                        'predict-dataset-vllm')
+        _requer_vllm = ('predict-vllm', 'predict-base-vllm', 'modelo-vllm', 'modelo-base-vllm')
         if acao in _requer_vllm and not vllm_ok:
             logger.warning("⚠️  Opção indisponível: vLLM não está instalado.")
             return None
 
         _requer_unsloth = ('predict-unsloth', 'predict-base-unsloth',
-                           'modelo-unsloth',  'modelo-base-unsloth',
-                           'predict-dataset-unsloth')
+                           'modelo-unsloth',  'modelo-base-unsloth')
         if acao in _requer_unsloth and not unsloth_ok:
             logger.warning("⚠️  Opção indisponível: unsloth não está instalado.")
             return None
@@ -756,13 +742,6 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
             return None
         if acao in _requer_ollama and ollama_ok and not ollama_api_ok:
             # Avisa mas deixa a função tratar o erro detalhadamente
-            logger.warning("⚠️  Ollama API indisponível — a função exibirá o erro detalhado.")
-
-        _requer_ollama_base = ('predict-dataset-ollama',)
-        if acao in _requer_ollama_base and not ollama_base_ok:
-            logger.warning("⚠️  Opção indisponível: configure 'modelo.ollama_base' no YAML.")
-            return None
-        if acao in _requer_ollama_base and ollama_base_ok and not ollama_api_ok:
             logger.warning("⚠️  Ollama API indisponível — a função exibirá o erro detalhado.")
 
         return acao
@@ -838,14 +817,6 @@ def _executar_acao_avaliar(acao: str, yaml_path: str, usar_base: bool = False,
         UtilPredicaoVLLM(yaml_path, usar_base=True).executar_modelo(n_exemplos=_perguntar_n_exemplos())
     elif acao == 'modelo-base-ollama':
         UtilPredicaoOllama(yaml_path, usar_base=True).executar_modelo(n_exemplos=_perguntar_n_exemplos())
-    elif acao == 'predict-dataset':
-        UtilPredicaoHF(yaml_path, usar_base=True).executar_predict_dataset()
-    elif acao == 'predict-dataset-unsloth':
-        UtilPredicaoUnsloth(yaml_path, usar_base=True).executar_predict_dataset()
-    elif acao == 'predict-dataset-vllm':
-        UtilPredicaoVLLM(yaml_path, usar_base=True).executar_predict_dataset()
-    elif acao == 'predict-dataset-ollama':
-        UtilPredicaoOllama(yaml_path, usar_base=True).executar_predict_dataset()
     elif acao == 'merge':
         executar_merge(yaml_path, quantizacao=quant, gerar_zip=gerar_zip)
     else:
@@ -888,7 +859,6 @@ Ações disponíveis:
   --predict-treino  Predições apenas do subset de treino
   --predict-validacao  Predições apenas do subset de validação
   --predict-teste   Predições apenas do subset de teste
-  --predict-dataset Predições de TODOS os itens do dataset (modelo base)
   --modelo N        Testa inferência interativa com N exemplos (padrão: 1)
   --merge           Exporta modelo (merge LoRA + Base)
   
@@ -904,7 +874,6 @@ Exemplos:
   %(prog)s config.yaml --predict    # Exporta predições (subset teste)
   %(prog)s config.yaml --predict-treino --predict-teste  # Treino + teste
   %(prog)s config.yaml --predict --base  # Predições com modelo base
-  %(prog)s config.yaml --predict-dataset # Predições do dataset completo
   %(prog)s config.yaml --modelo 5   # Testa 5 predições interativas
   %(prog)s config.yaml --merge --quant 16bit   # Exporta safetensors 16-bit
   %(prog)s config.yaml --merge --zip           # Exporta e compacta em .zip
@@ -928,8 +897,6 @@ Exemplos:
                         help="Exportar predições do subset de teste")
     parser.add_argument("--modelo", type=int, nargs='?', const=1,
                         help="Testa inferência interativa com N exemplos (padrão: 1)")
-    parser.add_argument("--predict-dataset", action="store_true",
-                        help="Predições de todos os itens do dataset (modelo base)")
     parser.add_argument("--merge", action="store_true",
                         help="Exporta modelo (merge LoRA + Base)")
     
@@ -981,7 +948,6 @@ Exemplos:
         getattr(args, 'predict_treino', False),
         getattr(args, 'predict_validacao', False),
         getattr(args, 'predict_teste', False),
-        getattr(args, 'predict_dataset', False),
         args.modelo is not None, args.merge
     ])
     
@@ -1001,8 +967,6 @@ Exemplos:
         executar_stats(cfg_path)
     elif args.merge:
         executar_merge(cfg_path, quantizacao=args.quant, gerar_zip=getattr(args, 'zip', False))
-    elif getattr(args, 'predict_dataset', False):
-        UtilPredicaoHF(cfg_path, usar_base=True).executar_predict_dataset()
     elif args.modelo is not None:
         n_exemplos = args.modelo if isinstance(args.modelo, int) else 1
         UtilPredicaoHF(cfg_path, usar_base=args.base).executar_modelo(n_exemplos=n_exemplos)

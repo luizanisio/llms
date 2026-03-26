@@ -94,19 +94,23 @@ def _perguntar_subsets_predict() -> Optional[list]:
         return None
 
 
-def _registro_ja_exportado(subset_dir: str, registro_id: str, min_bytes: int = 10) -> bool:
+def _registro_ja_exportado(subset_dir: str, registro_id: str, min_bytes: int = 10, formato_json: bool = False) -> bool:
     """Verifica se um registro já foi exportado com sucesso (txt + json válidos).
     
     Um registro é considerado exportado se AMBOS os arquivos existem
     e têm tamanho >= min_bytes (evita considerar arquivos vazios/corrompidos).
+    Quando ``formato_json=True``, também valida que o conteúdo do .txt é JSON
+    válido — permitindo que registros com resposta não-JSON sejam reexportados.
     
     Args:
         subset_dir: Diretório do subset (ex: predict/teste/)
         registro_id: ID do registro (ex: 'teste_0001')
         min_bytes: Tamanho mínimo em bytes para considerar válido (padrão: 10)
+        formato_json: Se True, valida se o conteúdo do .txt é JSON válido.
     
     Returns:
-        True se ambos .txt e .json existem com tamanho válido.
+        True se ambos .txt e .json existem com tamanho válido (e JSON válido
+        quando formato_json=True).
     """
     txt_path = os.path.join(subset_dir, f"{registro_id}.txt")
     json_path = os.path.join(subset_dir, f"{registro_id}.json")
@@ -114,7 +118,16 @@ def _registro_ja_exportado(subset_dir: str, registro_id: str, min_bytes: int = 1
     try:
         if not os.path.exists(txt_path) or not os.path.exists(json_path):
             return False
-        return os.path.getsize(txt_path) >= min_bytes and os.path.getsize(json_path) >= min_bytes
+        if os.path.getsize(txt_path) < min_bytes or os.path.getsize(json_path) < min_bytes:
+            return False
+        if formato_json:
+            with open(txt_path, 'r', encoding='utf-8') as f:
+                conteudo = f.read()
+            try:
+                json.loads(conteudo)
+            except (json.JSONDecodeError, ValueError):
+                return False
+        return True
     except OSError:
         return False
 
@@ -187,7 +200,8 @@ def _copiar_para_pastas_etapas(
 
 
 def _todas_predicoes_exportadas(
-    predict_dir: str, subsets: list, divisao_dict: dict, mapa_etapas: dict
+    predict_dir: str, subsets: list, divisao_dict: dict, mapa_etapas: dict,
+    formato_json: bool = False
 ) -> bool:
     """Verifica se todas as predições já foram exportadas (pré-check rápido).
 
@@ -202,6 +216,7 @@ def _todas_predicoes_exportadas(
         subsets: Lista de subsets a verificar.
         divisao_dict: Dicionário de divisão unificada.
         mapa_etapas: Mapa de etapas ou None.
+        formato_json: Se True, valida conteúdo JSON dos .txt ao verificar.
 
     Returns:
         True se todas as predições já existem (nada a gerar).
@@ -214,7 +229,7 @@ def _todas_predicoes_exportadas(
         ids_subset = [id_arq for id_arq, info in divisao_dict.items()
                       if info["alvo"] == subset]
         for id_arq in ids_subset:
-            if _registro_ja_exportado(subset_dir, id_arq):
+            if _registro_ja_exportado(subset_dir, id_arq, formato_json=formato_json):
                 total_exportados += 1
                 _copiar_para_pastas_etapas(predict_dir, subset, id_arq, mapa_etapas)
             else:
@@ -417,7 +432,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     mapa_etapas = _construir_mapa_etapas(divisao_dict)
 
     # Pré-check: se todas as predições já existem, sai sem carregar o modelo
-    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
         return
     
     # Carrega modelo via LLMsTrainer (mesmo caminho que executar_modelo)
@@ -497,7 +512,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
                     
                     # Skip se já exportado (permite continuação de exportações incompletas)
-                    if _registro_ja_exportado(subset_dir, registro_id):
+                    if _registro_ja_exportado(subset_dir, registro_id, formato_json=formato_json):
                         subset_stats['registros_skip'] += 1
                         _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
                         continue
@@ -1046,7 +1061,7 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
     mapa_etapas = _construir_mapa_etapas(divisao_dict)
 
     # Pré-check: se todas as predições já existem, sai sem carregar o modelo
-    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
         return
 
     # Inicializa vLLM (modelo base + LoRA adapter opcional)
@@ -1114,7 +1129,7 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
                     
                     # Skip se já exportado (permite continuação de exportações incompletas)
-                    if _registro_ja_exportado(subset_dir, registro_id):
+                    if _registro_ja_exportado(subset_dir, registro_id, formato_json=formato_json):
                         subset_stats['registros_skip'] += 1
                         _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
                         continue
@@ -1724,7 +1739,7 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
     mapa_etapas = _construir_mapa_etapas(divisao_dict)
 
     # Pré-check: se todas as predições já existem, sai sem conectar ao Ollama
-    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
         return
 
     # Verifica status do Ollama
@@ -1789,7 +1804,7 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
 
                     # Skip se já exportado (permite continuação de exportações incompletas)
-                    if _registro_ja_exportado(subset_dir, registro_id):
+                    if _registro_ja_exportado(subset_dir, registro_id, formato_json=formato_json):
                         subset_stats['registros_skip'] += 1
                         _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
                         continue
@@ -2097,7 +2112,7 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
     mapa_etapas = _construir_mapa_etapas(divisao_dict)
 
     # Pré-check: se todas as predições já existem, sai sem carregar o modelo
-    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+    if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
         return
 
     # Carrega modelo com unsloth
@@ -2165,7 +2180,7 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
 
                     # Skip se já exportado (permite continuação de exportações incompletas)
-                    if _registro_ja_exportado(subset_dir, registro_id):
+                    if _registro_ja_exportado(subset_dir, registro_id, formato_json=formato_json):
                         subset_stats['registros_skip'] += 1
                         _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
                         continue

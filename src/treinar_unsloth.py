@@ -400,8 +400,16 @@ class MetricsLoggerCallback(TrainerCallback):
         self._registrar(registro)
     
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
-        """Registra métricas completas de avaliação com contexto de etapa."""
+        """Registra métricas completas de avaliação com contexto de etapa.
+        
+        Ignora eventos de avaliação global (metric_key_prefix='eval_global')
+        pois estes são registrados pelo GlobalEvalCallback como evento separado.
+        """
         if not metrics:
+            return
+        
+        # Ignora eventos de avaliação global — são registrados pelo GlobalEvalCallback
+        if any(k.startswith("eval_global_") for k in metrics.keys()):
             return
         
         step_global = self._step_offset + state.global_step
@@ -506,6 +514,145 @@ class CheckpointRenameCallback(TrainerCallback):
             # Esperado em resume_from_checkpoint (checkpoint já foi renomeado)
             logger.debug(f"Checkpoint já existe com zero-padding: {padded_name}")
 
+
+# ---------------------------------------------------------------------------
+# Callback para avaliação global (todas as etapas do curriculum)
+# ---------------------------------------------------------------------------
+
+class GlobalEvalCallback(TrainerCallback):
+    """Callback que executa avaliação no dataset global (todas as etapas combinadas).
+    
+    Em treinamentos com curriculum learning multi-etapa, o eval_loss padrão
+    reflete apenas a etapa atual. Este callback adiciona eval_loss_global
+    avaliando o modelo contra dados de validação de TODAS as etapas,
+    permitindo monitorar se o modelo mantém desempenho geral.
+    
+    O campo eval_loss_global é registrado no training_metrics.jsonl
+    junto com o eval_loss da etapa atual para comparação direta.
+    """
+    
+    def __init__(self, global_eval_dataset, metrics_file: str,
+                 step_offset: int = 0, epoch_offset: float = 0.0,
+                 etapa_alias: str = "Principal", etapa_index: int = 0):
+        """
+        Args:
+            global_eval_dataset: Dataset HF tokenizado com validação de todas as etapas
+            metrics_file: Caminho do arquivo training_metrics.jsonl
+            step_offset: Steps acumulados de etapas anteriores
+            epoch_offset: Épocas acumuladas de etapas anteriores
+            etapa_alias: Nome da etapa atual
+            etapa_index: Índice da etapa atual
+        """
+        self._global_ds = global_eval_dataset
+        self._metrics_file = metrics_file
+        self._step_offset = step_offset
+        self._epoch_offset = epoch_offset
+        self._etapa_alias = etapa_alias
+        self._etapa_index = etapa_index
+        self._trainer_ref = None  # Preenchido após criação do trainer
+        self._best_eval_loss_global = float('inf')
+        self._avaliando_global = False  # Guarda contra recursão
+    
+    def set_trainer(self, trainer):
+        """Armazena referência ao trainer para chamar evaluate()."""
+        self._trainer_ref = trainer
+    
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        """Após cada avaliação padrão, executa avaliação no dataset global."""
+        if self._trainer_ref is None or self._global_ds is None:
+            return
+        if len(self._global_ds) == 0:
+            return
+        # Evita recursão: on_evaluate é chamado quando o próprio global eval termina
+        if self._avaliando_global:
+            return
+        
+        try:
+            # Marca que estamos avaliando global (evita recursão)
+            self._avaliando_global = True
+            
+            # Salva dataset de eval original do trainer
+            original_eval_ds = self._trainer_ref.eval_dataset
+            
+            # Desabilita temporariamente load_best_model_at_end para não
+            # interferir com a seleção do melhor modelo da etapa atual
+            original_load_best = self._trainer_ref.args.load_best_model_at_end
+            self._trainer_ref.args.load_best_model_at_end = False
+            
+            # Executa avaliação no dataset global
+            self._trainer_ref.eval_dataset = self._global_ds
+            global_metrics = self._trainer_ref.evaluate(
+                metric_key_prefix="eval_global"
+            )
+            
+            # Restaura configurações originais
+            self._trainer_ref.eval_dataset = original_eval_ds
+            self._trainer_ref.args.load_best_model_at_end = original_load_best
+            self._avaliando_global = False
+            
+            eval_loss_global = global_metrics.get("eval_global_loss")
+            if eval_loss_global is not None:
+                is_best = eval_loss_global < self._best_eval_loss_global
+                if is_best:
+                    self._best_eval_loss_global = eval_loss_global
+                
+                step_global = self._step_offset + state.global_step
+                epoch_global = round(self._epoch_offset + (state.epoch or 0), 4)
+                
+                registro = {
+                    "event": "evaluate_global",
+                    "timestamp": time.time(),
+                    "datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "step": state.global_step,
+                    "step_global": step_global,
+                    "epoch_global": epoch_global,
+                    "etapa_alias": self._etapa_alias,
+                    "etapa_index": self._etapa_index,
+                    "eval_loss_global": round(eval_loss_global, 6),
+                }
+                if is_best:
+                    registro["is_best_eval_global"] = True
+                
+                # Copia métricas adicionais
+                for key, value in global_metrics.items():
+                    if key != "eval_global_loss" and isinstance(value, (int, float)):
+                        registro[key] = round(value, 6) if isinstance(value, float) else value
+                
+                # Adiciona métricas de hardware
+                try:
+                    hardware = Util.dados_hardware(incluir_gpu=True)
+                    registro["cpu_uso_%"] = hardware.get("cpu_uso_%", 0)
+                    registro["ram_usada_gb"] = hardware.get("mem_usada_gb", 0)
+                    gpu_info = hardware.get("gpu", {})
+                    if gpu_info.get("disponivel", False):
+                        for gpu in gpu_info.get("gpus", []):
+                            idx = gpu.get("idx", 0)
+                            registro[f"gpu{idx}_reservada_gb"] = gpu.get("mem_reservada_gb", 0)
+                            registro[f"gpu{idx}_alocada_gb"] = gpu.get("mem_alocada_gb", 0)
+                except Exception:
+                    pass
+                
+                # Grava no JSONL
+                try:
+                    limpo = {
+                        k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+                        for k, v in registro.items()
+                    }
+                    with open(self._metrics_file, "a") as fp:
+                        fp.write(json.dumps(limpo, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                
+                logger.info(
+                    f"📊 eval_loss_global: {eval_loss_global:.4f}"
+                    f"{' ⭐ melhor!' if is_best else ''}"
+                    f" (etapa '{self._etapa_alias}', step_global={step_global})"
+                )
+        except Exception as e:
+            self._avaliando_global = False
+            logger.warning(f"⚠️  Erro na avaliação global: {e}")
+
+
 # ---------------------------------------------------------------------------
 # classe principal
 # ---------------------------------------------------------------------------
@@ -561,6 +708,14 @@ class LLMsTrainer:
         self.train_ds = self._load_from_pastas(alvo="treino")
         self.eval_ds = self._load_from_pastas(alvo="validacao")
         
+        # Dataset de validação global (todas as etapas) para curriculum multi-etapa
+        # Controlado por treinamento.eval_global (padrão: true)
+        self.eval_ds_global = None
+        if len(self._etapas) > 1 and self._yaml_config.treinamento.eval_global:
+            self.eval_ds_global = self._load_global_eval_dataset()
+        elif len(self._etapas) > 1 and not self._yaml_config.treinamento.eval_global:
+            print_cores('<cinza>   ℹ️  eval_global desativado via YAML (treinamento.eval_global: false)</cinza>', color_auto=False)
+        
         # Exibe estatísticas pré-treinamento e armazena para relatório
         ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino")
         es = self._print_dataset_stats(self.eval_ds, "Dataset de Validação") if self.eval_ds and len(self.eval_ds) > 0 else {}
@@ -573,6 +728,7 @@ class LLMsTrainer:
 
         self.save_checkpoints = self._yaml_config.treinamento.save_checkpoints
         self.trainer = None  # Inicialização lazy no método train()
+        self._global_eval_callback = None  # Preenchido em _build_trainer se curriculum multi-etapa
         
         # Inicializa histórico: se é novo treinamento, gera todos os arquivos
         # Se é continuação, registra retomada e verifica YAML
@@ -654,6 +810,66 @@ class LLMsTrainer:
         ds = dataset_loader.dataset
         return ds
         
+    def _load_global_eval_dataset(self) -> Dataset:
+        """Carrega dataset de validação unificado de TODAS as etapas do curriculum.
+        
+        Utiliza carregar_divisao_completa() para obter os IDs de validação
+        de todas as etapas e carregar as mensagens correspondentes.
+        Retorna None se houver apenas 1 etapa ou se não houver dados.
+        """
+        try:
+            # Constrói divisão unificada com todas as etapas (incluindo não-treináveis)
+            todas_etapas = self._yaml_config.curriculum
+            divisao_unificada = self._yaml_config.dataset_manager.carregar_divisao_completa(todas_etapas)
+            
+            if not divisao_unificada:
+                logger.warning("⚠️  Não foi possível construir divisão unificada para eval global")
+                return None
+            
+            # Conta quantos IDs de validação existem na divisão unificada
+            ids_val_global = [
+                id_arq for id_arq, info in divisao_unificada.items()
+                if info["alvo"] == "validacao"
+            ]
+            
+            # Compara com validação da etapa atual
+            n_val_etapa = len(self.eval_ds) if self.eval_ds else 0
+            n_val_global = len(ids_val_global)
+            
+            if n_val_global <= n_val_etapa:
+                # Validação global não traz dados extras — não vale a pena
+                logger.info(f"ℹ️  Eval global: {n_val_global} instância(s) = mesma qtde da etapa atual ({n_val_etapa}). Desativado.")
+                return None
+            
+            # Carrega mensagens de validação usando a divisão unificada
+            mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(
+                alvo="validacao", divisao=divisao_unificada
+            )
+            
+            if not mensagens:
+                return None
+            
+            # Converte para HF Dataset
+            dataset_loader = LLMsDataset(
+                data=mensagens,
+                tokenizer=self.tokenizer,
+                max_seq_length=self._yaml_config.treinamento.max_seq_length
+            )
+            
+            ds = dataset_loader.dataset
+            if ds and len(ds) > 0:
+                print_cores(
+                    f"<cinza>   📊 Eval global: {len(ds)} instâncias de validação "
+                    f"(todas as etapas combinadas, vs {n_val_etapa} da etapa atual)</cinza>",
+                    color_auto=False
+                )
+                return ds
+            
+            return None
+        except Exception as e:
+            logger.warning(f"⚠️  Erro ao carregar eval global: {e}")
+            return None
+
     # ------------------------- modelo ------------------------------------
     def _load_model(self):
         """Carrega modelo usando HuggingFace Transformers + PEFT.
@@ -1030,11 +1246,44 @@ class LLMsTrainer:
             max_length=treino_cfg.max_seq_length,  # max_length substitui max_seq_length no TRL >= 0.12.0
         )
 
+        # Monta eval_dataset para o SFTTrainer.
+        # Se houver eval_global, passa como dict {"current": eval_ds, "global": eval_ds_global}
+        # para que ambos sejam tokenizados por _prepare_dataset na construção do trainer
+        # (mesmo mecanismo, mesmo num_proc, sem risco de CUDA fork pós-inicialização).
+        #
+        # Detecção de redundância: em curriculum cumulativo, a partir de certa etapa
+        # eval_ds já contém todos os dados de todas as etapas anteriores — ficando
+        # idêntico ao eval_ds_global. Nesse caso, o eval_global seria redundante e
+        # não agregaria informação nova; desativamos para evitar confusão.
+        _n_eval = len(self.eval_ds) if self.eval_ds is not None else 0
+        _n_global = len(self.eval_ds_global) if self.eval_ds_global is not None else 0
+        _eval_global_redundante = (_n_global > 0 and _n_eval >= _n_global)
+        if _eval_global_redundante:
+            logger.info(
+                f"<cinza>ℹ️  eval_global desativado nesta etapa: eval_ds ({_n_eval} amostras) "
+                f">= eval_ds_global ({_n_global} amostras) — curriculum cumulativo detectado.</cinza>"
+            )
+
+        _tem_eval_global = (
+            self.eval_ds_global is not None
+            and _n_global > 0
+            and not _eval_global_redundante
+        )
+        if _tem_eval_global:
+            _eval_dataset_arg = {
+                "current": self.eval_ds,
+                "global": self.eval_ds_global,
+            } if self.eval_ds is not None and _n_eval > 0 else {
+                "global": self.eval_ds_global,
+            }
+        else:
+            _eval_dataset_arg = self.eval_ds
+
         trainer = SFTTrainer(
             model=self.model,
             processing_class=self.tokenizer,  # processing_class substitui tokenizer no TRL >= 0.12.0
             train_dataset=self.train_ds,
-            eval_dataset=self.eval_ds,
+            eval_dataset=_eval_dataset_arg,
             args=args,  # max_length agora está configurado no SFTConfig (TRL >= 0.12.0)
         )
         
@@ -1072,6 +1321,16 @@ class LLMsTrainer:
         if trainer.train_dataset is not None:
             for col in _str_cols & set(trainer.train_dataset.column_names):
                 trainer.train_dataset = trainer.train_dataset.remove_columns(col)
+
+        # Se eval_dataset é dict (com "global"), extrai e separa antes de limpar.
+        _global_ds_tokenized = None
+        if isinstance(trainer.eval_dataset, dict):
+            _global_ds_tokenized = trainer.eval_dataset.get("global")
+            trainer.eval_dataset = trainer.eval_dataset.get("current")  # restaura dataset simples
+            if _global_ds_tokenized is not None:
+                for col in _str_cols & set(_global_ds_tokenized.column_names):
+                    _global_ds_tokenized = _global_ds_tokenized.remove_columns(col)
+
         if trainer.eval_dataset is not None:
             for col in _str_cols & set(trainer.eval_dataset.column_names):
                 trainer.eval_dataset = trainer.eval_dataset.remove_columns(col)
@@ -1106,11 +1365,29 @@ class LLMsTrainer:
             os.makedirs(chkpt_dir, exist_ok=True)
             trainer.add_callback(CheckpointRenameCallback(chkpt_dir, step_offset=step_offset))
         
+        # 4. GlobalEvalCallback (avaliação em todas as etapas do curriculum)
+        # O dataset global já foi tokenizado pelo SFTTrainer junto com eval_ds
+        # (via dict eval_dataset na construção) e extraído em _global_ds_tokenized acima.
+        self._global_eval_callback = None
+        if _global_ds_tokenized is not None and len(_global_ds_tokenized) > 0:
+            metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
+            self._global_eval_callback = GlobalEvalCallback(
+                global_eval_dataset=_global_ds_tokenized,
+                metrics_file=metrics_file,
+                step_offset=step_offset,
+                epoch_offset=epoch_offset,
+                etapa_alias=etapa_alias,
+                etapa_index=etapa_index,
+            )
+            trainer.add_callback(self._global_eval_callback)
+        
         print_cores(f'<cinza> - callbacks de métricas configurados:</cinza>', color_auto=False)
         print_cores(f'   <cinza>• metrics_stream.jsonl (métricas brutas)</cinza>', color_auto=False)
         print_cores(f'   <cinza>• treinamento/training_metrics.jsonl (loss, hardware, tokens)</cinza>', color_auto=False)
         if self.save_checkpoints:
             print_cores(f'   <cinza>• checkpoint renaming (zero-padding: checkpoint-00001)</cinza>', color_auto=False)
+        if self._global_eval_callback is not None:
+            print_cores(f'   <cinza>• eval_loss_global (validação de todas as etapas combinadas)</cinza>', color_auto=False)
         
         trainer.model.config.use_cache = False
         
@@ -1338,6 +1615,10 @@ class LLMsTrainer:
                 tokens_previos=tokens_acumulados,
             )
 
+            # Conecta referência do trainer ao GlobalEvalCallback (necessário para evaluate())
+            if self._global_eval_callback is not None:
+                self._global_eval_callback.set_trainer(self.trainer)
+
             # Pipeline Universal: marca início da etapa
             self._tracker.iniciar_etapa(step_index=step_index, etapa=etapa_atual)
             tempo_inicio = time.time()
@@ -1413,10 +1694,34 @@ class LLMsTrainer:
 
             # Garante um eval FINAL mesmo que já tenha havido evals em steps
             eval_loss = None
+            eval_loss_global = None
             if self.eval_ds:
                 final_eval = self.trainer.evaluate()
                 stats.update(final_eval)
                 eval_loss = final_eval.get("eval_loss")
+            
+            # Eval global final (todas as etapas combinadas)
+            if self._global_eval_callback is not None and self.eval_ds_global is not None:
+                try:
+                    original_eval_ds = self.trainer.eval_dataset
+                    original_load_best = self.trainer.args.load_best_model_at_end
+                    self.trainer.args.load_best_model_at_end = False
+                    
+                    # Usa o dataset tokenizado do callback
+                    self.trainer.eval_dataset = self._global_eval_callback._global_ds
+                    final_global_eval = self.trainer.evaluate(metric_key_prefix="eval_global")
+                    
+                    # Restaura configurações originais
+                    self.trainer.eval_dataset = original_eval_ds
+                    self.trainer.args.load_best_model_at_end = original_load_best
+                    
+                    eval_loss_global = final_global_eval.get("eval_global_loss")
+                    stats["eval_loss_global"] = eval_loss_global
+                    if eval_loss_global is not None:
+                        logger.info(f"📊 eval_loss_global FINAL: {eval_loss_global:.4f} (etapa '{etapa_atual.alias}')")
+                except Exception as e:
+                    logger.warning(f"⚠️  Erro no eval global final: {e}")
+            
             self._save_model(stats=stats)
             
             # Registra conclusão no histórico
@@ -1429,6 +1734,7 @@ class LLMsTrainer:
                 alias=etapa_atual.alias,
                 train_loss=stats.get("training_loss"),
                 eval_loss=eval_loss,
+                eval_loss_global=eval_loss_global,
                 global_step=stats.get("global_step"),
                 tempo_segundos=round(tempo_total, 2),
                 ds_train_len=stats.get("ds_train_len"),

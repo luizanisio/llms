@@ -149,6 +149,7 @@ class GraficoTreinamento:
             Dict com chaves:
             - train_data: [{step_global, epoch, loss, lr, etapa_alias, etapa_index, instancias_acumuladas}]
             - eval_data: [{step_global, epoch, eval_loss, etapa_alias, etapa_index}]
+            - eval_global_data: [{step_global, epoch, eval_loss_global, etapa_alias, etapa_index}]
             - etapas: [{step_global, alias, index}] — transições entre etapas do curriculum
             Ou None se arquivo não existir ou estiver vazio
         """
@@ -175,6 +176,7 @@ class GraficoTreinamento:
         
         train_data = []
         eval_data = []
+        eval_global_data = []  # Dados de avaliação global (todas as etapas combinadas)
         etapas = []  # Transições de etapa detectadas pelo evento train_begin
         
         for r in registros:
@@ -232,10 +234,23 @@ class GraficoTreinamento:
                         "etapa_alias": etapa_alias,
                         "etapa_index": etapa_index,
                     })
+            
+            elif evento == "evaluate_global":
+                eval_loss_global = r.get("eval_loss_global")
+                if eval_loss_global is not None:
+                    eval_global_data.append({
+                        "step": step_global,
+                        "epoch": epoch,
+                        "epoch_global": r.get("epoch_global", epoch),
+                        "eval_loss_global": round(eval_loss_global, 4),
+                        "etapa_alias": etapa_alias,
+                        "etapa_index": etapa_index,
+                    })
         
         return {
             "train_data": train_data,
             "eval_data": eval_data,
+            "eval_global_data": eval_global_data,
             "etapas": etapas,
         }
 
@@ -354,7 +369,8 @@ class GraficoTreinamento:
         checkpoints: List[str],
         output_path: str,
         titulo: str = "Evolução do Loss durante Treinamento",
-        etapas_curriculum: List[Dict] = None
+        etapas_curriculum: List[Dict] = None,
+        eval_global_data: List[Dict] = None
     ) -> bool:
         """
         Gera gráfico de evolução do loss com marcações de época, checkpoints e etapas.
@@ -370,6 +386,7 @@ class GraficoTreinamento:
             output_path: Caminho para salvar o gráfico
             titulo: Título do gráfico
             etapas_curriculum: Lista de {step_global, alias, index} para marcar transições
+            eval_global_data: Lista de dicts com {step, eval_loss_global} (validação global)
             
         Returns:
             True se gerou com sucesso, False caso contrário
@@ -410,8 +427,22 @@ class GraficoTreinamento:
                         'tamanho_marcador': 4
                     }
             
+            if eval_global_data:
+                valid_g = [(e["step"], e["eval_loss_global"]) for e in eval_global_data 
+                          if "eval_loss_global" in e and _is_valid(e["eval_loss_global"])]
+                if valid_g:
+                    series['Eval Loss Global'] = {
+                        'x': [v[0] for v in valid_g],
+                        'y': [v[1] for v in valid_g],
+                        'cor': 'darkgreen',
+                        'marcador': 'D',
+                        'tamanho_marcador': 5
+                    }
+            
             # Coleta todos os step values para definir limites do eixo x
             all_steps = [t["step"] for t in train_data] + [e["step"] for e in eval_data]
+            if eval_global_data:
+                all_steps += [e["step"] for e in eval_global_data]
             
             # Marcadores reutilizáveis de época e etapas do curriculum
             marcadores_epoca = construir_marcadores_epocas(train_data)
@@ -477,7 +508,8 @@ class GraficoTreinamento:
             return False
     
     @staticmethod
-    def tabela_loss_markdown(train_data: List[Dict], eval_data: List[Dict]) -> List[str]:
+    def tabela_loss_markdown(train_data: List[Dict], eval_data: List[Dict],
+                             eval_global_data: List[Dict] = None) -> List[str]:
         """
         Gera tabela markdown com evolução do loss.
         
@@ -487,6 +519,7 @@ class GraficoTreinamento:
         Args:
             train_data: Lista de dicts com {step, epoch, loss, [etapa_alias, instancias_acumuladas]}
             eval_data: Lista de dicts com {step, epoch, eval_loss}
+            eval_global_data: Lista de dicts com {step, eval_loss_global} (opcional)
             
         Returns:
             Lista de linhas markdown para a tabela
@@ -496,14 +529,27 @@ class GraficoTreinamento:
         # Detecta se há dados enriquecidos (curriculum/instâncias)
         tem_etapa = any("etapa_alias" in t for t in train_data) if train_data else False
         tem_instancias = any("instancias_acumuladas" in t for t in train_data) if train_data else False
+        tem_global = bool(eval_global_data)
         
         # Cabeçalho adaptado ao formato dos dados
         if tem_etapa and tem_instancias:
-            lines.append("| Step | Época | Etapa | Train Loss | Eval Loss | Instâncias |")
-            lines.append("|------|-------|-------|------------|-----------|------------|")
+            header = "| Step | Época | Etapa | Train Loss | Eval Loss |"
+            separator = "|------|-------|-------|------------|-----------|"
+            if tem_global:
+                header += " Eval Global |"
+                separator += "-------------|"
+            header += " Instâncias |"
+            separator += "------------|"
+            lines.append(header)
+            lines.append(separator)
         elif tem_etapa:
-            lines.append("| Step | Época | Etapa | Train Loss | Eval Loss |")
-            lines.append("|------|-------|-------|------------|-----------|")
+            header = "| Step | Época | Etapa | Train Loss | Eval Loss |"
+            separator = "|------|-------|-------|------------|-----------|"
+            if tem_global:
+                header += " Eval Global |"
+                separator += "-------------|"
+            lines.append(header)
+            lines.append(separator)
         else:
             lines.append("| Step | Época | Train Loss | Eval Loss |")
             lines.append("|------|-------|------------|-----------|")
@@ -515,6 +561,7 @@ class GraficoTreinamento:
                 "epoch": t.get("epoch_global", t["epoch"]),
                 "train": t["loss"],
                 "eval": "-",
+                "eval_global": "-",
                 "etapa": t.get("etapa_alias", ""),
                 "instancias": t.get("instancias_acumuladas", ""),
             }
@@ -526,17 +573,29 @@ class GraficoTreinamento:
                     "epoch": e.get("epoch_global", e["epoch"]),
                     "train": "-",
                     "eval": e["eval_loss"],
+                    "eval_global": "-",
                     "etapa": e.get("etapa_alias", ""),
                     "instancias": "",
                 }
+        if eval_global_data:
+            for eg in eval_global_data:
+                if eg["step"] in steps_data:
+                    steps_data[eg["step"]]["eval_global"] = eg["eval_loss_global"]
         
         for step in sorted(steps_data.keys()):
             d = steps_data[step]
             inst_fmt = f"{d['instancias']:,}".replace(",", ".") if isinstance(d['instancias'], int) and d['instancias'] > 0 else "-"
             if tem_etapa and tem_instancias:
-                lines.append(f"| {step} | {d['epoch']} | {d['etapa']} | {d['train']} | {d['eval']} | {inst_fmt} |")
+                row = f"| {step} | {d['epoch']} | {d['etapa']} | {d['train']} | {d['eval']} |"
+                if tem_global:
+                    row += f" {d['eval_global']} |"
+                row += f" {inst_fmt} |"
+                lines.append(row)
             elif tem_etapa:
-                lines.append(f"| {step} | {d['epoch']} | {d['etapa']} | {d['train']} | {d['eval']} |")
+                row = f"| {step} | {d['epoch']} | {d['etapa']} | {d['train']} | {d['eval']} |"
+                if tem_global:
+                    row += f" {d['eval_global']} |"
+                lines.append(row)
             else:
                 lines.append(f"| {step} | {d['epoch']} | {d['train']} | {d['eval']} |")
         
