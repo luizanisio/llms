@@ -3,7 +3,7 @@
 
 # Configuração Global de Saída
 saida:
-  pasta: "./saidas_300/analises_comparacao_summa_q235_leve"
+  pasta: "./saidas_fold11/analises_comparacao_summa_gpt5 (fold11)"
   arquivo_base: "comparacao_summa"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
   linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
@@ -11,32 +11,44 @@ saida:
 # Configurações de Execução
 execucao:
   max_workers: 10
-  teste_rapido: true # Defina como true para pular métricas pesadas (BERTScore)
+  teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
   gerar_graficos: true 
   llm_as_a_judge: false
   analise_estatistica: true
   ignorar_erro_extracao: true
+  divisao:
+    treino: 0.70
+    validacao: 0.10
+    teste: 0.20
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  pasta: "./saidas_300/ext_qwen235b_11"
-  rotulo: "qwen235b_11"
-  familia: "Qwen-235B"
+  pasta: "./saidas_fold11/ext_gpt5_msc_11"
+  rotulo: "GPT5(P)"
+  familia: "GPT-5"
 
 # Modelos Comparados
 modelos_comparacao:
-  - pasta: "./saidas_300/ext_qwen-1.5B_11_u"
-    rotulo: "qwen-1.5B_11_u"
-    familia: "Qwen-1.5B"
+  - pasta: "./saidas_fold11/ext_gpt5_msc_11"
+    rotulo: "GPT5"
+    familia: "GPT-5"
 
-  - pasta: "./saidas_300/qwen-1.5B(ft-train-a)"
-    rotulo: "qwen-1.5B(ft-train-a)"
-    familia: "Qwen-1.5B"
+  - pasta: "./saidas_fold11/ext_qwen235b_11"
+    rotulo: "Qwen235b"
+    familia: "Qwen-235B"
 
-  - pasta: "./saidas_300/qwen-1.5B(ft-train-b)"
-    rotulo: "qwen-1.5B(ft-train-b)"
-    familia: "Qwen-1.5B"
+  - pasta: "./saidas_fold11/ext_qwen397b_11"
+    rotulo: "Qwen397b"
+    familia: "Qwen-397B"
 
+  # https://ollama.com/library/qwen2.5:7b  -- quantization Q4_K_M
+  - pasta: "./saidas_fold11/ext_qwen25_7b_11"
+    rotulo: "Qwen7b"
+    familia: "Qwen-7B"
+
+  - pasta: "./saidas_fold11/ext_qwen25_3b_11"
+    rotulo: "Qwen3b"
+    familia: "Qwen-3B"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
@@ -64,17 +76,17 @@ configuracao_comparacao:
       - "Materia"
       - "Resumo"
       - "Dispositivo"
-      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
+      - "Temas.Decisao"
       - "Temas.Explicacao"
+      - "Temas.Normas"
       - "Temas.Jurisprudencia"
+      - "Temas"
 
     rouge_1:
 
     rouge_2:
-      - "Tipo"
-      - "DataJulgamento"
       - "Partes"
       - "Partes.Tipo"
       - "Partes.Nome"
@@ -83,10 +95,8 @@ configuracao_comparacao:
       - "(global)"
       - "Materia"
       - "Resumo"
-      - "DataJulgamento"
+      #- "DataJulgamento" # não foi extraído pelo modelo
       - "Partes"
-      - "Temas.Normas"
-      - "Temas.Decisao"
 
     levenshtein:
       - "Tipo"
@@ -94,33 +104,18 @@ configuracao_comparacao:
 
     sbert_pequeno:
       - "(global)"
-      - "Materia"
-      - "Resumo"
       - "Dispositivo"
-      - "Temas"
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
-      - "Temas.Explicacao"
-      - "Temas.Jurisprudencia"
-
-    sbert_medio:
-      - "(global)"
       - "Materia"
-      - "Resumo"
-      - "Dispositivo"
+      - "Resumo"      
       - "Temas"
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
+      - "Partes"
       - "Temas.Explicacao"
-      - "Temas.Jurisprudencia"
 
     sbert_grande:
       - "(global)"
-      - "Materia"
-      - "Resumo"
       - "Dispositivo"
+      - "Materia"
+      - "Resumo"      
       - "Temas"
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
+      - "Partes"
       - "Temas.Explicacao"
-      - "Temas.Jurisprudencia"
