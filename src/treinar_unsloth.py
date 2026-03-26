@@ -508,11 +508,20 @@ class CheckpointRenameCallback(TrainerCallback):
             try:
                 os.rename(original_path, padded_path)
                 logger.debug(f"Checkpoint renomeado: {original_name} -> {padded_name}")
+                # Atualiza best_model_checkpoint para que o Trainer consiga
+                # encontrar o melhor modelo após a renomeação (load_best_model_at_end)
+                if state.best_model_checkpoint and state.best_model_checkpoint.rstrip("/") == original_path.rstrip("/"):
+                    state.best_model_checkpoint = padded_path
+                    logger.debug(f"best_model_checkpoint atualizado: {padded_path}")
             except Exception as e:
                 logger.warning(f"Erro ao renomear checkpoint: {e}")
         elif os.path.exists(padded_path):
             # Esperado em resume_from_checkpoint (checkpoint já foi renomeado)
             logger.debug(f"Checkpoint já existe com zero-padding: {padded_name}")
+            # Mesmo sem renomear, garante que best_model_checkpoint aponte para o nome correto
+            if state.best_model_checkpoint and state.best_model_checkpoint.rstrip("/") == original_path.rstrip("/"):
+                state.best_model_checkpoint = padded_path
+                logger.debug(f"best_model_checkpoint corrigido: {padded_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -1251,23 +1260,12 @@ class LLMsTrainer:
         # para que ambos sejam tokenizados por _prepare_dataset na construção do trainer
         # (mesmo mecanismo, mesmo num_proc, sem risco de CUDA fork pós-inicialização).
         #
-        # Detecção de redundância: em curriculum cumulativo, a partir de certa etapa
-        # eval_ds já contém todos os dados de todas as etapas anteriores — ficando
-        # idêntico ao eval_ds_global. Nesse caso, o eval_global seria redundante e
-        # não agregaria informação nova; desativamos para evitar confusão.
         _n_eval = len(self.eval_ds) if self.eval_ds is not None else 0
         _n_global = len(self.eval_ds_global) if self.eval_ds_global is not None else 0
-        _eval_global_redundante = (_n_global > 0 and _n_eval >= _n_global)
-        if _eval_global_redundante:
-            logger.info(
-                f"<cinza>ℹ️  eval_global desativado nesta etapa: eval_ds ({_n_eval} amostras) "
-                f">= eval_ds_global ({_n_global} amostras) — curriculum cumulativo detectado.</cinza>"
-            )
 
         _tem_eval_global = (
             self.eval_ds_global is not None
             and _n_global > 0
-            and not _eval_global_redundante
         )
         if _tem_eval_global:
             _eval_dataset_arg = {
