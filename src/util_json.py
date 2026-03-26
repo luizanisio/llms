@@ -82,6 +82,7 @@ import hashlib
 from copy import deepcopy
 from datetime import datetime
 import threading
+import time
 import pandas as pd
 import util  # garante que a pasta src está no sys.path
 from util import Util
@@ -2204,13 +2205,33 @@ class JsonAnaliseDataFrame():
         print(f"\n💾 Processamento em chunks ({CHUNK_SIZE} docs/chunk) - Total: {total_chunks} chunk(s)")
         
         _linhas_df = []
+        _tempo_inicio_chunks = time.time()
         
         # Divide dados em chunks
         for i in range(0, len(self.dados), CHUNK_SIZE):
             chunk = self.dados[i:i+CHUNK_SIZE]
             chunk_num = (i // CHUNK_SIZE) + 1
             
-            print(f"   Chunk {chunk_num}/{total_chunks}: processando {len(chunk)} documentos...")
+            # Calcula estimativa de término
+            if chunk_num == 1:
+                _eta_str = ""
+            else:
+                _tempo_decorrido = time.time() - _tempo_inicio_chunks
+                _tempo_por_chunk = _tempo_decorrido / (chunk_num - 1)
+                _chunks_restantes = total_chunks - (chunk_num - 1)
+                _segundos_restantes = _tempo_por_chunk * _chunks_restantes
+                if _segundos_restantes >= 3600:
+                    _h = int(_segundos_restantes // 3600)
+                    _m = int((_segundos_restantes % 3600) // 60)
+                    _eta_str = f" ⏱️ ETA: {_h}h{_m:02d}min"
+                elif _segundos_restantes >= 60:
+                    _m = int(_segundos_restantes // 60)
+                    _s = int(_segundos_restantes % 60)
+                    _eta_str = f" ⏱️ ETA: {_m}min{_s:02d}s"
+                else:
+                    _eta_str = f" ⏱️ ETA: {int(_segundos_restantes)}s"
+            
+            print(f"   Chunk {chunk_num}/{total_chunks}: processando {len(chunk)} documentos...{_eta_str}")
             
             # Processa chunk
             _resultados_chunk = self._processar_chunk(chunk)
@@ -2227,7 +2248,18 @@ class JsonAnaliseDataFrame():
             del _resultados_chunk
             gc.collect()
         
-        print(f"   ✅ {len(_linhas_df)} documentos processados")
+        _tempo_total = time.time() - _tempo_inicio_chunks
+        if _tempo_total >= 3600:
+            _h = int(_tempo_total // 3600)
+            _m = int((_tempo_total % 3600) // 60)
+            _tempo_total_str = f"{_h}h{_m:02d}min"
+        elif _tempo_total >= 60:
+            _m = int(_tempo_total // 60)
+            _s = int(_tempo_total % 60)
+            _tempo_total_str = f"{_m}min{_s:02d}s"
+        else:
+            _tempo_total_str = f"{_tempo_total:.1f}s"
+        print(f"   ✅ {len(_linhas_df)} documentos processados em {_tempo_total_str}")
         
         self._resultados = pd.DataFrame(_linhas_df)
         # Libera memória final
