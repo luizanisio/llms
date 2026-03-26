@@ -2152,17 +2152,21 @@ class JsonAnaliseDataFrame():
                             )
                             pares_por_modelo[modelo_sbert].append((texto_pred, texto_true))
         
+        import time as _time
         for modelo_sbert, pares in pares_por_modelo.items():
             if not pares:
                 continue
             preds = [p[0] for p in pares]
             trues = [p[1] for p in pares]
-            print(f"   ⚡ SBERT [{modelo_sbert}]: processando {len(preds)} pares...")
+            print(f"   ⚡ SBERT [{modelo_sbert}]: {len(preds)} pares para processar...")
+            t0 = _time.time()
             sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=True)
+            dt = _time.time() - t0
+            print(f"   ✅ SBERT [{modelo_sbert}]: concluído em {dt:.1f}s ({len(preds)} pares)")
         
         total = sum(len(p) for p in pares_por_modelo.values())
         if total:
-            print(f"   ✅ SBERT pré-calculado: {total} pares processados e armazenados no cache em disco")
+            print(f"   ✅ SBERT pré-cálculo finalizado: {total} pares totais")
 
     def to_df(self):
         """Executa comparações e retorna DataFrame com métricas"""

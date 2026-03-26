@@ -12,6 +12,7 @@ import json
 import os
 import re
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -245,7 +246,10 @@ def sbert_score(preds: List[str], trues: List[str],
         new_P = []
         new_R = []
         new_F1 = []
-        for p_text, t_text in zip(missed_preds, missed_trues):
+        total_miss = len(missed_preds)
+        t0 = time.time()
+        _ultimo_print = t0
+        for i_miss, (p_text, t_text) in enumerate(zip(missed_preds, missed_trues), 1):
             res = sbert.comparar_textos(
                 p_text, t_text,
                 metodo='bertscore_like',
@@ -256,6 +260,17 @@ def sbert_score(preds: List[str], trues: List[str],
             new_P.append(round(res['P'], decimais))
             new_R.append(round(res['R'], decimais))
             new_F1.append(round(res['F1'], decimais))
+            # Progresso a cada 2 segundos ou no último item
+            agora = time.time()
+            if verbose and (agora - _ultimo_print >= 2.0 or i_miss == total_miss):
+                decorrido = agora - t0
+                vel = i_miss / decorrido if decorrido > 0 else 0
+                restante = (total_miss - i_miss) / vel if vel > 0 else 0
+                pct = i_miss / total_miss * 100
+                print(f"   [SBERT:{modelo}] {i_miss}/{total_miss} ({pct:.0f}%) "
+                      f"| {decorrido:.0f}s decorrido | ~{restante:.0f}s restante "
+                      f"| {vel:.1f} pares/s")
+                _ultimo_print = agora
 
         # Salva no cache
         cache.save_batch(missed_meta, new_P, new_R, new_F1)

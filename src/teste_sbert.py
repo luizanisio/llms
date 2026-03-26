@@ -5,10 +5,14 @@
 import unittest
 import numpy as np
 import sys
+import os
+import json
+import tempfile
+import shutil
 import threading
 import concurrent.futures
 from unittest.mock import MagicMock, patch
-from util_sbert import BERTScoreLike
+from util_sbert import BERTScoreLike, SBERTCache, sbert_score
 
 # Detecta flag "mock" nos argumentos
 
@@ -459,6 +463,209 @@ class TestBERTScoreLikeGetInstance(unittest.TestCase):
                 msg="Texto idêntico deve ter F1=1.0")
         
         print(f"[Stress] OK - {total_esperado} comparações em {num_threads} threads sem erros")
+
+
+class TestSBERTCache(unittest.TestCase):
+    """
+    Testes para SBERTCache e sbert_score com cache em disco.
+    Usa diretório temporário para não afetar caches reais.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmpdir = tempfile.mkdtemp(prefix='sbert_cache_test_')
+        if MOCK_TEST:
+            cls.patcher = patch('util_sbert.SentenceTransformer')
+            cls.MockST = cls.patcher.start()
+            cls.mock_inst = MagicMock()
+            cls.MockST.return_value = cls.mock_inst
+            cls.mock_inst.encode.side_effect = TestBERTScoreLike._mock_encode
+        # Garante instância carregada
+        BERTScoreLike.clear_instances()
+        cls.bs = BERTScoreLike.get_instance(MODELO)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+        BERTScoreLike.clear_instances()
+        if MOCK_TEST:
+            cls.patcher.stop()
+
+    def _make_cache(self, **kwargs):
+        return SBERTCache(modelo=MODELO, cache_dir=self._tmpdir, **kwargs)
+
+    # ── Testes unitários do SBERTCache ────────────────────────────────────
+
+    def test_cache_miss_e_save(self):
+        """get_batch retorna miss, save_batch grava arquivo, segundo get_batch acerta."""
+        cache = self._make_cache()
+        preds = ['Texto A']
+        trues = ['Texto B']
+
+        P, R, F1, mi, mp, mt, mm = cache.get_batch(preds, trues)
+        self.assertEqual(len(mi), 1, "Primeiro acesso deve ser miss")
+        self.assertIsNone(P[0])
+
+        # Simula resultado e salva
+        cache.save_batch(mm, [0.8], [0.7], [0.75])
+
+        # Segundo acesso deve acertar
+        P2, R2, F12, mi2, _, _, _ = cache.get_batch(preds, trues)
+        self.assertEqual(len(mi2), 0, "Segundo acesso deve ser hit")
+        self.assertAlmostEqual(P2[0], 0.8)
+        self.assertAlmostEqual(R2[0], 0.7)
+        self.assertAlmostEqual(F12[0], 0.75)
+
+    def test_cache_ordem_invertida_troca_PR(self):
+        """(A,B) e (B,A) usam o mesmo arquivo; P e R são trocados."""
+        cache = self._make_cache()
+
+        cache_ab = self._make_cache()
+        _, _, _, _, _, _, mm = cache_ab.get_batch(['A'], ['B'])
+        cache_ab.save_batch(mm, [0.9], [0.6], [0.72])
+
+        # Busca com ordem invertida
+        P, R, F1, mi, _, _, _ = cache.get_batch(['B'], ['A'])
+        self.assertEqual(len(mi), 0, "Deve achar cache da ordem inversa")
+        # P e R devem estar trocados
+        self.assertAlmostEqual(P[0], 0.6, msg="P(B,A) == R(A,B)")
+        self.assertAlmostEqual(R[0], 0.9, msg="R(B,A) == P(A,B)")
+        self.assertAlmostEqual(F1[0], 0.72)
+
+    def test_cache_validacao_bytes(self):
+        """Arquivo com bytes errados é rejeitado (simula colisão de hash)."""
+        cache = self._make_cache()
+        preds = ['Colisao X']
+        trues = ['Colisao Y']
+
+        _, _, _, _, _, _, mm = cache.get_batch(preds, trues)
+        cache.save_batch(mm, [0.5], [0.5], [0.5])
+
+        # Corrompe bytes1 no arquivo
+        fp = mm[0]['filepath']
+        with open(fp, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        data['bytes1'] = 99999
+        with open(fp, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+
+        P, R, F1, mi, _, _, _ = cache.get_batch(preds, trues)
+        self.assertEqual(len(mi), 1, "Bytes corrompidos devem causar miss")
+        self.assertIsNone(P[0])
+
+    def test_cache_usar_cache_false(self):
+        """Com usar_cache=False tudo é miss mesmo com arquivo presente."""
+        cache_w = self._make_cache()
+        preds = ['UC False']
+        trues = ['Teste']
+
+        _, _, _, _, _, _, mm = cache_w.get_batch(preds, trues)
+        cache_w.save_batch(mm, [0.1], [0.2], [0.15])
+
+        cache_no = self._make_cache(usar_cache=False)
+        P, R, F1, mi, _, _, _ = cache_no.get_batch(preds, trues)
+        self.assertEqual(len(mi), 1)
+
+    def test_cache_atualizar_cache_false(self):
+        """Com atualizar_cache=False, save_batch não grava nada."""
+        cache = self._make_cache(atualizar_cache=False)
+        preds = ['No Save']
+        trues = ['Test']
+
+        _, _, _, _, _, _, mm = cache.get_batch(preds, trues)
+        cache.save_batch(mm, [0.3], [0.4], [0.35])
+
+        # Arquivo não deve existir
+        self.assertFalse(os.path.exists(mm[0]['filepath']))
+
+    def test_cache_batch_misto(self):
+        """Batch com um par cacheado e outro não."""
+        cache = self._make_cache()
+
+        # Grava primeiro par
+        _, _, _, _, _, _, mm = cache.get_batch(['Hit'], ['Par'])
+        cache.save_batch(mm, [0.9], [0.8], [0.85])
+
+        # Batch com par existente + par novo
+        P, R, F1, mi, mp, mt, mm2 = cache.get_batch(['Hit', 'Miss'], ['Par', 'Novo'])
+        self.assertEqual(len(mi), 1, "Apenas o segundo par deve ser miss")
+        self.assertEqual(mi[0], 1)
+        self.assertAlmostEqual(P[0], 0.9)
+        self.assertIsNone(P[1])
+
+    def test_limpar_cache(self):
+        """limpar_cache remove todos os arquivos."""
+        cache = self._make_cache()
+        _, _, _, _, _, _, mm = cache.get_batch(['Limpar'], ['Teste'])
+        cache.save_batch(mm, [0.5], [0.5], [0.5])
+
+        n = cache.limpar_cache(verbose=False)
+        self.assertGreaterEqual(n, 1)
+
+        # Confirma que o diretório está vazio
+        jsons = [f for f in os.listdir(cache.cache_dir) if f.endswith('.json')]
+        self.assertEqual(len(jsons), 0)
+
+    # ── Testes de integração com sbert_score ──────────────────────────────
+
+    def test_sbert_score_popula_cache(self):
+        """sbert_score grava no cache; segunda chamada retorna do cache sem recalcular."""
+        # Aponta env para pasta temporária
+        old_env = os.environ.get('SBERT_CACHE_PATH')
+        os.environ['SBERT_CACHE_PATH'] = self._tmpdir
+        try:
+            preds = ['Frase de teste alpha.']
+            trues = ['Frase de referência alpha.']
+
+            P1, R1, F11 = sbert_score(preds, trues, modelo=MODELO, decimais=3, verbose=False)
+            self.assertEqual(len(P1), 1)
+            self.assertGreater(F11[0], 0.0)
+
+            # Segunda chamada — deve vir do cache e retornar os mesmos valores
+            P2, R2, F12 = sbert_score(preds, trues, modelo=MODELO, decimais=3, verbose=False)
+            self.assertAlmostEqual(P1[0], P2[0], places=5)
+            self.assertAlmostEqual(R1[0], R2[0], places=5)
+            self.assertAlmostEqual(F11[0], F12[0], places=5)
+
+            # Verifica que arquivo existe no disco
+            cache = SBERTCache(modelo=MODELO)
+            info = cache._get_key_info(preds[0], trues[0])
+            self.assertTrue(os.path.exists(info['filepath']),
+                            "Arquivo de cache deve existir após sbert_score")
+        finally:
+            if old_env is None:
+                os.environ.pop('SBERT_CACHE_PATH', None)
+            else:
+                os.environ['SBERT_CACHE_PATH'] = old_env
+
+    def test_sbert_score_sem_cache_recalcula(self):
+        """usar_cache=False força recálculo mas ainda salva se atualizar_cache=True."""
+        old_env = os.environ.get('SBERT_CACHE_PATH')
+        os.environ['SBERT_CACHE_PATH'] = self._tmpdir
+        try:
+            preds = ['Recalculo forçado.']
+            trues = ['Referência recalculo.']
+
+            P1, R1, F11 = sbert_score(preds, trues, modelo=MODELO, decimais=3,
+                                       usar_cache=False, atualizar_cache=True)
+            self.assertGreater(F11[0], 0.0)
+
+            # Agora com cache habilitado deve retornar o mesmo
+            P2, R2, F12 = sbert_score(preds, trues, modelo=MODELO, decimais=3,
+                                       usar_cache=True)
+            self.assertAlmostEqual(F11[0], F12[0], places=5)
+        finally:
+            if old_env is None:
+                os.environ.pop('SBERT_CACHE_PATH', None)
+            else:
+                os.environ['SBERT_CACHE_PATH'] = old_env
+
+    def test_sbert_score_validacoes(self):
+        """Testa erros de validação de entrada."""
+        with self.assertRaises(TypeError):
+            sbert_score("não lista", ["b"])
+        with self.assertRaises(ValueError):
+            sbert_score(["a"], ["b", "c"])
 
 
 if __name__ == '__main__':
