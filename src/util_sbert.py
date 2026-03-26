@@ -28,7 +28,7 @@ except ImportError:
 
 _locais_sbert = [f'{_}_bertmodels/' for _ in ['./', '../'] if os.path.isdir(f'{_}_bertmodels/')]
 PASTA_LOCAL_SBERT = _locais_sbert[0] if _locais_sbert else './_bertmodels/'
-
+TEMPO_PROGRESSO =30  # segundos entre prints de progresso (para processamento lento)
 
 class SBERTCache:
     """
@@ -260,9 +260,9 @@ def sbert_score(preds: List[str], trues: List[str],
             new_P.append(round(res['P'], decimais))
             new_R.append(round(res['R'], decimais))
             new_F1.append(round(res['F1'], decimais))
-            # Progresso a cada 2 segundos ou no último item
+            # Progresso a cada TEMPO_PROGRESSO segundos ou no último item
             agora = time.time()
-            if verbose and (agora - _ultimo_print >= 2.0 or i_miss == total_miss):
+            if verbose and (agora - _ultimo_print >= TEMPO_PROGRESSO or i_miss == total_miss):
                 decorrido = agora - t0
                 vel = i_miss / decorrido if decorrido > 0 else 0
                 restante = (total_miss - i_miss) / vel if vel > 0 else 0
