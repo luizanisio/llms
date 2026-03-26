@@ -7,9 +7,12 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
 import threading
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -17,6 +20,258 @@ try:
     from sentence_transformers import SentenceTransformer, util
 except ImportError:
     raise ImportError('Módulo sentence_transformers não instalado. Instale com: pip install sentence-transformers')
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CACHE SBERT EM DISCO (padrão idêntico ao BERTScoreCache)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_locais_sbert = [f'{_}_bertmodels/' for _ in ['./', '../'] if os.path.isdir(f'{_}_bertmodels/')]
+PASTA_LOCAL_SBERT = _locais_sbert[0] if _locais_sbert else './_bertmodels/'
+
+
+class SBERTCache:
+    """
+    Cache de resultados SBERT em disco baseado em MD5 (mesmo padrão do BERTScoreCache).
+
+    Cada par de textos gera um arquivo JSON com P, R, F1.
+    A ordem dos textos não importa: (A, B) e (B, A) geram a mesma chave,
+    mas P e R são trocados automaticamente quando necessário.
+
+    O diretório de cache é separado por modelo para evitar colisões.
+
+    Exemplo:
+        cache = SBERTCache(modelo='pequeno')
+        P, R, F1 = cache.processar(['pred1'], ['true1'], sbert_instance)
+    """
+
+    def __init__(self, modelo: str = 'pequeno', cache_dir: str = None,
+                 usar_cache: bool = True, atualizar_cache: bool = True):
+        if cache_dir is None:
+            cache_dir = os.environ.get('SBERT_CACHE_PATH')
+        if not cache_dir:
+            cache_dir = os.path.join(PASTA_LOCAL_SBERT, 'sbert_cache')
+        # Subdiretório por modelo
+        self.cache_dir = os.path.join(cache_dir, modelo)
+        self.modelo = modelo
+        self.usar_cache = usar_cache
+        self.atualizar_cache = atualizar_cache
+        self._ensure_dir()
+
+    def _ensure_dir(self):
+        if not self.usar_cache and not self.atualizar_cache:
+            return
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        except OSError:
+            pass
+
+    def _get_key_info(self, text1: str, text2: str) -> dict:
+        t1_str = str(text1)
+        t2_str = str(text2)
+        b1 = t1_str.encode('utf-8')
+        b2 = t2_str.encode('utf-8')
+        h1 = hashlib.md5(b1).hexdigest()
+        h2 = hashlib.md5(b2).hexdigest()
+
+        swapped = False
+        if h1 > h2:
+            swapped = True
+            h_first, h_second = h2, h1
+            bytes_first, bytes_second = len(b2), len(b1)
+        else:
+            h_first, h_second = h1, h2
+            bytes_first, bytes_second = len(b1), len(b2)
+
+        filename = f"{h_first}-{h_second}.json"
+        filepath = os.path.join(self.cache_dir, filename)
+        return {
+            'filepath': filepath,
+            'swapped': swapped,
+            'bytes1': bytes_first,
+            'bytes2': bytes_second,
+        }
+
+    def _validate_cache_data(self, data: dict, info: dict) -> bool:
+        required_keys = ['P', 'R', 'F1', 'bytes1', 'bytes2']
+        if not all(k in data for k in required_keys):
+            return False
+        if data['bytes1'] != info['bytes1'] or data['bytes2'] != info['bytes2']:
+            return False
+        return True
+
+    def get_batch(self, preds: List[str], trues: List[str]) -> Tuple[
+            List[Optional[float]], List[Optional[float]], List[Optional[float]],
+            List[int], List[str], List[str], List[dict]]:
+        """
+        Recupera resultados do cache. Retorna listas de P/R/F1 (None onde ausente)
+        e listas com os pares não encontrados (misses).
+        """
+        n = len(preds)
+        final_P: List[Optional[float]] = [None] * n
+        final_R: List[Optional[float]] = [None] * n
+        final_F1: List[Optional[float]] = [None] * n
+
+        missed_indices: List[int] = []
+        missed_preds: List[str] = []
+        missed_trues: List[str] = []
+        missed_meta: List[dict] = []
+
+        if not self.usar_cache:
+            missed_indices = list(range(n))
+            missed_preds = list(preds)
+            missed_trues = list(trues)
+            missed_meta = [self._get_key_info(p, t) for p, t in zip(preds, trues)]
+            return final_P, final_R, final_F1, missed_indices, missed_preds, missed_trues, missed_meta
+
+        for i, (p, t) in enumerate(zip(preds, trues)):
+            info = self._get_key_info(p, t)
+            loaded = False
+            if os.path.exists(info['filepath']):
+                try:
+                    with open(info['filepath'], 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if self._validate_cache_data(data, info):
+                        p_val = data['P']
+                        r_val = data['R']
+                        f1_val = data['F1']
+                        if info['swapped']:
+                            p_val, r_val = r_val, p_val
+                        final_P[i] = p_val
+                        final_R[i] = r_val
+                        final_F1[i] = f1_val
+                        loaded = True
+                except Exception:
+                    pass
+
+            if not loaded:
+                missed_indices.append(i)
+                missed_preds.append(p)
+                missed_trues.append(t)
+                missed_meta.append(info)
+
+        return final_P, final_R, final_F1, missed_indices, missed_preds, missed_trues, missed_meta
+
+    def save_batch(self, meta_list: List[dict], P_list: List[float],
+                   R_list: List[float], F1_list: List[float]):
+        if not self.atualizar_cache:
+            return
+        for i, meta in enumerate(meta_list):
+            p_save, r_save = P_list[i], R_list[i]
+            if meta['swapped']:
+                p_save, r_save = r_save, p_save
+            data = {
+                'P': p_save,
+                'R': r_save,
+                'F1': F1_list[i],
+                'bytes1': meta['bytes1'],
+                'bytes2': meta['bytes2'],
+            }
+            try:
+                with open(meta['filepath'], 'w', encoding='utf-8') as f:
+                    json.dump(data, f)
+            except Exception:
+                pass
+
+    def limpar_cache(self, tempo_minutos: int = None, verbose: bool = True) -> int:
+        if not os.path.exists(self.cache_dir):
+            if verbose:
+                print(f"📁 [SBERTCache:{self.modelo}] Diretório não existe: {self.cache_dir}")
+            return 0
+
+        import time
+        arquivos_removidos = 0
+        tempo_limite = time.time() - (tempo_minutos * 60) if tempo_minutos is not None else None
+
+        try:
+            for nome in os.listdir(self.cache_dir):
+                if not nome.endswith('.json'):
+                    continue
+                caminho = os.path.join(self.cache_dir, nome)
+                if tempo_limite is not None:
+                    if os.path.getmtime(caminho) > tempo_limite:
+                        continue
+                os.remove(caminho)
+                arquivos_removidos += 1
+            if verbose:
+                if arquivos_removidos:
+                    print(f"✅ [SBERTCache:{self.modelo}] {arquivos_removidos} arquivo(s) removido(s)")
+                else:
+                    print(f"ℹ️ [SBERTCache:{self.modelo}] Nenhum arquivo para remover")
+        except Exception as e:
+            if verbose:
+                print(f"⚠️ [SBERTCache:{self.modelo}] Erro ao limpar cache: {e}")
+
+        return arquivos_removidos
+
+
+def sbert_score(preds: List[str], trues: List[str],
+                modelo: str = 'pequeno',
+                decimais: int = 3,
+                usar_cache: bool = True,
+                atualizar_cache: bool = True,
+                verbose: bool = False) -> Tuple[List[float], List[float], List[float]]:
+    """
+    Calcula SBERT (bertscore_like) com cache automático em disco baseado em MD5.
+
+    Padrão idêntico ao bscore() do BERTScore: verifica cache, calcula apenas os
+    pares ausentes e salva no cache.
+
+    Args:
+        preds: Lista de textos preditos
+        trues: Lista de textos de referência
+        modelo: Tamanho do modelo SBERT ('pequeno', 'medio', 'grande')
+        decimais: Casas decimais para arredondamento
+        usar_cache: Se True, lê do cache em disco
+        atualizar_cache: Se True, salva novos resultados no cache
+        verbose: Se True, exibe progresso
+
+    Returns:
+        Tupla (P, R, F1) com listas de floats
+    """
+    if not isinstance(preds, (list, tuple)) or not isinstance(trues, (list, tuple)):
+        raise TypeError("preds e trues devem ser listas ou tuplas de strings")
+    if len(preds) != len(trues):
+        raise ValueError(f"preds ({len(preds)}) e trues ({len(trues)}) devem ter o mesmo tamanho")
+
+    cache = SBERTCache(modelo=modelo, usar_cache=usar_cache, atualizar_cache=atualizar_cache)
+    final_P, final_R, final_F1, missed_idx, missed_preds, missed_trues, missed_meta = cache.get_batch(preds, trues)
+
+    if verbose and len(preds) > 0:
+        n_cache = len(preds) - len(missed_idx)
+        print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds)} pares | Calcular: {len(missed_idx)}")
+
+    if missed_preds:
+        sbert = BERTScoreLike.get_instance(modelo)
+        new_P = []
+        new_R = []
+        new_F1 = []
+        for p_text, t_text in zip(missed_preds, missed_trues):
+            res = sbert.comparar_textos(
+                p_text, t_text,
+                metodo='bertscore_like',
+                unitizador='sentencas',
+                threshold=None,
+                detalhes_nivel='nenhum',
+            )
+            new_P.append(round(res['P'], decimais))
+            new_R.append(round(res['R'], decimais))
+            new_F1.append(round(res['F1'], decimais))
+
+        # Salva no cache
+        cache.save_batch(missed_meta, new_P, new_R, new_F1)
+
+        # Preenche resultados finais
+        for j, idx in enumerate(missed_idx):
+            final_P[idx] = new_P[j]
+            final_R[idx] = new_R[j]
+            final_F1[idx] = new_F1[j]
+
+    # Arredonda resultados vindos do cache
+    final_P = [round(v, decimais) if v is not None else 0.0 for v in final_P]
+    final_R = [round(v, decimais) if v is not None else 0.0 for v in final_R]
+    final_F1 = [round(v, decimais) if v is not None else 0.0 for v in final_F1]
+
+    return final_P, final_R, final_F1
 
 class BERTScoreLike:
     """

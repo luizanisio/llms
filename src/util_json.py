@@ -967,24 +967,14 @@ class JsonAnalise:
             }
             tamanho_modelo = mapeamento_modelo.get(metrica, 'pequeno')
             
-            # Obtém instância singleton thread-safe via BERTScoreLike.get_instance()
-            from util_sbert import BERTScoreLike
-            sbert = BERTScoreLike.get_instance(tamanho_modelo)
-            
-            # Usa método bertscore_like para calcular P, R, F1
-            resultado = sbert.comparar_textos(
-                texto_pred, 
-                texto_true, 
-                metodo='bertscore_like',
-                unitizador='sentencas',
-                threshold=None,
-                detalhes_nivel='nenhum'
-            )
+            # Usa sbert_score() com cache em disco (padrão idêntico ao bscore)
+            from util_sbert import sbert_score
+            P, R, F1 = sbert_score([texto_pred], [texto_true], modelo=tamanho_modelo, decimais=4, verbose=True)
             
             return {
-                'P': round(resultado['P'], 3),
-                'R': round(resultado['R'], 3),
-                'F1': round(resultado['F1'], 3)
+                'P': P[0],
+                'R': R[0],
+                'F1': F1[0]
             }
         
         else:
@@ -2092,6 +2082,88 @@ class JsonAnaliseDataFrame():
         
         print(f"   ✅ BERTScore pré-calculado: {len(P_list)} pares processados e armazenados no cache interno")
 
+    def _precalcular_sbert_global(self):
+        """
+        PRÉ-CALCULA TODOS OS scores SBERT COM CACHE EM DISCO.
+        
+        Análogo a _precalcular_bertscore_global(), mas para métricas SBERT.
+        Coleta todos os pares (pred, true) de todas as linhas e modelos SBERT
+        configurados, calcula de uma vez e armazena no cache em disco via
+        SBERTCache (padrão MD5 idêntico ao BERTScoreCache).
+        
+        Chamadas subsequentes com os mesmos textos são instantâneas.
+        """
+        from util_sbert import sbert_score
+        
+        config = self.config or {}
+        
+        # Mapeia config keys → nome do modelo SBERT
+        sbert_config_keys = {
+            'campos_sbert': 'pequeno',
+            'campos_sbert_pequeno': 'pequeno',
+            'campos_sbert_medio': 'medio',
+            'campos_sbert_grande': 'grande',
+        }
+        
+        # Agrupa campos por modelo
+        campos_por_modelo = {}  # modelo -> set de campos
+        for cfg_key, modelo_nome in sbert_config_keys.items():
+            campos = config.get(cfg_key, [])
+            if campos:
+                campos_por_modelo.setdefault(modelo_nome, set()).update(campos)
+        
+        if not campos_por_modelo:
+            return
+        
+        print("\n🚀 Pré-calculando SBERT com cache em disco para todos os documentos...")
+        
+        # Coleta pares por modelo
+        pares_por_modelo = {m: [] for m in campos_por_modelo}  # modelo -> [(pred, true)]
+        
+        for idx, linha in enumerate(self.dados):
+            for modelo in self.rotulos[1:]:
+                pred_json = linha.get(modelo)
+                if not isinstance(pred_json, dict):
+                    continue
+                true_json = linha.get(self.rotulos[1])
+                if not isinstance(true_json, dict):
+                    continue
+                
+                for modelo_sbert, campos in campos_por_modelo.items():
+                    # Global
+                    if '(global)' in campos:
+                        texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
+                            true_json, pred_json, f'sbert_{modelo_sbert}', config, alinhar=False
+                        )
+                        pares_por_modelo[modelo_sbert].append((texto_pred, texto_true))
+                    
+                    # Campos individuais
+                    campos_pred = JsonAnalise._extrair_campos_por_nivel(pred_json, config.get('nivel_campos', 1))
+                    campos_true = JsonAnalise._extrair_campos_por_nivel(true_json, config.get('nivel_campos', 1))
+                    
+                    for campo in campos:
+                        if campo.startswith('('):
+                            continue
+                        valor_pred = campos_pred.get(campo)
+                        valor_true = campos_true.get(campo)
+                        if valor_pred is not None or valor_true is not None:
+                            texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
+                                valor_true, valor_pred, f'sbert_{modelo_sbert}', config, alinhar=True
+                            )
+                            pares_por_modelo[modelo_sbert].append((texto_pred, texto_true))
+        
+        for modelo_sbert, pares in pares_por_modelo.items():
+            if not pares:
+                continue
+            preds = [p[0] for p in pares]
+            trues = [p[1] for p in pares]
+            print(f"   ⚡ SBERT [{modelo_sbert}]: processando {len(preds)} pares...")
+            sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=True)
+        
+        total = sum(len(p) for p in pares_por_modelo.values())
+        if total:
+            print(f"   ✅ SBERT pré-calculado: {total} pares processados e armazenados no cache em disco")
+
     def to_df(self):
         """Executa comparações e retorna DataFrame com métricas"""
         import pandas as pd
@@ -2115,6 +2187,11 @@ class JsonAnaliseDataFrame():
         # OTIMIZAÇÃO CRÍTICA: PRÉ-CALCULA TODOS OS BERTScores EM BATCH ÚNICO
         # ═════════════════════════════════════════════════════════════════════════
         self._precalcular_bertscore_global()
+        
+        # ═════════════════════════════════════════════════════════════════════════
+        # OTIMIZAÇÃO: PRÉ-CALCULA TODOS OS SBERT COM CACHE EM DISCO
+        # ═════════════════════════════════════════════════════════════════════════
+        self._precalcular_sbert_global()
         
         # ═════════════════════════════════════════════════════════════════════════
         # PROCESSAMENTO EM CHUNKS (sempre, independente do volume)
