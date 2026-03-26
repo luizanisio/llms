@@ -23,9 +23,6 @@ misc:
 #| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
 #| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
 curriculum:
-  predicao:
-    #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
-    pasta: ./treino_simples/predict/ext_qwen1_5b_11
   saida:
     #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
     #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão

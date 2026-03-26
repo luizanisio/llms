@@ -20,9 +20,6 @@ misc:
 #| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
 #| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
 curriculum:
-  predicao:
-    #| Pasta onde serão gravadas as predições do modelo para avaliação (criada automaticamente)
-    pasta: ./treino_simples/predict/ext_qwen1_5b_11
   saida:
     #| Gold dataset: pasta com as saídas esperadas usadas como alvo no treino
     #| O nome do arquivo sem extensão é o ID ligado ao dataframe e ao arquivo de divisão
@@ -49,19 +46,14 @@ curriculum:
       tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_alguns/divisao_medio.csv
+    - arquivo: ./treino_simples/_divisao_muitos/divisao_medio.csv
       alias: "médio"
       tipo: ""
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_alguns/divisao_dificil.csv
+    - arquivo: ./treino_simples/_divisao_muitos/divisao_dificil.csv
       alias: "difícil"
       tipo: "lora"
-      pace_epochs: 2     # (Padrão) Transita após 1 época.
-      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_alguns/divisao_teste.csv
-      alias: "testes"
-      tipo: ""
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 
@@ -88,6 +80,8 @@ modelo:
 treinamento:
   #| Frequência de avaliação (ex: '15%' das steps ou número inteiro).
   eval_steps: 20%
+  #| Avaliação global a cada `eval_steps` (recomendada para monitorar progresso geral, padrao true).
+  eval_global: true
   
   #| Amostras por GPU. Menor gasta menos VRAM.
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
