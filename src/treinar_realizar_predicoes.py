@@ -78,6 +78,23 @@ _INTERVALO_PROGRESSO_S = 120  # 2 minutos
 _FREQUENCIA_PROGRESSO = 10
 
 
+def _formatar_eta(inicio: float, feitos: int, total: int) -> str:
+    """Retorna string com ETA estimado, ex: '⏱️ ~1h32min restantes'."""
+    if feitos <= 0:
+        return ""
+    elapsed = time.time() - inicio
+    restantes = total - feitos
+    eta_s = (elapsed / feitos) * restantes
+    if eta_s < 60:
+        return f"⏱️ ~{int(eta_s)}s restantes"
+    elif eta_s < 3600:
+        return f"⏱️ ~{int(eta_s // 60)}min restantes"
+    else:
+        h = int(eta_s // 3600)
+        m = int((eta_s % 3600) // 60)
+        return f"⏱️ ~{h}h{m:02d}min restantes"
+
+
 # ============================================================================
 # Classe base — UtilPredicao
 # ============================================================================
@@ -166,6 +183,7 @@ class UtilPredicao(ABC):
         """
         resultados = []
         ultimo_log = time.time()
+        ini_lote = time.time()
         total = len(registros)
         for i, reg in enumerate(registros):
             resultado = self.predizer(reg['messages'], reg['prompt_texto'])
@@ -173,7 +191,8 @@ class UtilPredicao(ABC):
             # Log de progresso: a cada N registros OU se >= 2 min desde último log
             agora = time.time()
             if (i + 1) % _FREQUENCIA_PROGRESSO == 0 or (i + 1) == total or (agora - ultimo_log) >= _INTERVALO_PROGRESSO_S:
-                logger.info(f"   Progresso: {i + 1}/{total} ({100 * (i + 1) // total}%)")
+                eta = _formatar_eta(ini_lote, i + 1, total)
+                logger.info(f"   Progresso: {i + 1}/{total} ({100 * (i + 1) // total}%) {eta}")
                 ultimo_log = agora
         return resultados
 
@@ -502,6 +521,170 @@ class UtilPredicao(ABC):
         logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, "
                     f"{uso_total['input_tokens']} + {uso_total['output_tokens']} tokens "
                     f"({uso_total['tempo_total_s']:.1f}s)</cinza>")
+        log_separador(caractere="=", largura=80)
+
+    # ------------------------------------------------------------------
+    # executar_predict_dataset — exportação do dataset completo
+    # ------------------------------------------------------------------
+
+    def executar_predict_dataset(self) -> None:
+        """Exporta predições para TODOS os itens do dataset, sem filtragem por subset.
+
+        Carrega todos os itens de entrada (dataframe com ``dataset_filtro``
+        aplicado ou pasta de arquivos), gera predições e salva em
+        ``{output_dir}/predict_dataset_{engine}/``.
+
+        Registros já exportados são automaticamente ignorados (permite continuação).
+        """
+        logger.info("\n")
+        log_separador(caractere="=", largura=80)
+        logger.info(f"<azul>>> MODO PREDICT DATASET - {self.NOME_ENGINE.upper()} {self.ICONE}</azul>")
+        log_separador(caractere="=", largura=80)
+
+        _exibir_cabecalho_modelo(self.yaml_config)
+        self.yaml_config.validar_max_seq_length()
+
+        logger.info(f"<cinza>\n📋 Formato de saída: {self.yaml_config.formato_saida}</cinza>")
+
+        filtro = getattr(self.yaml_config.curriculum_config.entrada, 'dataset_filtro', None)
+        if filtro:
+            logger.info(f"<cinza>🔍 dataset_filtro: {filtro}</cinza>")
+
+        if not self._preparar_para_execucao():
+            return
+
+        # Diretório de predições do dataset
+        sufixo = f"_{self.NOME_ENGINE}" if self.NOME_ENGINE != "hf" else ""
+        predict_dir = os.path.join(self.yaml_config.modelo.saida, f"predict_dataset{sufixo}")
+        os.makedirs(predict_dir, exist_ok=True)
+
+        # Carrega TODOS os itens do dataset (sem filtragem por subset)
+        logger.info("<azul>\n📂 Carregando dataset completo...</azul>")
+        try:
+            mensagens = self.yaml_config.dataset_manager.carregar_mensagens_dataset_completo()
+            if not mensagens:
+                logger.error("<vermelho>❌ Nenhum dado encontrado no dataset.</vermelho>")
+                return
+            logger.info(f"<cinza>   📊 {len(mensagens)} registros encontrados</cinza>")
+        except Exception as e:
+            logger.error(f"<vermelho>❌ Erro ao carregar dataset: {e}</vermelho>")
+            return
+
+        # Pré-check: verifica quantos já foram exportados
+        total_skip = sum(1 for msg in mensagens
+                         if _registro_ja_exportado(predict_dir, msg.get('id', '')))
+        if total_skip == len(mensagens):
+            logger.info(f"<verde>✅ Todas as {total_skip} predições já exportadas em: {predict_dir}</verde>")
+            gerar_estatisticas_predicoes(predict_dir)
+            return
+        if total_skip > 0:
+            logger.info(f"<cinza>   ⏭️ {total_skip} já exportados, {len(mensagens) - total_skip} pendentes</cinza>")
+
+        # Garante modelo carregado
+        modelo_proprio = not self._modelo_carregado
+        if modelo_proprio:
+            try:
+                self.carregar_modelo()
+            except Exception as e:
+                logger.error(f"<vermelho>❌ Erro ao carregar modelo: {e}</vermelho>")
+                return
+
+        stats = {
+            'input_tokens': 0, 'output_tokens': 0,
+            'registros_ok': 0, 'registros_erro': 0, 'registros_skip': 0,
+        }
+        ini_total = time.time()
+
+        try:
+            # Filtra pendentes e prepara registros
+            registros_pendentes = []
+            for idx, msg in enumerate(mensagens):
+                if not (isinstance(msg, dict) and 'messages' in msg):
+                    stats['registros_erro'] += 1
+                    continue
+                messages = msg['messages']
+                prompt_texto = self._extrair_prompt(messages)
+                if not prompt_texto:
+                    stats['registros_erro'] += 1
+                    continue
+                registro_id = msg.get('id', f'dataset_{idx:04d}')
+                if _registro_ja_exportado(predict_dir, registro_id):
+                    stats['registros_skip'] += 1
+                    continue
+                registros_pendentes.append({
+                    'messages': messages,
+                    'prompt_texto': prompt_texto,
+                    'registro_id': registro_id,
+                    'idx': idx,
+                })
+
+            if not registros_pendentes:
+                skip_msg = f" ({stats['registros_skip']} já exportados)" if stats['registros_skip'] else ""
+                logger.info(f"<cinza>   Nenhum registro pendente{skip_msg}</cinza>")
+            else:
+                total_pendentes = len(registros_pendentes)
+                logger.info(f"<cinza>   📝 {total_pendentes} registros pendentes</cinza>")
+
+                # Predição incremental — salva cada resultado imediatamente
+                ultimo_log = time.time()
+                ini_lote = time.time()
+                for i, reg in enumerate(registros_pendentes):
+                    resultado = self.predizer(reg['messages'], reg['prompt_texto'])
+
+                    if 'erro' in resultado:
+                        logger.error(f"<vermelho>   ❌ Erro no registro {reg['registro_id']}: {resultado['erro']}</vermelho>")
+                        stats['registros_erro'] += 1
+                    else:
+                        resposta_texto = self._formatar_resposta(resultado.get('resposta', ''))
+                        self._salvar_resultado(predict_dir, reg['registro_id'], resposta_texto, resultado)
+
+                        usage = resultado.get('usage', {})
+                        stats['input_tokens'] += usage.get('prompt_tokens', 0)
+                        stats['output_tokens'] += usage.get('completion_tokens', 0)
+                        stats['registros_ok'] += 1
+
+                    # Log de progresso
+                    agora = time.time()
+                    if (i + 1) % _FREQUENCIA_PROGRESSO == 0 or (i + 1) == total_pendentes or (agora - ultimo_log) >= _INTERVALO_PROGRESSO_S:
+                        eta = _formatar_eta(ini_lote, i + 1, total_pendentes)
+                        logger.info(f"   Progresso: {i + 1}/{total_pendentes} ({100 * (i + 1) // total_pendentes}%) {eta}")
+                        ultimo_log = agora
+
+        finally:
+            if modelo_proprio:
+                self.liberar_modelo()
+
+        tempo_total = time.time() - ini_total
+
+        # Resumo
+        resumo = {
+            'data_geracao': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'modelo_base': self.yaml_config.modelo.base,
+            'modelo_saida': self.yaml_config.modelo.saida,
+            'modelo_usado': self.nome_modelo_usado(),
+            'engine': self.NOME_ENGINE,
+            'formato_saida': self.yaml_config.formato_saida,
+            'dataset_filtro': filtro,
+            'total_registros': stats['registros_ok'],
+            'registros_skip': stats['registros_skip'],
+            'registros_erro': stats['registros_erro'],
+            'input_tokens_total': stats['input_tokens'],
+            'output_tokens_total': stats['output_tokens'],
+            'tempo_total_s': round(tempo_total, 2),
+        }
+        resumo_file = os.path.join(predict_dir, "resumo_geral.json")
+        with open(resumo_file, 'w', encoding='utf-8') as f:
+            json.dump(resumo, f, ensure_ascii=False, indent=2)
+
+        skip_msg = f", {stats['registros_skip']} já exportados" if stats['registros_skip'] else ""
+        logger.info(f"<verde>   ✅ {stats['registros_ok']} predições salvas</verde>")
+        gerar_estatisticas_predicoes(predict_dir)
+
+        log_separador(caractere="=", largura=80)
+        logger.info(f"<verde>✅ PREDICT DATASET {self.NOME_ENGINE.upper()} COMPLETO - Resultados em: {predict_dir}</verde>")
+        logger.info(f"<cinza>📊 Total: {stats['registros_ok']} registros, "
+                    f"{stats['input_tokens']} + {stats['output_tokens']} tokens "
+                    f"({tempo_total:.1f}s){skip_msg}</cinza>")
         log_separador(caractere="=", largura=80)
 
     # ------------------------------------------------------------------

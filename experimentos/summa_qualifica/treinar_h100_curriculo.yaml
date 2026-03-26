@@ -33,6 +33,7 @@ curriculum:
     dataframe: ./summa_data/pecas_exportadas_textos.parquet
     dataframe_col: texto
     dataframe_id: id_peca
+    dataset_filtro: {"fold": 11}
     prompt_template: './summa_data/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
     texto_criptografado: true

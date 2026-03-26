@@ -96,7 +96,7 @@ def detectar_template_ollama(modelo_base: str) -> tuple:
 
 def _gerar_modelfile(modelo_base: str, nome_modelo: str, pasta: str,
                      quantizacao: str, max_seq: int,
-                     template_str: str | None) -> str:
+                     template_str: str | None, num_ctx: int | None = None) -> str:
     """Gera o conteúdo do Modelfile para Ollama.
     
     O FROM usa um placeholder <./MeuModelo.gguf> que deve ser substituído
@@ -110,6 +110,9 @@ def _gerar_modelfile(modelo_base: str, nome_modelo: str, pasta: str,
 # Template não reconhecido para '{modelo_base}'.
 # Adicione o TEMPLATE adequado manualmente.
 # Consulte: https://github.com/ollama/ollama/blob/main/docs/modelfile.md'''
+
+    if num_ctx is None:
+        num_ctx = max_seq
 
     return f'''\
 # Modelfile gerado automaticamente pelo pipeline de treinamento
@@ -129,10 +132,11 @@ FROM <./MeuModelo.gguf>
 
 {template_block}
 
-# num_ctx: contexto usado no treinamento ({max_seq}).
+# num_ctx: contexto estimado a partir dos dados reais de treinamento ({max_seq} tokens de treino,
+# arredondado para cima ao múltiplo de 128 para alinhar com hardware de GPU).
 # O modelo merged preserva o contexto nativo do modelo base — que pode ser maior.
 # Ajuste conforme necessidade e VRAM disponível.
-PARAMETER num_ctx {max_seq}
+PARAMETER num_ctx {num_ctx}
 PARAMETER temperature 0.01
 PARAMETER top_p 0.9
 PARAMETER top_k 20
@@ -150,6 +154,15 @@ def gerar_modelfile_ollama(dirname: str, yaml_config, quantizacao: str) -> None:
     modelo_base = yaml_config.modelo.base
     max_seq = yaml_config.treinamento.max_seq_length
 
+    # Estima contexto a partir dos dados reais (ceil arredondado para múltiplo de 128)
+    try:
+        ctx_info = yaml_config.estimar_contexto_predict()
+        num_ctx = ctx_info["contexto"]
+        logger.info(f"<cinza>   📋 num_ctx={num_ctx} ({ctx_info['fonte']})</cinza>")
+    except Exception:
+        num_ctx = (((max_seq + 127) // 128) * 128)
+        logger.info(f"<cinza>   📋 num_ctx={num_ctx} (fallback ceil128 de max_seq_length={max_seq})</cinza>")
+
     # Usa modelo.ollama se configurado, senão gera nome a partir do diretório
     if hasattr(yaml_config.modelo, 'ollama') and yaml_config.modelo.ollama:
         nome_modelo = yaml_config.modelo.ollama
@@ -162,7 +175,7 @@ def gerar_modelfile_ollama(dirname: str, yaml_config, quantizacao: str) -> None:
 
     # Modelfile
     conteudo_modelfile = _gerar_modelfile(
-        modelo_base, nome_modelo, dirname, quantizacao, max_seq, template_str
+        modelo_base, nome_modelo, dirname, quantizacao, max_seq, template_str, num_ctx=num_ctx
     )
     modelfile_path = os.path.join(dirname, "Modelfile")
     with open(modelfile_path, 'w', encoding='utf-8') as f:

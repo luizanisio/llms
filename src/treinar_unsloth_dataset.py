@@ -436,7 +436,11 @@ class DatasetTreinamento:
                 return f.read()
 
     def _carregar_dataframe_entrada(self) -> Dict[str, str]:
-        """Carrega textos de entrada de um dataframe parquet, com decriptografia opcional."""
+        """Carrega textos de entrada de um dataframe parquet, com decriptografia opcional.
+
+        Se ``entrada.dataset_filtro`` estiver definido, aplica o filtro ao dataframe
+        antes de extrair os textos (ex: ``{"fold": 11}`` filtra ``df[df["fold"] == 11]``).
+        """
         entrada = self.curriculum.entrada
         if not entrada.dataframe:
             return {}
@@ -447,6 +451,17 @@ class DatasetTreinamento:
             raise ValueError(f"Coluna '{entrada.dataframe_col}' não encontrada no dataframe de entrada")
         if entrada.dataframe_id not in df.columns:
             raise ValueError(f"Coluna '{entrada.dataframe_id}' não encontrada no dataframe de entrada")
+        
+        # Aplica filtro de dataset se configurado
+        if entrada.dataset_filtro:
+            total_antes = len(df)
+            for coluna, valor in entrada.dataset_filtro.items():
+                if coluna not in df.columns:
+                    raise ValueError(f"Coluna de filtro '{coluna}' não encontrada no dataframe de entrada. "
+                                     f"Colunas disponíveis: {list(df.columns)}")
+                df = df[df[coluna] == valor]
+            print(f"🔍 dataset_filtro aplicado: {entrada.dataset_filtro} → "
+                  f"{len(df)} de {total_antes} registros")
         
         # Inicializa criptografia se o campo de texto está criptografado
         cripto = self._obter_cripto() if entrada.texto_criptografado else None
@@ -635,6 +650,91 @@ class DatasetTreinamento:
             print(f"⚠️  {len(erros)} erro(s) ao processar arquivos")
             
         print(f"✅ {len(mensagens)} mensagem(ns) carregada(s)" + (f" para '{alvo}'" if alvo else ""))
+        return mensagens
+
+    def carregar_mensagens_dataset_completo(self) -> List[Dict[str, Any]]:
+        """Carrega mensagens de TODOS os itens de entrada, sem filtragem por subset.
+
+        Semelhante a ``carregar_mensagens_de_pastas``, mas sem aplicar divisão
+        treino/validação/teste.  Utiliza todos os IDs disponíveis na fonte de
+        entrada (dataframe com ``dataset_filtro`` aplicado ou pasta de arquivos).
+
+        Quando a saída (gold) existe para um item, ela é incluída como role
+        ``assistant``; caso contrário, apenas o role ``user`` é incluído.
+
+        Returns:
+            Lista de dicts ``{id, messages: [{role, content}, ...]}``
+        """
+        cc = self.curriculum
+
+        # Carrega todos os itens de entrada
+        mapa_textos_entrada = {}
+        if cc.entrada.dataframe:
+            mapa_textos_entrada = self._carregar_dataframe_entrada()
+        else:
+            # Pasta de arquivos: carrega todos sem filtro
+            arquivos_entrada = self.listar_arquivos_por_mascara(cc.entrada.pasta, cc.entrada.mascara)
+            for id_arq, caminho in arquivos_entrada.items():
+                try:
+                    mapa_textos_entrada[id_arq] = self._carregar_conteudo_arquivo(caminho)
+                except Exception as e:
+                    print(f"⚠️  Erro ao carregar entrada {id_arq}: {e}")
+
+        if not mapa_textos_entrada:
+            print("⚠️  Nenhum item de entrada encontrado no dataset")
+            return []
+
+        # Carrega saída (gold) se disponível — opcional para dataset completo
+        mapa_textos_saida: Dict[str, str] = {}
+        try:
+            if cc.saida.dataframe:
+                mapa_textos_saida = self._carregar_dataframe_saida()
+            elif cc.saida.pasta:
+                arquivos_saida = self.listar_arquivos_por_mascara(cc.saida.pasta, cc.saida.mascara)
+                for id_arq, caminho in arquivos_saida.items():
+                    try:
+                        mapa_textos_saida[id_arq] = self._carregar_conteudo_arquivo(caminho)
+                    except Exception:
+                        pass
+        except Exception:
+            pass  # Saída é opcional para exportação do dataset completo
+
+        from util import UtilTextos as Util
+
+        mensagens = []
+        erros = []
+
+        for id_arq in sorted(mapa_textos_entrada.keys()):
+            try:
+                texto_entrada = mapa_textos_entrada[id_arq]
+                texto_entrada = self._montar_prompt(texto_entrada)
+
+                messages = [{"role": "user", "content": texto_entrada}]
+
+                # Inclui gold output se disponível
+                conteudo_saida = mapa_textos_saida.get(id_arq)
+                if conteudo_saida:
+                    if cc.validacao.exigir_json_valido:
+                        if not conteudo_saida.strip().startswith("Error:"):
+                            try:
+                                json_obj = Util.mensagem_to_json(conteudo_saida)
+                                conteudo_saida = json.dumps(json_obj, ensure_ascii=False)
+                            except Exception:
+                                pass  # Mantém texto original se não for JSON
+                    messages.append({"role": "assistant", "content": conteudo_saida})
+
+                mensagens.append({"id": id_arq, "messages": messages})
+
+            except Exception as e:
+                erros.append((id_arq, str(e)))
+                print(f"❌ Erro ao processar {id_arq}: {e}")
+
+        if erros:
+            print(f"⚠️  {len(erros)} erro(s) ao processar itens do dataset")
+
+        n_com_gold = sum(1 for m in mensagens if len(m["messages"]) > 1)
+        print(f"✅ {len(mensagens)} item(ns) carregado(s) do dataset completo "
+              f"({n_com_gold} com saída gold)")
         return mensagens
 
     def mostrar_exemplo(self, titulo: str, msgs_lista: List[Dict]):
