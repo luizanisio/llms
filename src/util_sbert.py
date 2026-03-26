@@ -237,11 +237,11 @@ def sbert_score(preds: List[str], trues: List[str],
     cache = SBERTCache(modelo=modelo, usar_cache=usar_cache, atualizar_cache=atualizar_cache)
     final_P, final_R, final_F1, missed_idx, missed_preds, missed_trues, missed_meta = cache.get_batch(preds, trues)
 
-    if verbose and len(preds) > 0:
-        n_cache = len(preds) - len(missed_idx)
-        print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds)} pares | Calcular: {len(missed_idx)}")
-
     if missed_preds:
+        # verbose - quantidade a calcular
+        if verbose and len(preds) > 0:
+            n_cache = len(preds) - len(missed_idx)
+            print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds)} pares | Calcular: {len(missed_idx)}")
         sbert = BERTScoreLike.get_instance(modelo)
         new_P = []
         new_R = []
