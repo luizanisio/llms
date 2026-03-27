@@ -1,0 +1,1 @@
+watch -n 3 "nvidia-smi | head -n -5"
