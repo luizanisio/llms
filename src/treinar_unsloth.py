@@ -1232,7 +1232,7 @@ class LLMsTrainer:
             learning_rate=treino_cfg.learning_rate,
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
-            logging_steps=1,
+            logging_steps=log_steps,  # Alinhado com eval_steps para sincronizar métricas no gráfico
             optim=treino_cfg.optim,
             weight_decay=treino_cfg.weight_decay,
             lr_scheduler_type=treino_cfg.lr_scheduler_type,
@@ -1245,6 +1245,7 @@ class LLMsTrainer:
             load_best_model_at_end=True if self.eval_ds and eval_steps > 0 else False,
             report_to="none",
             gradient_checkpointing=True,  # Ativa gradient checkpointing (era "unsloth" antes)
+            gradient_checkpointing_kwargs={"use_reentrant": False},  # Evita stream mismatch
             remove_unused_columns=False,
             dataloader_drop_last=False,
             dataset_text_field="text", # usamos a coluna 'text' formatada
