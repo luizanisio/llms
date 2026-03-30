@@ -927,6 +927,11 @@ class UtilPredicaoVLLM(UtilPredicao):
         import torch
         from treinar_vllm_inference import VLLMInferenceEngine, get_recommended_config
 
+        # Libera memória GPU de processos anteriores (ex: modelo HF/Unsloth
+        # ainda carregado, ou caches CUDA residuais) antes de inicializar
+        # o vLLM, que precisa de um bloco contíguo de VRAM.
+        self._liberar_memoria_gpu()
+
         self._iniciar_monitor("memoria_predicao_vllm")
 
         modelo_base_path = self.yaml_config.modelo.base
@@ -958,6 +963,30 @@ class UtilPredicaoVLLM(UtilPredicao):
         logger.info(f"<verde>   ✅ vLLM inicializado em {time.time() - ini:.1f}s</verde>")
         self._modelo = self._engine  # para liberar_modelo
         self._modelo_carregado = True
+
+    @staticmethod
+    def _liberar_memoria_gpu():
+        """Libera memória GPU antes de iniciar o vLLM.
+
+        Executa gc.collect() + torch.cuda.empty_cache() + synchronize()
+        para devolver ao sistema operacional a VRAM mantida em cache pelo
+        PyTorch.  Loga a memória livre em cada GPU para diagnóstico.
+        """
+        try:
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.info("<cinza>🧹 Memória GPU liberada antes de inicializar vLLM:</cinza>")
+                for i in range(torch.cuda.device_count()):
+                    livre_gb = torch.cuda.mem_get_info(i)[0] / (1024 ** 3)
+                    total_gb = torch.cuda.get_device_properties(i).total_mem / (1024 ** 3)
+                    logger.info(
+                        f"<cinza>   GPU {i}: {livre_gb:.1f} GB livres / {total_gb:.1f} GB total</cinza>"
+                    )
+        except Exception as e:
+            logger.debug(f"Erro ao liberar memória GPU: {e}")
 
     def predizer(self, messages: list, prompt_texto: str) -> Dict[str, Any]:
         """Predição unitária via vLLM (usado pela inferência interativa)."""

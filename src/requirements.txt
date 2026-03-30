@@ -52,7 +52,59 @@ cryptography
 python-dotenv
 
 # Redução de uso de VRAM
-# se der erro de compilador, usar: pip install flash-attn --no-build-isolation
- #                             ou  conda install flash-attn
+# IMPORTANTE: flash-attn DEVE ser compilado do source contra o PyTorch instalado.
+# NÃO usar wheels pré-compilados (pip install flash-attn) nem conda install,
+# pois geram erro "undefined symbol" por incompatibilidade de ABI com o PyTorch.
+# Ver instruções de instalação manual ao final deste arquivo.
 flash-attn
 liger-kernel
+
+# ==============================================================================
+# INSTALAÇÃO MANUAL — ORDEM E VERSÕES CORRETAS (env: luizbat05 / treina)
+# ==============================================================================
+# Versões testadas e compatíveis (Março/2026, H100 80GB, Python 3.13.9):
+#
+#   torch==2.10.0+cu128      transformers==4.57.6    accelerate==1.13.0
+#   vllm==0.18.0             flash-attn==2.8.3       liger-kernel==0.7.0
+#   bitsandbytes==0.49.2     peft==0.18.1            trl==0.24.0
+#   datasets==4.3.0          triton==3.6.0           sentence-transformers==5.3.0
+#
+# --- Passo a passo ---
+#
+# 1. Criar o ambiente conda:
+#    conda create -n treina python=3.13.9 -y
+#    conda activate treina
+#
+# 2. Instalar o PyTorch PRIMEIRO (cu128 para H100):
+#    pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+#
+# 3. Instalar os demais pacotes:
+#    TMPDIR=/var/tmp pip install -r requirements.txt
+#
+# 4. Instalar flash-attn compilando do source (OBRIGATÓRIO):
+#    TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --force-reinstall
+#
+#    - MAX_JOBS=8 limita o paralelismo para não sobrecarregar a máquina
+#    - --no-build-isolation usa o PyTorch já instalado no env (garante ABI correta)
+#    - --force-reinstall garante que qualquer versão pré-compilada seja substituída
+#    - A compilação leva ~20 minutos em 128 CPUs com MAX_JOBS=8
+#
+# 5. Verificar se tudo funciona:
+#    python -c "import torch; print(torch.__version__)"
+#    python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
+#    python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('rotary OK')"
+#    python -c "import vllm; print(vllm.__version__)"
+#
+# --- Solução de problemas ---
+#
+# Erro "undefined symbol: _ZN3c104cuda..." ao importar flash_attn:
+#   → flash-attn foi compilado contra um PyTorch diferente.
+#   → Solução: repetir passo 4 acima (recompilar do source).
+#
+# Erro "No space left on device" durante pip install:
+#   → Usar TMPDIR=/var/tmp antes do comando pip.
+#
+# pip fez upgrade do torch automaticamente (ex: 2.10→2.11):
+#   → Reverter: pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128 --no-deps
+#   → O --no-deps evita que o pip arraste dependências indesejadas.
+# ==============================================================================
