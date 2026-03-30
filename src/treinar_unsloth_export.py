@@ -405,7 +405,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     if usar_base:
         logger.info(f"<cinza>ℹ️  Opção --base ativada: Forçando uso do modelo base.</cinza>")
     elif not tem_modelo_treinado:
-        logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo LoRA treinado.</amarelo>")
+        logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo treinado.</amarelo>")
         if not _perguntar_confirmacao("Deseja usar o modelo base para predição?", padrao=False):
             logger.info("Operação cancelada.")
             return
@@ -665,6 +665,15 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
     
     if not _verificar_modelo_treinado(yaml_config):
         logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
+        return
+
+    # Merge LoRA só faz sentido para modelos LoRA; modelo FULL já é standalone
+    from treinar_unsloth_actions import _detectar_tipo_modelo_saida
+    tipo_modelo = _detectar_tipo_modelo_saida(output_dir)
+    if tipo_modelo == 'full':
+        logger.warning(f"<amarelo>⚠️  O modelo em {output_dir} é um modelo FULL fine-tuned (não LoRA).</amarelo>")
+        logger.info("<cinza>   Modelos FULL já são standalone — não precisam de merge LoRA.</cinza>")
+        logger.info(f"<cinza>   Para converter para GGUF/Ollama, use llama.cpp diretamente em: {output_dir}</cinza>")
         return
     
     mapa_quant = {
@@ -934,14 +943,14 @@ def executar_modelo(yaml_path: str, n_exemplos: int = 1, usar_base: bool = False
     
     if not usar_base:
         if not _verificar_modelo_treinado(yaml_config):
-            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo treinado na pasta de saída.</amarelo>")
             if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
                 logger.info("Operação cancelada.")
                 return
             usar_base = True
             logger.info("Continuando com modelo base (sem fine-tuning)...\n")
         else:
-            logger.info(f"<verde>✅ Modelo LoRA treinado encontrado em: {yaml_config.modelo.saida}</verde>")
+            logger.info(f"<verde>✅ Modelo treinado encontrado em: {yaml_config.modelo.saida}</verde>")
     else:
         logger.info("<cinza>ℹ️  Opção --base ativada: Forçando uso do modelo base.</cinza>")
 
@@ -1269,19 +1278,25 @@ def executar_modelo_vllm(yaml_path: str, n_exemplos: int = 1, usar_base: bool = 
 
     # Decide o caminho do modelo a utilizar
     # vLLM com LoRA: carrega modelo BASE + adapter LoRA separado
+    # vLLM com FULL: carrega modelo treinado diretamente (sem LoRA)
+    from treinar_unsloth_actions import _detectar_tipo_modelo_saida
+    tipo_modelo = _detectar_tipo_modelo_saida(yaml_config.modelo.saida)
     modelo_base_path = yaml_config.modelo.base
     lora_adapter_path = None
 
     if usar_base:
         logger.info(f"<cinza>ℹ️  Usando modelo BASE: {modelo_base_path}</cinza>")
     else:
-        if not _verificar_modelo_treinado(yaml_config):
-            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
+        if not tipo_modelo:
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo treinado na pasta de saída.</amarelo>")
             if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
                 logger.info("Operação cancelada.")
                 return
             usar_base = True
             logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+        elif tipo_modelo == 'full':
+            modelo_base_path = yaml_config.modelo.saida
+            logger.info(f"<verde>✅ Modelo FULL fine-tuned: {modelo_base_path}</verde>")
         else:
             lora_adapter_path = yaml_config.modelo.saida
             logger.info(f"<verde>✅ Modelo treinado (LoRA): {lora_adapter_path}</verde>")
@@ -1503,7 +1518,7 @@ def executar_modelo_unsloth(yaml_path: str, n_exemplos: int = 1, usar_base: bool
         logger.info(f"<cinza>ℹ️  Usando modelo BASE: {model_name}</cinza>")
     else:
         if not _verificar_modelo_treinado(yaml_config):
-            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo treinado na pasta de saída.</amarelo>")
             if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
                 logger.info("Operação cancelada.")
                 return
@@ -2086,7 +2101,7 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
         model_name = base_model
         logger.info(f"<cinza>ℹ️  Opção --base ativada: Forçando uso do modelo base.</cinza>")
     elif not tem_modelo_treinado:
-        logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo LoRA treinado.</amarelo>")
+        logger.warning("<amarelo>\n⚠️ Não foi encontrado modelo treinado.</amarelo>")
         if not _perguntar_confirmacao("Deseja usar o modelo base para predição?", padrao=False):
             logger.info("Operação cancelada.")
             return

@@ -58,6 +58,7 @@ from treinar_unsloth_util import YamlTreinamento, FORMATO_SAIDA_JSON
 from treinar_unsloth_actions import (
     _exibir_cabecalho_modelo,
     _verificar_modelo_treinado,
+    _detectar_tipo_modelo_saida,
     _perguntar_confirmacao,
 )
 from treinar_unsloth_export import (
@@ -138,6 +139,7 @@ class UtilPredicao(ABC):
         self._modelo_carregado = False
         self._monitor = None
         self.metricas_memoria: Dict[str, Any] = {}
+        self._tipo_modelo_saida: str = ''  # 'lora', 'full' ou '' (preenchido em _verificar_modelo_e_decidir_base)
 
         # Carrega configuração YAML
         validar = self.REQUER_MODELO_LOCAL
@@ -315,21 +317,32 @@ class UtilPredicao(ABC):
     def _verificar_modelo_e_decidir_base(self) -> bool:
         """Verifica modelo treinado e ajusta ``self.usar_base`` se necessário.
 
+        Detecta se a saída contém LoRA ou modelo full fine-tuned e configura
+        ``self._tipo_modelo_saida`` para uso nas subclasses de carregamento.
+
         Returns:
             True se pode continuar, False se o usuário cancelou.
         """
         if self.usar_base:
             logger.info(f"<cinza>ℹ️  Opção base ativada: usando modelo base.</cinza>")
+            self._tipo_modelo_saida = ''
             return True
-        if not _verificar_modelo_treinado(self.yaml_config):
-            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo LoRA treinado na pasta de saída.</amarelo>")
+
+        tipo = _detectar_tipo_modelo_saida(self.yaml_config.modelo.saida)
+        self._tipo_modelo_saida = tipo
+
+        if not tipo:
+            logger.warning("<amarelo>\n⚠️  Não foi encontrado modelo treinado na pasta de saída.</amarelo>")
             if not _perguntar_confirmacao("Deseja continuar com o modelo base?", padrao=False):
                 logger.info("Operação cancelada.")
                 return False
             self.usar_base = True
+            self._tipo_modelo_saida = ''
             logger.info("Continuando com modelo base (sem fine-tuning)...\n")
+        elif tipo == 'full':
+            logger.info(f"<verde>✅ Modelo FULL fine-tuned encontrado em: {self.yaml_config.modelo.saida}</verde>")
         else:
-            logger.info(f"<verde>✅ Modelo treinado encontrado em: {self.yaml_config.modelo.saida}</verde>")
+            logger.info(f"<verde>✅ Modelo LoRA treinado encontrado em: {self.yaml_config.modelo.saida}</verde>")
         return True
 
     # ------------------------------------------------------------------
@@ -934,8 +947,20 @@ class UtilPredicaoVLLM(UtilPredicao):
 
         self._iniciar_monitor("memoria_predicao_vllm")
 
-        modelo_base_path = self.yaml_config.modelo.base
-        lora_adapter_path = None if self.usar_base else self.yaml_config.modelo.saida
+        # Determina model_path e lora_path com base no tipo de modelo treinado
+        if self.usar_base:
+            # Modo base: carrega modelo original sem LoRA
+            modelo_base_path = self.yaml_config.modelo.base
+            lora_adapter_path = None
+        elif self._tipo_modelo_saida == 'full':
+            # Modelo FULL fine-tuned: carrega diretamente de modelo.saida (sem LoRA)
+            modelo_base_path = self.yaml_config.modelo.saida
+            lora_adapter_path = None
+            logger.info(f"<cinza>   📦 Modelo FULL detectado — carregando de: {modelo_base_path}</cinza>")
+        else:
+            # Modelo LoRA: carrega base + adapter
+            modelo_base_path = self.yaml_config.modelo.base
+            lora_adapter_path = self.yaml_config.modelo.saida
 
         num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
         logger.info(f"\n🎮 GPUs disponíveis: {num_gpus}")
@@ -1219,6 +1244,9 @@ class UtilPredicaoUnsloth(UtilPredicao):
 
         model_name = self.yaml_config.modelo.base if self.usar_base else self.yaml_config.modelo.saida
         logger.info(f"<azul>\n⚡ Carregando modelo com unsloth...</azul>")
+        logger.info(f"<cinza>   Modelo: {model_name}</cinza>")
+        if not self.usar_base and self._tipo_modelo_saida:
+            logger.info(f"<cinza>   Tipo: {self._tipo_modelo_saida.upper()} fine-tuned</cinza>")
         logger.info(f"<cinza>   Contexto Unsloth: {self._unsloth_context} ({self._ctx_fonte})</cinza>")
 
         ini = time.time()

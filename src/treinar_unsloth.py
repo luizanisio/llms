@@ -986,11 +986,16 @@ class LLMsTrainer:
         base_model_name = self._yaml_config.modelo.base
 
         lora_ok = False
+        full_ok = False
         model = None
         tokenizer = None
 
+        # Detecta tipo de modelo na pasta de saída
+        from treinar_unsloth_actions import _detectar_tipo_modelo_saida
+        tipo_saida = _detectar_tipo_modelo_saida(lora_model_path)
+
         # Tentativa 1: Carregar modelo LoRA já treinado (para retomada de treinamento)
-        if not self.force_base and ModelLoader.check_lora_exists(lora_model_path):
+        if not self.force_base and tipo_saida == 'lora':
             try:
                 model, tokenizer = ModelLoader.load_lora_model(
                     base_model_name=base_model_name,
@@ -1007,11 +1012,32 @@ class LLMsTrainer:
                 traceback.print_exc()
                 print_cores('<amarelo>Tentando carregar modelo base e aplicar LoRA...</amarelo>', color_auto=False)
                 time.sleep(2)
+
+        # Tentativa 1b: Carregar modelo FULL fine-tuned (sem LoRA) da saída
+        elif not self.force_base and tipo_saida == 'full':
+            print_cores(f'<azul>📦 Modelo FULL fine-tuned detectado em: {lora_model_path}</azul>', color_auto=False)
+            try:
+                model, tokenizer = ModelLoader.load_base_model(
+                    model_name=lora_model_path,
+                    max_seq_length=max_seq_length,
+                    quant_config=quant_config,
+                    device_map="auto",
+                    attn_implementation=attn_impl,
+                    use_liger_kernel=use_liger,
+                )
+                full_ok = True
+                print_cores(f'<verde>✅ Modelo FULL carregado de: {lora_model_path}</verde>', color_auto=False)
+            except Exception as e:
+                print_cores(f'<vermelho>❌ Erro ao carregar modelo FULL: {e}</vermelho>', color_auto=False)
+                traceback.print_exc()
+                print_cores('<amarelo>Tentando carregar modelo base...</amarelo>', color_auto=False)
+                time.sleep(2)
+
         elif self.force_base:
             print_cores(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>', color_auto=False)
 
         # Tentativa 2: Carregar modelo base e aplicar LoRA (se necessário)
-        if not lora_ok:
+        if not lora_ok and not full_ok:
             model, tokenizer = ModelLoader.load_base_model(
                 model_name=base_model_name,
                 max_seq_length=max_seq_length,
@@ -2666,19 +2692,23 @@ def _modo_interativo_treinar(yaml_path: str):
         Nome da ação escolhida ou None se cancelou
     """
     from treinar_unsloth_actions import (
-        _exibir_cabecalho_modelo, _verificar_modelo_treinado, _verificar_checkpoints_existem
+        _exibir_cabecalho_modelo, _verificar_modelo_treinado, _verificar_checkpoints_existem,
+        _detectar_tipo_modelo_saida,
     )
     
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=False)
     _exibir_cabecalho_modelo(yaml_config)
     
     # Status atual
-    tem_modelo = _verificar_modelo_treinado(yaml_config)
+    tipo_modelo = _detectar_tipo_modelo_saida(yaml_config.modelo.saida)
+    tem_modelo = bool(tipo_modelo)
     tem_checkpoints, qtd_checkpoints = _verificar_checkpoints_existem(yaml_config)
     
     print_cores("\n📊 STATUS ATUAL:", color_auto=False)
-    if tem_modelo:
+    if tipo_modelo == 'lora':
         print_cores("   ✅ Modelo LoRA treinado encontrado", color_auto=False)
+    elif tipo_modelo == 'full':
+        print_cores("   ✅ Modelo FULL fine-tuned encontrado", color_auto=False)
     else:
         print_cores("   ❌ Nenhum modelo treinado encontrado", color_auto=False)
     

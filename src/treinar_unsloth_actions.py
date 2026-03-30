@@ -47,19 +47,49 @@ def _exibir_cabecalho_modelo(yaml_config) -> None:
     log_separador(caractere="=", largura=70)
 
 
+def _detectar_tipo_modelo_saida(output_dir: str) -> str:
+    """Detecta o tipo de modelo treinado na pasta de saída.
+
+    Retorna:
+        ``'lora'``  — se existem adaptadores LoRA (adapter_config.json + adapter_model.*)
+        ``'full'``  — se existe modelo completo (config.json + safetensors/bin) sem adapter
+        ``''``      — se nenhum modelo treinado foi encontrado
+    """
+    if not output_dir or not os.path.isdir(output_dir):
+        return ''
+
+    # Verifica LoRA (prioridade: adapters são mais específicos)
+    arq_lora_cfg = os.path.join(output_dir, 'adapter_config.json')
+    arq_adapter_st = os.path.join(output_dir, 'adapter_model.safetensors')
+    arq_adapter_bin = os.path.join(output_dir, 'adapter_model.bin')
+    if os.path.exists(arq_lora_cfg) and (
+        os.path.exists(arq_adapter_st) or os.path.exists(arq_adapter_bin)
+    ):
+        return 'lora'
+
+    # Verifica modelo full (config.json + algum safetensors de modelo ou pytorch_model.bin)
+    arq_config = os.path.join(output_dir, 'config.json')
+    if os.path.exists(arq_config):
+        # Procura por *.safetensors (model-*.safetensors ou model.safetensors)
+        tem_safetensors = any(
+            f.endswith('.safetensors') and not f.startswith('adapter')
+            for f in os.listdir(output_dir)
+        )
+        arq_pytorch = os.path.join(output_dir, 'pytorch_model.bin')
+        if tem_safetensors or os.path.exists(arq_pytorch):
+            return 'full'
+
+    return ''
+
+
 def _verificar_modelo_treinado(yaml_config) -> bool:
     """
-    Verifica se existe modelo LoRA treinado na pasta de saída.
+    Verifica se existe modelo treinado (LoRA ou full) na pasta de saída.
     
     Returns:
         True se existir modelo treinado, False caso contrário
     """
-    output_dir = yaml_config.modelo.saida
-    arq_lora = os.path.join(output_dir, 'adapter_config.json')
-    arq_model = os.path.join(output_dir, 'adapter_model.safetensors')
-    arq_pytorch = os.path.join(output_dir, 'pytorch_model.bin')
-    
-    return os.path.exists(arq_lora) and (os.path.exists(arq_model) or os.path.exists(arq_pytorch))
+    return bool(_detectar_tipo_modelo_saida(yaml_config.modelo.saida))
 
 
 def _verificar_checkpoints_existem(yaml_config) -> tuple[bool, int]:

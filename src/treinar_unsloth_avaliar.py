@@ -576,10 +576,19 @@ def _modo_interativo_avaliar(yaml_path: str) -> Optional[str]:
         except Exception:
             pass
 
+    # --- Detecta tipo de modelo treinado (LoRA, full ou nenhum) ---
+    from treinar_unsloth_actions import _detectar_tipo_modelo_saida
+    tipo_modelo = _detectar_tipo_modelo_saida(yaml_config.modelo.saida)
+    tem_modelo = bool(tipo_modelo)
+
     # --- STATUS ATUAL ---
     print_cores("\n📊 STATUS ATUAL:", color_auto=False)
-    print_cores(f"   {'✅' if tem_modelo else '❌'} Modelo LoRA treinado"
-                f"{'' if tem_modelo else ' não encontrado na pasta de saída'}", color_auto=False)
+    if tipo_modelo == 'lora':
+        print_cores(f"   ✅ Modelo LoRA treinado encontrado na pasta de saída", color_auto=False)
+    elif tipo_modelo == 'full':
+        print_cores(f"   ✅ Modelo FULL fine-tuned encontrado na pasta de saída", color_auto=False)
+    else:
+        print_cores(f"   ❌ Modelo treinado não encontrado na pasta de saída", color_auto=False)
     if tem_checkpoints:
         print_cores(f"   💾 {qtd_checkpoints} checkpoint(s) disponível(is)", color_auto=False)
     if ollama_ok:
