@@ -144,6 +144,17 @@ class ConfigTreinamento:
     weight_decay: float = 0.01
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "linear"
+    # --- Otimizações de memória GPU (padrão: ativadas) ---
+    # flash_attention_2: usa Flash Attention 2 (O(n) VRAM vs O(n²)), crítico para sequências longas.
+    #   Requer: pip install flash-attn --no-build-isolation
+    #   Se True e não instalado, o treinamento será interrompido com sugestão de instalação.
+    #   Se False, usa 'sdpa' (Scaled Dot Product Attention) como fallback.
+    flash_attention_2: bool = True
+    # liger_kernel: usa Liger Kernel fused cross-entropy + RoPE + RMSNorm (~40% menos VRAM no pico).
+    #   Evita materializar tensor de logits completo (batch × seq × vocab × 4B).
+    #   Requer: pip install liger-kernel
+    #   Se True e não instalado, o treinamento será interrompido com sugestão de instalação.
+    liger_kernel: bool = True
     
     def __post_init__(self):
         # Validações de valores
@@ -733,6 +744,8 @@ class YamlTreinamento:
             weight_decay=float(treino_raw.get("weight_decay", 0.01)),
             optim=str(treino_raw.get("optim", "adamw_8bit")),
             lr_scheduler_type=str(treino_raw.get("lr_scheduler_type", "linear")),
+            flash_attention_2=treino_raw.get("flash_attention_2", True) in {True, "true", "True", 1, "1", "sim"},
+            liger_kernel=treino_raw.get("liger_kernel", True) in {True, "true", "True", 1, "1", "sim"},
         )
 
     def _processar_lora(self) -> ConfigLora:

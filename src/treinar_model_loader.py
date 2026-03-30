@@ -37,6 +37,19 @@ from util_print import print_cores
 
 logger = get_logger(__name__)
 
+# --- Disponibilidade de componentes opcionais de otimização de memória ---
+try:
+    from liger_kernel.transformers import AutoLigerKernelForCausalLM
+    _LIGER_DISPONIVEL = True
+except ImportError:
+    _LIGER_DISPONIVEL = False
+
+try:
+    from transformers.utils import is_flash_attn_2_available
+    _FLASH_ATTN_DISPONIVEL = is_flash_attn_2_available()
+except Exception:
+    _FLASH_ATTN_DISPONIVEL = False
+
 
 # ---------------------------------------------------------------------------
 # Configuração de Quantização
@@ -109,8 +122,9 @@ class ModelLoader:
         trust_remote_code: bool = True,
         attn_implementation: str = "flash_attention_2",
         use_cache: bool = False,
+        use_liger_kernel: bool = False,
     ) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
-        """Carrega modelo base usando AutoModelForCausalLM.
+        """Carrega modelo base usando AutoModelForCausalLM ou AutoLigerKernelForCausalLM.
 
         Args:
             model_name: Nome ou caminho do modelo (HF Hub ou local)
@@ -120,6 +134,8 @@ class ModelLoader:
             trust_remote_code: Confiar em código remoto (necessário para alguns modelos)
             attn_implementation: Implementação de atenção ("flash_attention_2", "sdpa", "eager")
             use_cache: Ativar cache KV (desabilitar durante treinamento)
+            use_liger_kernel: Usar Liger Kernel (fused cross-entropy, RoPE, RMSNorm).
+                Reduz pico de VRAM ~40% ao evitar materializar tensor de logits completo.
 
         Returns:
             Tupla (model, tokenizer)
@@ -137,9 +153,50 @@ class ModelLoader:
         # nativo (ex: Qwen2.5 = 32768 com rope_theta=1e6 que suporta até 131072).
         # O max_seq_length de treinamento é aplicado apenas na truncagem de dados
         # (via SFTConfig.max_length), não na arquitetura do modelo.
+
+        # Determina a classe de carregamento: Liger Kernel ou AutoModelForCausalLM
+        if use_liger_kernel and _LIGER_DISPONIVEL:
+            _model_cls = AutoLigerKernelForCausalLM
+            print_cores(
+                "<verde>🔥 Liger Kernel ativo: fused cross-entropy, RoPE, RMSNorm "
+                "(economia ~40% VRAM pico)</verde>", color_auto=False
+            )
+            # Liger Kernel fused loss requer que hidden_states e lm_head.weight
+            # estejam no MESMO device. Com device_map="auto" e múltiplas GPUs,
+            # o accelerate distribui camadas entre GPUs (model parallelism),
+            # causando RuntimeError: "Expected all tensors to be on the same device".
+            # Solução: forçar modelo em uma única GPU quando Liger está ativo.
+            if device_map == "auto" and torch.cuda.device_count() > 1:
+                n_gpus = torch.cuda.device_count()
+                visible = os.environ.get("CUDA_VISIBLE_DEVICES", "não definido")
+                raise RuntimeError(
+                    f"\n{'='*72}\n"
+                    f"❌ ERRO: Liger Kernel + múltiplas GPUs ({n_gpus}) detectadas.\n\n"
+                    f"O Liger Kernel utiliza fused cross-entropy loss, que exige que\n"
+                    f"hidden_states e lm_head.weight estejam no MESMO device.\n"
+                    f"Com device_map='auto' e {n_gpus} GPUs visíveis "
+                    f"(CUDA_VISIBLE_DEVICES={visible}), o modelo seria\n"
+                    f"distribuído entre GPUs, causando erro de device mismatch.\n\n"
+                    f"SOLUÇÕES (escolha uma):\n\n"
+                    f"  1. Restringir a UMA GPU antes de executar:\n"
+                    f"     export CUDA_VISIBLE_DEVICES=0\n"
+                    f"     python treinar_unsloth.py config.yaml\n\n"
+                    f"  2. Usar DDP com torchrun (cada processo usa 1 GPU):\n"
+                    f"     torchrun --nproc_per_node={n_gpus} treinar_unsloth.py config.yaml\n\n"
+                    f"  3. Desativar Liger Kernel no YAML (permite model parallelism):\n"
+                    f"     treinamento:\n"
+                    f"       liger_kernel: false\n"
+                    f"{'='*72}"
+                )
+        else:
+            _model_cls = AutoModelForCausalLM
+            if use_liger_kernel and not _LIGER_DISPONIVEL:
+                # Não deveria chegar aqui (validação é feita antes), mas por segurança
+                logger.warning("Liger Kernel solicitado mas não disponível. Usando AutoModelForCausalLM.")
+
         # Tenta usar flash_attention_2 se disponível, senão fallback para sdpa
         try:
-            model = AutoModelForCausalLM.from_pretrained(
+            model = _model_cls.from_pretrained(
                 model_name,
                 quantization_config=bnb_config,
                 device_map=device_map,
@@ -151,7 +208,7 @@ class ModelLoader:
         except Exception as e:
             logger.warning(f"Falha ao carregar com attn_implementation={attn_implementation}: {e}")
             logger.info("Tentando com attn_implementation='sdpa' (fallback)...")
-            model = AutoModelForCausalLM.from_pretrained(
+            model = _model_cls.from_pretrained(
                 model_name,
                 quantization_config=bnb_config,
                 device_map=device_map,
@@ -184,6 +241,8 @@ class ModelLoader:
         print(f"  - Parâmetros totais: {model.num_parameters():,}")
         print(f"  - Quantização: {quant_config.nbits if quant_config else 16}-bit")
         print(f"  - Device map: {device_map}")
+        print(f"  - Atenção: {getattr(model.config, '_attn_implementation', attn_implementation)}")
+        print(f"  - Liger Kernel: {'✅ ativo' if (use_liger_kernel and _LIGER_DISPONIVEL) else '❌ desativado'}")
         print(f"  - Contexto nativo: max_position_embeddings={native_max_pos}, rope_theta={native_rope_theta}")
         print(f"  - Tokenizer max length (nativo): {tokenizer_max}")
         print(f"  - Max seq length (treinamento): {max_seq_length}")
@@ -265,6 +324,8 @@ class ModelLoader:
         max_seq_length: int = 4096,
         quant_config: Optional[QuantizationConfig] = None,
         device_map: str = "auto",
+        attn_implementation: str = "flash_attention_2",
+        use_liger_kernel: bool = False,
     ) -> Tuple[PeftModel, PreTrainedTokenizer]:
         """Carrega modelo LoRA já treinado (base + adaptadores).
 
@@ -274,6 +335,8 @@ class ModelLoader:
             max_seq_length: Comprimento máximo de sequência
             quant_config: Configuração de quantização
             device_map: Estratégia de distribuição
+            attn_implementation: Implementação de atenção ("flash_attention_2", "sdpa", "eager")
+            use_liger_kernel: Usar Liger Kernel para otimização de memória
 
         Returns:
             Tupla (model, tokenizer)
@@ -286,6 +349,8 @@ class ModelLoader:
             max_seq_length=max_seq_length,
             quant_config=quant_config,
             device_map=device_map,
+            attn_implementation=attn_implementation,
+            use_liger_kernel=use_liger_kernel,
         )
 
         # Carrega adaptadores LoRA

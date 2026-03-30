@@ -50,3 +50,9 @@ python-Levenshtein==0.27.3
 # Util
 cryptography
 python-dotenv
+
+# Redução de uso de VRAM
+# se der erro de compilador, usar: pip install flash-attn --no-build-isolation
+ #                             ou  conda install flash-attn
+flash-attn
+liger-kernel

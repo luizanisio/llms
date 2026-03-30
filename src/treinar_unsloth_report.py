@@ -251,6 +251,10 @@ class GeradorRelatorio:
         conteudo.append(f"| LR scheduler | {cfg.treinamento.lr_scheduler_type} |")
         conteudo.append(f"| Quantização (nbits) | {cfg.treinamento.nbits} |")
         
+        # --- Otimizações de memória GPU ---
+        conteudo.append(f"| **Flash Attention 2** | {'✅ ativo' if cfg.treinamento.flash_attention_2 else '❌ desativado (usando SDPA)'} |")
+        conteudo.append(f"| **Liger Kernel** | {'✅ ativo (fused CE + RoPE + RMSNorm)' if cfg.treinamento.liger_kernel else '❌ desativado'} |")
+        
         # --- Seção de dados: curriculum ---
         conteudo.append("\n### Dados (Curriculum)")
         cc = cfg.curriculum_config

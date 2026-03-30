@@ -42,6 +42,13 @@ lora_r: 8
 save_checkpoints: True
 resume_from_checkpoint: True
 dataset_eval_path: ""     # opcional
+
+# Otimizações de memória GPU (padrão: ativadas)
+# flash_attention_2: atenção O(n) VRAM vs O(n²). Requer: pip install flash-attn --no-build-isolation
+# liger_kernel: fused cross-entropy ~40% menos VRAM pico. Requer: pip install liger-kernel
+# Se ativados e não instalados, o treinamento será interrompido com sugestão de instalação.
+flash_attention_2: true
+liger_kernel: true
 ```
 """
 
@@ -58,13 +65,24 @@ import torch
 
 # Nota: Não precisamos mais desabilitar torch.compile (era necessário apenas para Unsloth)
 # Mantido para compatibilidade com sistemas sem compilador C
-os.environ["TORCH_COMPILE_DISABLE"] = "1"
-try:
-    import torch._dynamo
-    torch._dynamo.config.suppress_errors = True
-    torch._dynamo.config.disable = True
-except ImportError:
-    pass
+# os.environ["TORCH_COMPILE_DISABLE"] = "1"
+# try:
+#     import torch._dynamo
+#     torch._dynamo.config.suppress_errors = True
+#     torch._dynamo.config.disable = True
+# except ImportError:
+#     pass
+
+# === Otimizações de memória GPU ===
+# Liger Kernel: fused cross-entropy + fused RoPE + fused RMSNorm
+#   Reduz pico de VRAM ~40% ao evitar materializar tensor de logits completo
+#   (batch × seq_len × vocab_size × 4B). Crítico para sequências longas (>16k tokens).
+# Flash Attention 2: atenção O(n) vs O(n²) em VRAM.
+# A disponibilidade é verificada pelo treinar_model_loader.py.
+# Se ativados no YAML e não instalados, o treinamento será interrompido com instruções.
+from treinar_model_loader import _LIGER_DISPONIVEL, _FLASH_ATTN_DISPONIVEL
+
+
 import pandas as pd
 
 import util  # garante que a pasta src está no sys.path
@@ -86,6 +104,29 @@ except ImportError:
     print("Erro: O pacote 'trl' não está instalado.")
     print("Por favor, instale-o executando: pip install trl")
     sys.exit(1)
+
+# --- Patch TRL: compatibilidade com Liger Kernel fused cross-entropy ---
+# O Liger Kernel fused CE computa a loss diretamente a partir de hidden_states
+# SEM materializar o tensor de logits completo (economia ~40% VRAM pico).
+# Isso faz outputs.logits = None, mas TRL chama entropy_from_logits(outputs.logits)
+# que assume logits != None. Este patch torna a função segura para logits=None.
+try:
+    import trl.trainer.utils as _trl_utils
+    import trl.trainer.sft_trainer as _trl_sft
+
+    _original_entropy_from_logits = _trl_utils.entropy_from_logits
+
+    def _safe_entropy_from_logits(logits):
+        """Wrapper que retorna tensor zero quando logits é None (Liger Kernel fused CE)."""
+        if logits is None:
+            return torch.tensor(0.0)
+        return _original_entropy_from_logits(logits)
+
+    # Patch em ambos os módulos (utils define, sft_trainer importa via from...import)
+    _trl_utils.entropy_from_logits = _safe_entropy_from_logits
+    _trl_sft.entropy_from_logits = _safe_entropy_from_logits
+except Exception:
+    pass  # Se não conseguir patchar, o erro original do TRL aparecerá
 
 try:
     from transformers import TrainerCallback, GenerationConfig
@@ -884,11 +925,49 @@ class LLMsTrainer:
         """Carrega modelo usando HuggingFace Transformers + PEFT.
 
         Lógica:
-        1. Se --base não foi passado, tenta carregar modelo LoRA já treinado (resume)
-        2. Se falhar ou não existir, carrega modelo base
-        3. Aplica adaptadores LoRA se configurado (lora.r > 0)
+        1. Valida disponibilidade de flash_attention_2 e liger_kernel
+        2. Se --base não foi passado, tenta carregar modelo LoRA já treinado (resume)
+        3. Se falhar ou não existir, carrega modelo base
+        4. Aplica adaptadores LoRA se configurado (lora.r > 0)
         """
         print_cores("<azul>[1/6] Carregando modelo base…</azul>", color_auto=False)
+
+        # --- Validação de componentes de otimização de memória ---
+        use_flash_attn = self._yaml_config.treinamento.flash_attention_2
+        use_liger = self._yaml_config.treinamento.liger_kernel
+
+        if use_flash_attn and not _FLASH_ATTN_DISPONIVEL:
+            raise RuntimeError(
+                "\n" + "=" * 70 + "\n"
+                "❌ Flash Attention 2 está ATIVADO no YAML (treinamento.flash_attention_2: true)\n"
+                "   mas o pacote 'flash-attn' não está instalado.\n\n"
+                "Opções:\n"
+                "  1. Instalar: pip install flash-attn --no-build-isolation\n"
+                "  2. Desativar no YAML: flash_attention_2: false\n"
+                "     (usará SDPA como fallback, mais lento e mais memória)\n"
+                + "=" * 70
+            )
+
+        if use_liger and not _LIGER_DISPONIVEL:
+            raise RuntimeError(
+                "\n" + "=" * 70 + "\n"
+                "❌ Liger Kernel está ATIVADO no YAML (treinamento.liger_kernel: true)\n"
+                "   mas o pacote 'liger-kernel' não está instalado.\n\n"
+                "   O Liger Kernel reduz o pico de VRAM em ~40% ao usar fused\n"
+                "   cross-entropy (evita materializar o tensor de logits completo).\n\n"
+                "Opções:\n"
+                "  1. Instalar: pip install liger-kernel\n"
+                "  2. Desativar no YAML: liger_kernel: false\n"
+                "     (pode causar OOM em modelos grandes ou sequências longas)\n"
+                + "=" * 70
+            )
+
+        attn_impl = "flash_attention_2" if use_flash_attn else "sdpa"
+
+        # Log das otimizações ativas
+        print_cores(f"<cinza>   🛠️  Otimizações de memória GPU:</cinza>", color_auto=False)
+        print_cores(f"<cinza>      - Flash Attention 2: {'✅ ativo' if use_flash_attn else '❌ desativado (usando SDPA)'}</cinza>", color_auto=False)
+        print_cores(f"<cinza>      - Liger Kernel:      {'✅ ativo (fused CE + RoPE + RMSNorm)' if use_liger else '❌ desativado'}</cinza>", color_auto=False)
 
         # Configuração de quantização
         nbits = self._yaml_config.treinamento.nbits
@@ -916,6 +995,8 @@ class LLMsTrainer:
                     max_seq_length=max_seq_length,
                     quant_config=quant_config,
                     device_map="auto",  # Agora funciona sem problemas!
+                    attn_implementation=attn_impl,
+                    use_liger_kernel=use_liger,
                 )
                 lora_ok = True
             except Exception as e:
@@ -933,6 +1014,8 @@ class LLMsTrainer:
                 max_seq_length=max_seq_length,
                 quant_config=quant_config,
                 device_map="auto",  # Múltiplas GPUs agora suportadas!
+                attn_implementation=attn_impl,
+                use_liger_kernel=use_liger,
             )
 
             # Aplica LoRA se configurado (e não for --base)
@@ -1254,6 +1337,7 @@ class LLMsTrainer:
             per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
             eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
             max_length=treino_cfg.max_seq_length,  # max_length substitui max_seq_length no TRL >= 0.12.0
+            use_liger_kernel=treino_cfg.liger_kernel and _LIGER_DISPONIVEL,  # Informa ao TRL para NÃO acessar outputs.logits (Liger fused CE retorna logits=None)
         )
 
         # Monta eval_dataset para o SFTTrainer.
@@ -2449,6 +2533,8 @@ def _create_default_cfg(path: str) -> None:
             "saida": "../modelos/gemma-3-12b-refleg20k-v01",
         },
         "treinamento": {
+            "flash_attention_2": True,
+            "liger_kernel": True,
             "eval_steps": "15%",
             "batch_size": 2,
             "grad_batch_size": 5,
