@@ -653,28 +653,29 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
         quantizacao: Opcional. '16bit', '4bit', '16bit_zip', '4bit_zip'.
         gerar_zip: Se True, compacta e remove o diretório temporário.
     """
-    logger.info("\n")
-    log_separador(caractere="=", largura=80)
-    logger.info("<azul>>> MODO MERGE - INTEGRANDO LORA ADAPTERS</azul>")
-    log_separador(caractere="=", largura=80)
-    
     yaml_config = YamlTreinamento(yaml_path, validar_caminhos=True)
-    _exibir_cabecalho_modelo(yaml_config)
-    
     output_dir = yaml_config.modelo.saida
     
     if not _verificar_modelo_treinado(yaml_config):
         logger.error(f"<vermelho>❌ Erro: Não foi encontrado modelo treinado em {output_dir}</vermelho>")
         return
 
-    # Merge LoRA só faz sentido para modelos LoRA; modelo FULL já é standalone
+    # Detecta tipo do modelo treinado
     from treinar_unsloth_actions import _detectar_tipo_modelo_saida
     tipo_modelo = _detectar_tipo_modelo_saida(output_dir)
-    if tipo_modelo == 'full':
-        logger.warning(f"<amarelo>⚠️  O modelo em {output_dir} é um modelo FULL fine-tuned (não LoRA).</amarelo>")
-        logger.info("<cinza>   Modelos FULL já são standalone — não precisam de merge LoRA.</cinza>")
-        logger.info(f"<cinza>   Para converter para GGUF/Ollama, use llama.cpp diretamente em: {output_dir}</cinza>")
-        return
+    is_full = (tipo_modelo == 'full')
+
+    logger.info("\n")
+    log_separador(caractere="=", largura=80)
+    if is_full:
+        logger.info("<azul>>> MODO EXPORT - EXPORTANDO MODELO FULL FINE-TUNED</azul>")
+    else:
+        logger.info("<azul>>> MODO MERGE - INTEGRANDO LORA ADAPTERS</azul>")
+    log_separador(caractere="=", largura=80)
+    
+    _exibir_cabecalho_modelo(yaml_config)
+    if is_full:
+        logger.info("<cinza>📦 Modelo FULL fine-tuned detectado — exportação direta (sem merge LoRA).</cinza>")
     
     mapa_quant = {
         '1': '16bit',
@@ -713,7 +714,8 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
         gerar_zip = True
         quantizacao = quantizacao.replace('_zip', '')  # '16bit_zip' → '16bit'
     
-    dirname = f"{output_dir}(merged_{quantizacao})"
+    label_dir = "export" if is_full else "merged"
+    dirname = f"{output_dir}({label_dir}_{quantizacao})"
     zip_path = f"{dirname}.zip"
     
     # Modo zip: merge em tempfile.TemporaryDirectory → zip → limpeza automática
@@ -731,7 +733,10 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
                 return
             os.remove(zip_path)
         
-        logger.info(f"<azul>\n🔄 Carregando modelo LoRA de: {output_dir}</azul>")
+        if is_full:
+            logger.info(f"<azul>\n🔄 Carregando modelo FULL de: {output_dir}</azul>")
+        else:
+            logger.info(f"<azul>\n🔄 Carregando modelo LoRA de: {output_dir}</azul>")
         logger.info("   Isso pode levar alguns instantes...")
         
         import tempfile
@@ -745,7 +750,10 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
                 
                 logger.info(f"<cinza>   📁 Diretório temporário: {tmpdir}</cinza>")
                 
-                _executar_merge_hf(yaml_config, output_dir, merge_dir, quantizacao)
+                if is_full:
+                    _executar_export_full_hf(yaml_config, output_dir, merge_dir, quantizacao)
+                else:
+                    _executar_merge_hf(yaml_config, output_dir, merge_dir, quantizacao)
                 
                 src_treinamento = os.path.join(output_dir, "treinamento")
                 dst_treinamento = os.path.join(merge_dir, "treinamento")
@@ -760,7 +768,7 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
                 except Exception as e:
                     logger.warning(f"<amarelo>⚠️  Erro ao gerar Modelfile: {e}</amarelo>")
                 
-                logger.info("<verde>✅ Merge concluído com sucesso!</verde>")
+                logger.info(f"<verde>✅ {'Exportação' if is_full else 'Merge'} concluído com sucesso!</verde>")
                 
                 # Compacta do tmpdir para o destino final
                 _compactar_modelo_zip(merge_dir, zip_destino=zip_path)
@@ -789,11 +797,17 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
             logger.error(f"Erro ao remover diretório: {e}")
             return
             
-    logger.info(f"<azul>\n🔄 Carregando modelo LoRA de: {output_dir}</azul>")
+    if is_full:
+        logger.info(f"<azul>\n🔄 Carregando modelo FULL de: {output_dir}</azul>")
+    else:
+        logger.info(f"<azul>\n🔄 Carregando modelo LoRA de: {output_dir}</azul>")
     logger.info("   Isso pode levar alguns instantes...")
     
     try:
-        _executar_merge_hf(yaml_config, output_dir, dirname, quantizacao)
+        if is_full:
+            _executar_export_full_hf(yaml_config, output_dir, dirname, quantizacao)
+        else:
+            _executar_merge_hf(yaml_config, output_dir, dirname, quantizacao)
         
         src_treinamento = os.path.join(output_dir, "treinamento")
         dst_treinamento = os.path.join(dirname, "treinamento")
@@ -809,7 +823,7 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
         except Exception as e:
             logger.warning(f"<amarelo>⚠️  Erro ao gerar Modelfile: {e}</amarelo>")
         
-        logger.info("<verde>✅ Merge concluído com sucesso!</verde>")
+        logger.info(f"<verde>✅ {'Exportação' if is_full else 'Merge'} concluído com sucesso!</verde>")
         logger.info(f"<cinza>   Modelo pronto em: {dirname}</cinza>")
         
     except Exception as e:
@@ -917,6 +931,36 @@ def _executar_merge_hf(yaml_config, output_dir: str, dirname: str, quantizacao: 
     )
     
     ModelLoader.save_merged_model(model, dirname, tokenizer)
+
+
+def _executar_export_full_hf(yaml_config, output_dir: str, dirname: str, quantizacao: str) -> None:
+    """Exporta modelo FULL fine-tuned (re-quantização opcional, sem merge LoRA).
+    
+    Para 16bit: carrega e re-salva o modelo (garante formato safetensors limpo).
+    Para 4bit: carrega com quantização BitsAndBytes 4-bit e salva.
+    """
+    from treinar_model_loader import ModelLoader, QuantizationConfig
+    
+    if quantizacao == '4bit':
+        quant_cfg = QuantizationConfig(nbits=4)
+        logger.info("💾 Exportando modelo FULL com quantização 4-bit (BitsAndBytes)...")
+    else:
+        quant_cfg = None
+        logger.info("💾 Exportando modelo FULL em full precision (16-bit safetensors)...")
+    
+    model, tokenizer = ModelLoader.load_base_model(
+        model_name=output_dir,
+        max_seq_length=yaml_config.treinamento.max_seq_length,
+        quant_config=quant_cfg,
+    )
+    
+    os.makedirs(dirname, exist_ok=True)
+    model.save_pretrained(dirname, safe_serialization=True)
+    tokenizer.save_pretrained(dirname)
+    
+    logger.info(f"<verde>✅ Modelo FULL exportado com sucesso!</verde>")
+    logger.info(f"<cinza>   Formato: {'4-bit (BitsAndBytes)' if quantizacao == '4bit' else '16-bit safetensors'}</cinza>")
+    logger.info(f"<cinza>   Destino: {dirname}</cinza>")
 
 
 # ---------------------------------------------------------------------------

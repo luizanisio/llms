@@ -646,12 +646,16 @@ class UtilPredicao(ABC):
                 total_pendentes = len(registros_pendentes)
                 logger.info(f"<cinza>   📝 {total_pendentes} registros pendentes</cinza>")
 
-                # Predição incremental — salva cada resultado imediatamente
-                ultimo_log = time.time()
-                ini_lote = time.time()
-                for i, reg in enumerate(registros_pendentes):
-                    resultado = self.predizer(reg['messages'], reg['prompt_texto'])
+                # Predição em lote com gravação contínua
+                # (vLLM faz batch nativo, outros fazem loop sequencial)
+                # Processa em chunks para permitir salvamento intermediário
+                _BATCH_DATASET = 64
 
+                acumulador = [0]
+                ultimo_log_t = [time.time()]
+                ini_lote = time.time()
+
+                def _on_resultado_dataset(reg, resultado):
                     if 'erro' in resultado:
                         logger.error(f"<vermelho>   ❌ Erro no registro {reg['registro_id']}: {resultado['erro']}</vermelho>")
                         stats['registros_erro'] += 1
@@ -664,12 +668,17 @@ class UtilPredicao(ABC):
                         stats['output_tokens'] += usage.get('completion_tokens', 0)
                         stats['registros_ok'] += 1
 
-                    # Log de progresso
+                    acumulador[0] += 1
+                    i = acumulador[0]
                     agora = time.time()
-                    if (i + 1) % _FREQUENCIA_PROGRESSO == 0 or (i + 1) == total_pendentes or (agora - ultimo_log) >= _INTERVALO_PROGRESSO_S:
-                        eta = _formatar_eta(ini_lote, i + 1, total_pendentes)
-                        logger.info(f"   Progresso: {i + 1}/{total_pendentes} ({100 * (i + 1) // total_pendentes}%) {eta}")
-                        ultimo_log = agora
+                    if i % _FREQUENCIA_PROGRESSO == 0 or i == total_pendentes or (agora - ultimo_log_t[0]) >= _INTERVALO_PROGRESSO_S:
+                        eta = _formatar_eta(ini_lote, i, total_pendentes)
+                        logger.info(f"   Progresso: {i}/{total_pendentes} ({100 * i // total_pendentes}%) {eta}")
+                        ultimo_log_t[0] = agora
+
+                for chunk_start in range(0, total_pendentes, _BATCH_DATASET):
+                    chunk = registros_pendentes[chunk_start:chunk_start + _BATCH_DATASET]
+                    self.predizer_lote(chunk, on_resultado=_on_resultado_dataset)
 
         finally:
             if modelo_proprio:
