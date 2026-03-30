@@ -387,7 +387,7 @@ class UtilPredicao(ABC):
         mapa_etapas = _construir_mapa_etapas(divisao_dict)
 
         # Pré-check: se todas as predições já existem, sai sem carregar o modelo
-        if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas):
+        if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=self.formato_json):
             return
 
         # Garante modelo carregado
@@ -441,7 +441,7 @@ class UtilPredicao(ABC):
                         subset_stats['registros_erro'] += 1
                         continue
                     registro_id = msg.get('id', f'{subset}_{idx:04d}')
-                    if _registro_ja_exportado(subset_dir, registro_id):
+                    if _registro_ja_exportado(subset_dir, registro_id, formato_json=self.formato_json):
                         subset_stats['registros_skip'] += 1
                         _copiar_para_pastas_etapas(predict_dir, subset, registro_id, mapa_etapas)
                         continue
@@ -593,7 +593,7 @@ class UtilPredicao(ABC):
 
         # Pré-check: verifica quantos já foram exportados
         total_skip = sum(1 for msg in mensagens
-                         if _registro_ja_exportado(predict_dir, msg.get('id', '')))
+                         if _registro_ja_exportado(predict_dir, msg.get('id', ''), formato_json=self.formato_json))
         if total_skip == len(mensagens):
             logger.info(f"<verde>✅ Todas as {total_skip} predições já exportadas em: {predict_dir}</verde>")
             gerar_estatisticas_predicoes(predict_dir)
@@ -629,7 +629,7 @@ class UtilPredicao(ABC):
                     stats['registros_erro'] += 1
                     continue
                 registro_id = msg.get('id', f'dataset_{idx:04d}')
-                if _registro_ja_exportado(predict_dir, registro_id):
+                if _registro_ja_exportado(predict_dir, registro_id, formato_json=self.formato_json):
                     stats['registros_skip'] += 1
                     continue
                 registros_pendentes.append({
