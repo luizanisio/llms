@@ -42,24 +42,26 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
   divisao:
-    - arquivo: ./treino_simples/divisao_unica.csv
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
       alias: "completo"
       tipo: "lora"
-      pace_epochs: 4
-      max_seq_length: 35840
-      proporcao:
-        - treino: 0.70
-        - validacao: 0.10
-        - teste: 0.20
-    - arquivo: ./treino_simples/divisao_facil.csv
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
       alias: "fácil"
-      tipo: "" # tipo vazio permite dividir no predict sendo ignorado no treino
-    - arquivo: ./treino_simples/divisao_medio.csv
+      tipo: ""       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_medio.csv
       alias: "médio"
       tipo: ""
-    - arquivo: ./treino_simples/divisao_dificil.csv
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_dificil.csv
       alias: "difícil"
       tipo: ""
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
 #| MODELO
@@ -96,7 +98,7 @@ treinamento:
   #| [H100] Com sequências longas: use 1. Com sequências curtas (<8k): pode usar 4-8.
   batch_size:
     efetivo: 16  # Batch efetivo (ajusta batch_size e grad_batch_size automaticamente)
-    batch_size: 1  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
+    batch_size: 3  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16-24).
   #| [H100] Com batch_size=2 e 2 GPUs: grad_batch_size=8 → efetivo = 2*8*2 = 32.

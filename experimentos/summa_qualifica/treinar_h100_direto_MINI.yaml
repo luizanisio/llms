@@ -42,24 +42,24 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
   divisao:
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
+      alias: "completo"
+      tipo: "lora"
+      pace_epochs: 4     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
       alias: "fácil"
-      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      tipo: ""       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_fold11/divisao_medio.csv
       alias: "médio"
-      tipo: "lora"
+      tipo: ""
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_fold11/divisao_dificil.csv
       alias: "difícil"
-      tipo: "lora"
-      pace_epochs: 2     # (Padrão) Transita após 1 época.
-      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
-      alias: "completo"
-      tipo: "lora"
+      tipo: ""
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 
@@ -74,12 +74,9 @@ modelo:
   #base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #base_model_name: unsloth/Qwen2.5-1.5B-Instruct-unsloth-bnb-4bit
   #base_model_name: Qwen/Qwen2.5-3B-Instruct
-  base_model_name: Qwen/Qwen2.5-7B-Instruct
+  base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-7B-Instruct(curriculum)
-  ollama: QwenCurriculum:latest
-  ollama_base: qwen2.5:7b
-  ollama_url: 
+  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI direto)
 
 #| =========================================================================
 #| TREINAMENTO
@@ -87,8 +84,14 @@ modelo:
 #| Configurações de hiperparâmetros. Defaults do Unsloth são otimizados.
 #| Guia: https://unsloth.ai/docs/get-started/fine-tuning-llms-guide/lora-hyperparameters-guide
 treinamento:
+  #| Recomendados para melhor desempenho e menor uso de VRAM, especialmente em H100. Padrão: true.
+  flash_attention_2: true  
+  liger_kernel: true  
+
   #| Frequência de avaliação (ex: '15%' das steps ou número inteiro).
   eval_steps: 20%
+  #| Avaliação global a cada `eval_steps` (recomendada para monitorar progresso geral, padrão true).
+  eval_global: true
   
   #| Amostras por GPU. Menor gasta menos VRAM.
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
@@ -99,12 +102,12 @@ treinamento:
   #| [H100] Com sequências longas: use 1. Com sequências curtas (<8k): pode usar 4-8.
   batch_size:
     efetivo: 16  # Batch efetivo (ajusta batch_size e grad_batch_size automaticamente)
-    batch_size: 3  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
+    batch_size: 1  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16-24).
   #| [H100] Com batch_size=1 e 2 GPUs: grad_batch_size=12 → efetivo = 1*12*2 = 24.
-  grad_batch_size: 6
-  # Batch efetivo: 2 * 8 * 2 GPUs = 32
+  grad_batch_size: 8
+  # Batch efetivo: 1 * 3 * 2 GPUs = 6
   
   #| Passadas no dataset. Recomendado: 1-3 épocas.
   #| Mais que 3 pode causar overfitting (memorização) em instruct datasets.
@@ -135,7 +138,7 @@ treinamento:
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
-  warmup_steps: 5
+  warmup_steps: 1
   
   #| Decaimento de peso (regularização). Padrão 0.01.
   weight_decay: 0.01
