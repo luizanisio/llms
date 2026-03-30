@@ -137,11 +137,23 @@ class CurriculumTracker:
         logger.info(f"<azul>▶ Etapa {step_index} iniciada: alias='{etapa.alias}', tipo={etapa.tipo}</azul>")
     
     def finalizar_etapa(self, step_index: int, alias: str, **metricas) -> None:
-        """Marca fim de uma etapa e registra métricas finais."""
+        """Marca fim de uma etapa e registra métricas finais.
+        
+        Métricas esperadas (além das de treinamento):
+            step_offset_acumulado: total de steps após esta etapa
+            epoch_offset_acumulado: total de épocas após esta etapa
+            instancias_acumuladas: total de instâncias treinadas após esta etapa
+            tokens_acumulados: total de tokens processados após esta etapa
+        """
+        # Salva estado com offsets acumulados para permitir retomada
         self.salvar_estado(
             current_step=step_index,
             status=self.STATUS_COMPLETED,
-            alias=alias
+            alias=alias,
+            step_offset_acumulado=metricas.get("step_offset_acumulado", 0),
+            epoch_offset_acumulado=metricas.get("epoch_offset_acumulado", 0.0),
+            instancias_acumuladas=metricas.get("instancias_acumuladas", 0),
+            tokens_acumulados=metricas.get("tokens_acumulados", 0),
         )
         self.registrar_metrica(alias=alias, event="etapa_fim", **metricas)
         logger.info(f"<verde>✅ Etapa {step_index} finalizada: alias='{alias}'</verde>")
@@ -173,6 +185,105 @@ class CurriculumTracker:
         """Verifica se o treinamento já foi dado como concluído."""
         estado = self.carregar_estado()
         return estado.get("status") == "finished"
+
+    def obter_estado_retomada(self, total_etapas: int) -> tuple:
+        """Determina o ponto de retomada e os offsets acumulados.
+        
+        Analisa curriculum_state.json para identificar até onde o treinamento
+        progrediu e recupera os contadores acumulados (steps, épocas, instâncias,
+        tokens) das etapas já concluídas.
+        
+        Args:
+            total_etapas: Número total de etapas no pipeline atual
+        
+        Returns:
+            Tupla (etapa_retomada, acumulados) onde:
+            - etapa_retomada: índice da etapa a retomar (0 = início limpo)
+            - acumulados: dict com step_offset_global, epoch_offset_global,
+              instancias_acumuladas, tokens_acumulados (todos 0 se início limpo)
+        """
+        estado = self.carregar_estado()
+        status = estado.get("status", self.STATUS_PENDENTE)
+        current_step = estado.get("current_step", 0)
+        
+        # Sem estado ou pendente: início limpo
+        if status == self.STATUS_PENDENTE:
+            return 0, {}
+        
+        # Pipeline finalizado: não deveria chegar aqui (verificado antes em train())
+        if status == "finished":
+            return total_etapas, {}
+        
+        if status == self.STATUS_COMPLETED:
+            # A etapa current_step acabou de concluir; retomar na próxima
+            etapa_retomada = current_step + 1
+        else:
+            # Status 'running' ou 'failed': retomar na mesma etapa
+            etapa_retomada = current_step
+        
+        # Garante limites válidos
+        etapa_retomada = min(etapa_retomada, total_etapas)
+        
+        if etapa_retomada <= 0:
+            return 0, {}
+        
+        # Recupera offsets acumulados do curriculum_state.json
+        # (gravados por finalizar_etapa da última etapa concluída)
+        acumulados = {
+            "step_offset_global": estado.get("step_offset_acumulado", 0),
+            "epoch_offset_global": estado.get("epoch_offset_acumulado", 0.0),
+            "instancias_acumuladas": estado.get("instancias_acumuladas", 0),
+            "tokens_acumulados": estado.get("tokens_acumulados", 0),
+        }
+        
+        # Se os offsets não estão no state (treinamento antigo sem esses campos),
+        # tenta recalcular a partir do curriculum_metrics.jsonl
+        if all(v == 0 for v in acumulados.values()) and etapa_retomada > 0:
+            acumulados_recalc = self._recalcular_offsets_de_metricas(etapa_retomada)
+            if acumulados_recalc:
+                acumulados = acumulados_recalc
+        
+        logger.info(
+            f"<azul>🔄 Retomada detectada: etapa {etapa_retomada}/{total_etapas} "
+            f"(status anterior: {status}, etapa_anterior: {current_step})</azul>"
+        )
+        logger.info(
+            f"<cinza>   Offsets restaurados: steps={acumulados.get('step_offset_global', 0)}, "
+            f"epochs={acumulados.get('epoch_offset_global', 0.0):.1f}, "
+            f"instâncias={acumulados.get('instancias_acumuladas', 0)}, "
+            f"tokens={acumulados.get('tokens_acumulados', 0)}</cinza>"
+        )
+        
+        return etapa_retomada, acumulados
+
+    def _recalcular_offsets_de_metricas(self, etapa_retomada: int) -> Optional[Dict[str, Any]]:
+        """Fallback: recalcula offsets a partir de curriculum_metrics.jsonl.
+        
+        Usado quando curriculum_state.json não tem os offsets (compatibilidade
+        com treinamentos iniciados antes desta funcionalidade).
+        """
+        if not os.path.isfile(self.metrics_file):
+            return None
+        
+        step_total = 0
+        try:
+            with open(self.metrics_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        reg = json.loads(line)
+                        if reg.get("event") == "etapa_fim":
+                            gs = reg.get("global_step", 0)
+                            step_total += gs
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+        except Exception:
+            return None
+        
+        if step_total > 0:
+            logger.info(f"<cinza>   ↳ Offsets recalculados via curriculum_metrics.jsonl (step_total={step_total})</cinza>")
+            return {"step_offset_global": step_total, "epoch_offset_global": 0.0,
+                    "instancias_acumuladas": 0, "tokens_acumulados": 0}
+        return None
 
 
 # ---------------------------------------------------------------------------

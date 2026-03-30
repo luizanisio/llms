@@ -216,10 +216,11 @@ def _print_mem(tag: str, incluir_ram: bool = True) -> dict:
 class JsonLoggerCallback(TrainerCallback):
     """Callback para registrar métricas de treinamento em formato JSONL."""
     
-    def __init__(self, path):
+    def __init__(self, path, truncar: bool = True):
         self.path = path
-        # zera o arquivo no início
-        open(self.path, "w").close()
+        # zera o arquivo no início apenas se não for retomada
+        if truncar:
+            open(self.path, "w").close()
 
     # logs = {'loss': …}  ou  {'eval_loss': …}
     def on_log(self, args, state, control, logs=None, **kwargs):
@@ -262,7 +263,8 @@ class MetricsLoggerCallback(TrainerCallback):
     def __init__(self, output_dir: str, etapa_alias: str = "Principal",
                  etapa_index: int = 0, instancias_previas: int = 0,
                  step_offset: int = 0, epoch_offset: float = 0.0,
-                 max_seq_length: int = 0, tokens_previos: int = 0):
+                 max_seq_length: int = 0, tokens_previos: int = 0,
+                 retomada: bool = False):
         """
         Args:
             output_dir: Diretório onde salvar o arquivo de métricas
@@ -273,6 +275,7 @@ class MetricsLoggerCallback(TrainerCallback):
             epoch_offset: Total de épocas acumuladas de etapas anteriores (para epoch_global)
             max_seq_length: Comprimento máximo de sequência (para calcular tokens processados)
             tokens_previos: Total de tokens processados em etapas anteriores
+            retomada: Se True, preserva métricas anteriores (não trunca arquivo)
         """
         self.output_dir = output_dir
         self.metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
@@ -290,9 +293,9 @@ class MetricsLoggerCallback(TrainerCallback):
         self._max_seq_length = max_seq_length
         self._tokens_previos = tokens_previos
         
-        # Cria diretório; trunca arquivo apenas na primeira etapa do curriculum
+        # Cria diretório; trunca arquivo apenas na primeira etapa e se NÃO for retomada
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
-        if etapa_index == 0:
+        if etapa_index == 0 and not retomada:
             open(self.metrics_file, "w").close()
             # Remove gráficos e relatório estatístico anteriores para evitar
             # confusão com dados de um treinamento passado (serão regenerados ao final)
@@ -1222,7 +1225,8 @@ class LLMsTrainer:
     # ------------------------- trainer -----------------------------------
     def _build_trainer(self, etapa_index: int = 0, etapa_alias: str = "Principal",
                        instancias_previas: int = 0, step_offset: int = 0,
-                       epoch_offset: float = 0.0, tokens_previos: int = 0) -> SFTTrainer:
+                       epoch_offset: float = 0.0, tokens_previos: int = 0,
+                       is_retomada: bool = False) -> SFTTrainer:
         """Constrói o SFTTrainer com callbacks de métricas.
         
         Args:
@@ -1232,6 +1236,7 @@ class LLMsTrainer:
             step_offset: Steps acumulados de etapas anteriores (para step_global contínuo)
             epoch_offset: Épocas acumuladas de etapas anteriores (para epoch_global contínuo)
             tokens_previos: Tokens processados em etapas anteriores (para tokens_acumulados contínuo)
+            is_retomada: Se True, preserva arquivos de métricas existentes (retomada de treino interrompido)
         """
         print_cores("<azul>[3/6] Configurando trainer…</azul>", color_auto=False)
         
@@ -1426,9 +1431,9 @@ class LLMsTrainer:
         
         # 1. JsonLogger (métricas brutas em metrics_stream.jsonl)
         jsonl = os.path.join(output_dir, "metrics_stream.jsonl")
-        if os.path.isfile(jsonl):
+        if not is_retomada and os.path.isfile(jsonl):
             os.remove(jsonl)
-        trainer.add_callback(JsonLoggerCallback(jsonl))
+        trainer.add_callback(JsonLoggerCallback(jsonl, truncar=not is_retomada))
         
         # 2. MetricsLoggerCallback (métricas unificadas: loss, hardware, curriculum, tokens)
         trainer.add_callback(MetricsLoggerCallback(
@@ -1440,6 +1445,7 @@ class LLMsTrainer:
             epoch_offset=epoch_offset,
             max_seq_length=self._yaml_config.treinamento.max_seq_length,
             tokens_previos=tokens_previos,
+            retomada=is_retomada,
         ))
         
         # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding)
@@ -1532,6 +1538,51 @@ class LLMsTrainer:
             print_cores(f'   <verde>✅ Labels verificados: {total_validos}/{total_tokens} tokens com loss ({pct_resp:.1f}%)</verde>', color_auto=False)
 
     # ------------------------- checkpoint management --------------------- 
+    def _limpar_metricas_etapa_interrompida(self, etapa_retomada: int) -> None:
+        """Remove métricas parciais da etapa interrompida, preservando etapas concluídas.
+        
+        Ao retomar um treinamento interrompido na etapa N, o arquivo
+        training_metrics.jsonl pode conter registros parciais da etapa N
+        (antes do crash). Este método remove esses registros para que
+        a etapa seja re-registrada de forma limpa, gerando um gráfico
+        contínuo e consistente.
+        
+        Args:
+            etapa_retomada: Índice da etapa a retomar (registros com etapa_index >= este valor são removidos)
+        """
+        metrics_file = os.path.join(self._yaml_config.modelo.saida, "treinamento", "training_metrics.jsonl")
+        if not os.path.isfile(metrics_file):
+            return
+        
+        try:
+            linhas_mantidas = []
+            linhas_removidas = 0
+            with open(metrics_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        reg = json.loads(line)
+                        idx = reg.get("etapa_index", 0)
+                        if idx < etapa_retomada:
+                            linhas_mantidas.append(line + "\n")
+                        else:
+                            linhas_removidas += 1
+                    except (json.JSONDecodeError, KeyError):
+                        # Mantém linhas não-parseáveis para não perder dados
+                        linhas_mantidas.append(line + "\n")
+            
+            if linhas_removidas > 0:
+                with open(metrics_file, "w", encoding="utf-8") as f:
+                    f.writelines(linhas_mantidas)
+                logger.info(
+                    f"<cinza>   🧹 Métricas da etapa interrompida removidas: "
+                    f"{linhas_removidas} registros (etapa_index >= {etapa_retomada}), "
+                    f"{len(linhas_mantidas)} registros preservados</cinza>"
+                )
+        except Exception as e:
+            logger.warning(f"⚠️  Erro ao limpar métricas da etapa interrompida: {e}")
     def _find_latest_checkpoint(self) -> str:
         """Encontra o checkpoint mais recente na pasta de checkpoints.
         
@@ -1664,18 +1715,39 @@ class LLMsTrainer:
             print_cores("<cinza>   ↳ Para reiniciar integralmente: acione o script com a opção --reset.</cinza>\n", color_auto=False)
             return
 
-        if is_curriculum:
+        # ---------------------------------------------------------
+        # Detecção de Retomada (Curriculum)
+        # ---------------------------------------------------------
+        # Usa curriculum_state.json para identificar etapas já concluídas
+        # e restaurar contadores acumulados (steps, épocas, instâncias, tokens).
+        # Isso permite pular etapas concluídas e retomar na etapa interrompida
+        # com o checkpoint correto e dataset correto.
+        etapa_retomada, acumulados_retomada = self._tracker.obter_estado_retomada(total_etapas)
+        is_retomada = etapa_retomada > 0
+
+        if is_retomada:
+            print_cores(f"<azul>[4/6] Retomando treinamento a partir da etapa {etapa_retomada+1}/{total_etapas} "
+                        f"('{self._etapas[etapa_retomada].alias}')…</azul>", color_auto=False)
+            # Limpa métricas parciais da etapa interrompida (mantém etapas concluídas)
+            self._limpar_metricas_etapa_interrompida(etapa_retomada)
+        elif is_curriculum:
             print_cores(f"<azul>[4/6] Iniciando treinamento com {total_etapas} etapas de curriculum…</azul>", color_auto=False)
         else:
             print_cores("<azul>[4/6] Iniciando treinamento…</azul>", color_auto=False)
 
         # Contadores acumulados para métricas contínuas entre etapas do curriculum
-        instancias_acumuladas = 0
-        step_offset_global = 0
-        epoch_offset_global = 0.0
-        tokens_acumulados = 0
+        # Se retomando, restaura contadores das etapas já concluídas
+        instancias_acumuladas = acumulados_retomada.get("instancias_acumuladas", 0)
+        step_offset_global = acumulados_retomada.get("step_offset_global", 0)
+        epoch_offset_global = acumulados_retomada.get("epoch_offset_global", 0.0)
+        tokens_acumulados = acumulados_retomada.get("tokens_acumulados", 0)
 
         for step_index, etapa_atual in enumerate(self._etapas):
+            # --- Pula etapas já concluídas na retomada ---
+            if step_index < etapa_retomada:
+                logger.info(f"<cinza>⏩ Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}' — já concluída, pulando</cinza>")
+                continue
+
             # --- Preparação da etapa ---
             if is_curriculum:
                 logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
@@ -1688,7 +1760,16 @@ class LLMsTrainer:
                     max_seq_length=etapa_atual.max_seq_length if etapa_atual.max_seq_length > 0 else self._yaml_config.treinamento.max_seq_length,
                 )
 
+            # Identifica se esta é a primeira etapa efetiva (para checkpoint e retomada)
+            is_primeira_etapa_efetiva = (step_index == etapa_retomada)
+            is_retomada_desta_etapa = is_retomada and is_primeira_etapa_efetiva
+
+            # Detecta checkpoint ANTES de construir o trainer para preservar métricas
+            checkpoint_path = self._find_latest_checkpoint() if is_primeira_etapa_efetiva else None
+            resume_from_checkpoint = checkpoint_path is not None
+
             # Constrói (ou reconstrói) o trainer com contexto da etapa
+            # Se há checkpoint ou retomada de curriculum, preserva arquivos de métricas
             self.trainer = self._build_trainer(
                 etapa_index=step_index,
                 etapa_alias=etapa_atual.alias,
@@ -1696,6 +1777,7 @@ class LLMsTrainer:
                 step_offset=step_offset_global,
                 epoch_offset=epoch_offset_global,
                 tokens_previos=tokens_acumulados,
+                is_retomada=is_retomada_desta_etapa or resume_from_checkpoint,
             )
 
             # Conecta referência do trainer ao GlobalEvalCallback (necessário para evaluate())
@@ -1710,10 +1792,6 @@ class LLMsTrainer:
             print("\n🔍 STATUS DO MODELO ANTES DO TREINAMENTO:")
             self.print_modelo_status()
 
-            # Checkpoint resume apenas na primeira etapa (retomada de treino interrompido)
-            checkpoint_path = self._find_latest_checkpoint() if step_index == 0 else None
-            resume_from_checkpoint = checkpoint_path is not None
-
             try:
                 if resume_from_checkpoint:
                     print_cores(f"<azul>🔄 Tentando continuar treinamento a partir do checkpoint: {checkpoint_path}</azul>", color_auto=False)
@@ -1724,12 +1802,12 @@ class LLMsTrainer:
                     except Exception as e:
                         error_msg = str(e)
                         print_cores(f"<vermelho>❌ Erro ao continuar do checkpoint: {error_msg}</vermelho>", color_auto=False)
-                        print_cores("<amarelo>🔄 Reiniciando treinamento do início...</amarelo>", color_auto=False)
+                        print_cores("<amarelo>🔄 Reiniciando treinamento do início desta etapa...</amarelo>", color_auto=False)
                         self._historico.evento_checkpoint_retomado(sucesso=False, erro=error_msg)
 
                         train_stats = self.trainer.train()
                 else:
-                    if step_index == 0:
+                    if step_index == 0 and not is_retomada:
                         print_cores("<azul>🆕 Iniciando novo treinamento</azul>", color_auto=False)
                         self._historico.registrar_evento("TREINO INICIADO", f"Novo treinamento do zero")
                     else:
@@ -1811,20 +1889,8 @@ class LLMsTrainer:
             self._historico.evento_treinamento_concluido(stats)
             self._historico.atualizar_yaml_se_necessario()
 
-            # Pipeline Universal: registra conclusão da etapa com métricas
-            self._tracker.finalizar_etapa(
-                step_index=step_index,
-                alias=etapa_atual.alias,
-                train_loss=stats.get("training_loss"),
-                eval_loss=eval_loss,
-                eval_loss_global=eval_loss_global,
-                global_step=stats.get("global_step"),
-                tempo_segundos=round(tempo_total, 2),
-                ds_train_len=stats.get("ds_train_len"),
-                ds_eval_len=stats.get("ds_eval_len"),
-            )
-
-            # Atualiza contadores acumulados para a próxima etapa do curriculum
+            # Pipeline Universal: registra conclusão da etapa com métricas e offsets acumulados
+            # PRIMEIRO atualiza contadores (necessário para gravar offsets no state)
             n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
             effective_batch = (
                 self._yaml_config.treinamento.batch_size
@@ -1844,6 +1910,23 @@ class LLMsTrainer:
                 etapa_atual.pace_epochs if etapa_atual.pace_epochs > 0 else self._yaml_config.treinamento.epochs
             )
             epoch_offset_global = math.ceil(epoch_offset_global + epocas_reais)
+
+            # DEPOIS registra conclusão com offsets acumulados (para retomada)
+            self._tracker.finalizar_etapa(
+                step_index=step_index,
+                alias=etapa_atual.alias,
+                train_loss=stats.get("training_loss"),
+                eval_loss=eval_loss,
+                eval_loss_global=eval_loss_global,
+                global_step=stats.get("global_step"),
+                tempo_segundos=round(tempo_total, 2),
+                ds_train_len=stats.get("ds_train_len"),
+                ds_eval_len=stats.get("ds_eval_len"),
+                step_offset_acumulado=step_offset_global,
+                epoch_offset_acumulado=epoch_offset_global,
+                instancias_acumuladas=instancias_acumuladas,
+                tokens_acumulados=tokens_acumulados,
+            )
 
         if is_curriculum:
             logger.info(f"<verde>✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas</verde>")
