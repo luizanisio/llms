@@ -69,7 +69,7 @@ from treinar_unsloth_export import (
     gerar_estatisticas_predicoes_etapas,
 )
 from util import UtilEnv
-
+from util_print import print_cores
 logger = get_logger(__name__)
 
 # Intervalo mínimo entre logs de progresso (segundos)
@@ -987,6 +987,87 @@ class UtilPredicaoVLLM(UtilPredicao):
                     )
         except Exception as e:
             logger.debug(f"Erro ao liberar memória GPU: {e}")
+
+    def liberar_modelo(self) -> None:
+        """Libera engine vLLM e destrói process group NCCL para evitar leak.
+
+        Segue o padrão do próprio test suite do vLLM (tests/conftest.py,
+        VllmRunner.__exit__):
+          1. llm.llm_engine.engine_core.shutdown(timeout)
+          2. del llm
+          3. cleanup (gc + empty_cache)
+
+        O engine_core é um MPClient que envia shutdown ao subprocesso
+        EngineCore, o qual por sua vez chama WorkerProc.shutdown() →
+        destroy_model_parallel() + destroy_distributed_environment() →
+        torch.distributed.destroy_process_group().  Sem essa chamada
+        explícita, o subprocesso recebe SIGTERM com timeout=0 e não tem
+        tempo de destruir o ProcessGroupNCCL, gerando o warning
+        "destroy_process_group() was not called before program exit".
+        """
+        if self._monitor:
+            self.metricas_memoria = self._monitor.parar()
+            self._monitor = None
+
+        if self._engine is not None:
+            try:
+                llm = getattr(self._engine, 'llm', None)
+                if llm is not None:
+                    # --- Caminho principal: engine_core.shutdown() -----------
+                    # Envia shutdown ao subprocesso EngineCore com timeout
+                    # suficiente para destroy_process_group() ser chamado
+                    # dentro do subprocesso (padrão do test suite vLLM).
+                    llm_engine = getattr(llm, 'llm_engine', None)
+                    engine_core = getattr(llm_engine, 'engine_core', None)
+                    if engine_core is not None and hasattr(engine_core, 'shutdown'):
+                        engine_core.shutdown(timeout=15)
+                        print_cores(
+                            "<verde>vLLM EngineCore shutdown(timeout=15) "
+                            "chamado com sucesso.</verde>"
+                        )
+                    # --- Fallback: métodos diretos na LLM/LLMEngine ---------
+                    elif hasattr(llm, 'shutdown'):
+                        llm.shutdown()
+                        print_cores("<verde>vLLM LLM.shutdown() chamado.</verde>")
+                    elif hasattr(llm, 'close'):
+                        llm.close()
+                        print_cores("<verde>vLLM LLM.close() chamado.</verde>")
+                    elif llm_engine is not None and hasattr(llm_engine, 'shutdown'):
+                        llm_engine.shutdown()
+                        print_cores("<verde>vLLM LLMEngine.shutdown() chamado.</verde>")
+            except Exception as e:
+                logger.debug(f"Erro ao fazer shutdown do vLLM engine: {e}")
+
+            del self._engine
+            self._engine = None
+
+        if self._modelo is not None:
+            del self._modelo
+            self._modelo = None
+
+        self._vllm_tokenizer = None
+        self._config = None
+        self._modelo_carregado = False
+
+        # Safety net: destrói process group do processo pai (caso exista)
+        try:
+            import torch.distributed as dist
+            if dist.is_initialized():
+                dist.destroy_process_group()
+                logger.debug("Process group NCCL do processo pai destruído.")
+        except Exception as e:
+            logger.debug(f"Erro ao destruir process group: {e}")
+
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+
+        logger.info("<cinza>🧹 Engine vLLM liberado e memória GPU limpa.</cinza>")
 
     def predizer(self, messages: list, prompt_texto: str) -> Dict[str, Any]:
         """Predição unitária via vLLM (usado pela inferência interativa)."""
