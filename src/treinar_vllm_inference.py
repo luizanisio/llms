@@ -220,7 +220,7 @@ class VLLMInferenceEngine:
     def generate_batch(
         self,
         prompts: List[str],
-        max_tokens: int = 512,
+        max_tokens: "int | List[int]" = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
         top_k: int = 50,
@@ -232,7 +232,12 @@ class VLLMInferenceEngine:
 
         Args:
             prompts: Lista de prompts
-            max_tokens: Máximo de tokens por completion
+            max_tokens: Máximo de tokens por completion. Pode ser:
+                - ``int``: valor único aplicado a todos os prompts
+                - ``List[int]``: valor individual por prompt (mesmo tamanho
+                  que ``prompts``), permitindo que prompts menores gerem
+                  saídas maiores sem serem penalizados pelo maior prompt
+                  do batch.
             temperature: Temperatura de sampling (0.0 = determinístico, 1.0 = criativo)
             top_p: Nucleus sampling
             top_k: Top-k sampling
@@ -255,18 +260,36 @@ class VLLMInferenceEngine:
         if not prompts:
             return []
 
-        # Configuração de sampling
-        sampling_params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            repetition_penalty=repetition_penalty,
-            stop=stop,
-            n=n,
-        )
-
-        print(f"🔄 Gerando {len(prompts)} completion(s)...")
+        # Configuração de sampling — individual por prompt ou global
+        if isinstance(max_tokens, list):
+            # SamplingParams por prompt: cada prompt tem seu próprio max_tokens
+            sampling_params = [
+                SamplingParams(
+                    max_tokens=mt,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                    stop=stop,
+                    n=n,
+                )
+                for mt in max_tokens
+            ]
+            min_mt = min(max_tokens)
+            max_mt = max(max_tokens)
+            print(f"🔄 Gerando {len(prompts)} completion(s)... "
+                  f"(max_tokens por prompt: {min_mt}..{max_mt})")
+        else:
+            sampling_params = SamplingParams(
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
+                stop=stop,
+                n=n,
+            )
+            print(f"🔄 Gerando {len(prompts)} completion(s)...")
 
         # Gera em batch (vLLM otimiza automaticamente)
         try:

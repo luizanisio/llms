@@ -958,6 +958,15 @@ class YamlTreinamento:
         contexto = _ceil128(contexto)
         max_new = _ceil128(max_new)
 
+        # max_tokens fixo para geração nas predições: maior output do dataset + folga.
+        # Usado por todas as engines (HF, vLLM, Unsloth, Ollama) como limite
+        # uniforme, permitindo ao modelo gerar livremente sem cap artificial.
+        # Fórmula: max(128, maior_output_tokens_do_dataset) + 256
+        if tem_colunas and max_output_obs > 0:
+            max_tokens_predict = _ceil128(max(128, max_output_obs) + 256)
+        else:
+            max_tokens_predict = max_new  # fallback: usa max_new_tokens estimado
+
         # Informa se excede max_position_embeddings (vLLM aceita via
         # VLLM_ALLOW_LONG_MAX_MODEL_LEN=1, que habilita RoPE scaling)
         max_pos = self._ler_max_position_embeddings()
@@ -967,6 +976,7 @@ class YamlTreinamento:
         return {
             "contexto": contexto,
             "max_new_tokens": max_new,
+            "max_tokens_predict": max_tokens_predict,
             "fonte": fonte,
         }
 
