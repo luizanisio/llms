@@ -50,7 +50,7 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
   - `train_on_responses_only`: (true/false) Se a perda da atenção deve pular o lado Prompter (Usuário). Ótimo para modelos instruct.
 
 ## 🔄 Como Replicar Experimentos e Reutilizar Código
-- **Retomada Autônoma**: Se um experimento for interrompido, baste re-rodar `--treinar`. O script escaneará `/chkpt`, subirá o state de onde parou as loss das métricas, e engatará exatamente na Época ou Pace que sucumbiu.
+- **Retomada Autônoma**: Se um experimento for interrompido, baste re-rodar `--treinar`. O script escaneará `/chkpt`, subirá o state de onde parou as loss das métricas, e continuará exatamente na Época ou Pace que foi interrompido.
 - **Versionamento Embutido**: Sem precisar versionar pelo git. A cada iteração ou "Resume" válido da sua frente, dentro da pasta `saida` alçada em `treinamento/treinamento_config`, viverão `.yaml` prefixados como cópia física perfeita congelada em tempo dos specs do dia (`(v001)`, `(v002)...`).
 - Todo **log** e **visualização** ficará eternizado perfeitamente grafado em `<saida>/treinamento`. Os perfis de RAM consumida, Tokens Processados e curvas de convergência residirão em `/treinamento/*hardware*, *loss*`.
 
