@@ -170,13 +170,16 @@ class UtilPredicao(ABC):
     # Métodos com implementação padrão (override opcional)
     # ------------------------------------------------------------------
 
-    def predizer_lote(self, registros: List[dict]) -> List[Dict[str, Any]]:
+    def predizer_lote(self, registros: List[dict], on_resultado=None) -> List[Dict[str, Any]]:
         """Executa predição em lote. Padrão: loop sequencial de ``predizer()``.
 
         A subclasse vLLM sobrescreve com batch nativo.
 
         Args:
             registros: Lista de dicts ``{messages, prompt_texto, registro_id, idx}``
+            on_resultado: Callback opcional ``(reg, resultado)`` chamado
+                imediatamente após cada predição, permitindo gravação
+                contínua em disco.
 
         Returns:
             Lista de dicts de resultado na mesma ordem de ``registros``.
@@ -188,6 +191,8 @@ class UtilPredicao(ABC):
         for i, reg in enumerate(registros):
             resultado = self.predizer(reg['messages'], reg['prompt_texto'])
             resultados.append(resultado)
+            if on_resultado:
+                on_resultado(reg, resultado)
             # Log de progresso: a cada N registros OU se >= 2 min desde último log
             agora = time.time()
             if (i + 1) % _FREQUENCIA_PROGRESSO == 0 or (i + 1) == total or (agora - ultimo_log) >= _INTERVALO_PROGRESSO_S:
@@ -441,15 +446,14 @@ class UtilPredicao(ABC):
 
                 logger.info(f"<cinza>   📝 {len(registros_pendentes)} registros pendentes</cinza>")
 
-                # Predição em lote (vLLM faz batch nativo, outros fazem loop)
-                resultados = self.predizer_lote(registros_pendentes)
-
-                # Salva resultados
-                for reg, resultado in zip(registros_pendentes, resultados):
+                # Callback para gravação contínua: salva cada resultado
+                # imediatamente após a predição, permitindo retomada em
+                # caso de erro (registros já exportados são ignorados).
+                def _on_resultado(reg, resultado):
                     if 'erro' in resultado:
                         logger.error(f"<vermelho>   ❌ Erro no registro {reg['idx']}: {resultado['erro']}</vermelho>")
                         subset_stats['registros_erro'] += 1
-                        continue
+                        return
 
                     resposta_texto = self._formatar_resposta(resultado.get('resposta', ''))
                     self._salvar_resultado(subset_dir, reg['registro_id'], resposta_texto, resultado)
@@ -459,6 +463,10 @@ class UtilPredicao(ABC):
                     subset_stats['input_tokens'] += usage.get('prompt_tokens', 0)
                     subset_stats['output_tokens'] += usage.get('completion_tokens', 0)
                     subset_stats['registros_ok'] += 1
+
+                # Predição em lote com gravação contínua
+                # (vLLM faz batch nativo, outros fazem loop sequencial)
+                self.predizer_lote(registros_pendentes, on_resultado=_on_resultado)
 
                 tempo_subset = time.time() - ini_subset
 
@@ -992,7 +1000,7 @@ class UtilPredicaoVLLM(UtilPredicao):
         except Exception as e:
             return {'erro': f'{type(e).__name__}: {e}', 'model': self.nome_modelo_usado(), 'tempo': time.time() - tempo_inicio}
 
-    def predizer_lote(self, registros: List[dict]) -> List[Dict[str, Any]]:
+    def predizer_lote(self, registros: List[dict], on_resultado=None) -> List[Dict[str, Any]]:
         """Predição em lote real via vLLM (batch nativo)."""
         prompts_batch = []
         metas_batch = []
@@ -1029,14 +1037,18 @@ class UtilPredicaoVLLM(UtilPredicao):
                 n=1,
             )
         except Exception as e:
-            return [{'erro': f'{type(e).__name__}: {e}', 'model': self.nome_modelo_usado(),
-                     'tempo': 0} for _ in registros]
+            erros = [{'erro': f'{type(e).__name__}: {e}', 'model': self.nome_modelo_usado(),
+                      'tempo': 0} for _ in registros]
+            if on_resultado:
+                for reg, err in zip(registros, erros):
+                    on_resultado(reg, err)
+            return erros
         tempo_total = time.time() - tempo_inicio
         tempo_por_item = tempo_total / len(prompts_batch) if prompts_batch else 0
 
         resultados = []
         for i, res in enumerate(resultados_vllm):
-            resultados.append({
+            resultado = {
                 'resposta': res["output"],
                 'usage': {
                     'prompt_tokens': metas_batch[i]['input_tokens'],
@@ -1045,7 +1057,10 @@ class UtilPredicaoVLLM(UtilPredicao):
                 },
                 'model': self.nome_modelo_usado(),
                 'tempo': round(tempo_por_item, 3),
-            })
+            }
+            resultados.append(resultado)
+            if on_resultado:
+                on_resultado(registros[i], resultado)
 
         logger.info(f"<cinza>   ✅ Batch concluído em {tempo_total:.1f}s "
                     f"({sum(r['usage']['completion_tokens'] for r in resultados)} tokens gerados)</cinza>")
