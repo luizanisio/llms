@@ -3,7 +3,7 @@
 
 # Configuração Global de Saída
 saida:
-  pasta: "./saidas_fold11/analises_comparacao_summa_q235 (fold11-fácil)"
+  pasta: "./saidas_fold11/analises_comparacao_summa_q235 (fold11-vllm)"
   arquivo_base: "comparacao_summa"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
   linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
@@ -29,28 +29,24 @@ modelo_base:
 
 # Modelos Comparados
 modelos_comparacao:
-  - pasta: "./treino_simples/Qwen2.5-7B-Instruct(curriculum)/predict_vllm/teste (fácil)"
-    rotulo: "Qwen7b(cur-fácil)"
-    familia: "Qwen-7B"
+  - pasta: "./saidas_fold11/ext_qwen235b_11"
+    rotulo: "Qwen235b*"
+    familia: "Qwen-235B"
 
-  - pasta: "./treino_simples/Qwen2.5-7B-Instruct(direto)/predict_vllm/teste (fácil)"
-    rotulo: "Qwen7b(direto-fácil)"
+  - pasta: "./treino_simples/Qwen2.5-7B-Instruct(curriculum)/predict_dataset_vllm"
+    rotulo: "Qwen7b(vLLM)"
     familia: "Qwen-7B"
 
   - pasta: "./saidas_fold11/ext_qwen25_7b_11"
-    rotulo: "Qwen7b(base-fácil)"
+    rotulo: "Qwen7b(Unsloth)"
     familia: "Qwen-7B"
 
-  - pasta: "./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum)/predict_vllm/teste (fácil)"
-    rotulo: "Qwen1.5b(cur-fácil)"
+  - pasta: "./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum)/predict_dataset_vllm"
+    rotulo: "Qwen1.5b(vLLM)"
     familia: "Qwen-1.5B"
 
-  - pasta: "./treino_simples/Qwen2.5-1.5B-Instruct(MINI direto)/predict_vllm/teste (fácil)"
-    rotulo: "Qwen1.5b(direto-fácil)"
-    familia: "Qwen-1.5B"
-
-  - pasta: "./saidas_fold11/ex_qwen25_1_5b_11/"
-    rotulo: "Qwen1.5b(base-fácil)"
+  - pasta: "./saidas_fold11/ex_qwen25_1_5b_11"
+    rotulo: "Qwen1.5b(Unsloth)"
     familia: "Qwen-1.5B"
 
 # Configuração das Métricas e Campos

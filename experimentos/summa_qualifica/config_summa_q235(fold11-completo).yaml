@@ -29,21 +29,30 @@ modelo_base:
 
 # Modelos Comparados
 modelos_comparacao:
-  - pasta: "./saidas_fold11/ext_qwen235b_11"
-    rotulo: "Qwen235b*"
-    familia: "Qwen-235B"
-
-  - pasta: "./saidas_fold11/treina7b(cur)/treina7b(cur-completo)"
+  - pasta: "./treino_simples/Qwen2.5-7B-Instruct(curriculum)/predict_vllm/teste (completo)"
     rotulo: "Qwen7b(cur-completo)"
     familia: "Qwen-7B"
 
-  - pasta: "./saidas_fold11/treina7b(all)/treina7b(all-completo)"
-    rotulo: "Qwen7b(all-completo)"
+  - pasta: "./treino_simples/Qwen2.5-7B-Instruct(direto)/predict_vllm/teste (completo)"
+    rotulo: "Qwen7b(direto-completo)"
     familia: "Qwen-7B"
 
-  - pasta: "./saidas_fold11/treina7b(base)/treina7b(completo)"
+  - pasta: "./saidas_fold11/ext_qwen25_7b_11"
     rotulo: "Qwen7b(base-completo)"
     familia: "Qwen-7B"
+
+  - pasta: "./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum)/predict_vllm/teste (completo)"
+    rotulo: "Qwen1.5b(cur-completo)"
+    familia: "Qwen-1.5B"
+
+  - pasta: "./treino_simples/Qwen2.5-1.5B-Instruct(MINI direto)/predict_vllm/teste (completo)"
+    rotulo: "Qwen1.5b(direto-completo)"
+    familia: "Qwen-1.5B"
+
+  - pasta: "./saidas_fold11/ex_qwen25_1_5b_11/"
+    rotulo: "Qwen1.5b(base-completo)"
+    familia: "Qwen-1.5B"
+
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
