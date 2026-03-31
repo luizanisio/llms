@@ -66,6 +66,7 @@ from treinar_unsloth_export import (
     _copiar_para_pastas_etapas,
     _registro_ja_exportado,
     _todas_predicoes_exportadas,
+    _exibir_resumo_json_validos,
     gerar_estatisticas_predicoes,
     gerar_estatisticas_predicoes_etapas,
 )
@@ -393,6 +394,7 @@ class UtilPredicao(ABC):
 
         # Pré-check: se todas as predições já existem, sai sem carregar o modelo
         if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=self.formato_json):
+            _exibir_resumo_json_validos(predict_dir, self.formato_json, subsets=subsets)
             return
 
         # Garante modelo carregado
@@ -542,6 +544,8 @@ class UtilPredicao(ABC):
         with open(resumo_file, 'w', encoding='utf-8') as f:
             json.dump(resumo_geral, f, ensure_ascii=False, indent=2)
 
+        _exibir_resumo_json_validos(predict_dir, self.formato_json, subsets=subsets)
+
         log_separador(caractere="=", largura=80)
         logger.info(f"<verde>✅ PREDICT {self.NOME_ENGINE.upper()} COMPLETO - Resultados em: {predict_dir}</verde>")
         logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, "
@@ -602,6 +606,7 @@ class UtilPredicao(ABC):
         if total_skip == len(mensagens):
             logger.info(f"<verde>✅ Todas as {total_skip} predições já exportadas em: {predict_dir}</verde>")
             gerar_estatisticas_predicoes(predict_dir)
+            _exibir_resumo_json_validos(predict_dir, self.formato_json)
             return
         if total_skip > 0:
             logger.info(f"<cinza>   ⏭️ {total_skip} já exportados, {len(mensagens) - total_skip} pendentes</cinza>")
@@ -714,6 +719,7 @@ class UtilPredicao(ABC):
         skip_msg = f", {stats['registros_skip']} já exportados" if stats['registros_skip'] else ""
         logger.info(f"<verde>   ✅ {stats['registros_ok']} predições salvas</verde>")
         gerar_estatisticas_predicoes(predict_dir)
+        _exibir_resumo_json_validos(predict_dir, self.formato_json)
 
         log_separador(caractere="=", largura=80)
         logger.info(f"<verde>✅ PREDICT DATASET {self.NOME_ENGINE.upper()} COMPLETO - Resultados em: {predict_dir}</verde>")

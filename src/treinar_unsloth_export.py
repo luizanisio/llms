@@ -38,7 +38,7 @@ from datetime import datetime
 import torch
 
 from treinar_unsloth_logging import get_logger, log_separador
-from util_print import exibir_menu_opcoes
+from util_print import exibir_menu_opcoes, print_cores
 from treinar_unsloth_util import (
     YamlTreinamento, FORMATO_SAIDA_JSON
 )
@@ -123,9 +123,9 @@ def _registro_ja_exportado(subset_dir: str, registro_id: str, min_bytes: int = 1
         if formato_json:
             with open(txt_path, 'r', encoding='utf-8') as f:
                 conteudo = f.read()
-            try:
-                json.loads(conteudo)
-            except (json.JSONDecodeError, ValueError):
+            from util import UtilTextos
+            json_obj = UtilTextos.mensagem_to_json(conteudo, padrao=None)
+            if json_obj is None:
                 return False
         return True
     except OSError:
@@ -364,6 +364,60 @@ def gerar_estatisticas_predicoes_etapas(predict_dir: str, subset: str) -> None:
                 gerar_estatisticas_predicoes(pasta_etapa)
 
 
+def _exibir_resumo_json_validos(predict_dir: str, formato_json: bool, subsets: list = None) -> None:
+    """Exibe resumo de validação JSON dos arquivos .txt exportados.
+
+    Quando ``formato_json=True``, varre os .txt da pasta de predição e
+    verifica quantos contêm JSON válido via ``UtilTextos.mensagem_to_json``.
+    Imprime resultado com ``print_cores``.
+
+    Args:
+        predict_dir: Diretório raiz de predições.
+        formato_json: Se False, não faz nada (saída não é JSON).
+        subsets: Lista de subsets. Se None, varre ``predict_dir`` diretamente.
+    """
+    if not formato_json:
+        return
+
+    from util import UtilTextos
+
+    json_validos = 0
+    json_invalidos = 0
+
+    # Determina pastas a varrer
+    pastas = [os.path.join(predict_dir, s) for s in subsets] if subsets else [predict_dir]
+
+    for pasta in pastas:
+        if not os.path.isdir(pasta):
+            continue
+        for nome in sorted(os.listdir(pasta)):
+            if not nome.endswith('.txt'):
+                continue
+            caminho = os.path.join(pasta, nome)
+            try:
+                with open(caminho, 'r', encoding='utf-8') as f:
+                    conteudo = f.read().strip()
+                if not conteudo:
+                    json_invalidos += 1
+                    continue
+                resultado = UtilTextos.mensagem_to_json(conteudo, padrao=None)
+                if resultado is not None:
+                    json_validos += 1
+                else:
+                    json_invalidos += 1
+            except Exception:
+                json_invalidos += 1
+
+    total = json_validos + json_invalidos
+    if total == 0:
+        return
+
+    if json_invalidos == 0:
+        print_cores(f"📋 Validação JSON: {json_validos}/{total} saídas são JSON válido ✅")
+    else:
+        print_cores(f"📋 Validação JSON: {json_validos}/{total} JSON válido, <vermelho>{json_invalidos} inválido(s)</vermelho> ⚠️")
+
+
 # ---------------------------------------------------------------------------
 # Predições com HuggingFace Transformers (LLMsTrainer)
 # ---------------------------------------------------------------------------
@@ -433,6 +487,7 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
 
     # Pré-check: se todas as predições já existem, sai sem carregar o modelo
     if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
+        _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
         return
     
     # Carrega modelo via LLMsTrainer (mesmo caminho que executar_modelo)
@@ -629,6 +684,8 @@ def executar_predict(yaml_path: str, subsets: list = None, usar_base: bool = Fal
     with open(resumo_geral_file, 'w', encoding='utf-8') as f:
         json.dump(resumo_geral, f, ensure_ascii=False, indent=2)
     
+    _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
+
     log_separador(caractere="=", largura=80)
     logger.info(f"<verde>✅ PREDICT COMPLETO - Resultados em: {predict_dir}</verde>")
     logger.info(f"<cinza>📊 Total: {uso_total['total_registros']} registros, {uso_total['input_tokens']} + {uso_total['output_tokens']} tokens</cinza>")
@@ -1115,6 +1172,7 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
 
     # Pré-check: se todas as predições já existem, sai sem carregar o modelo
     if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
+        _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
         return
 
     # Inicializa vLLM (modelo base + LoRA adapter opcional)
@@ -1279,6 +1337,8 @@ def executar_predict_vllm(yaml_path: str, subsets: list = None, usar_base: bool 
 
     finally:
         pass
+
+    _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
 
     log_separador(caractere="=", largura=80)
     logger.info(f"<verde>✅ PREDICT VLLM COMPLETO - Resultados em: {predict_dir}</verde>")
@@ -1799,6 +1859,7 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
 
     # Pré-check: se todas as predições já existem, sai sem conectar ao Ollama
     if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
+        _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
         return
 
     # Verifica status do Ollama
@@ -1942,6 +2003,8 @@ def executar_predict_ollama(yaml_path: str, subsets: list = None) -> None:
 
     finally:
         pass
+
+    _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
 
     log_separador(caractere="=", largura=80)
     logger.info(f"<verde>✅ PREDICT OLLAMA COMPLETO - Resultados em: {predict_dir}</verde>")
@@ -2172,6 +2235,7 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
 
     # Pré-check: se todas as predições já existem, sai sem carregar o modelo
     if _todas_predicoes_exportadas(predict_dir, subsets, divisao_dict, mapa_etapas, formato_json=formato_json):
+        _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
         return
 
     # Carrega modelo com unsloth
@@ -2334,6 +2398,8 @@ def executar_predict_unsloth(yaml_path: str, subsets: list = None, usar_base: bo
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    _exibir_resumo_json_validos(predict_dir, formato_json, subsets=subsets)
 
     log_separador(caractere="=", largura=80)
     logger.info(f"<verde>✅ PREDICT UNSLOTH COMPLETO - Resultados em: {predict_dir}</verde>")
