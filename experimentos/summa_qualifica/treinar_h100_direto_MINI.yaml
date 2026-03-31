@@ -121,7 +121,7 @@ treinamento:
   #| Em modo curriculum, cada etapa pode sobrepor este valor (ver curriculum.divisao).
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
   #| ⚠️ Com sequências longas, reduza batch_size para 1 e aumente grad_batch_size.
-  max_seq_length: 4098
+  max_seq_length: 35840
   
   #| Validação de tokens segura. Recomendado: true.
   #| Se `false` e o max_seq_length for > 0, o sistema confia na sua configuração
