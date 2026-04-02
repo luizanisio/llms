@@ -1158,6 +1158,10 @@ class GraficoEficiencia:
         Usa eval_loss como referência (padrão acadêmico). Para cada etapa,
         calcula tokens_por_delta_loss = tokens_da_etapa / (eval_loss_inicial - eval_loss_final).
         
+        Para os pontos do gráfico, calcula a eficiência **marginal** entre avaliações
+        consecutivas (tokens consumidos no intervalo / Δloss no intervalo), mostrando
+        retornos decrescentes ao longo do treinamento.
+        
         Args:
             train_data: Lista de dicts com {step, tokens_acumulados, loss, etapa_index, ...}
             eval_data: Lista de dicts com {step, eval_loss, etapa_index, etapa_alias, ...}
@@ -1191,11 +1195,12 @@ class GraficoEficiencia:
             "tokens_por_delta_loss": round(global_tokens / global_delta) if global_delta > 0 else None,
         }
         
-        # --- Pontos para gráfico (curva de custo acumulado) ---
+        # --- Pontos para gráfico (custo marginal entre avaliações consecutivas) ---
+        prev_tok = 0
+        prev_loss = global_loss_inicial
         for ev in eval_data:
             step = ev["step"]
             eval_loss = ev["eval_loss"]
-            delta = global_loss_inicial - eval_loss
             
             # Busca tokens_acumulados do train_data mais próximo (≤ step)
             tok = 0
@@ -1204,16 +1209,26 @@ class GraficoEficiencia:
                     tok = t["tokens_acumulados"]
                     break
             
+            # Custo marginal: tokens consumidos neste intervalo / melhoria neste intervalo
+            delta_marginal = prev_loss - eval_loss
+            tok_marginal = tok - prev_tok
+            if delta_marginal > 0 and tok_marginal > 0:
+                custo_marginal = round(tok_marginal / delta_marginal)
+            else:
+                custo_marginal = None
+            
             ponto = {
                 "step": step,
                 "tokens_acumulados": tok,
                 "eval_loss": eval_loss,
-                "delta_loss": round(delta, 4),
-                "tokens_por_delta_loss": round(tok / delta) if delta > 0 and tok > 0 else None,
+                "delta_loss": round(delta_marginal, 4),
+                "tokens_por_delta_loss": custo_marginal,
                 "etapa_alias": ev.get("etapa_alias", "Principal"),
                 "etapa_index": ev.get("etapa_index", 0),
             }
             resultado["pontos"].append(ponto)
+            prev_tok = tok
+            prev_loss = eval_loss
         
         # --- Cálculo por etapa ---
         # Agrupa eval_data por etapa_index
@@ -1269,9 +1284,9 @@ class GraficoEficiencia:
         titulo: str = "Eficiência de Tokens por Redução de Loss",
         etapas_curriculum: List[Dict] = None,
     ) -> bool:
-        """Gera gráfico de eficiência: tokens/Δloss ao longo do treinamento.
+        """Gera gráfico de eficiência marginal: tokens/Δloss ao longo do treinamento.
         
-        X = tokens acumulados, Y = tokens necessários por ponto de Δloss (custo).
+        X = tokens acumulados, Y = custo marginal (tokens entre avaliações / Δloss entre avaliações).
         Mostra como o custo marginal cresce (retornos decrescentes).
         Marcadores de etapa quando aplicável.
         
@@ -1304,13 +1319,13 @@ class GraficoEficiencia:
             custo = [p["tokens_por_delta_loss"] for p in pontos_validos]
             eval_losses = [p["eval_loss"] for p in pontos_validos]
             
-            # --- Eixo esquerdo: Custo (tokens/Δloss) ---
+            # --- Eixo esquerdo: Custo marginal (tokens/Δloss) ---
             cor_custo = '#DC2626'  # vermelho
             ax1.plot(tokens, custo, color=cor_custo, linewidth=2, marker='o',
-                     markersize=5, alpha=0.9, label='Tokens/Δloss (custo)')
+                     markersize=5, alpha=0.9, label='Tokens/Δloss marginal (custo)')
             ax1.fill_between(tokens, custo, alpha=0.1, color=cor_custo)
             ax1.set_xlabel('Tokens Acumulados', fontsize=12)
-            ax1.set_ylabel('Tokens por ponto de Δeval_loss', fontsize=12, color=cor_custo)
+            ax1.set_ylabel('Custo marginal (tokens/Δeval_loss)', fontsize=12, color=cor_custo)
             ax1.tick_params(axis='y', labelcolor=cor_custo)
             ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
             ax1.xaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))

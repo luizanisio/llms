@@ -256,7 +256,7 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
             # Imagem do gráfico
             if os.path.exists(efic_graph_path):
                 stats_report.append("\n![Eficiência Tokens/Loss](treinamento_eficiencia_tokens.png)\n")
-                stats_report.append("*Vermelho: custo acumulado (tokens/Δloss, quanto menor melhor) | Azul: eval_loss*\n")
+                stats_report.append("*Vermelho: custo marginal (tokens/Δloss entre avaliações, subindo = retornos decrescentes) | Azul: eval_loss*\n")
 
     # ---- Métricas de Hardware ----
     hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)

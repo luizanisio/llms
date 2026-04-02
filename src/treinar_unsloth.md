@@ -96,8 +96,8 @@ tokens_por_delta_loss = tokens_processados / (eval_loss_inicial - eval_loss_fina
 - **Referência:** Usa `eval_loss` (validation loss), não training loss — padrão acadêmico que evita decisões baseadas em overfitting.
 - **Cálculo global:** Eficiência total do treinamento inteiro.
 - **Cálculo por etapa:** Eficiência de cada etapa do curriculum separadamente. Permite identificar quais etapas têm melhor custo-benefício.
-- **Gráfico:** O eixo X mostra tokens acumulados, eixo Y esquerdo mostra o custo acumulado (tokens/Δloss — vermelho, quanto menor melhor), eixo Y direito mostra eval_loss (azul). Marcadores violeta indicam transições de etapa.
-- **Interpretação:** Se a curva vermelha sobe acentuadamente, o modelo está em retornos decrescentes — investindo muitos tokens para pouca melhoria adicional.
+- **Gráfico:** O eixo X mostra tokens acumulados, eixo Y esquerdo mostra o custo marginal entre avaliações consecutivas (tokens/Δloss — vermelho, quanto menor melhor), eixo Y direito mostra eval_loss (azul). Marcadores violeta indicam transições de etapa.
+- **Interpretação:** A curva vermelha mostra o custo marginal — se sobe, o modelo está em retornos decrescentes (investindo mais tokens por unidade de melhoria). Em treinamentos saudáveis, o custo marginal sobe gradualmente.
 - **Caso sem melhoria:** Se eval_loss não diminui (Δloss ≤ 0), a métrica é reportada como "∞ (sem melhoria)".
 
 ---
