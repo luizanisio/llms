@@ -74,6 +74,19 @@ logger = get_logger(__name__)
 # Geração de gráficos/estatísticas reutilizável (pós-treinamento e --stats)
 # ---------------------------------------------------------------------------
 
+def _formatar_tokens(valor) -> str:
+    """Formata número de tokens para exibição legível (K/M/B)."""
+    if valor is None:
+        return "N/A"
+    if valor >= 1_000_000_000:
+        return f"{valor / 1_000_000_000:.1f}B"
+    if valor >= 1_000_000:
+        return f"{valor / 1_000_000:.1f}M"
+    if valor >= 1_000:
+        return f"{valor / 1_000:.1f}K"
+    return str(int(valor))
+
+
 def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
                                 stats_report: list = None) -> Optional[str]:
     """
@@ -189,6 +202,61 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
         else:
             if not silencioso:
                 logger.info("<cinza>   ℹ️ Gráfico de tokens não gerado (sem dados de tokens_acumulados).</cinza>")
+
+    # ---- Gráfico e Relatório de Eficiência tokens/Δloss ----
+    if train_data and eval_data:
+        if not silencioso:
+            logger.info("<cinza>   📊 Calculando eficiência tokens/Δloss...</cinza>")
+
+        eficiencia = GraficoEficiencia.calcular_eficiencia_tokens(
+            train_data, eval_data, etapas_curriculum=etapas_curriculum
+        )
+        
+        # Gráfico
+        efic_graph_path = os.path.join(report_dir, "treinamento_eficiencia_tokens.png")
+        if GraficoEficiencia.grafico_eficiencia_tokens(
+            eficiencia, efic_graph_path,
+            etapas_curriculum=etapas_curriculum
+        ):
+            logger.info("<verde>   ✅ Gráfico de eficiência salvo: treinamento_eficiencia_tokens.png</verde>")
+        
+        # Seção no relatório
+        info_global = eficiencia.get("global", {})
+        info_etapas = eficiencia.get("etapas", [])
+        
+        if info_global.get("delta_loss", 0) > 0 or info_etapas:
+            stats_report.append("\n### Eficiência de Tokens\n")
+            stats_report.append("Custo computacional medido em tokens necessários para reduzir 1 ponto de eval_loss.\n")
+            stats_report.append("Quanto menor, mais eficiente o treinamento.\n")
+            
+            # Tabela global
+            if info_global.get("delta_loss", 0) > 0:
+                tpdl = info_global["tokens_por_delta_loss"]
+                stats_report.append(f"\n**Global:** {_formatar_tokens(tpdl)} tokens/Δloss "
+                                    f"(eval_loss: {info_global['loss_inicial']:.4f} → {info_global['loss_final']:.4f}, "
+                                    f"Δ={info_global['delta_loss']:.4f}, "
+                                    f"tokens={_formatar_tokens(info_global['tokens'])})\n")
+            elif info_global:
+                stats_report.append(f"\n**Global:** sem melhoria no eval_loss "
+                                    f"({info_global.get('loss_inicial', '?')} → {info_global.get('loss_final', '?')})\n")
+            
+            # Tabela por etapa
+            if len(info_etapas) > 1:
+                stats_report.append("\n| Etapa | Tokens | eval_loss (ini→fin) | Δloss | Tokens/Δloss |")
+                stats_report.append("|-------|--------|---------------------|-------|-------------|")
+                for et in info_etapas:
+                    tpdl_str = _formatar_tokens(et["tokens_por_delta_loss"]) if et["tokens_por_delta_loss"] else "∞ (sem melhoria)"
+                    stats_report.append(
+                        f"| {et['alias']} | {_formatar_tokens(et['tokens'])} "
+                        f"| {et['loss_inicial']:.4f} → {et['loss_final']:.4f} "
+                        f"| {et['delta_loss']:.4f} | {tpdl_str} |"
+                    )
+                stats_report.append("")
+            
+            # Imagem do gráfico
+            if os.path.exists(efic_graph_path):
+                stats_report.append("\n![Eficiência Tokens/Loss](treinamento_eficiencia_tokens.png)\n")
+                stats_report.append("*Vermelho: custo acumulado (tokens/Δloss, quanto menor melhor) | Azul: eval_loss*\n")
 
     # ---- Métricas de Hardware ----
     hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)

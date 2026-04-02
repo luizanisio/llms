@@ -231,18 +231,38 @@ class HistoricoTreinamento:
                 linhas.append(f"- **Target Modules:** {modules_str}")
             linhas.append("")
 
-        # Parâmetros
+        # Parâmetros (estado inicial — LoRA por padrão)
         try:
+            import torch
             trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
             total = sum(p.numel() for p in model.parameters())
+            quantizados = sum(p.numel() for p in model.parameters()
+                              if p.dtype not in (torch.float32, torch.float16, torch.bfloat16))
             pct = (trainable / total * 100) if total > 0 else 0
-            linhas.append("## Parâmetros")
+            linhas.append("## Parâmetros (estado inicial)")
             linhas.append(f"- **Treináveis:** {trainable:,}")
             linhas.append(f"- **Totais:** {total:,}")
+            if quantizados > 0:
+                nbits = yaml_config.treinamento.nbits
+                linhas.append(f"- **Quantizados ({nbits}-bit, congelados):** {quantizados:,}")
+                linhas.append(f"- **Float (desbloqueáveis):** {total - quantizados:,}")
             linhas.append(f"- **Percentual treinável:** {pct:.4f}%")
             linhas.append("")
         except Exception:
             pass
+
+        # Etapas do curriculum (full vs lora)
+        etapas = yaml_config.curriculum
+        if etapas:
+            linhas.append("## Etapas do Curriculum")
+            linhas.append("")
+            linhas.append("| # | Alias | Tipo | Epochs | Max Seq |")
+            linhas.append("|---|-------|------|--------|---------|")
+            for i, etapa in enumerate(etapas):
+                ep = etapa.pace_epochs if etapa.pace_epochs > 0 else yaml_config.treinamento.epochs
+                msl = etapa.max_seq_length if etapa.max_seq_length > 0 else yaml_config.treinamento.max_seq_length
+                linhas.append(f"| {i} | {etapa.alias} | {etapa.tipo or '(predict)'} | {ep} | {msl} |")
+            linhas.append("")
 
         # Template do tokenizer
         linhas.append("## Chat Template")
@@ -415,9 +435,13 @@ class HistoricoTreinamento:
             detalhes += f"\n- **{k}:** {v}"
         self.registrar_evento(f"ETAPA CURRICULUM: {alias}", detalhes)
 
-    def evento_treinamento_concluido(self, stats: dict = None) -> None:
+    def evento_treinamento_concluido(self, stats: dict = None, alias: str = "", tipo: str = "") -> None:
         """Registra conclusão do treinamento."""
         detalhes = ""
+        if alias:
+            detalhes += f"- **Etapa:** {alias}\n"
+        if tipo:
+            detalhes += f"- **Modo:** {tipo}\n"
         if stats:
             if "training_loss" in stats:
                 detalhes += f"- **Training Loss:** {stats['training_loss']:.6f}\n"
@@ -431,6 +455,8 @@ class HistoricoTreinamento:
                 detalhes += f"- **Instâncias de Treino:** {stats['ds_train_len']}\n"
             if "ds_eval_len" in stats:
                 detalhes += f"- **Instâncias de Validação:** {stats['ds_eval_len']}\n"
+            if "parametros_treinaveis" in stats:
+                detalhes += f"- **Parâmetros treináveis:** {stats['parametros_treinaveis']:,}\n"
         self.registrar_evento("TREINAMENTO CONCLUÍDO", detalhes)
 
     def evento_modelo_salvo(self, output_dir: str, arquivos: list = None) -> None:

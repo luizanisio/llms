@@ -164,14 +164,12 @@ class ConfigTreinamento:
             raise ValueError(f"grad_batch_size deve ser > 0, recebido: {self.grad_batch_size}")
         if self.epochs <= 0:
             raise ValueError(f"epochs deve ser > 0, recebido: {self.epochs}")
-        if self.max_seq_length <= 0:
+        if self.max_seq_length < 0:
             raise ValueError(
-                f"max_seq_length é obrigatório e deve ser > 0, recebido: {self.max_seq_length}. "
-                f"Consulte os dados de tokens no CSV de divisão (coluna token_total) "
-                f"para definir um valor adequado."
+                f"max_seq_length deve ser >= 0 (0 = auto-estimar a partir do CSV), recebido: {self.max_seq_length}."
             )
-        if self.nbits not in {0, 4, 8, None}:
-            raise ValueError(f"nbits deve ser 0, 4, 8 ou None, recebido: {self.nbits}")
+        if self.nbits not in {0, 4, 8, 16, None}:
+            raise ValueError(f"nbits deve ser 0, 4, 8, 16 ou None, recebido: {self.nbits}")
 
 
 @dataclass
@@ -718,14 +716,10 @@ class YamlTreinamento:
             batch_size_val = int(batch_size_raw)
             grad_batch_size_val = int(treino_raw.get("grad_batch_size", 5))
 
-        # max_seq_length é obrigatório — o pesquisador deve definir com base
-        # nos dados de tokens do CSV de divisão (coluna token_total)
-        msl_raw = treino_raw.get("max_seq_length")
-        if msl_raw is None or int(msl_raw) <= 0:
-            raise ValueError(
-                "❌ 'treinamento.max_seq_length' é obrigatório e deve ser > 0.\n"
-                "   Consulte a coluna 'token_total' no CSV de divisão para definir um valor adequado."
-            )
+        # max_seq_length: 0 ou omitido = auto-estimar a partir do CSV (coluna token_total)
+        # > 0 = valor explícito (teto máximo)
+        msl_raw = treino_raw.get("max_seq_length", 0)
+        msl_val = int(msl_raw) if msl_raw is not None else 0
 
         return ConfigTreinamento(
             eval_steps=treino_raw.get("eval_steps", "15%"),
@@ -733,7 +727,7 @@ class YamlTreinamento:
             batch_size=batch_size_val,
             grad_batch_size=grad_batch_size_val,
             epochs=int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1),
-            max_seq_length=int(msl_raw),
+            max_seq_length=msl_val,
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
             save_checkpoints=treino_raw.get("save_checkpoints", True) in {True, "true", "True", 1, "1", "sim"},
             resume_from_checkpoint=treino_raw.get("resume_from_checkpoint", True) in {True, "true", "True", 1, "1", "sim"},
@@ -835,15 +829,45 @@ class YamlTreinamento:
     # ---------------------------------------------------------------------------
 
     def validar_max_seq_length(self) -> None:
-        """Valida que max_seq_length está definido e exibe informações de tokens por etapa.
+        """Valida max_seq_length ou auto-estima a partir dos dados de tokens no CSV.
         
-        max_seq_length é obrigatório (já validado no __post_init__).
-        Aqui apenas exibimos informações úteis baseadas nos dados de tokens
-        disponíveis no CSV de divisão (coluna token_total), para que o pesquisador
-        possa verificar se o valor escolhido é adequado.
+        Se max_seq_length == 0 (omitido ou explicitamente 0 no YAML), estima
+        automaticamente com base em max(token_total) do CSV + 10% de margem,
+        arredondado para múltiplo de 128. Falha se o CSV não possui coluna token_total.
+        
+        Se max_seq_length > 0, exibe informações de validação por etapa.
+        O atributo max_seq_length_auto é definido como True quando auto-estimado,
+        permitindo que _aplicar_etapa_curriculum() faça estimativas por etapa.
         """
+        import math
         msl = self.treinamento.max_seq_length
-        print(f"✅ max_seq_length={msl} (definido no YAML)")
+        
+        if msl <= 0:
+            # Auto-estimação a partir dos dados do CSV
+            max_tokens_global = 0
+            
+            for etapa in self._curriculum:
+                info_tokens = self._ler_info_tokens_divisao(etapa.arquivo)
+                if not info_tokens or info_tokens.get("max", 0) == 0:
+                    raise ValueError(
+                        f"❌ max_seq_length não definido e CSV '{etapa.arquivo}' "
+                        f"(etapa '{etapa.alias}') não possui coluna 'token_total'.\n"
+                        f"   Defina 'treinamento.max_seq_length' manualmente no YAML "
+                        f"ou gere o CSV com a coluna token_total."
+                    )
+                max_tk = info_tokens["max"]
+                if max_tk > max_tokens_global:
+                    max_tokens_global = max_tk
+            
+            # Margem de 10% + arredondamento para múltiplo de 128
+            estimado = int(math.ceil(max_tokens_global * 1.1 / 128) * 128)
+            self.treinamento.max_seq_length = estimado
+            self.treinamento.max_seq_length_auto = True
+            msl = estimado
+            print(f"✅ max_seq_length={estimado} (auto: max_token={max_tokens_global} + 10% margem, ×128)")
+        else:
+            self.treinamento.max_seq_length_auto = False
+            print(f"✅ max_seq_length={msl} (definido no YAML)")
         
         # Exibe informações de tokens por etapa do curriculum (se disponível nos CSVs)
         for etapa in self._curriculum:

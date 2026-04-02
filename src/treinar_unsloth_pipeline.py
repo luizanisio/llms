@@ -39,12 +39,14 @@ class EtapaCurriculum:
     predições para pastas separadas por etapa, sem afetar o treino.
     """
     alias: str = "Principal"
-    arquivo: str = ""          # Arquivo de divisão ou dataset específico da etapa
-    tipo: str = "lora"         # "lora", "full" ou "" (somente predict)
-    pace_epochs: int = 0       # 0 = usa epochs global do YAML
-    pace_loss: float = 0.0     # 0 = sem early stopping por loss
-    max_seq_length: int = 0    # 0 = usa valor global
-    learning_rate: float = 0.0 # 0 = usa valor global
+    arquivo: str = ""              # Arquivo de divisão ou dataset específico da etapa
+    tipo: str = "lora"             # "lora", "full" ou "" (somente predict)
+    pace_epochs: int = 0           # Mínimo de épocas (0 = usa epochs global do YAML)
+    pace_epochs_max: int = 0       # Máximo de épocas se pace_loss não for atingido (0 = sem limite extra)
+    pace_loss: float = 0.0         # Loss alvo para avançar. Só avalia após pace_epochs mínimo. 0 = desativado
+    max_seq_length: int = 0        # 0 = usa valor global
+    learning_rate: float = 0.0     # 0 = usa valor global
+    batch_size: int = 0            # 0 = usa valor global (treinamento.batch_size)
 
     @property
     def is_treinavel(self) -> bool:
@@ -375,9 +377,11 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             arquivo=arquivo,
             tipo=tipo_etapa,
             pace_epochs=int(item.get("pace_epochs", treinamento.epochs)),
+            pace_epochs_max=int(item.get("pace_epochs_max", 0)),
             pace_loss=float(item.get("pace_loss", 0.0)),
             max_seq_length=int(item.get("max_seq_length", 0)),
             learning_rate=float(item.get("learning_rate", 0.0)),
+            batch_size=int(item.get("batch_size", 0)),
         )
         etapas.append(etapa)
     
@@ -387,6 +391,11 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
     logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s){sufixo}</azul>")
     for i, e in enumerate(etapas):
         tag = "" if e.is_treinavel else " <cinza>(somente predict)</cinza>"
-        logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo or '(vazio)'}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}{tag}</cinza>")
+        pace_info = f"epochs={e.pace_epochs}"
+        if e.pace_epochs_max > 0:
+            pace_info += f", max={e.pace_epochs_max}"
+        if e.pace_loss > 0:
+            pace_info += f", loss<{e.pace_loss}"
+        logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo or '(vazio)'}, {pace_info}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}{tag}</cinza>")
     
     return etapas

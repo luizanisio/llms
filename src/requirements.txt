@@ -1,12 +1,12 @@
-# conda create -n treina python=3.13.9
+# 🐍 conda create -n treina python=3.13.9
 
-# erro de espaço para instalar os pacotes (vllm principalmente)
+# ⚠️  erro de espaço para instalar os pacotes (vllm principalmente)
 # TMPDIR=/var/tmp pip install -r requirements.txt
 
 # ==============================================================================
-# TREINAMENTO DE MODELOS (HuggingFace Transformers + PEFT)
+# 🤖 TREINAMENTO DE MODELOS (HuggingFace Transformers + PEFT)
 # ==============================================================================
-# Nota: Unsloth foi removido do pipeline de treinamento!
+# ℹ️  Nota: Unsloth foi removido do pipeline de treinamento!
 # Agora usamos HF Transformers + PEFT para melhor compatibilidade com múltiplas GPUs
 
 transformers>=4.40.0
@@ -23,12 +23,13 @@ vllm
 # deepspeed>=0.14.0
 
 # ==============================================================================
-# UTILITÁRIOS
+# 🔧 UTILITÁRIOS
 # ==============================================================================
 tqdm
 regex==2026.2.28
+PyYAML==6.0.3
 
-# Nota: Para exportação GGUF (opcional), instale:
+# 💡 Para exportação GGUF (opcional), instale:
 #   pip install -r requirements-gguf.txt
 # Isso instalará o Unsloth APENAS para exportação GGUF
 ipywidgets==8.1.7
@@ -51,60 +52,139 @@ python-Levenshtein==0.27.3
 cryptography
 python-dotenv
 
-# Redução de uso de VRAM
-# IMPORTANTE: flash-attn DEVE ser compilado do source contra o PyTorch instalado.
-# NÃO usar wheels pré-compilados (pip install flash-attn) nem conda install,
+# ⚡ Redução de uso de VRAM
+# 🚨 IMPORTANTE: flash-attn DEVE ser compilado do source contra o PyTorch instalado.
+# ❌ NÃO usar wheels pré-compilados (pip install flash-attn) nem conda install,
 # pois geram erro "undefined symbol" por incompatibilidade de ABI com o PyTorch.
-# Ver instruções de instalação manual ao final deste arquivo.
-flash-attn
+# ❌ NÃO instalar via requirements.txt: ele exige CUDA toolkit visível no shell
+# e deve ser compilado manualmente após instalar o PyTorch.
+# 👇 Ver instruções de instalação manual ao final deste arquivo.
+# flash-attn
 liger-kernel
 
 # ==============================================================================
-# INSTALAÇÃO MANUAL — ORDEM E VERSÕES CORRETAS (env: luizbat05 / treina)
+# 📋 INSTALAÇÃO MANUAL — ORDEM E VERSÕES CORRETAS (funcional em 03/2026)
 # ==============================================================================
-# Versões testadas e compatíveis (Março/2026, H100 80GB, Python 3.13.9):
 #
-#   torch==2.10.0+cu128      transformers==4.57.6    accelerate==1.13.0
-#   vllm==0.18.0             flash-attn==2.8.3       liger-kernel==0.7.0
-#   bitsandbytes==0.49.2     peft==0.18.1            trl==0.24.0
-#   datasets==4.3.0          triton==3.6.0           sentence-transformers==5.3.0
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ 🔬 MÁQUINA A — Laboratório: H100 80GB · CUDA 12.8 · Linux nativo       │
+# │ 🏠 MÁQUINA B — Pessoal:     RTX 3060 12GB · CUDA 13.x · WSL2/Debian 13│
+# └─────────────────────────────────────────────────────────────────────────┘
 #
-# --- Passo a passo ---
+# Versões testadas e compatíveis (Março/2026, Python 3.13.9):
 #
-# 1. Criar o ambiente conda:
-#    conda create -n treina python=3.13.9 -y
-#    conda activate treina
+#   [A] torch==2.10.0+cu128   [B] torch==2.10.0+cu128  (mesmo wheel, diferente toolkit)
+#   flash-attn==2.8.3         liger-kernel==0.7.0
+#   transformers==4.57.6      accelerate==1.13.0        trl==0.24.0
+#   vllm==0.18.0              bitsandbytes==0.49.2       peft==0.18.1
+#   datasets==4.3.0           triton==3.6.0              sentence-transformers==5.3.0
 #
-# 2. Instalar o PyTorch PRIMEIRO (cu128 para H100):
-#    pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+# ==============================================================================
+# 🛠️  PASSO 0 — Instalar o CUDA Toolkit no Linux (somente se nvcc não for encontrado)
+# ==============================================================================
 #
-# 3. Instalar os demais pacotes:
-#    TMPDIR=/var/tmp pip install -r requirements.txt
+#   🔍 Verificar: which nvcc
 #
-# 4. Instalar flash-attn compilando do source (OBRIGATÓRIO):
-#    TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --force-reinstall
+#   🔬 [A] H100 / Linux nativo — toolkit CUDA 12.8:
+#       wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+#       sudo dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb
+#       sudo apt update && sudo apt install -y cuda-toolkit-12-8
+#       echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
 #
-#    - MAX_JOBS=8 limita o paralelismo para não sobrecarregar a máquina
-#    - --no-build-isolation usa o PyTorch já instalado no env (garante ABI correta)
-#    - --force-reinstall garante que qualquer versão pré-compilada seja substituída
-#    - A compilação leva ~20 minutos em 128 CPUs com MAX_JOBS=8
+#   🏠 [B] RTX 3060 / WSL2 Debian 13 — instala o toolkit mais recente (13.x),
+#       mas aponta CUDA_HOME para a versão 12.8 compatível com o PyTorch:
+#       sudo apt update && sudo apt install -y wget gnupg ca-certificates
+#       wget https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb
+#       sudo dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb
+#       sudo apt update
+#     --> tentativa com apt install 
+#       sudo apt install -y cuda-toolkit-12-8   # instala 12.8 mesmo no Debian 13
+#       echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
+#     --> se erro: 
+#       conda install -c nvidia/label/cuda-12.8.0 cuda-toolkit -y
+#       export CUDA_HOME=$CONDA_PREFIX
+#       export PATH=$CUDA_HOME/bin:$PATH
+#       export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
+#       nvcc --version
+#       TMPDIR=/var/tmp MAX_JOBS=4 pip install flash-attn --no-build-isolation --force-reinstall
 #
-# 5. Verificar se tudo funciona:
-#    python -c "import torch; print(torch.__version__)"
-#    python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
-#    python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('rotary OK')"
-#    python -c "import vllm; print(vllm.__version__)"
+#   💾 Após instalar (ambas as máquinas), persistir variáveis no ~/.bashrc:
+#       echo 'export PATH=$CUDA_HOME/bin:$PATH' >> ~/.bashrc
+#       echo 'export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}' >> ~/.bashrc
+#       source ~/.bashrc
+#       nvcc --version   # ✅ deve mostrar release 12.8
 #
-# --- Solução de problemas ---
+# ==============================================================================
+# 🐍 PASSO 1 — Criar o ambiente conda
+# ==============================================================================
 #
-# Erro "undefined symbol: _ZN3c104cuda..." ao importar flash_attn:
-#   → flash-attn foi compilado contra um PyTorch diferente.
-#   → Solução: repetir passo 4 acima (recompilar do source).
+#   conda create -n treina python=3.13.9 -y
+#   conda activate treina
 #
-# Erro "No space left on device" durante pip install:
-#   → Usar TMPDIR=/var/tmp antes do comando pip.
+# ==============================================================================
+# 🔥 PASSO 2 — Instalar o PyTorch (cu128 funciona nas duas máquinas)
+# ==============================================================================
 #
-# pip fez upgrade do torch automaticamente (ex: 2.10→2.11):
+#   pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+#
+# ==============================================================================
+# 📦 PASSO 3 — Instalar os demais pacotes
+# ==============================================================================
+#
+#   TMPDIR=/var/tmp pip install -r requirements.txt
+#
+# ==============================================================================
+# ⚡ PASSO 4 — Compilar o flash-attn do source (OBRIGATÓRIO)
+# ==============================================================================
+#
+#   ⚠️  Garantir que o shell enxerga o toolkit antes de compilar:
+#       export CUDA_HOME=/usr/local/cuda-12.8
+#       export PATH=$CUDA_HOME/bin:$PATH
+#       export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
+#       nvcc --version   # deve mostrar 12.8
+#
+#   🔬 [A] H100 / servidor (128+ CPUs):
+#       TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --force-reinstall
+#       # ⏱️  ~20 minutos com MAX_JOBS=8
+#
+#   🏠 [B] RTX 3060 / WSL2 (menos CPUs disponíveis):
+#       TMPDIR=/var/tmp MAX_JOBS=4 pip install flash-attn --no-build-isolation --force-reinstall
+#       # ⏱️  ~40-60 minutos com MAX_JOBS=4; reduza para MAX_JOBS=2 se a máquina travar
+#
+#   🔑 Flags importantes:
+#   - --no-build-isolation  usa o PyTorch já instalado no env (garante ABI correta)
+#   - --force-reinstall     substitui qualquer versão pré-compilada incompatível
+#
+# ==============================================================================
+# ✅ PASSO 5 — Verificar se tudo funciona
+# ==============================================================================
+#
+#   python -c "import torch; print(torch.__version__)"
+#   python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
+#   python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('rotary OK')"
+#   python -c "import vllm; print(vllm.__version__)"
+#
+# ==============================================================================
+# 🆘 SOLUÇÃO DE PROBLEMAS
+# ==============================================================================
+#
+# ❌ Erro "CUDA_HOME environment variable is not set":
+#   → nvcc não está no PATH.
+#   → 🔍 Verificar: which nvcc
+#   → Se não encontrar: instalar cuda-toolkit-12-8 conforme Passo 0.
+#   → Se encontrar: exportar CUDA_HOME, PATH e LD_LIBRARY_PATH antes do pip.
+#
+# ❌ Erro "undefined symbol: _ZN3c104cuda...":
+#   → flash-attn foi compilado contra um CUDA diferente do PyTorch.
+#   → 🔧 Solução: garantir CUDA_HOME=/usr/local/cuda-12.8 e repetir o Passo 4.
+#
+# ❌ Erro "No space left on device":
+#   → 🔧 Usar TMPDIR=/var/tmp antes do pip.
+#
+# ⚠️  pip fez upgrade do torch automaticamente (ex: 2.10→2.11):
 #   → Reverter: pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128 --no-deps
-#   → O --no-deps evita que o pip arraste dependências indesejadas.
+#   → --no-deps evita que o pip arraste dependências indesejadas.
+#
+# 🏠 RTX 3060 — compilação muito lenta ou máquina travando:
+#   → Reduzir MAX_JOBS: MAX_JOBS=2 pip install flash-attn --no-build-isolation --force-reinstall
 # ==============================================================================

@@ -41,11 +41,16 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
   - `entrada`: Local das entradas não parseadas do Dataset. Suporta criptografia. Pode pular se o par parquet estiver completo em `saida`.
   - **`divisao`**: (Lista). Essencial. Descreve as Etapas. Se você quer treinar um LORA de X epocas, defina:
     - `arquivo`: CSV exato da gaveta fracionada alvo produzida lá no pacote `comparar_extracoes`
-    - `tipo`: lora ou full
-    - `pace_epochs`: (ou pace_loss) quando que a roda deste subconjunto deve encerrar e o Early-Stopping atrelado pular.
-    - `max_seq_length`: Importante colocar fixo de acordo com colunas `token_total` geradas.
+    - `tipo`: `lora` ou `full`
+    - `pace_epochs`: Mínimo de épocas garantido para a etapa. Se `pace_loss` estiver ativo, o treinamento nunca para antes desse mínimo.
+    - `pace_epochs_max`: (Opcional) Máximo de épocas para a etapa. Se `pace_loss` não for atingido até essa época, a etapa finaliza. O máximo é inclusivo (ex: `pace_epochs_max: 2` executa 2 épocas completas). Se omitido, o teto é `pace_epochs`.
+    - `pace_loss`: (Opcional) Eval loss alvo (validation loss). Após completar `pace_epochs` mínimo, se o eval_loss cair abaixo desse valor ao final de uma época, a etapa avança automaticamente. Usar eval_loss (e não training loss) é o padrão acadêmico — evita decisões baseadas em overfitting. Requer que `eval_steps` esteja configurado para que avaliações ocorram durante o treinamento. Se `pace_epochs_max` estiver configurado, o treinamento é limitado a esse teto mesmo que o loss nunca atinja o alvo. Se `pace_loss` não for definido (ou 0), a etapa sempre treina exatamente `pace_epochs` épocas.
+    - `max_seq_length`: (Opcional) Define o comprimento máximo de sequência para a etapa. Se omitido (ou 0), e o `max_seq_length` global também for omitido, o valor é **auto-estimado** a partir da coluna `token_total` do CSV de divisão (max + 10% margem, arredondado para múltiplo de 128). Se definido, funciona como **teto** que trunca instâncias maiores. Importante colocar fixo quando a memória GPU é limitada (ex: RTX 3060 12GB).
+    - `learning_rate`: (Opcional) Sobrepõe o `learning_rate` global apenas nesta etapa.
+    - `batch_size`: (Opcional) Sobrepõe o `batch_size` por GPU (`treinamento.batch_size.batch_size`) apenas nesta etapa. Útil quando etapas com `max_seq_length` menor permitem batch maior, ou etapas com sequências longas exigem batch reduzido para evitar OOM.
 
 - **`treinamento`**:
+  - `max_seq_length`: Comprimento máximo de sequência. Se **omitido ou 0**, o sistema auto-estima a partir de `max(token_total)` dos CSVs de divisão + 10% margem, arredondado para múltiplo de 128. Se o CSV não possuir a coluna `token_total`, falha com instrução para definir manualmente. Se **definido > 0**, funciona como teto que trunca instâncias maiores. Quando o global é auto-estimado, cada etapa do curriculum também recebe um valor auto-estimado a partir do seu próprio CSV (otimizando memória por etapa).
   - `batch_size`: Suporta `efetivo: N` para autoavaliar quantas GPUs o torch tem na ponta e calcular perfeitamente o Gradient Acceleration Substep garantindo reprodutibilidade independentemente da topologia física!
   - `train_on_responses_only`: (true/false) Se a perda da atenção deve pular o lado Prompter (Usuário). Ótimo para modelos instruct.
 
@@ -56,7 +61,48 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
 
 ---
 
-## 🔥 Decisões de Implementação: Liger Kernel e Flash Attention 2
+## � Relatório Estatístico e Gráficos (`--stats`)
+
+Ao final do treinamento (ou via `--stats`), o sistema gera automaticamente um relatório completo em `<saida>/treinamento/relatorio_estatistico.md` com gráficos e tabelas:
+
+### Gráficos Gerados
+
+| Gráfico | Arquivo | Conteúdo |
+|---------|---------|----------|
+| Evolução do Loss | `treinamento_loss.png` | Train loss, eval loss, eval global, transições de etapa curriculum |
+| Custo Computacional | `treinamento_tokens.png` | Tokens reais acumulados × instâncias treinadas ao longo dos steps |
+| Eficiência Tokens/Δloss | `treinamento_eficiencia_tokens.png` | Custo marginal (tokens/Δloss) e eval_loss ao longo do treinamento |
+| Uso de Memória | `hardware_memoria.png` | RAM, GPU VRAM reservada/alocada ao longo do treinamento |
+
+### Contagem Real de Tokens
+
+O campo `tokens_acumulados` registrado no `training_metrics.jsonl` reflete o **número real de tokens** do dataset tokenizado, não uma estimativa baseada em `max_seq_length`. A contagem é feita uma única vez por etapa, logo após o SFTTrainer tokenizar o dataset:
+
+```
+média_tokens = sum(len(input_ids) por instância) / num_instâncias
+tokens_acumulados = instâncias_processadas × média_tokens
+```
+
+Isso garante que a métrica de custo computacional seja precisa mesmo em datasets com alta variância de comprimento (ex: instâncias de 100 a 900 tokens com `max_seq_length: 1024`). Para épocas completas, o valor é **exato**; para épocas parciais, é uma aproximação muito precisa.
+
+### Eficiência de Tokens (tokens/Δloss)
+
+Métrica que quantifica o **custo computacional por unidade de melhoria**:
+
+```
+tokens_por_delta_loss = tokens_processados / (eval_loss_inicial - eval_loss_final)
+```
+
+- **Referência:** Usa `eval_loss` (validation loss), não training loss — padrão acadêmico que evita decisões baseadas em overfitting.
+- **Cálculo global:** Eficiência total do treinamento inteiro.
+- **Cálculo por etapa:** Eficiência de cada etapa do curriculum separadamente. Permite identificar quais etapas têm melhor custo-benefício.
+- **Gráfico:** O eixo X mostra tokens acumulados, eixo Y esquerdo mostra o custo acumulado (tokens/Δloss — vermelho, quanto menor melhor), eixo Y direito mostra eval_loss (azul). Marcadores violeta indicam transições de etapa.
+- **Interpretação:** Se a curva vermelha sobe acentuadamente, o modelo está em retornos decrescentes — investindo muitos tokens para pouca melhoria adicional.
+- **Caso sem melhoria:** Se eval_loss não diminui (Δloss ≤ 0), a métrica é reportada como "∞ (sem melhoria)".
+
+---
+
+## �🔥 Decisões de Implementação: Liger Kernel e Flash Attention 2
 
 ### Contexto
 

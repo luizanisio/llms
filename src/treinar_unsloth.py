@@ -256,14 +256,15 @@ class MetricsLoggerCallback(TrainerCallback):
         - epoch_global: época contínua somando épocas de todas as etapas
         - etapa_alias/etapa_index: identificação da etapa do curriculum
         - instancias_acumuladas: total de instâncias processadas
-        - tokens_acumulados: total de tokens processados (instâncias × max_seq_length)
+        - tokens_acumulados: total de tokens reais processados (baseado no comprimento
+          real das instâncias tokenizadas, não em max_seq_length)
         - ram_usada_gb, gpu*_reservada_gb, cpu_uso_%: métricas de hardware
     """
     
     def __init__(self, output_dir: str, etapa_alias: str = "Principal",
                  etapa_index: int = 0, instancias_previas: int = 0,
                  step_offset: int = 0, epoch_offset: float = 0.0,
-                 max_seq_length: int = 0, tokens_previos: int = 0,
+                 media_tokens_por_instancia: float = 0, tokens_previos: int = 0,
                  retomada: bool = False):
         """
         Args:
@@ -273,7 +274,7 @@ class MetricsLoggerCallback(TrainerCallback):
             instancias_previas: Total de instâncias treinadas em etapas anteriores
             step_offset: Total de steps acumulados de etapas anteriores (para step_global)
             epoch_offset: Total de épocas acumuladas de etapas anteriores (para epoch_global)
-            max_seq_length: Comprimento máximo de sequência (para calcular tokens processados)
+            media_tokens_por_instancia: Média de tokens reais por instância do dataset tokenizado
             tokens_previos: Total de tokens processados em etapas anteriores
             retomada: Se True, preserva métricas anteriores (não trunca arquivo)
         """
@@ -290,7 +291,7 @@ class MetricsLoggerCallback(TrainerCallback):
         self._step_offset = step_offset
         self._epoch_offset = epoch_offset
         self._effective_batch_size = 1  # Calculado em on_train_begin
-        self._max_seq_length = max_seq_length
+        self._media_tokens_por_instancia = media_tokens_por_instancia
         self._tokens_previos = tokens_previos
         
         # Cria diretório; trunca arquivo apenas na primeira etapa e se NÃO for retomada
@@ -377,7 +378,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "epoch_offset": self._epoch_offset,
             "instancias_previas": self._instancias_previas,
             "effective_batch_size": self._effective_batch_size,
-            "max_seq_length": self._max_seq_length,
+            "media_tokens_por_instancia": round(self._media_tokens_por_instancia, 1),
             "tokens_previos": self._tokens_previos,
         })
     
@@ -407,7 +408,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "etapa_alias": self._etapa_alias,
             "etapa_index": self._etapa_index,
             "instancias_acumuladas": instancias_acumuladas,
-            "tokens_acumulados": self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._max_seq_length if self._max_seq_length > 0 else 0,
+            "tokens_acumulados": round(self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._media_tokens_por_instancia) if self._media_tokens_por_instancia > 0 else 0,
         }
         
         # Métricas de treinamento
@@ -475,7 +476,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "etapa_alias": self._etapa_alias,
             "etapa_index": self._etapa_index,
             "instancias_acumuladas": instancias_acumuladas,
-            "tokens_acumulados": self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._max_seq_length if self._max_seq_length > 0 else 0,
+            "tokens_acumulados": round(self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._media_tokens_por_instancia) if self._media_tokens_por_instancia > 0 else 0,
         }
         
         # Copia todas as métricas de avaliação
@@ -511,7 +512,7 @@ class MetricsLoggerCallback(TrainerCallback):
             "etapa_alias": self._etapa_alias,
             "etapa_index": self._etapa_index,
             "instancias_acumuladas": instancias_acumuladas,
-            "tokens_acumulados": self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._max_seq_length if self._max_seq_length > 0 else 0,
+            "tokens_acumulados": round(self._tokens_previos + (instancias_acumuladas - self._instancias_previas) * self._media_tokens_por_instancia) if self._media_tokens_por_instancia > 0 else 0,
         }
         
         self._registrar(registro)
@@ -566,6 +567,86 @@ class CheckpointRenameCallback(TrainerCallback):
             if state.best_model_checkpoint and state.best_model_checkpoint.rstrip("/") == original_path.rstrip("/"):
                 state.best_model_checkpoint = padded_path
                 logger.debug(f"best_model_checkpoint corrigido: {padded_path}")
+
+
+# ---------------------------------------------------------------------------
+# Callback para pace_loss (early stopping por loss com mínimo de épocas)
+# ---------------------------------------------------------------------------
+
+class PaceLossCallback(TrainerCallback):
+    """Callback que interrompe o treinamento quando eval_loss < pace_loss, respeitando pace_epochs mínimo.
+    
+    Lógica:
+        - Ignora qualquer verificação enquanto epoch < pace_epochs (mínimo garantido)
+        - Após pace_epochs: se eval_loss < pace_loss → para o treinamento
+        - Se pace_epochs_max está configurado, o num_train_epochs já é pace_epochs_max,
+          então o treinamento para naturalmente se pace_loss nunca for atingido.
+    
+    O loss verificado é o eval_loss (validation loss) mais recente, capturado via on_evaluate.
+    Usar eval_loss em vez de training loss é o padrão acadêmico: evita decisões
+    baseadas em overfitting (training loss baixo mas sem generalização real).
+    A verificação é feita no on_epoch_end para decisões em fronteiras de época.
+    """
+    
+    def __init__(self, pace_loss: float, pace_epochs: int, pace_epochs_max: int = 0,
+                 etapa_alias: str = "Principal"):
+        self.pace_loss = pace_loss
+        self.pace_epochs = pace_epochs
+        self.pace_epochs_max = pace_epochs_max
+        self.etapa_alias = etapa_alias
+        self._last_eval_loss = None
+        self._last_train_loss = None
+        self._stopped = False
+        self._stop_epoch = None
+        self._stop_loss = None
+    
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        """Rastreia o último training loss (para log informativo)."""
+        if logs and "loss" in logs:
+            self._last_train_loss = logs["loss"]
+    
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        """Rastreia o último eval_loss da etapa atual."""
+        if metrics and "eval_loss" in metrics:
+            self._last_eval_loss = metrics["eval_loss"]
+    
+    def on_epoch_end(self, args, state, control, **kwargs):
+        """Verifica se o pace_loss foi atingido após o mínimo de épocas."""
+        if self._stopped:
+            return
+        
+        current_epoch = int(state.epoch) if state.epoch else 0
+        
+        # Respeita o mínimo de épocas
+        if current_epoch < self.pace_epochs:
+            return
+        
+        # Precisa de eval_loss para decidir
+        if self._last_eval_loss is None:
+            train_info = f", train_loss={self._last_train_loss:.4f}" if self._last_train_loss is not None else ""
+            logger.info(
+                f"📉 Etapa '{self.etapa_alias}' época {current_epoch}: "
+                f"eval_loss indisponível{train_info} (pace_loss requer eval — configure eval_steps)"
+            )
+            return
+        
+        # Verifica se eval_loss atingiu o alvo
+        if self._last_eval_loss < self.pace_loss:
+            self._stopped = True
+            self._stop_epoch = current_epoch
+            self._stop_loss = self._last_eval_loss
+            control.should_training_stop = True
+            logger.info(
+                f"🎯 pace_loss atingido na etapa '{self.etapa_alias}': "
+                f"eval_loss={self._last_eval_loss:.4f} < pace_loss={self.pace_loss} "
+                f"(época {current_epoch}/{self.pace_epochs_max or self.pace_epochs})"
+            )
+        else:
+            train_info = f", train_loss={self._last_train_loss:.4f}" if self._last_train_loss is not None else ""
+            logger.info(
+                f"📉 Etapa '{self.etapa_alias}' época {current_epoch}: "
+                f"eval_loss={self._last_eval_loss:.4f}{train_info} (alvo: < {self.pace_loss})"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1036,7 +1117,7 @@ class LLMsTrainer:
         elif self.force_base:
             print_cores(f'<cinza>ℹ️  Opção --base ativada: Ignorando busca por modelo LoRA treinado.</cinza>', color_auto=False)
 
-        # Tentativa 2: Carregar modelo base e aplicar LoRA (se necessário)
+        # Tentativa 2: Carregar modelo base (novo treinamento)
         if not lora_ok and not full_ok:
             model, tokenizer = ModelLoader.load_base_model(
                 model_name=base_model_name,
@@ -1047,23 +1128,31 @@ class LLMsTrainer:
                 use_liger_kernel=use_liger,
             )
 
-            # Aplica LoRA se configurado (e não for --base)
-            use_lora = (
-                not self.force_base and
-                self._yaml_config.lora.r not in (0, None, False)
-            )
-
-            if use_lora:
-                model = ModelLoader.apply_lora(
-                    model=model,
-                    r=self._yaml_config.lora.r,
-                    lora_alpha=self._yaml_config.lora.alpha,
-                    lora_dropout=self._yaml_config.lora.dropout,
-                    target_modules=self._yaml_config.lora.target_modules,
-                    bias="none",
-                )
-            elif self.force_base:
+            if self.force_base:
                 print_cores(f'<cinza>ℹ️  Opção --base ativada: Não aplicando adaptadores LoRA.</cinza>', color_auto=False)
+            else:
+                # LoRA será aplicado em _aplicar_etapa_curriculum quando a primeira
+                # etapa LoRA iniciar. Isso permite que etapas "full" treinem o modelo
+                # base diretamente, sem overhead de adaptadores LoRA.
+                tipos_etapas = set(e.tipo for e in self._etapas if e.tipo)
+                if "lora" in tipos_etapas and "full" in tipos_etapas:
+                    print_cores(
+                        f'<cinza>ℹ️  Curriculum misto (full + LoRA): modelo base carregado sem LoRA.</cinza>',
+                        color_auto=False
+                    )
+                    print_cores(
+                        f'<cinza>   LoRA será aplicado automaticamente na primeira etapa que o requeira.</cinza>',
+                        color_auto=False
+                    )
+                elif "lora" in tipos_etapas:
+                    print_cores(
+                        f'<cinza>ℹ️  LoRA será aplicado no início do treinamento.</cinza>',
+                        color_auto=False
+                    )
+
+        # Rastreia se LoRA já está aplicado ao modelo
+        # True apenas se carregou modelo LoRA existente (retomada)
+        self._lora_applied = lora_ok
 
         # Imprime informações do modelo
         ModelLoader.print_model_info(model, tokenizer)
@@ -1252,7 +1341,8 @@ class LLMsTrainer:
     def _build_trainer(self, etapa_index: int = 0, etapa_alias: str = "Principal",
                        instancias_previas: int = 0, step_offset: int = 0,
                        epoch_offset: float = 0.0, tokens_previos: int = 0,
-                       is_retomada: bool = False) -> SFTTrainer:
+                       is_retomada: bool = False,
+                       etapa=None) -> SFTTrainer:
         """Constrói o SFTTrainer com callbacks de métricas.
         
         Args:
@@ -1462,6 +1552,12 @@ class LLMsTrainer:
         trainer.add_callback(JsonLoggerCallback(jsonl, truncar=not is_retomada))
         
         # 2. MetricsLoggerCallback (métricas unificadas: loss, hardware, curriculum, tokens)
+        # Calcula média de tokens reais por instância do dataset tokenizado
+        _total_tokens_dataset = sum(len(r.get('input_ids', [])) for r in trainer.train_dataset)
+        _num_instancias = len(trainer.train_dataset)
+        _media_tokens = _total_tokens_dataset / _num_instancias if _num_instancias > 0 else 0
+        self._media_tokens_por_instancia = _media_tokens  # Armazena para uso em train()
+        
         trainer.add_callback(MetricsLoggerCallback(
             output_dir,
             etapa_alias=etapa_alias,
@@ -1469,7 +1565,7 @@ class LLMsTrainer:
             instancias_previas=instancias_previas,
             step_offset=step_offset,
             epoch_offset=epoch_offset,
-            max_seq_length=self._yaml_config.treinamento.max_seq_length,
+            media_tokens_por_instancia=_media_tokens,
             tokens_previos=tokens_previos,
             retomada=is_retomada,
         ))
@@ -1499,10 +1595,26 @@ class LLMsTrainer:
         print_cores(f'<cinza> - callbacks de métricas configurados:</cinza>', color_auto=False)
         print_cores(f'   <cinza>• metrics_stream.jsonl (métricas brutas)</cinza>', color_auto=False)
         print_cores(f'   <cinza>• treinamento/training_metrics.jsonl (loss, hardware, tokens)</cinza>', color_auto=False)
+        print_cores(f'   <cinza>• tokens reais: {_total_tokens_dataset:,} total, média {_media_tokens:.0f}/instância ({_num_instancias} instâncias)</cinza>', color_auto=False)
         if self.save_checkpoints:
             print_cores(f'   <cinza>• checkpoint renaming (zero-padding: checkpoint-00001)</cinza>', color_auto=False)
         if self._global_eval_callback is not None:
             print_cores(f'   <cinza>• eval_loss_global (validação de todas as etapas combinadas)</cinza>', color_auto=False)
+        
+        # 5. PaceLossCallback (early stopping por loss com mínimo de épocas)
+        if etapa is not None and etapa.pace_loss > 0:
+            pace_cb = PaceLossCallback(
+                pace_loss=etapa.pace_loss,
+                pace_epochs=etapa.pace_epochs,
+                pace_epochs_max=etapa.pace_epochs_max,
+                etapa_alias=etapa.alias,
+            )
+            trainer.add_callback(pace_cb)
+            self._pace_loss_callback = pace_cb
+            print_cores(f'   <cinza>• pace_loss={etapa.pace_loss} (mín {etapa.pace_epochs} épocas'
+                        f'{f", máx {etapa.pace_epochs_max} épocas" if etapa.pace_epochs_max > 0 else ""})</cinza>', color_auto=False)
+        else:
+            self._pace_loss_callback = None
         
         trainer.model.config.use_cache = False
         
@@ -1664,34 +1776,111 @@ class LLMsTrainer:
         """Configura parâmetros e dados para uma etapa específica do curriculum.
         
         - Aplica pace_epochs, learning_rate e max_seq_length da etapa
+        - Alterna entre modo "full" (todos os parâmetros) e "lora" (só adaptadores)
+        - Aplica adaptadores LoRA sob demanda na primeira etapa LoRA
         - Para etapas > 0, troca o arquivo de divisão e recarrega os datasets
         - Se max_seq_length mudar entre etapas, recarrega model/tokenizer
         """
         treino = self._yaml_config.treinamento
         msl_anterior = treino.max_seq_length
 
-        # Override de epochs com pace_epochs da etapa
+        # === Alterna modo de treinamento conforme tipo da etapa ===
+        if etapa.tipo == "full":
+            # Full fine-tuning: desbloqueia todos os parâmetros float (base + LoRA se presente)
+            # Parâmetros quantizados (int8/int4 via bitsandbytes) não suportam gradientes
+            for param in self.model.parameters():
+                if param.dtype in (torch.float32, torch.float16, torch.bfloat16):
+                    param.requires_grad = True
+            n_total = sum(p.numel() for p in self.model.parameters())
+            n_train = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            if self._lora_applied:
+                logger.info(f"🔓 Modo FULL: {n_train:,}/{n_total:,} parâmetros desbloqueados (base + LoRA, quantizados permanecem congelados)")
+            else:
+                logger.info(f"🔓 Modo FULL: {n_train:,}/{n_total:,} parâmetros desbloqueados para treinamento")
+        elif etapa.tipo == "lora":
+            # Se LoRA ainda não foi aplicado, aplica agora
+            if not self._lora_applied:
+                lora_cfg = self._yaml_config.lora
+                logger.info(f"🔄 Aplicando adaptadores LoRA (r={lora_cfg.r}, alpha={lora_cfg.alpha}) para etapa '{etapa.alias}'...")
+                self.model = ModelLoader.apply_lora(
+                    model=self.model,
+                    r=lora_cfg.r,
+                    lora_alpha=lora_cfg.alpha,
+                    lora_dropout=lora_cfg.dropout,
+                    target_modules=lora_cfg.target_modules,
+                    bias="none",
+                )
+                self._lora_applied = True
+                logger.info(f"✅ LoRA aplicado com sucesso")
+
+            # LoRA fine-tuning: congela base, treina apenas adaptadores LoRA
+            for name, param in self.model.named_parameters():
+                if "lora_" in name or "modules_to_save" in name:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+            n_total = sum(p.numel() for p in self.model.parameters())
+            n_train = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            logger.info(f"🔒 Modo LoRA: {n_train:,}/{n_total:,} parâmetros treináveis (apenas adaptadores)")
+
+        # Override de epochs com pace_epochs / pace_epochs_max da etapa
+        # Lógica:
+        #   - pace_epochs: mínimo de épocas (pace_loss não interrompe antes disso)
+        #   - pace_epochs_max: máximo de épocas (força parada se pace_loss não for atingido)
+        #   - pace_loss: loss alvo. Após pace_epochs mínimo, se loss < pace_loss → para.
+        #
+        # Se pace_loss está configurado com pace_epochs_max:
+        #   num_train_epochs = pace_epochs_max (treina até o máximo, callback para antes se pace_loss atingido)
+        # Se pace_loss está configurado sem pace_epochs_max:
+        #   num_train_epochs = pace_epochs (sem teto extra, apenas avalia loss ao final de cada época)
+        # Se pace_loss não está configurado:
+        #   num_train_epochs = pace_epochs (comportamento original)
         if etapa.pace_epochs > 0:
-            treino.epochs = etapa.pace_epochs
+            if etapa.pace_loss > 0 and etapa.pace_epochs_max > 0:
+                # Treina até pace_epochs_max; callback PaceLoss para antes se loss < pace_loss (após pace_epochs mínimo)
+                treino.epochs = etapa.pace_epochs_max
+                logger.info(
+                    f"⏱️  Etapa '{etapa.alias}': epochs={etapa.pace_epochs_max} (max), "
+                    f"pace_epochs={etapa.pace_epochs} (mín), pace_loss={etapa.pace_loss}"
+                )
+            else:
+                treino.epochs = etapa.pace_epochs
+                if etapa.pace_loss > 0:
+                    logger.info(
+                        f"⏱️  Etapa '{etapa.alias}': epochs={etapa.pace_epochs}, pace_loss={etapa.pace_loss}"
+                    )
 
         # Override de learning_rate se especificado
         if etapa.learning_rate > 0:
             treino.learning_rate = etapa.learning_rate
 
-        # Override de max_seq_length se especificado
+        # Override de batch_size se especificado
+        if etapa.batch_size > 0:
+            treino.batch_size = etapa.batch_size
+            logger.info(f"📦 Etapa '{etapa.alias}': batch_size={etapa.batch_size} (override por etapa)")
+
+        # Lê info de tokens da etapa (para auto-estimação e exibição de suficiência)
+        info_tokens = self._yaml_config._ler_info_tokens_divisao(etapa.arquivo)
+
+        # Override de max_seq_length: explícito > auto por etapa > global
         if etapa.max_seq_length > 0:
             treino.max_seq_length = etapa.max_seq_length
+        elif getattr(treino, 'max_seq_length_auto', False) and info_tokens and info_tokens.get("max", 0) > 0:
+            # Global foi auto-estimado → auto-estima por etapa a partir do CSV
+            import math
+            _est = int(math.ceil(info_tokens["max"] * 1.1 / 128) * 128)
+            treino.max_seq_length = _est
 
         # Log da mudança de max_seq_length (afeta truncagem de dados no SFTConfig)
         # NÃO recarrega o modelo: ele usa max_position_embeddings nativo (ex: 32768)
         # e não precisa ser recarregado quando max_seq_length de treinamento muda.
         msl_atual = treino.max_seq_length
         if msl_atual != msl_anterior:
-            logger.info(f"🔄 max_seq_length mudou: {msl_anterior} → {msl_atual} "
+            _auto_tag = " (auto)" if etapa.max_seq_length == 0 and getattr(treino, 'max_seq_length_auto', False) else ""
+            logger.info(f"🔄 max_seq_length mudou: {msl_anterior} → {msl_atual}{_auto_tag} "
                         f"(etapa '{etapa.alias}' - afeta truncagem de dados, não a arquitetura do modelo)")
 
         # Exibe informações de tokens da divisão da etapa
-        info_tokens = self._yaml_config._ler_info_tokens_divisao(etapa.arquivo)
         if info_tokens:
             suficiente = "✅" if msl_atual >= info_tokens["max"] else "⚠️  INSUFICIENTE 🚩"
             print(f"   📊 Tokens etapa '{etapa.alias}': max={info_tokens['max']}, "
@@ -1724,7 +1913,12 @@ class LLMsTrainer:
         # Controle de Conclusão e Retomada
         # ---------------------------------------------------------
         estado_pipeline = self._tracker.carregar_estado()
-        target_epochs_yaml = sum([e.pace_epochs if e.pace_epochs > 0 else self._yaml_config.treinamento.epochs for e in self._etapas])
+        # Usa pace_epochs_max como teto quando configurado (com pace_loss), senão pace_epochs
+        def _epochs_efetivos(e):
+            if e.pace_loss > 0 and e.pace_epochs_max > 0:
+                return e.pace_epochs_max
+            return e.pace_epochs if e.pace_epochs > 0 else self._yaml_config.treinamento.epochs
+        target_epochs_yaml = sum([_epochs_efetivos(e) for e in self._etapas])
         target_epochs_salvo = estado_pipeline.get("target_epochs", -1.0)
         
         # Se concluído e o número de etapas/épocas no YAML não aumentou, evite recomeçar
@@ -1774,16 +1968,25 @@ class LLMsTrainer:
                 logger.info(f"<cinza>⏩ Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}' — já concluída, pulando</cinza>")
                 continue
 
-            # --- Preparação da etapa ---
+            # --- Preparação da etapa (full/lora, hiperparâmetros, dados) ---
+            # Sempre chamado: configura modo full/lora, aplica LoRA sob demanda,
+            # ajusta epochs/lr/max_seq_length e recarrega dados se necessário.
             if is_curriculum:
                 logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
-                self._aplicar_etapa_curriculum(step_index, etapa_atual)
+            self._aplicar_etapa_curriculum(step_index, etapa_atual)
+            if is_curriculum:
+                # Conta parâmetros treináveis após alternância full/lora
+                n_treinaveis = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+                n_totais = sum(p.numel() for p in self.model.parameters())
                 self._historico.evento_etapa_curriculum(
                     step_index=step_index,
                     alias=etapa_atual.alias,
                     tipo=etapa_atual.tipo,
                     pace_epochs=etapa_atual.pace_epochs,
+                    pace_epochs_max=etapa_atual.pace_epochs_max if etapa_atual.pace_epochs_max > 0 else "N/A",
+                    pace_loss=etapa_atual.pace_loss if etapa_atual.pace_loss > 0 else "N/A",
                     max_seq_length=etapa_atual.max_seq_length if etapa_atual.max_seq_length > 0 else self._yaml_config.treinamento.max_seq_length,
+                    parametros_treinaveis=f"{n_treinaveis:,}/{n_totais:,} ({n_treinaveis/n_totais*100:.2f}%)" if n_totais > 0 else "N/A",
                 )
 
             # Identifica se esta é a primeira etapa efetiva (para checkpoint e retomada)
@@ -1804,6 +2007,7 @@ class LLMsTrainer:
                 epoch_offset=epoch_offset_global,
                 tokens_previos=tokens_acumulados,
                 is_retomada=is_retomada_desta_etapa or resume_from_checkpoint,
+                etapa=etapa_atual,
             )
 
             # Conecta referência do trainer ao GlobalEvalCallback (necessário para evaluate())
@@ -1860,7 +2064,29 @@ class LLMsTrainer:
                 "ds_train_len" : len(self.train_ds),
                 "ds_eval_len" : len(self.eval_ds) if self.eval_ds else 0,
                 "modelo_info": info_modelo,
+                "etapa_alias": etapa_atual.alias,
+                "etapa_tipo": etapa_atual.tipo,
+                "parametros_treinaveis": info_modelo.get("parametros_treinaveis", 0) if isinstance(info_modelo, dict) else 0,
             }
+
+            # Registra informação do pace_loss (se callback ativo)
+            if self._pace_loss_callback is not None:
+                cb = self._pace_loss_callback
+                if cb._stopped:
+                    stats["pace_loss_atingido"] = True
+                    stats["pace_loss_epoch"] = cb._stop_epoch
+                    stats["pace_loss_valor"] = cb._stop_loss
+                    logger.info(
+                        f"🎯 Etapa '{etapa_atual.alias}' encerrou por pace_loss: "
+                        f"eval_loss={cb._stop_loss:.4f} < {cb.pace_loss} na época {cb._stop_epoch}"
+                    )
+                else:
+                    stats["pace_loss_atingido"] = False
+                    if etapa_atual.pace_epochs_max > 0:
+                        logger.info(
+                            f"⏱️  Etapa '{etapa_atual.alias}' encerrou por pace_epochs_max={etapa_atual.pace_epochs_max} "
+                            f"(pace_loss={etapa_atual.pace_loss} não atingido pelo eval_loss)"
+                        )
 
             # Gera relatório .md na pasta 'treinamento'
             try:
@@ -1912,7 +2138,9 @@ class LLMsTrainer:
             self._save_model(stats=stats)
             
             # Registra conclusão no histórico
-            self._historico.evento_treinamento_concluido(stats)
+            self._historico.evento_treinamento_concluido(
+                stats, alias=etapa_atual.alias, tipo=etapa_atual.tipo
+            )
             self._historico.atualizar_yaml_se_necessario()
 
             # Pipeline Universal: registra conclusão da etapa com métricas e offsets acumulados
@@ -1926,7 +2154,7 @@ class LLMsTrainer:
             step_offset_global += train_stats.global_step
             instancias_etapa = train_stats.global_step * effective_batch
             instancias_acumuladas += instancias_etapa
-            tokens_acumulados += instancias_etapa * self._yaml_config.treinamento.max_seq_length
+            tokens_acumulados += round(instancias_etapa * self._media_tokens_por_instancia)
             # Usa a época real do Trainer (não pace_epochs configurado) para robustez
             # com early stopping ou datasets que não dividem exatamente em batches.
             # ceil() garante que a próxima etapa inicia em fronteira inteira de época.
@@ -1963,8 +2191,8 @@ class LLMsTrainer:
         else:
             logger.info("<verde>✅ TREINAMENTO COMPLETO</verde>")
             
-        # Calcula o target total demandado
-        target_epochs_yaml = sum([e.pace_epochs if e.pace_epochs > 0 else self._yaml_config.treinamento.epochs for e in self._etapas])
+        # Calcula o target total demandado (usa pace_epochs_max quando pace_loss configurado)
+        target_epochs_yaml = sum([_epochs_efetivos(e) for e in self._etapas])
 
         # O treinamento encerrou completamente o pipeline requerido. Registrar trava.
         self._tracker.marcar_conclusao(total_etapas=total_etapas, target_epochs=target_epochs_yaml)
@@ -2242,14 +2470,15 @@ class LLMsTrainer:
         }
 
     def validar_modelo_lora(self) -> dict:
-        """Valida se o modelo LoRA está carregado corretamente e retorna informações detalhadas."""
+        """Valida o modelo e retorna informações detalhadas, incluindo modo de treinamento."""
         info = {
             'modelo_tipo': type(self.model).__name__,
             'is_peft_model': False,
             'adapters_ativos': [],
             'parametros_treinaveis': 0,
             'parametros_totais': 0,
-            'lora_detectado': False
+            'lora_detectado': False,
+            'modo_treinamento': 'desconhecido',  # 'full', 'lora' ou 'desconhecido'
         }
         
         # Verifica se é modelo PEFT
@@ -2271,32 +2500,88 @@ class LLMsTrainer:
                     }
                     info['adapters_ativos'].append(adapter_info)
         
-        # Conta parâmetros treináveis
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in self.model.parameters())
+        # Conta parâmetros treináveis e detecta modo de treinamento
+        trainable_params = 0
+        total_params = 0
+        base_treinaveis = 0
+        lora_treinaveis = 0
+        for name, param in self.model.named_parameters():
+            total_params += param.numel()
+            if param.requires_grad:
+                trainable_params += param.numel()
+                if "lora_" in name or "modules_to_save" in name:
+                    lora_treinaveis += param.numel()
+                else:
+                    base_treinaveis += param.numel()
+        
+        # Conta parâmetros quantizados (int/uint — não suportam gradientes)
+        quantizados = 0
+        for param in self.model.parameters():
+            if param.dtype not in (torch.float32, torch.float16, torch.bfloat16):
+                quantizados += param.numel()
         
         info['parametros_treinaveis'] = trainable_params
         info['parametros_totais'] = total_params
+        info['parametros_quantizados'] = quantizados
         info['percentual_treinavel'] = (trainable_params / total_params * 100) if total_params > 0 else 0
+        info['base_treinaveis'] = base_treinaveis
+        info['lora_treinaveis'] = lora_treinaveis
+        
+        # Determina modo de treinamento efetivo
+        if trainable_params == 0:
+            info['modo_treinamento'] = 'congelado'
+        elif base_treinaveis > 0 and info['lora_detectado']:
+            info['modo_treinamento'] = 'full'
+        elif lora_treinaveis > 0 and base_treinaveis == 0:
+            info['modo_treinamento'] = 'lora'
+        elif not info['lora_detectado'] and trainable_params > 0:
+            info['modo_treinamento'] = 'full'
+        else:
+            info['modo_treinamento'] = 'desconhecido'
         
         return info
 
     def print_modelo_status(self):
-        """Imprime o status detalhado do modelo."""
+        """Imprime o status detalhado do modelo, incluindo modo de treinamento (full/lora)."""
         info = self.validar_modelo_lora()
+        nbits = self._yaml_config.treinamento.nbits
+        
+        modo = info['modo_treinamento']
+        quantizados = info['parametros_quantizados']
+        tem_quantizados = quantizados > 0
+        
+        if modo == 'full' and tem_quantizados:
+            modo_label = f"🔓 FULL (todos os parâmetros float treináveis — modelo quantizado {nbits}-bit)"
+        elif modo == 'full':
+            modo_label = "🔓 FULL (todos os parâmetros treináveis)"
+        elif modo == 'lora':
+            modo_label = "🔒 LoRA (apenas adaptadores treináveis)"
+        elif modo == 'congelado':
+            modo_label = "❄️  CONGELADO (nenhum parâmetro treinável)"
+        else:
+            modo_label = "❓ Desconhecido"
         
         print(f"\n{'='*60}")
         print(f"📊 STATUS DETALHADO DO MODELO")
         print(f"{'='*60}")
-        print(f"Tipo do modelo: {info['modelo_tipo']}")
-        print(f"É modelo PEFT: {info['is_peft_model']}")
-        print(f"LoRA detectado: {info['lora_detectado']}")
+        print(f"Tipo do modelo:       {info['modelo_tipo']}")
+        print(f"Modo de treinamento:  {modo_label}")
         print(f"Parâmetros treináveis: {info['parametros_treinaveis']:,}")
-        print(f"Parâmetros totais: {info['parametros_totais']:,}")
+        if info['lora_detectado'] and info['base_treinaveis'] > 0:
+            print(f"  ├─ base (float):  {info['base_treinaveis']:,}")
+            print(f"  └─ LoRA:          {info['lora_treinaveis']:,}")
+        print(f"Parâmetros totais:    {info['parametros_totais']:,}")
+        if tem_quantizados:
+            print(f"  ├─ quantizados ({nbits}-bit, congelados): {quantizados:,}")
+            print(f"  └─ float (treináveis):       {info['parametros_totais'] - quantizados:,}")
         print(f"Percentual treinável: {info['percentual_treinavel']:.4f}%")
         
+        if tem_quantizados and modo == 'full':
+            print(f"\n⚠️  Parâmetros quantizados ({nbits}-bit) não suportam gradientes.")
+            print(f"   Para full fine-tuning real de 100% dos pesos, use nbits: 16.")
+        
         if info['adapters_ativos']:
-            print(f"\n🔧 ADAPTADORES ATIVOS:")
+            print(f"\n🔧 ADAPTADORES LoRA:")
             for adapter in info['adapters_ativos']:
                 print(f"  - {adapter['nome']}: r={adapter['r']}, alpha={adapter['alpha']}")
                 modules = adapter['target_modules']
@@ -2305,8 +2590,6 @@ class LLMsTrainer:
                 else:
                      modules_str = str(modules)
                 print(f"    Modules: {modules_str}")
-        else:
-            print(f"\n⚠️  NENHUM ADAPTADOR ATIVO DETECTADO")
         
         print(f"{'='*60}")
         

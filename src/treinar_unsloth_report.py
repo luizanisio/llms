@@ -7,6 +7,85 @@ from typing import Dict, Any, Optional
 from treinar_unsloth_util import YamlTreinamento
 
 # ---------------------------------------------------------------------------
+# Helpers para formatação do relatório
+# ---------------------------------------------------------------------------
+
+def _formatar_mem_gpu(before: dict, after: dict) -> list:
+    """Formata a seção de memória GPU comparando antes/depois.
+    
+    Dados fixos aparecem uma vez; dados que mudaram aparecem no formato 'antes → depois'.
+    """
+    linhas = []
+
+    def _flatten(d, prefix=""):
+        """Achata dict aninhado em pares (chave, valor)."""
+        items = []
+        for k, v in d.items():
+            chave = f"{prefix}{k}" if not prefix else f"{prefix}.{k}"
+            if isinstance(v, dict):
+                items.extend(_flatten(v, chave))
+            elif isinstance(v, list):
+                for i, elem in enumerate(v):
+                    if isinstance(elem, dict):
+                        items.extend(_flatten(elem, f"{chave}[{i}]"))
+                    else:
+                        items.append((f"{chave}[{i}]", elem))
+            else:
+                items.append((chave, v))
+        return items
+
+    flat_before = dict(_flatten(before))
+    flat_after = dict(_flatten(after)) if after else {}
+
+    todas_chaves = list(dict.fromkeys(list(flat_before.keys()) + list(flat_after.keys())))
+
+    fixos = []
+    mudaram = []
+
+    for chave in todas_chaves:
+        val_b = flat_before.get(chave)
+        val_a = flat_after.get(chave)
+        if flat_after and val_b != val_a and val_a is not None and val_b is not None:
+            mudaram.append((chave, val_b, val_a))
+        else:
+            fixos.append((chave, val_b if val_b is not None else val_a))
+
+    def _fmt(v):
+        if isinstance(v, float):
+            return f"{v:g}"
+        if isinstance(v, bool):
+            return "✅" if v else "❌"
+        return str(v)
+
+    if fixos:
+        linhas.append("**Dados fixos:**")
+        linhas.append("")
+        linhas.append("| Recurso | Valor |")
+        linhas.append("|---|---|")
+        for chave, val in fixos:
+            linhas.append(f"| {chave} | {_fmt(val)} |")
+
+    if mudaram:
+        linhas.append("")
+        linhas.append("**Variação (antes → depois):**")
+        linhas.append("")
+        linhas.append("| Recurso | Antes | Depois | Δ |")
+        linhas.append("|---|---|---|---|")
+        for chave, val_b, val_a in mudaram:
+            delta = ""
+            if isinstance(val_b, (int, float)) and isinstance(val_a, (int, float)):
+                diff = val_a - val_b
+                sinal = "+" if diff > 0 else ""
+                if isinstance(diff, float):
+                    delta = f"{sinal}{diff:.3f}"
+                else:
+                    delta = f"{sinal}{diff}"
+            linhas.append(f"| {chave} | {_fmt(val_b)} | {_fmt(val_a)} | {delta} |")
+
+    return linhas
+
+
+# ---------------------------------------------------------------------------
 # Classe GeradorRelatorio
 # ---------------------------------------------------------------------------
 
@@ -218,6 +297,15 @@ class GeradorRelatorio:
         batch_total = bs_efetivo * grad_efetivo * n_gpus
         
         conteudo.append("\n## 1. Configuração do Treinamento")
+        
+        # Detecta tipos de treinamento presentes no curriculum
+        etapas_todas = cfg.curriculum
+        tipos_presentes = set(e.tipo for e in etapas_todas if e.tipo)
+        tem_full = "full" in tipos_presentes
+        tem_lora = "lora" in tipos_presentes
+        
+        # --- 1.1 Parâmetros Gerais (compartilhados entre todas as etapas) ---
+        conteudo.append("\n### Parâmetros Gerais")
         conteudo.append("")
         conteudo.append("| Parâmetro | Valor |")
         conteudo.append("|---|---|")
@@ -235,14 +323,6 @@ class GeradorRelatorio:
             conteudo.append(f"| Grad accumulation | {grad_efetivo} |")
             conteudo.append(f"| **Batch efetivo total** | **{batch_total}** ({bs_efetivo} × {grad_efetivo} × {n_gpus} GPU) |")
         
-        # Épocas e max_seq_length: mostra o efetivo da etapa atual
-        # Em modo curriculum, os valores por etapa aparecem na tabela abaixo
-        conteudo.append(f"| Épocas | {cfg.treinamento.epochs} |")
-        conteudo.append(f"| Max seq length | {cfg.treinamento.max_seq_length} |")
-        conteudo.append(f"| LoRA r | {cfg.lora.r} |")
-        conteudo.append(f"| LoRA alpha | {cfg.lora.alpha} |")
-        conteudo.append(f"| LoRA dropout | {cfg.lora.dropout} |")
-        conteudo.append(f"| LoRA target modules | {', '.join(cfg.lora.target_modules)} |")
         conteudo.append(f"| Learning rate | {cfg.treinamento.learning_rate} |")
         conteudo.append(f"| Train on responses only | {cfg.treinamento.train_on_responses_only} |")
         conteudo.append(f"| Warmup steps | {cfg.treinamento.warmup_steps} |")
@@ -250,10 +330,48 @@ class GeradorRelatorio:
         conteudo.append(f"| Otimizador | {cfg.treinamento.optim} |")
         conteudo.append(f"| LR scheduler | {cfg.treinamento.lr_scheduler_type} |")
         conteudo.append(f"| Quantização (nbits) | {cfg.treinamento.nbits} |")
+        conteudo.append(f"| Seed | {cfg.treinamento.seed} |")
         
         # --- Otimizações de memória GPU ---
         conteudo.append(f"| **Flash Attention 2** | {'✅ ativo' if cfg.treinamento.flash_attention_2 else '❌ desativado (usando SDPA)'} |")
         conteudo.append(f"| **Liger Kernel** | {'✅ ativo (fused CE + RoPE + RMSNorm)' if cfg.treinamento.liger_kernel else '❌ desativado'} |")
+        
+        # --- Modo de treinamento usado ---
+        if tem_full and tem_lora:
+            conteudo.append(f"| **Modos de treinamento** | Full + LoRA (por etapa — ver curriculum abaixo) |")
+        elif tem_full:
+            conteudo.append(f"| **Modo de treinamento** | Full (todos os parâmetros float treináveis) |")
+        elif tem_lora:
+            conteudo.append(f"| **Modo de treinamento** | LoRA (apenas adaptadores treináveis) |")
+        
+        # --- 1.2 Configuração LoRA (se ao menos uma etapa usa LoRA) ---
+        if tem_lora:
+            conteudo.append("\n### Configuração LoRA")
+            conteudo.append(f"Aplicada nas etapas: {', '.join(e.alias for e in etapas_todas if e.tipo == 'lora')}")
+            conteudo.append("")
+            conteudo.append("| Parâmetro | Valor |")
+            conteudo.append("|---|---|")
+            conteudo.append(f"| r (rank) | {cfg.lora.r} |")
+            conteudo.append(f"| alpha | {cfg.lora.alpha} |")
+            conteudo.append(f"| dropout | {cfg.lora.dropout} |")
+            conteudo.append(f"| Target modules | {', '.join(cfg.lora.target_modules)} |")
+            conteudo.append(f"| Ratio (alpha/r) | {cfg.lora.alpha / cfg.lora.r:.1f} |")
+        
+        # --- 1.3 Modo Full (se ao menos uma etapa usa Full) ---
+        if tem_full:
+            conteudo.append("\n### Modo Full Fine-Tuning")
+            conteudo.append(f"Aplicado nas etapas: {', '.join(e.alias for e in etapas_todas if e.tipo == 'full')}")
+            conteudo.append("")
+            nbits = cfg.treinamento.nbits
+            if nbits < 16:
+                conteudo.append(
+                    f"> ⚠️ Com quantização {nbits}-bit, apenas parâmetros float (embeddings, "
+                    f"layer norms, adaptadores LoRA) são treináveis no modo Full. "
+                    f"Pesos quantizados permanecem congelados. "
+                    f"Para full fine-tuning de 100% dos pesos, use `nbits: 16`."
+                )
+            else:
+                conteudo.append("> Todos os parâmetros do modelo são treináveis (sem quantização).")
         
         # --- Seção de dados: curriculum ---
         conteudo.append("\n### Dados (Curriculum)")
@@ -277,8 +395,30 @@ class GeradorRelatorio:
             # Tabela detalhada das etapas do curriculum
             # Usa valores originais do YAML como fallback (não os mutados por _aplicar_etapa_curriculum)
             conteudo.append("")
-            conteudo.append("| # | Alias | Tipo | Epochs | LR | Max Seq | Divisão | Treino | Valid. | Teste |")
-            conteudo.append("|---|-------|------|--------|----|---------|---------|--------|--------|-------|")
+            
+            # Detecta colunas opcionais (só aparecem se alguma etapa as define)
+            tem_pace_loss = any(e.pace_loss > 0 for e in etapas)
+            tem_pace_max = any(e.pace_epochs_max > 0 for e in etapas)
+            tem_batch = any(e.batch_size > 0 for e in etapas)
+            
+            # Cabeçalho
+            header = "| # | Alias | Tipo | Epochs"
+            sep    = "|---|-------|------|-------"
+            if tem_pace_max:
+                header += " | Max Ep"
+                sep    += "|-------"
+            if tem_pace_loss:
+                header += " | Pace Loss"
+                sep    += "|----------"
+            header += " | LR | Max Seq"
+            sep    += "|----|--------"
+            if tem_batch:
+                header += " | Batch"
+                sep    += "|------"
+            header += " | Divisão | Treino | Valid. | Teste |"
+            sep    += "|---------|--------|--------|-------|"
+            conteudo.append(header)
+            conteudo.append(sep)
             
             for i, etapa in enumerate(etapas):
                 ep = etapa.pace_epochs if etapa.pace_epochs > 0 else yaml_epochs
@@ -292,10 +432,17 @@ class GeradorRelatorio:
                 n_valid = contagens.get("validacao", "-")
                 n_teste = contagens.get("teste", "-")
                 
-                conteudo.append(
-                    f"| {i} | {etapa.alias} | {etapa.tipo} | {ep} | {lr} "
-                    f"| {msl} | {divisao_nome} | {n_treino} | {n_valid} | {n_teste} |"
-                )
+                linha = f"| {i} | {etapa.alias} | {etapa.tipo} | {ep}"
+                if tem_pace_max:
+                    linha += f" | {etapa.pace_epochs_max if etapa.pace_epochs_max > 0 else '-'}"
+                if tem_pace_loss:
+                    linha += f" | {etapa.pace_loss if etapa.pace_loss > 0 else '-'}"
+                linha += f" | {lr} | {msl}"
+                if tem_batch:
+                    linha += f" | {etapa.batch_size if etapa.batch_size > 0 else '-'}"
+                linha += f" | {divisao_nome} | {n_treino} | {n_valid} | {n_teste} |"
+                
+                conteudo.append(linha)
         else:
             # Etapa única: resumo em texto
             etapa = etapas[0]
@@ -411,16 +558,9 @@ class GeradorRelatorio:
             # Memória GPU se disponível (no train_stats customizado)
             if 'mem_gpu_before' in train_stats:
                 conteudo.append("\n### Memória GPU")
-                conteudo.append("**Antes:**")
-                conteudo.append("```json")
-                conteudo.append(json.dumps(train_stats['mem_gpu_before'], indent=2, ensure_ascii=False))
-                conteudo.append("```")
-                
-            if 'mem_gpu_after' in train_stats:
-                conteudo.append("**Depois:**")
-                conteudo.append("```json")
-                conteudo.append(json.dumps(train_stats['mem_gpu_after'], indent=2, ensure_ascii=False))
-                conteudo.append("```")
+                before = train_stats['mem_gpu_before']
+                after = train_stats.get('mem_gpu_after', {})
+                conteudo.extend(_formatar_mem_gpu(before, after))
 
         texto_final = "\n".join(conteudo)
 
