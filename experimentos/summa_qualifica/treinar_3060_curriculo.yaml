@@ -39,6 +39,7 @@ curriculum:
     dataframe_id: id_peca
     prompt_template: './summa_data/prompt_summa_raw.txt'
     tag_texto: '<<--TEXTO-->>'
+    dataset_filtro: {"fold": 11}
     texto_criptografado: true # Indica que o texto de entrada está criptografado e precisa ser descriptografado usando a chave fornecida em `env_chave_criptografia`.
     prompt_criptografado: false # Indica que o template de prompt não está criptografado. Se fosse true, ele também seria descriptografado usando a mesma chave.
 
@@ -52,10 +53,15 @@ curriculum:
       alias: "fácil"
       tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 2     # (Padrão) Transita após 1 época.
+      pace_loss: 1.9    #  pace_epochs_max: 10 # máximo de épocas para atingir o loss definido
+      pace_epochs_max: 10 # máximo de épocas para atingir o loss definido
       max_seq_length: 1024  # [Opcional] Pode sobrepor config geral.
+      batch_size: 4
     - arquivo: ./treino_simples/divisao_medio.csv
       alias: "médio"
       tipo: "lora"
+      pace_loss: 1.6    #  pace_epochs_max: 10 # máximo de épocas para atingir o loss definido
+      pace_epochs_max: 5 # máximo de épocas para atingir o loss definido
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 2048  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/divisao_dificil.csv
@@ -63,6 +69,13 @@ curriculum:
       tipo: "lora"
       pace_epochs: 2     # (Padrão) Transita após 1 época.
       max_seq_length: 3072  # [Opcional] Pode sobrepor config geral.
+      pace_loss: 1.4    #  pace_epochs_max: 10 # máximo de épocas para atingir o loss definido
+      pace_epochs_max: 5 # máximo de épocas para atingir o loss definido
+    # - arquivo: ./treino_simples/divisao_unica.csv
+    #   alias: "completo-FF"
+    #   tipo: "full"
+    #   pace_epochs: 1     # (Padrão) Transita após 1 época.
+    #   max_seq_length: 3072  # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
 #| MODELO
@@ -88,6 +101,8 @@ modelo:
 treinamento:
   #| Frequência de avaliação (ex: '15%' das steps ou número inteiro).
   eval_steps: 20%
+
+  flash_attention_2: false
   
   #| Amostras por GPU. Menor gasta menos VRAM.
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
@@ -98,7 +113,7 @@ treinamento:
   #| [H100] Com sequências longas: use 1. Com sequências curtas (<8k): pode usar 4-8.
   batch_size:
     efetivo: 16  # Batch efetivo (ajusta batch_size e grad_batch_size automaticamente)
-    batch_size: 1  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
+    batch_size: 2  # Batch por GPU (deve ser verificado empiricamente para evitar OOM)
   #| Acumulação de gradiente. Aumenta tempo de treino mas economiza VRAM.
   #| Batch Efetivo = batch_size * grad_batch_size * num_gpus (Recomendado: 16).
   #| [7B] Aumente para 20-40 se batch_size=1.
@@ -150,7 +165,7 @@ treinamento:
   
   #| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
   #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.
-  nbits: 4
+  nbits: 8
   
   #| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.
   train_on_responses_only: true

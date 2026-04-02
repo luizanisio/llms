@@ -435,29 +435,69 @@ class HistoricoTreinamento:
             detalhes += f"\n- **{k}:** {v}"
         self.registrar_evento(f"ETAPA CURRICULUM: {alias}", detalhes)
 
-    def evento_treinamento_concluido(self, stats: dict = None, alias: str = "", tipo: str = "") -> None:
-        """Registra conclusão do treinamento."""
+    def evento_treinamento_concluido(self, stats: dict = None, alias: str = "", tipo: str = "",
+                                     instancias_acumuladas: int = 0, tokens_acumulados: int = 0,
+                                     etapa_config=None) -> None:
+        """Registra conclusão do treinamento com motivo de parada e acumulados."""
         detalhes = ""
         if alias:
             detalhes += f"- **Etapa:** {alias}\n"
         if tipo:
             detalhes += f"- **Modo:** {tipo}\n"
+
+        # Motivo da conclusão
+        if stats and etapa_config:
+            motivo = self._motivo_conclusao(stats, etapa_config)
+            if motivo:
+                detalhes += f"- **Conclusão:** {motivo}\n"
+
         if stats:
             if "training_loss" in stats:
-                detalhes += f"- **Training Loss:** {stats['training_loss']:.6f}\n"
+                detalhes += f"- **Training Loss:** {stats['training_loss']:.4f}\n"
+            if "eval_loss" in stats:
+                detalhes += f"- **Eval Loss:** {stats['eval_loss']:.4f}\n"
             if "train_runtime" in stats:
                 runtime = stats["train_runtime"]
                 h, m, s = int(runtime // 3600), int((runtime % 3600) // 60), int(runtime % 60)
                 detalhes += f"- **Tempo:** {h}h {m}m {s}s\n"
             if "global_step" in stats:
                 detalhes += f"- **Steps:** {stats['global_step']}\n"
-            if "ds_train_len" in stats:
-                detalhes += f"- **Instâncias de Treino:** {stats['ds_train_len']}\n"
-            if "ds_eval_len" in stats:
-                detalhes += f"- **Instâncias de Validação:** {stats['ds_eval_len']}\n"
-            if "parametros_treinaveis" in stats:
-                detalhes += f"- **Parâmetros treináveis:** {stats['parametros_treinaveis']:,}\n"
+
+        # Acumulados (tokens e instâncias)
+        if tokens_acumulados > 0:
+            if tokens_acumulados >= 1_000_000:
+                tok_fmt = f"{tokens_acumulados/1_000_000:.1f}M"
+            elif tokens_acumulados >= 1_000:
+                tok_fmt = f"{tokens_acumulados/1_000:.1f}K"
+            else:
+                tok_fmt = str(tokens_acumulados)
+            detalhes += f"- **Tokens acumulados:** {tok_fmt}\n"
+        if instancias_acumuladas > 0:
+            detalhes += f"- **Instâncias acumuladas:** {instancias_acumuladas:,}\n".replace(",", ".")
+
         self.registrar_evento("TREINAMENTO CONCLUÍDO", detalhes)
+
+    @staticmethod
+    def _motivo_conclusao(stats: dict, etapa_config) -> str:
+        """Determina motivo de conclusão da etapa baseado nos stats e config."""
+        pace_loss = getattr(etapa_config, 'pace_loss', 0)
+        pace_epochs = getattr(etapa_config, 'pace_epochs', 0)
+        pace_epochs_max = getattr(etapa_config, 'pace_epochs_max', 0)
+
+        if stats.get("pace_loss_atingido"):
+            epoch = stats.get("pace_loss_epoch", "?")
+            loss_val = stats.get("pace_loss_valor", 0)
+            return f"🎯 pace_loss atingido (eval_loss={loss_val:.4f} < {pace_loss}) na época {epoch}"
+
+        if pace_loss > 0 and not stats.get("pace_loss_atingido", True):
+            if pace_epochs_max > 0:
+                return f"⏱️ máximo de épocas ({pace_epochs_max}) — pace_loss={pace_loss} não atingido"
+            return f"⏱️ épocas completadas ({pace_epochs}) — pace_loss={pace_loss} não atingido"
+
+        if pace_epochs > 0:
+            return f"✅ {pace_epochs} épocas completadas"
+
+        return ""
 
     def evento_modelo_salvo(self, output_dir: str, arquivos: list = None) -> None:
         """Registra salvamento do modelo."""

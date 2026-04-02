@@ -2136,15 +2136,8 @@ class LLMsTrainer:
                     logger.warning(f"⚠️  Erro no eval global final: {e}")
             
             self._save_model(stats=stats)
-            
-            # Registra conclusão no histórico
-            self._historico.evento_treinamento_concluido(
-                stats, alias=etapa_atual.alias, tipo=etapa_atual.tipo
-            )
-            self._historico.atualizar_yaml_se_necessario()
 
-            # Pipeline Universal: registra conclusão da etapa com métricas e offsets acumulados
-            # PRIMEIRO atualiza contadores (necessário para gravar offsets no state)
+            # Pipeline Universal: atualiza contadores acumulados ANTES de registrar eventos
             n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
             effective_batch = (
                 self._yaml_config.treinamento.batch_size
@@ -2164,8 +2157,17 @@ class LLMsTrainer:
                 etapa_atual.pace_epochs if etapa_atual.pace_epochs > 0 else self._yaml_config.treinamento.epochs
             )
             epoch_offset_global = math.ceil(epoch_offset_global + epocas_reais)
+            
+            # Registra conclusão no histórico (com acumuladores já atualizados)
+            self._historico.evento_treinamento_concluido(
+                stats, alias=etapa_atual.alias, tipo=etapa_atual.tipo,
+                instancias_acumuladas=instancias_acumuladas,
+                tokens_acumulados=tokens_acumulados,
+                etapa_config=etapa_atual,
+            )
+            self._historico.atualizar_yaml_se_necessario()
 
-            # DEPOIS registra conclusão com offsets acumulados (para retomada)
+            # Registra conclusão com offsets acumulados (para retomada)
             self._tracker.finalizar_etapa(
                 step_index=step_index,
                 alias=etapa_atual.alias,
