@@ -554,6 +554,35 @@ class GeradorRelatorio:
             # Adiciona outras métricas importantes se presentes
             if 'global_step' in train_stats:
                 conteudo.append(f"| Steps Totais | {train_stats['global_step']} |")
+            
+            # --- Melhor Checkpoint ---
+            if train_stats.get('best_checkpoint'):
+                conteudo.append("\n### Melhor Checkpoint (menor eval_loss)")
+                conteudo.append("")
+                conteudo.append("| Informação | Valor |")
+                conteudo.append("|---|---|")
+                conteudo.append(f"| Checkpoint | `{train_stats['best_checkpoint']}` |")
+                if train_stats.get('best_eval_loss') is not None:
+                    conteudo.append(f"| eval_loss | {train_stats['best_eval_loss']:.6f} |")
+                if train_stats.get('best_checkpoint_step') is not None:
+                    conteudo.append(f"| Step (global) | {train_stats['best_checkpoint_step']} |")
+                if train_stats.get('best_checkpoint_tokens') is not None:
+                    _tok = train_stats['best_checkpoint_tokens']
+                    _tok_fmt = f"{_tok:,}".replace(",", ".") if isinstance(_tok, int) else str(_tok)
+                    conteudo.append(f"| Tokens processados | {_tok_fmt} |")
+                if train_stats.get('best_checkpoint_instancias') is not None:
+                    _inst = train_stats['best_checkpoint_instancias']
+                    _inst_fmt = f"{_inst:,}".replace(",", ".") if isinstance(_inst, int) else str(_inst)
+                    conteudo.append(f"| Instâncias processadas | {_inst_fmt} |")
+                
+                # Cálculo de eficiência: % do treinamento até o melhor ponto
+                if train_stats.get('best_checkpoint_step') and train_stats.get('global_step'):
+                    _pct = (train_stats['best_checkpoint_step'] / train_stats['global_step']) * 100
+                    conteudo.append(f"| Posição no treinamento | {_pct:.1f}% dos steps |")
+                
+                conteudo.append("")
+                conteudo.append("> 💡 O modelo final salvo corresponde ao melhor checkpoint (menor eval_loss),")
+                conteudo.append("> carregado automaticamente via `load_best_model_at_end=True`.")
                 
             # Memória GPU se disponível (no train_stats customizado)
             if 'mem_gpu_before' in train_stats:

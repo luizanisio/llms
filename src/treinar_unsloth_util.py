@@ -136,6 +136,7 @@ class ConfigTreinamento:
     max_seq_length: int = 4096
     learning_rate: float = 2e-4
     save_checkpoints: bool = True
+    save_checkpoints_qtd: int = 1  # Quantidade de checkpoints mantidos além do melhor e último (0 = manter todos)
     resume_from_checkpoint: bool = True
     warmup_steps: int = 5
     nbits: int = 4
@@ -730,6 +731,7 @@ class YamlTreinamento:
             max_seq_length=msl_val,
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
             save_checkpoints=treino_raw.get("save_checkpoints", True) in {True, "true", "True", 1, "1", "sim"},
+            save_checkpoints_qtd=int(treino_raw.get("save_checkpoints_qtd", 1)),
             resume_from_checkpoint=treino_raw.get("resume_from_checkpoint", True) in {True, "true", "True", 1, "1", "sim"},
             warmup_steps=int(treino_raw.get("warmup_steps", 5)),
             nbits=nbits,

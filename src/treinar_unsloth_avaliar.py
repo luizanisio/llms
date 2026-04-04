@@ -38,7 +38,7 @@ import sys
 import json
 import time
 import statistics
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 import torch
@@ -85,6 +85,183 @@ def _formatar_tokens(valor) -> str:
     if valor >= 1_000:
         return f"{valor / 1_000:.1f}K"
     return str(int(valor))
+
+
+def _identificar_melhor_checkpoint(
+    eval_data: list,
+    train_data: list,
+    chkpt_dir: str,
+    eval_global_data: list = None,
+) -> Optional[Dict[str, Any]]:
+    """Identifica o melhor checkpoint (menor eval_loss global) a partir dos dados disponíveis.
+    
+    Retrocompatível: funciona com treinamentos antigos que não gravaram
+    a marcação explícita do melhor checkpoint. Deriva a informação
+    diretamente dos registros de eval_loss em eval_data ou eval_global_data.
+    
+    Em curriculum com múltiplas etapas, eval_data contém eval_loss por
+    etapa (datasets diferentes). Quando eval_global_data está disponível,
+    usa-o para identificar o melhor modelo global (avaliação no dataset
+    combinado de todas as etapas).
+    
+    Args:
+        eval_data: Lista de dicts com {step, eval_loss, tokens_acumulados?, instancias_acumuladas?}
+        train_data: Lista de dicts com {step, tokens_acumulados?, instancias_acumuladas?}
+        chkpt_dir: Diretório onde os checkpoints estão salvos
+        eval_global_data: Lista de dicts com {step, eval_loss_global} (avaliação global, opcional)
+        
+    Returns:
+        Dict com {step, eval_loss, checkpoint, tokens_acumulados, instancias_acumuladas}
+        ou None se não houver dados de eval.
+    """
+    import math
+    
+    # Prioriza eval_global_data quando disponível (curriculum multi-etapa)
+    if eval_global_data:
+        validos_global = [
+            e for e in eval_global_data
+            if e.get("eval_loss_global") is not None and not math.isnan(e["eval_loss_global"])
+            and e.get("step") is not None
+        ]
+        if validos_global:
+            melhor = min(validos_global, key=lambda e: e["eval_loss_global"])
+            best_step = melhor["step"]
+            best_loss = melhor["eval_loss_global"]
+            
+            info = {
+                "step": best_step,
+                "eval_loss": best_loss,
+                "tokens_acumulados": melhor.get("tokens_acumulados"),
+                "instancias_acumuladas": melhor.get("instancias_acumuladas"),
+                "checkpoint": None,
+                "fonte": "eval_global",
+            }
+            
+            # Busca tokens/instâncias no eval_data ou train_data se não presentes
+            if info["tokens_acumulados"] is None and eval_data:
+                for ed in eval_data:
+                    if ed.get("step") == best_step:
+                        info["tokens_acumulados"] = ed.get("tokens_acumulados")
+                        info["instancias_acumuladas"] = ed.get("instancias_acumuladas")
+                        break
+            
+            if info["tokens_acumulados"] is None and train_data:
+                melhor_td = None
+                for td in train_data:
+                    if td.get("step", 0) <= best_step:
+                        melhor_td = td
+                    else:
+                        break
+                if melhor_td:
+                    info["tokens_acumulados"] = melhor_td.get("tokens_acumulados")
+                    info["instancias_acumuladas"] = melhor_td.get("instancias_acumuladas")
+            
+            # Busca pasta do checkpoint no disco
+            if os.path.isdir(chkpt_dir):
+                import re
+                for d in sorted(os.listdir(chkpt_dir)):
+                    if d.startswith("checkpoint-") and os.path.isdir(os.path.join(chkpt_dir, d)):
+                        match = re.match(r"checkpoint-(\d+)", d)
+                        if match and int(match.group(1)) == best_step:
+                            info["checkpoint"] = d
+                            break
+            
+            return info
+    
+    # Fallback: usa eval_data (ok para treino sem curriculum ou etapa única)
+    if not eval_data:
+        return None
+    
+    # Filtra eval_data válidos
+    validos = [
+        e for e in eval_data
+        if e.get("eval_loss") is not None and not math.isnan(e["eval_loss"])
+        and e.get("step") is not None
+    ]
+    if not validos:
+        return None
+    
+    # Encontra o ponto com menor eval_loss
+    melhor = min(validos, key=lambda e: e["eval_loss"])
+    best_step = melhor["step"]
+    best_loss = melhor["eval_loss"]
+    
+    info = {
+        "step": best_step,
+        "eval_loss": best_loss,
+        "tokens_acumulados": melhor.get("tokens_acumulados"),
+        "instancias_acumuladas": melhor.get("instancias_acumuladas"),
+        "checkpoint": None,
+        "fonte": "eval_data",
+    }
+    
+    # Se tokens/instâncias não existem no eval_data (treinos antigos),
+    # busca no train_data o último registro com step <= best_step
+    if info["tokens_acumulados"] is None and train_data:
+        melhor_td = None
+        for td in train_data:
+            if td.get("step", 0) <= best_step:
+                melhor_td = td
+            else:
+                break  # train_data é ordenado por step
+        if melhor_td:
+            info["tokens_acumulados"] = melhor_td.get("tokens_acumulados")
+            info["instancias_acumuladas"] = melhor_td.get("instancias_acumuladas")
+    
+    # Busca pasta do checkpoint correspondente no disco
+    # (pode não existir se foi limpo pela rotação de checkpoints)
+    if os.path.isdir(chkpt_dir):
+        import re
+        for d in sorted(os.listdir(chkpt_dir)):
+            if d.startswith("checkpoint-") and os.path.isdir(os.path.join(chkpt_dir, d)):
+                match = re.match(r"checkpoint-(\d+)", d)
+                if match and int(match.group(1)) == best_step:
+                    info["checkpoint"] = d
+                    break
+    
+    return info
+
+
+def _relatorio_melhor_checkpoint(
+    best_info: Dict[str, Any],
+    train_data: list,
+) -> List[str]:
+    """Gera linhas markdown com a seção do melhor checkpoint para o relatório.
+    
+    Args:
+        best_info: Dict retornado por _identificar_melhor_checkpoint()
+        train_data: Dados de treino (para calcular posição percentual)
+        
+    Returns:
+        Lista de linhas markdown.
+    """
+    linhas = []
+    _titulo = "Melhor Checkpoint (menor eval_loss global)" if best_info.get("fonte") == "eval_global" else "Melhor Checkpoint (menor eval_loss)"
+    linhas.append(f"\n### \U0001f3c6 {_titulo}\n")
+    linhas.append("| Indicador | Valor |")
+    linhas.append("|-----------|-------|")
+    
+    if best_info.get("checkpoint"):
+        linhas.append(f"| Checkpoint | `{best_info['checkpoint']}` |")
+    
+    _loss_label = "eval_loss_global" if best_info.get("fonte") == "eval_global" else "eval_loss"
+    linhas.append(f"| {_loss_label} | {best_info['eval_loss']:.4f} |")
+    linhas.append(f"| Step (global) | {best_info['step']} |")
+    
+    if best_info.get("tokens_acumulados"):
+        linhas.append(f"| Tokens processados | {_formatar_tokens(best_info['tokens_acumulados'])} |")
+    if best_info.get("instancias_acumuladas"):
+        linhas.append(f"| Instâncias processadas | {int(best_info['instancias_acumuladas']):,} |")
+    
+    # Posição percentual no treinamento
+    if train_data:
+        total_steps = train_data[-1].get("step", 0)
+        if total_steps > 0:
+            pct = best_info["step"] / total_steps * 100
+            linhas.append(f"| Posição no treinamento | {pct:.1f}% (step {best_info['step']}/{total_steps}) |")
+    
+    linhas.append("")
+    return linhas
 
 
 def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
@@ -151,6 +328,9 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
         stats_report.append(f"**Modelo Saída:** `{yaml_config.modelo.saida}`\n")
         stats_report.append(f"**Data:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
+    # ---- Identifica melhor checkpoint (retrocompatível com treinos antigos) ----
+    best_info = _identificar_melhor_checkpoint(eval_data, train_data, chkpt_dir, eval_global_data=eval_global_data)
+
     # ---- Gráfico de Loss ----
     if train_data or eval_data:
         if not silencioso:
@@ -161,6 +341,10 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
         if etapas_curriculum:
             nomes = [et["alias"] for et in etapas_curriculum]
             stats_report.append(f"**Etapas do curriculum:** {' → '.join(nomes)}\n")
+
+        # Seção do melhor checkpoint no relatório
+        if best_info:
+            stats_report.extend(_relatorio_melhor_checkpoint(best_info, train_data))
 
         stats_report.append("\n### Evolução do Loss\n")
         tabela_loss = GraficoTreinamento.tabela_loss_markdown(train_data, eval_data, eval_global_data=eval_global_data)
@@ -193,7 +377,9 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
         tokens_graph_path = os.path.join(report_dir, "treinamento_tokens.png")
         if GraficoEficiencia.evolucao_tokens(
             train_data, tokens_graph_path,
-            etapas_curriculum=etapas_curriculum
+            etapas_curriculum=etapas_curriculum,
+            eval_data=eval_data,
+            eval_global_data=eval_global_data,
         ):
             logger.info("<verde>   ✅ Gráfico de tokens salvo: treinamento_tokens.png</verde>")
             stats_report.append("\n### Custo Computacional\n")
@@ -209,14 +395,17 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
             logger.info("<cinza>   📊 Calculando eficiência tokens/Δloss...</cinza>")
 
         eficiencia = GraficoEficiencia.calcular_eficiencia_tokens(
-            train_data, eval_data, etapas_curriculum=etapas_curriculum
+            train_data, eval_data, etapas_curriculum=etapas_curriculum,
+            eval_global_data=eval_global_data,
         )
         
         # Gráfico
         efic_graph_path = os.path.join(report_dir, "treinamento_eficiencia_tokens.png")
         if GraficoEficiencia.grafico_eficiencia_tokens(
             eficiencia, efic_graph_path,
-            etapas_curriculum=etapas_curriculum
+            etapas_curriculum=etapas_curriculum,
+            eval_data=eval_data,
+            eval_global_data=eval_global_data,
         ):
             logger.info("<verde>   ✅ Gráfico de eficiência salvo: treinamento_eficiencia_tokens.png</verde>")
         
@@ -226,8 +415,11 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
         
         if info_global.get("delta_loss", 0) > 0 or info_etapas:
             stats_report.append("\n### Eficiência de Tokens\n")
-            stats_report.append("Custo computacional medido em tokens necessários para reduzir 1 ponto de eval_loss.\n")
-            stats_report.append("Quanto menor, mais eficiente o treinamento.\n")
+            stats_report.append("Relação entre tokens processados e redução do eval_loss global.\n")
+            stats_report.append("A **eficiência marginal** (|Δloss|/Δtokens) indica quanto o modelo está aprendendo por token em cada momento:\n")
+            stats_report.append("- **Alta** → aprendizado rápido (cada token conta)\n")
+            stats_report.append("- **Caindo** → retornos decrescentes\n")
+            stats_report.append("- **≈ 0** → modelo parou de melhorar (sinal natural de parada)\n")
             
             # Tabela global
             if info_global.get("delta_loss", 0) > 0:
@@ -240,8 +432,9 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
                 stats_report.append(f"\n**Global:** sem melhoria no eval_loss "
                                     f"({info_global.get('loss_inicial', '?')} → {info_global.get('loss_final', '?')})\n")
             
-            # Tabela por etapa
+            # Tabela por etapa (usa eval_loss por etapa, não global)
             if len(info_etapas) > 1:
+                stats_report.append("\n**Por etapa** (eval_loss do dataset de cada etapa):\n")
                 stats_report.append("\n| Etapa | Tokens | eval_loss (ini→fin) | Δloss | Tokens/Δloss |")
                 stats_report.append("|-------|--------|---------------------|-------|-------------|")
                 for et in info_etapas:
@@ -256,7 +449,7 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
             # Imagem do gráfico
             if os.path.exists(efic_graph_path):
                 stats_report.append("\n![Eficiência Tokens/Loss](treinamento_eficiencia_tokens.png)\n")
-                stats_report.append("*Vermelho: custo marginal (tokens/Δloss entre avaliações, subindo = retornos decrescentes) | Azul: eval_loss*\n")
+                stats_report.append("*Azul: eval_loss (onde o modelo está) | Vermelho: eficiência marginal suavizada (quanto aprende por token, caindo = retornos decrescentes)*\n")
 
     # ---- Métricas de Hardware ----
     hardware_metricas = GraficoHardware.carregar_metricas(treinamento_dir)
@@ -276,7 +469,7 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
             logger.info("<cinza>   📊 Gerando gráfico de memória...</cinza>")
         mem_graph_path = os.path.join(report_dir, "hardware_memoria.png")
 
-        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path, train_data=train_data, etapas_curriculum=etapas_curriculum):
+        if GraficoHardware.evolucao_memoria(hardware_metricas, mem_graph_path, train_data=train_data, etapas_curriculum=etapas_curriculum, eval_data=eval_data, eval_global_data=eval_global_data):
             logger.info("<verde>   ✅ Gráfico de memória salvo: hardware_memoria.png</verde>")
             stats_report.append("\n### Gráfico de Uso de Memória\n")
             stats_report.append("![Uso de Memória](hardware_memoria.png)\n")

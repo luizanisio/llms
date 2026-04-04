@@ -60,36 +60,147 @@ class GraficoTokens:
 
 
 # ---------------------------------------------------------------------------
+# Helper para encontrar o melhor eval_loss global (preferindo eval_global_data)
+# ---------------------------------------------------------------------------
+
+def _encontrar_melhor_eval_global(
+    eval_data: List[Dict],
+    eval_global_data: List[Dict] = None,
+) -> Optional[Dict[str, Any]]:
+    """Encontra o ponto de menor eval_loss global do treinamento.
+    
+    Em curriculum com múltiplas etapas, eval_data contém eval_loss de cada
+    etapa (datasets diferentes, não diretamente comparáveis). Quando
+    eval_global_data está disponível, usa-o como fonte de verdade para
+    identificar o melhor modelo global (avaliação no dataset combinado).
+    
+    Args:
+        eval_data: Lista de dicts com {step, eval_loss, ...}
+        eval_global_data: Lista de dicts com {step, eval_loss_global, ...} (opcional)
+        
+    Returns:
+        Dict com {'step': int, 'eval_loss': float} ou None se não houver dados.
+    """
+    import math
+    
+    # Prioriza eval_global_data quando disponível (eval no dataset combinado)
+    if eval_global_data:
+        validos = [
+            (e["step"], e["eval_loss_global"])
+            for e in eval_global_data
+            if e.get("eval_loss_global") is not None
+            and not math.isnan(e["eval_loss_global"])
+        ]
+        if validos:
+            best_step, best_loss = min(validos, key=lambda x: x[1])
+            return {"step": best_step, "eval_loss": best_loss}
+    
+    # Fallback: usa eval_data (ok para treinos sem curriculum ou etapa única)
+    if eval_data:
+        validos = [
+            (e["step"], e["eval_loss"])
+            for e in eval_data
+            if e.get("eval_loss") is not None
+            and not math.isnan(e["eval_loss"])
+        ]
+        if validos:
+            best_step, best_loss = min(validos, key=lambda x: x[1])
+            return {"step": best_step, "eval_loss": best_loss}
+    
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Funções reutilizáveis para marcadores de época e etapas do curriculum
 # Usadas por GraficoTreinamento.evolucao_loss() e GraficoHardware.evolucao_memoria()
 # ---------------------------------------------------------------------------
 
-def construir_marcadores_epocas(train_data: List[Dict]) -> List[Dict]:
+def construir_marcadores_epocas(train_data: List[Dict],
+                                etapas_curriculum: List[Dict] = None) -> List[Dict]:
     """Constrói marcadores de época a partir dos dados de treino.
     
     Detecta transições de época inteira usando epoch_global (contínuo entre
     etapas do curriculum) e retorna marcadores verticais verdes.
     
+    O step exato de cada época é calculado por interpolação linear entre
+    os dois registros adjacentes ao cruzamento. Quando a fronteira de época
+    coincide com uma transição de etapa do curriculum, usa o step_global da
+    etapa como posição exata (evita interpolação imprecisa entre etapas).
+    
     Args:
         train_data: Lista de dicts com {step, epoch, epoch_global?, ...}
+        etapas_curriculum: Lista de {step_global, alias, index} (pode ser None)
         
     Returns:
         Lista de dicts para marcadores_epoca do UtilGraficos.gerar_grafico_linhas()
     """
+    # Mapa de steps exatos para transições de etapa (epoch inteiro → step_global)
+    # Usado para posicionar épocas que coincidem com fronteiras de etapa
+    etapa_steps = {}
+    if etapas_curriculum and len(etapas_curriculum) > 1:
+        # A etapa N+1 começa com epoch_offset = epoch inteiro acumulado
+        # Etapa 0 começa em epoch 0; etapa 1 começa em epoch ceil(epocas_etapa0); etc.
+        # Estimamos o epoch da fronteira usando a sequência crescente de etapas:
+        # se etapa[i] tem step_global S, e o registro anterior tinha epoch_global < E
+        # e o registro seguinte tem epoch_global >= E, então E mapeia para S.
+        for et in etapas_curriculum[1:]:
+            step_et = et["step_global"]
+            # Descobre qual epoch_global corresponde a esta fronteira de etapa
+            # buscando o primeiro registro com step >= step_et
+            for t in train_data:
+                if t["step"] >= step_et:
+                    eg = t.get("epoch_global", t.get("epoch", 0))
+                    # O epoch inteiro mais próximo por baixo é a fronteira
+                    epoch_fronteira = int(eg) if eg == int(eg) else int(eg)
+                    # Se não bateu exato, verifica o registro anterior
+                    if epoch_fronteira > 0:
+                        etapa_steps[epoch_fronteira] = step_et
+                    break
+
     marcadores = []
     epochs_seen = set()
+    step_anterior = 0
+    epoch_anterior = 0.0
+    etapa_idx_anterior = 0
     for t in train_data:
         eg = t.get("epoch_global", t.get("epoch", 0))
-        epoch_int = int(eg)
-        if epoch_int > 0 and epoch_int not in epochs_seen and eg == epoch_int:
-            marcadores.append({
-                'x': t["step"],
-                'label': f'Época {epoch_int}',
-                'cor': 'green',
-                'y_frac': 0.05,
-                'va': 'bottom',
-            })
-            epochs_seen.add(epoch_int)
+        step_atual = t["step"]
+        etapa_idx_atual = t.get("etapa_index", 0)
+        # Detecta quais épocas inteiras foram cruzadas entre o registro
+        # anterior e o atual (ex: epoch_anterior=0.95, eg=2.1 → marca 1 e 2)
+        inicio = int(epoch_anterior) + 1  # primeira época inteira após o anterior
+        fim = int(eg)                     # última época inteira <= atual
+        delta_epoch = eg - epoch_anterior
+        delta_step = step_atual - step_anterior
+        mudou_etapa = etapa_idx_atual != etapa_idx_anterior
+        for epoch_int in range(inicio, fim + 1):
+            if epoch_int > 0 and epoch_int not in epochs_seen:
+                # Se a época coincide com uma transição de etapa, usa step exato
+                if epoch_int in etapa_steps:
+                    step_exato = etapa_steps[epoch_int]
+                elif mudou_etapa:
+                    # Transição de etapa sem mapeamento explícito:
+                    # usa o step do início da nova etapa (step_anterior é o
+                    # último da etapa anterior, step_atual é o primeiro da nova)
+                    step_exato = step_atual
+                elif delta_epoch > 0 and delta_step > 0:
+                    # Interpolação normal dentro da mesma etapa
+                    frac = (epoch_int - epoch_anterior) / delta_epoch
+                    step_exato = step_anterior + frac * delta_step
+                else:
+                    step_exato = step_atual
+                marcadores.append({
+                    'x': round(step_exato, 1),
+                    'label': f'Época {epoch_int}',
+                    'cor': 'green',
+                    'y_frac': 0.92,
+                    'va': 'top',
+                    'ha': 'left',
+                })
+                epochs_seen.add(epoch_int)
+        step_anterior = step_atual
+        epoch_anterior = eg
+        etapa_idx_anterior = etapa_idx_atual
     return marcadores
 
 
@@ -402,56 +513,82 @@ class GraficoTreinamento:
             def _is_valid(v):
                 return v is not None and isinstance(v, (int, float)) and not math.isnan(v)
             
-            # Filtra NaN: séries só incluem pontos com loss válido
+            # --- Coleta dados válidos ---
+            valid_train = [(t["step"], t["loss"]) for t in train_data if "loss" in t and _is_valid(t["loss"])] if train_data else []
+            valid_eval = [(e["step"], e["eval_loss"]) for e in eval_data if "eval_loss" in e and _is_valid(e["eval_loss"])] if eval_data else []
+            valid_global = [(e["step"], e["eval_loss_global"]) for e in eval_global_data if "eval_loss_global" in e and _is_valid(e["eval_loss_global"])] if eval_global_data else []
+            
+            total_pontos = len(valid_train) + len(valid_eval) + len(valid_global)
+            is_denso = total_pontos > 150  # Muitos pontos: otimiza visualização
+            
+            # --- Decide escala do eixo Y ---
+            # Escala log quando o range dinâmico é grande (padrão acadêmico para
+            # gráficos de loss com decaimento rápido seguido de plateau)
+            all_losses = [v[1] for v in valid_train] + [v[1] for v in valid_eval] + [v[1] for v in valid_global]
+            all_losses = [v for v in all_losses if v > 0]
+            yscale = None
+            if len(all_losses) >= 2:
+                loss_max, loss_min = max(all_losses), min(all_losses)
+                if loss_min > 0 and loss_max / loss_min > 5:
+                    yscale = 'log'
+            
+            # --- Séries (sem marcadores quando denso, como TensorBoard/W&B) ---
             series = {}
             
-            if train_data:
-                valid = [(t["step"], t["loss"]) for t in train_data if "loss" in t and _is_valid(t["loss"])]
-                if valid:
-                    series['Train Loss'] = {
-                        'x': [v[0] for v in valid],
-                        'y': [v[1] for v in valid],
-                        'cor': 'blue',
-                        'marcador': 'o',
-                        'tamanho_marcador': 4
-                    }
+            if valid_train:
+                series['Train Loss'] = {
+                    'x': [v[0] for v in valid_train],
+                    'y': [v[1] for v in valid_train],
+                    'cor': 'blue',
+                    'marcador': None if is_denso else 'o',
+                    'tamanho_marcador': 3 if not is_denso else 0,
+                    'largura': 1.5 if is_denso else 2,
+                    'alpha': 0.7 if is_denso else 0.8,
+                }
             
-            # Eval Loss Global é desenhado primeiro (fundo) para que Eval Loss (por etapa)
-            # fique visível por cima quando os valores forem próximos ou iguais.
-            if eval_global_data:
-                valid_g = [(e["step"], e["eval_loss_global"]) for e in eval_global_data 
-                          if "eval_loss_global" in e and _is_valid(e["eval_loss_global"])]
-                if valid_g:
-                    series['Eval Loss Global'] = {
-                        'x': [v[0] for v in valid_g],
-                        'y': [v[1] for v in valid_g],
-                        'cor': 'darkgreen',
-                        'marcador': 'D',
-                        'tamanho_marcador': 5
-                    }
+            # Eval Loss Global desenhado primeiro (fundo)
+            if valid_global:
+                series['Eval Loss Global'] = {
+                    'x': [v[0] for v in valid_global],
+                    'y': [v[1] for v in valid_global],
+                    'cor': 'darkgreen',
+                    'marcador': 'D' if not is_denso else None,
+                    'tamanho_marcador': 5 if not is_denso else 0,
+                    'largura': 2,
+                }
             
-            if eval_data:
-                valid = [(e["step"], e["eval_loss"]) for e in eval_data if "eval_loss" in e and _is_valid(e["eval_loss"])]
-                if valid:
-                    series['Eval Loss'] = {
-                        'x': [v[0] for v in valid],
-                        'y': [v[1] for v in valid],
-                        'cor': 'red',
-                        'marcador': 's',
-                        'tamanho_marcador': 4,
-                        'estilo': '--' if eval_global_data else '-',
-                    }
+            if valid_eval:
+                series['Eval Loss'] = {
+                    'x': [v[0] for v in valid_eval],
+                    'y': [v[1] for v in valid_eval],
+                    'cor': 'red',
+                    'marcador': 's' if not is_denso else None,
+                    'tamanho_marcador': 4 if not is_denso else 0,
+                    'estilo': '--' if eval_global_data else '-',
+                    'largura': 2,
+                }
             
-            # Coleta todos os step values para definir limites do eixo x
+            # --- Steps para limites do eixo x ---
             all_steps = [t["step"] for t in train_data] + [e["step"] for e in eval_data]
             if eval_global_data:
                 all_steps += [e["step"] for e in eval_global_data]
             
-            # Marcadores reutilizáveis de época e etapas do curriculum
-            marcadores_epoca = construir_marcadores_epocas(train_data)
+            # --- Marcadores de época (com raleamento quando muitos) ---
+            marcadores_epoca = construir_marcadores_epocas(train_data, etapas_curriculum)
             construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
             
-            # Marcadores de checkpoints
+            # Raleamento de labels de época: quando muitas, mostra apenas cada N-ésima.
+            # Etapas do curriculum (violeta) e épocas de transição são sempre mantidas.
+            _epoca_markers = [m for m in marcadores_epoca if m.get('cor') == 'green']
+            if len(_epoca_markers) > 10:
+                # Calcula intervalo: mostra ~8-10 labels distribuídos uniformemente
+                intervalo = max(2, len(_epoca_markers) // 8)
+                for i, m in enumerate(_epoca_markers):
+                    if (i + 1) % intervalo != 0 and i != len(_epoca_markers) - 1:
+                        m['label'] = ''  # Remove label mas mantém a linha vertical
+                        m['alpha'] = 0.3  # Linha mais sutil
+            
+            # --- Marcadores de checkpoints ---
             marcadores_verticais = []
             for chkpt in checkpoints:
                 parts = chkpt.replace("checkpoint-", "").split("-")
@@ -466,32 +603,42 @@ class GraficoTreinamento:
                 except ValueError:
                     continue
             
-            # Info text com instâncias acumuladas (se disponível)
+            # Marcador do melhor checkpoint (menor eval_loss global)
+            _melhor = _encontrar_melhor_eval_global(eval_data, eval_global_data)
+            if _melhor:
+                    marcadores_verticais.append({
+                        'x': _melhor['step'],
+                        'cor': 'darkorange',
+                        'estilo': '--',
+                        'alpha': 0.85,
+                        'largura': 2,
+                        'label': f'Melhor global ({_melhor["eval_loss"]:.4f})',
+                    })
+            
+            # --- Info text ---
             info_text = None
             ultima_instancia = 0
             if train_data and "instancias_acumuladas" in train_data[-1]:
                 ultima_instancia = train_data[-1]["instancias_acumuladas"]
                 info_text = f"Instâncias treinadas: {ultima_instancia:,}".replace(",", ".")
             
-            # Adiciona info de etapas curriculum no texto informativo
             if etapas_curriculum and len(etapas_curriculum) > 1:
                 nomes = [et["alias"] for et in etapas_curriculum]
                 prefixo = info_text + " | " if info_text else ""
                 info_text = prefixo + f"Etapas: {' → '.join(nomes)}"
             
-            # Nota quando sem dados válidos de loss
             if not series:
                 sufixo = "\n⚠ Sem dados de loss válidos para plotar"
                 info_text = (info_text + sufixo) if info_text else sufixo.strip()
             
-            # Calcula limites do eixo x baseado em todos os steps conhecidos
+            # --- Limites do eixo x ---
             xlim = None
             if all_steps:
                 x_min, x_max = min(all_steps), max(all_steps)
                 margem = max(0.5, (x_max - x_min) * 0.05)
                 xlim = (x_min - margem, x_max + margem)
             
-            # Gera gráfico usando util_graficos
+            # --- Gera gráfico ---
             resultado = UtilGraficos.gerar_grafico_linhas(
                 series=series,
                 titulo=titulo,
@@ -502,6 +649,7 @@ class GraficoTreinamento:
                 marcadores_epoca=marcadores_epoca,
                 info_text=info_text,
                 xlim=xlim,
+                yscale=yscale,
             )
             
             return resultado is not None
@@ -802,6 +950,8 @@ class GraficoHardware:
         titulo: str = "Uso de Memória durante Treinamento",
         train_data: List[Dict] = None,
         etapas_curriculum: List[Dict] = None,
+        eval_data: List[Dict] = None,
+        eval_global_data: List[Dict] = None,
     ) -> bool:
         """
         Gera gráfico de evolução de memória RAM e GPU por step.
@@ -812,8 +962,7 @@ class GraficoHardware:
             titulo: Título do gráfico
             train_data: Dados de treino (para marcadores de época). Se None, usa epoch das próprias métricas.
             etapas_curriculum: Lista de {step_global, alias, index} para marcar transições
-            output_path: Caminho para salvar o gráfico
-            titulo: Título do gráfico
+            eval_data: Lista de dicts com {step, eval_loss} para marcar melhor checkpoint
             
         Returns:
             True se gerou com sucesso, False caso contrário
@@ -851,14 +1000,28 @@ class GraficoHardware:
                     gpu_train_x.append(step)
                     gpu_train_y.append(gpu_total)
 
+            # Modo denso: quando muitos pontos, otimiza visualização
+            total_pontos = len(steps) + len(gpu_train_x) + len(gpu_eval_x)
+            is_denso = total_pontos > 150
+            _marker_ram = None if is_denso else 'o'
+            _ms_ram = 0 if is_denso else 3
+            _marker_gpu = None if is_denso else '^'
+            _ms_gpu = 0 if is_denso else 5
+            _marker_eval = None if is_denso else 's'
+            _ms_eval = 0 if is_denso else 5
+            _lw = 1.5 if is_denso else 2
+            _alpha = 0.7 if is_denso else 0.8
+
             # Prepara séries
             series = {
                 'RAM (GB)': {
                     'x': steps,
                     'y': ram_usadas,
                     'cor': 'blue',
-                    'marcador': 'o',
-                    'tamanho_marcador': 3
+                    'marcador': _marker_ram,
+                    'tamanho_marcador': _ms_ram,
+                    'largura': _lw,
+                    'alpha': _alpha,
                 }
             }
             
@@ -867,10 +1030,11 @@ class GraficoHardware:
                     'x': gpu_train_x,
                     'y': gpu_train_y,
                     'cor': 'red',
-                    'marcador': '^',
-                    'tamanho_marcador': 5,
+                    'marcador': _marker_gpu,
+                    'tamanho_marcador': _ms_gpu,
+                    'largura': _lw,
                     'estilo': '-',
-                    'alpha': 0.7,
+                    'alpha': _alpha - 0.1,
                     'preencher': False,
                 }
                 
@@ -879,10 +1043,11 @@ class GraficoHardware:
                     'x': gpu_eval_x,
                     'y': gpu_eval_y,
                     'cor': 'darkorange',
-                    'marcador': 's',
-                    'tamanho_marcador': 5,
+                    'marcador': _marker_eval,
+                    'tamanho_marcador': _ms_eval,
+                    'largura': _lw,
                     'estilo': '--',
-                    'alpha': 0.7,
+                    'alpha': _alpha - 0.1,
                     'preencher': False,
                 }
             
@@ -906,9 +1071,32 @@ class GraficoHardware:
                 {"step": m.get("step", 0), "epoch": m.get("epoch", 0), "epoch_global": m.get("epoch", 0)}
                 for m in metricas
             ]
-            marcadores_epoca = construir_marcadores_epocas(fonte_epocas)
+            marcadores_epoca = construir_marcadores_epocas(fonte_epocas, etapas_curriculum)
             all_steps = list(steps)
             construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
+            
+            # Raleamento de labels de época: quando muitas, mostra apenas cada N-ésima.
+            # Etapas do curriculum (violeta) são sempre mantidas.
+            _epoca_markers = [m for m in marcadores_epoca if m.get('cor') == 'green']
+            if len(_epoca_markers) > 10:
+                intervalo = max(2, len(_epoca_markers) // 8)
+                for i, m in enumerate(_epoca_markers):
+                    if (i + 1) % intervalo != 0 and i != len(_epoca_markers) - 1:
+                        m['label'] = ''
+                        m['alpha'] = 0.3
+            
+            # Marcador do melhor checkpoint (menor eval_loss global)
+            marcadores_verticais = []
+            _melhor = _encontrar_melhor_eval_global(eval_data, eval_global_data)
+            if _melhor:
+                    marcadores_verticais.append({
+                        'x': _melhor['step'],
+                        'cor': 'darkorange',
+                        'estilo': '--',
+                        'alpha': 0.85,
+                        'largura': 2,
+                        'label': f'Melhor global ({_melhor["eval_loss"]:.4f})',
+                    })
             
             # Calcula limites do eixo x para incluir etapas
             xlim = None
@@ -927,6 +1115,7 @@ class GraficoHardware:
                 preencher_area=True,
                 info_text=info_text,
                 marcadores_epoca=marcadores_epoca,
+                marcadores_verticais=marcadores_verticais,
                 xlim=xlim,
             )
             
@@ -1016,6 +1205,8 @@ class GraficoEficiencia:
         output_path: str,
         titulo: str = "Custo Computacional do Treinamento",
         etapas_curriculum: List[Dict] = None,
+        eval_data: List[Dict] = None,
+        eval_global_data: List[Dict] = None,
     ) -> bool:
         """
         Gera gráfico de tokens e instâncias acumulados ao longo dos steps.
@@ -1023,6 +1214,7 @@ class GraficoEficiencia:
         Eixo Y esquerdo: tokens acumulados (azul, área preenchida)
         Eixo Y direito: instâncias acumuladas (laranja, linha)
         Inclui marcadores de época e etapa, e info_text com eficiência.
+        Se eval_data fornecido, marca o ponto do melhor eval_loss.
         
         Args:
             train_data: Lista de dicts com {step, tokens_acumulados, instancias_acumuladas,
@@ -1030,6 +1222,7 @@ class GraficoEficiencia:
             output_path: Caminho para salvar o gráfico
             titulo: Título do gráfico
             etapas_curriculum: Lista de {step_global, alias, index} para transições
+            eval_data: Lista de dicts com {step, eval_loss} para marcar melhor checkpoint
             
         Returns:
             True se gerou com sucesso, False caso contrário
@@ -1078,7 +1271,7 @@ class GraficoEficiencia:
             ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
             
             # --- Marcadores de época e etapas ---
-            marcadores_epoca = construir_marcadores_epocas(train_data)
+            marcadores_epoca = construir_marcadores_epocas(train_data, etapas_curriculum)
             all_steps = list(steps)
             construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
             
@@ -1093,9 +1286,16 @@ class GraficoEficiencia:
                     va = m.get('va', 'bottom')
                     y_min, y_max = ax1.get_ylim()
                     y_pos = y_min + (y_max - y_min) * y_frac
-                    ha = 'right' if va == 'top' else 'left'
+                    ha = m.get('ha', 'right' if va == 'top' else 'left')
                     ax1.text(x_pos, y_pos, label,
                              rotation=90, va=va, ha=ha, fontsize=9, color=cor)
+            
+            # --- Marcador do melhor checkpoint (menor eval_loss global) ---
+            _melhor = _encontrar_melhor_eval_global(eval_data, eval_global_data)
+            if _melhor:
+                    ax1.axvline(x=_melhor['step'], color='darkorange', linestyle='--',
+                                alpha=0.85, linewidth=2,
+                                label=f'Melhor global ({_melhor["eval_loss"]:.4f})')
             
             # --- Limites do eixo x ---
             if all_steps:
@@ -1152,39 +1352,58 @@ class GraficoEficiencia:
         train_data: List[Dict],
         eval_data: List[Dict],
         etapas_curriculum: List[Dict] = None,
+        eval_global_data: List[Dict] = None,
     ) -> Dict[str, Any]:
         """Calcula métricas de eficiência tokens/Δloss por etapa e global.
         
-        Usa eval_loss como referência (padrão acadêmico). Para cada etapa,
-        calcula tokens_por_delta_loss = tokens_da_etapa / (eval_loss_inicial - eval_loss_final).
+        Usa eval_loss como referência (padrão acadêmico). Quando eval_global_data
+        está disponível (curriculum multi-etapa), usa-o para cálculos globais e
+        pontos do gráfico, pois eval_loss por etapa compara datasets diferentes.
         
-        Para os pontos do gráfico, calcula a eficiência **marginal** entre avaliações
-        consecutivas (tokens consumidos no intervalo / Δloss no intervalo), mostrando
-        retornos decrescentes ao longo do treinamento.
+        Para os pontos do gráfico, calcula:
+        - delta_acumulado: melhoria total (loss_inicial - loss_atual)
+        - eficiencia_marginal: |Δloss| / Δtokens entre avaliações consecutivas
+        - eficiencia_marginal_suavizada: média móvel (janela=3) da eficiência marginal,
+          suavizando ruído para identificar tendência de retornos decrescentes
         
         Args:
             train_data: Lista de dicts com {step, tokens_acumulados, loss, etapa_index, ...}
             eval_data: Lista de dicts com {step, eval_loss, etapa_index, etapa_alias, ...}
             etapas_curriculum: Lista de {step_global, alias, index}
+            eval_global_data: Lista de dicts com {step, eval_loss_global} (avaliação global, opcional)
             
         Returns:
             Dict com:
             - global: {tokens, loss_inicial, loss_final, delta_loss, tokens_por_delta_loss}
             - etapas: [{alias, tokens, loss_inicial, loss_final, delta_loss, tokens_por_delta_loss}]
-            - pontos: [{step, tokens_acumulados, eval_loss, tokens_por_delta_loss}] (para gráfico)
+            - pontos: [{step, tokens_acumulados, eval_loss, delta_acumulado, eficiencia_marginal, eficiencia_marginal_suavizada, ...}]
+            - fonte_loss: "eval_global" ou "eval_data" (indica qual série foi usada)
         """
-        resultado = {"global": {}, "etapas": [], "pontos": []}
+        resultado = {"global": {}, "etapas": [], "pontos": [], "fonte_loss": "eval_data"}
         
-        if not eval_data:
+        if not eval_data and not eval_global_data:
             return resultado
-        
-        # --- Cálculo global ---
-        global_loss_inicial = eval_data[0]["eval_loss"]
-        global_loss_final = eval_data[-1]["eval_loss"]
         
         # Tokens globais: do train_data (último ponto com tokens_acumulados)
         tokens_validos = [t for t in train_data if t.get("tokens_acumulados", 0) > 0]
         global_tokens = tokens_validos[-1]["tokens_acumulados"] if tokens_validos else 0
+        
+        # --- Decide fonte de loss para pontos e cálculo global ---
+        # Prioriza eval_global_data (dataset combinado, comparável entre etapas)
+        if eval_global_data and len(eval_global_data) >= 2:
+            loss_fonte = eval_global_data
+            loss_key = "eval_loss_global"
+            resultado["fonte_loss"] = "eval_global"
+        elif eval_data:
+            loss_fonte = eval_data
+            loss_key = "eval_loss"
+            resultado["fonte_loss"] = "eval_data"
+        else:
+            return resultado
+        
+        # --- Cálculo global ---
+        global_loss_inicial = loss_fonte[0][loss_key]
+        global_loss_final = loss_fonte[-1][loss_key]
         
         global_delta = global_loss_inicial - global_loss_final
         resultado["global"] = {
@@ -1198,9 +1417,9 @@ class GraficoEficiencia:
         # --- Pontos para gráfico (custo marginal entre avaliações consecutivas) ---
         prev_tok = 0
         prev_loss = global_loss_inicial
-        for ev in eval_data:
+        for ev in loss_fonte:
             step = ev["step"]
-            eval_loss = ev["eval_loss"]
+            eval_loss = ev[loss_key]
             
             # Busca tokens_acumulados do train_data mais próximo (≤ step)
             tok = 0
@@ -1217,18 +1436,36 @@ class GraficoEficiencia:
             else:
                 custo_marginal = None
             
+            # Eficiência marginal: |Δloss| / Δtokens (quanto de loss reduz por token)
+            if tok_marginal > 0:
+                efic_marginal = abs(delta_marginal) / tok_marginal
+            else:
+                efic_marginal = None
+            
             ponto = {
                 "step": step,
                 "tokens_acumulados": tok,
                 "eval_loss": eval_loss,
+                "delta_acumulado": round(global_loss_inicial - eval_loss, 4),
                 "delta_loss": round(delta_marginal, 4),
                 "tokens_por_delta_loss": custo_marginal,
+                "eficiencia_marginal": efic_marginal,
                 "etapa_alias": ev.get("etapa_alias", "Principal"),
                 "etapa_index": ev.get("etapa_index", 0),
             }
             resultado["pontos"].append(ponto)
             prev_tok = tok
             prev_loss = eval_loss
+        
+        # --- Suavização da eficiência marginal (média móvel, janela=3) ---
+        marginais = [p.get("eficiencia_marginal") for p in resultado["pontos"]]
+        janela = 3
+        for i, p in enumerate(resultado["pontos"]):
+            # Coleta valores válidos na janela centrada
+            inicio = max(0, i - janela // 2)
+            fim = min(len(marginais), i + janela // 2 + 1)
+            vals = [v for v in marginais[inicio:fim] if v is not None]
+            p["eficiencia_marginal_suavizada"] = sum(vals) / len(vals) if vals else None
         
         # --- Cálculo por etapa ---
         # Agrupa eval_data por etapa_index
@@ -1283,25 +1520,43 @@ class GraficoEficiencia:
         output_path: str,
         titulo: str = "Eficiência de Tokens por Redução de Loss",
         etapas_curriculum: List[Dict] = None,
+        eval_data: List[Dict] = None,
+        eval_global_data: List[Dict] = None,
     ) -> bool:
-        """Gera gráfico de eficiência marginal: tokens/Δloss ao longo do treinamento.
+        """Gera gráfico de eficiência: eval_loss × eficiência marginal por tokens.
         
-        X = tokens acumulados, Y = custo marginal (tokens entre avaliações / Δloss entre avaliações).
-        Mostra como o custo marginal cresce (retornos decrescentes).
-        Marcadores de etapa quando aplicável.
+        X = tokens acumulados (total desde o início do treinamento).
+        Y esquerdo = eval_loss (valor absoluto — mostra onde o modelo está).
+        Y direito = eficiência marginal suavizada (|Δloss|/Δtokens — mostra
+                    quanto o modelo está aprendendo por token naquele momento).
+        
+        Interpretação:
+        - Eficiência alta = aprendizado rápido (cada token conta)
+        - Eficiência caindo → retornos decrescentes
+        - Eficiência ≈ 0 = modelo parou de melhorar (sinal para parar)
         
         Args:
             eficiencia: Resultado de calcular_eficiencia_tokens()
             output_path: Caminho para salvar o gráfico
             titulo: Título do gráfico
             etapas_curriculum: Lista de {step_global, alias, index}
+            eval_data: Lista de dicts com eval_loss por etapa
+            eval_global_data: Lista de dicts com eval_loss_global (avaliação global)
             
         Returns:
             True se gerou com sucesso, False caso contrário
         """
         pontos = eficiencia.get("pontos", [])
-        # Filtra apenas pontos com melhoria real (delta_loss > 0 e custo calculável)
-        pontos_validos = [p for p in pontos if p.get("tokens_por_delta_loss") is not None]
+        # Filtra pontos com tokens válidos
+        pontos_validos = [p for p in pontos if p.get("tokens_acumulados", 0) > 0]
+        
+        # Dedup: quando múltiplos evals mapeiam para os mesmos tokens_acumulados
+        # (evals mais frequentes que training logs), mantém apenas o último valor
+        # para evitar pontos empilhados verticalmente no mesmo X.
+        seen_tok = {}
+        for i, p in enumerate(pontos_validos):
+            seen_tok[p["tokens_acumulados"]] = i
+        pontos_validos = [pontos_validos[i] for i in sorted(seen_tok.values())]
         
         if len(pontos_validos) < 2:
             logger.warning("Dados insuficientes para gráfico de eficiência tokens/loss.")
@@ -1313,36 +1568,59 @@ class GraficoEficiencia:
             import matplotlib.pyplot as plt
             from matplotlib.ticker import FuncFormatter
             
-            fig, ax1 = plt.subplots(figsize=(12, 6))
+            fig, ax_loss = plt.subplots(figsize=(12, 6))
             
             tokens = [p["tokens_acumulados"] for p in pontos_validos]
-            custo = [p["tokens_por_delta_loss"] for p in pontos_validos]
             eval_losses = [p["eval_loss"] for p in pontos_validos]
+            efic_suav = [p.get("eficiencia_marginal_suavizada") for p in pontos_validos]
             
-            # --- Eixo esquerdo: Custo marginal (tokens/Δloss) ---
-            cor_custo = '#DC2626'  # vermelho
-            ax1.plot(tokens, custo, color=cor_custo, linewidth=2, marker='o',
-                     markersize=5, alpha=0.9, label='Tokens/Δloss marginal (custo)')
-            ax1.fill_between(tokens, custo, alpha=0.1, color=cor_custo)
-            ax1.set_xlabel('Tokens Acumulados', fontsize=12)
-            ax1.set_ylabel('Custo marginal (tokens/Δeval_loss)', fontsize=12, color=cor_custo)
-            ax1.tick_params(axis='y', labelcolor=cor_custo)
-            ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
-            ax1.xaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
+            # Filtra pontos com eficiência válida para o eixo direito
+            tok_efic = [t for t, e in zip(tokens, efic_suav) if e is not None]
+            val_efic = [e for e in efic_suav if e is not None]
             
-            # --- Eixo direito: eval_loss ---
+            # Detecta se a fonte é global ou por etapa
+            _is_global = eficiencia.get("fonte_loss") == "eval_global"
+            _loss_label = "eval_loss_global" if _is_global else "eval_loss"
+            
+            # Modo denso: quando muitos pontos, otimiza visualização
+            is_denso = len(pontos_validos) > 150
+            _lw = 1.5 if is_denso else 2
+            _marker = None if is_denso else 'o'
+            _ms = 0 if is_denso else 5
+            _alpha = 0.7 if is_denso else 0.9
+            
+            # --- Eixo esquerdo: eval_loss (onde o modelo está) ---
             cor_loss = '#2563EB'  # azul
-            ax2 = ax1.twinx()
-            ax2.plot(tokens, eval_losses, color=cor_loss, linewidth=2, marker='s',
-                     markersize=4, alpha=0.7, linestyle='--', label='eval_loss')
-            ax2.set_ylabel('eval_loss', fontsize=12, color=cor_loss)
-            ax2.tick_params(axis='y', labelcolor=cor_loss)
+            ax_loss.plot(tokens, eval_losses, color=cor_loss, linewidth=_lw,
+                         marker=_marker, markersize=_ms, alpha=_alpha,
+                         label=_loss_label)
+            ax_loss.set_xlabel('Tokens Acumulados', fontsize=12)
+            ax_loss.set_ylabel(_loss_label, fontsize=12, color=cor_loss)
+            ax_loss.tick_params(axis='y', labelcolor=cor_loss)
+            ax_loss.xaxis.set_major_formatter(FuncFormatter(lambda v, _: _formatar_numero(int(v))))
+            
+            # --- Eixo direito: eficiência marginal suavizada ---
+            if len(val_efic) >= 2:
+                cor_efic = '#DC2626'  # vermelho
+                ax_efic = ax_loss.twinx()
+                ax_efic.plot(tok_efic, val_efic, color=cor_efic, linewidth=_lw,
+                             marker=_marker, markersize=max(0, _ms - 1),
+                             alpha=max(0.5, _alpha - 0.15), linestyle='--',
+                             label='Eficiência (|Δloss|/Δtokens)')
+                ax_efic.fill_between(tok_efic, val_efic, alpha=0.06, color=cor_efic)
+                ax_efic.set_ylabel('Eficiência marginal (|Δloss| / Δtokens)', fontsize=11, color=cor_efic)
+                ax_efic.tick_params(axis='y', labelcolor=cor_efic)
+                # Formato científico quando valores muito pequenos
+                from matplotlib.ticker import ScalarFormatter
+                fmt = ScalarFormatter(useMathText=True)
+                fmt.set_powerlimits((-2, 3))
+                ax_efic.yaxis.set_major_formatter(fmt)
+            else:
+                ax_efic = None
             
             # --- Marcadores de etapa ---
             if etapas_curriculum and len(etapas_curriculum) > 1:
-                # Mapeia step_global → tokens_acumulados para posicionar marcadores
-                for et in etapas_curriculum[1:]:  # Pula a primeira (início)
-                    # Busca o ponto mais próximo
+                for et in etapas_curriculum[1:]:
                     et_step = et["step_global"]
                     tok_pos = None
                     for p in pontos:
@@ -1350,35 +1628,53 @@ class GraficoEficiencia:
                             tok_pos = p["tokens_acumulados"]
                             break
                     if tok_pos is not None:
-                        ax1.axvline(x=tok_pos, color='#7C3AED', linestyle='--',
-                                    alpha=0.7, linewidth=1.5)
-                        y_min, y_max = ax1.get_ylim()
-                        ax1.text(tok_pos, y_min + (y_max - y_min) * 0.95,
-                                 f" {et['alias']}", rotation=90, va='top',
-                                 fontsize=9, color='#7C3AED')
+                        ax_loss.axvline(x=tok_pos, color='#7C3AED', linestyle='--',
+                                        alpha=0.7, linewidth=1.5)
+                        y_min, y_max = ax_loss.get_ylim()
+                        ax_loss.text(tok_pos, y_min + (y_max - y_min) * 0.05,
+                                     f" {et['alias']}", rotation=90, va='bottom',
+                                     fontsize=9, color='#7C3AED')
+            
+            # --- Marcador do melhor checkpoint ---
+            _melhor = _encontrar_melhor_eval_global(eval_data, eval_global_data)
+            if _melhor:
+                _best_label = f'Melhor global ({_melhor["eval_loss"]:.4f})'
+                best_tok = None
+                for p in pontos:
+                    if p["step"] >= _melhor['step'] and p.get("tokens_acumulados", 0) > 0:
+                        best_tok = p["tokens_acumulados"]
+                        break
+                if best_tok is not None:
+                    ax_loss.axvline(x=best_tok, color='darkorange', linestyle='--',
+                                    alpha=0.85, linewidth=2, label=_best_label)
             
             # --- Info text ---
             info_global = eficiencia.get("global", {})
             info_parts = []
+            info_parts.append(f"{_loss_label}: {info_global.get('loss_inicial', 0):.4f} → {info_global.get('loss_final', 0):.4f}")
             if info_global.get("delta_loss", 0) > 0:
-                tpdl = info_global["tokens_por_delta_loss"]
-                info_parts.append(f"Custo total: {_formatar_numero(tpdl)} tok/Δloss")
-            info_parts.append(f"Δeval_loss: {info_global.get('loss_inicial', 0):.4f} → {info_global.get('loss_final', 0):.4f}")
+                info_parts.append(f"Δtotal: {info_global['delta_loss']:.4f}")
             if info_global.get("tokens", 0) > 0:
                 info_parts.append(f"Tokens: {_formatar_numero(info_global['tokens'])}")
+            if info_global.get("tokens_por_delta_loss") is not None:
+                info_parts.append(f"Custo médio: {_formatar_numero(info_global['tokens_por_delta_loss'])} tok/Δloss")
             
             info_text = " | ".join(info_parts)
-            ax1.text(0.02, 0.02, info_text, transform=ax1.transAxes, fontsize=10,
-                     verticalalignment='bottom',
-                     bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.7))
+            ax_loss.text(0.02, 0.02, info_text, transform=ax_loss.transAxes, fontsize=10,
+                         verticalalignment='bottom',
+                         bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.7))
             
             # --- Estilo ---
-            ax1.set_title(titulo, fontsize=14, fontweight='bold')
-            ax1.grid(True, alpha=0.3)
+            ax_loss.set_title(titulo, fontsize=14, fontweight='bold')
+            ax_loss.grid(True, alpha=0.3)
             
-            lines1, labels1 = ax1.get_legend_handles_labels()
-            lines2, labels2 = ax2.get_legend_handles_labels()
-            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=11)
+            # Legenda unificada
+            lines1, labels1 = ax_loss.get_legend_handles_labels()
+            if ax_efic is not None:
+                lines2, labels2 = ax_efic.get_legend_handles_labels()
+            else:
+                lines2, labels2 = [], []
+            ax_loss.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=11)
             
             plt.tight_layout()
             plt.savefig(output_path, dpi=150, bbox_inches='tight')

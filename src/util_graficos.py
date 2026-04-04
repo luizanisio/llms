@@ -544,7 +544,8 @@ class UtilGraficos:
                               figsize: tuple = (12, 6),
                               dpi: int = 150,
                               info_text: str = None,
-                              xlim: tuple = None):
+                              xlim: tuple = None,
+                              yscale: str = None):
         """
         Gera um gráfico de linhas para séries temporais ou evolução de métricas.
         
@@ -561,6 +562,7 @@ class UtilGraficos:
             figsize: Tamanho da figura (largura, altura)
             dpi: DPI para salvar imagem
             info_text: Texto informativo para exibir no canto superior esquerdo
+            yscale: Escala do eixo Y ('log', 'symlog', etc). None = linear (padrão).
         
         Returns:
             str: Caminho do arquivo salvo, ou None se erro/exibição
@@ -596,6 +598,10 @@ class UtilGraficos:
                 if preencher_area and config.get('preencher', True):
                     ax.fill_between(x, y, alpha=0.2, color=cor)
         
+        # Escala do eixo Y (log, symlog, etc)
+        if yscale:
+            ax.set_yscale(yscale)
+        
         # Marcadores de época (linhas verticais destacadas com label)
         if marcadores_epoca:
             for m in marcadores_epoca:
@@ -610,7 +616,7 @@ class UtilGraficos:
                     va = m.get('va', 'top')
                     y_min, y_max = ax.get_ylim()
                     y_pos = y_min + (y_max - y_min) * y_frac
-                    ha = 'right' if va == 'top' else 'left'
+                    ha = m.get('ha', 'right' if va == 'top' else 'left')
                     ax.text(x_pos, y_pos, label,
                            rotation=90, va=va, ha=ha, fontsize=9, color=cor)
         

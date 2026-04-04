@@ -172,13 +172,24 @@ class CurriculumTracker:
         logger.error(f"<vermelho>❌ Etapa {step_index} falhou: alias='{alias}' - {erro}</vermelho>")
 
     def marcar_conclusao(self, total_etapas: int, target_epochs: float = 0.0) -> None:
-        """Marca o pipeline inteiro como concluído."""
+        """Marca o pipeline inteiro como concluído.
+        
+        Preserva offsets acumulados do estado anterior (finalizar_etapa)
+        para permitir retomada se o usuário aumentar epochs/etapas.
+        """
+        # Lê estado anterior para preservar offsets acumulados
+        estado_anterior = self.carregar_estado()
         self.salvar_estado(
             current_step=total_etapas,
             status="finished",
             alias="COMPLETO",
             target_epochs=target_epochs,
-            mensagem="Treinamento atingiu seu objetivo final."
+            mensagem="Treinamento atingiu seu objetivo final.",
+            # Preserva offsets para possível retomada com mais epochs
+            step_offset_acumulado=estado_anterior.get("step_offset_acumulado", 0),
+            epoch_offset_acumulado=estado_anterior.get("epoch_offset_acumulado", 0.0),
+            instancias_acumuladas=estado_anterior.get("instancias_acumuladas", 0),
+            tokens_acumulados=estado_anterior.get("tokens_acumulados", 0),
         )
         self.registrar_metrica(alias="COMPLETO", event="treinamento_concluido", total_etapas=total_etapas, target_epochs=target_epochs)
         logger.info(f"<verde>✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas</verde>")
@@ -212,9 +223,21 @@ class CurriculumTracker:
         if status == self.STATUS_PENDENTE:
             return 0, {}
         
-        # Pipeline finalizado: não deveria chegar aqui (verificado antes em train())
+        # Pipeline finalizado mas desbloqueado (usuário aumentou epochs/etapas)
+        # Retoma na última etapa com offsets acumulados preservados
         if status == "finished":
-            return total_etapas, {}
+            etapa_retomada = max(0, total_etapas - 1)
+            acumulados = {
+                "step_offset_global": estado.get("step_offset_acumulado", 0),
+                "epoch_offset_global": estado.get("epoch_offset_acumulado", 0.0),
+                "instancias_acumuladas": estado.get("instancias_acumuladas", 0),
+                "tokens_acumulados": estado.get("tokens_acumulados", 0),
+            }
+            logger.info(
+                f"<azul>🔄 Pipeline finalizado sendo retomado: etapa {etapa_retomada+1}/{total_etapas} "
+                f"(offsets preservados: epochs={acumulados.get('epoch_offset_global', 0.0):.1f})</azul>"
+            )
+            return etapa_retomada, acumulados
         
         if status == self.STATUS_COMPLETED:
             # A etapa current_step acabou de concluir; retomar na próxima

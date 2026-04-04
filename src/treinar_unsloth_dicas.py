@@ -71,6 +71,11 @@ DICAS_YAML = {
     "treinamento/nbits": """#| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
 #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.""",
     "treinamento/train_on_responses_only": "#| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.",
+    "treinamento/save_checkpoints_qtd": """#| Quantidade de checkpoints extras mantidos. Padrão: 1 (melhor + último).
+#| Protegidos (sempre mantidos): melhor (menor eval_loss) + último (para retomada).
+#| Extras: N-1 checkpoints recentes adicionais. Ex: 3 = melhor + último + 2 extras.
+#| Em curriculum multi-etapa, ao concluir uma etapa apenas o melhor dela é preservado.
+#| 0 = manter todos (mais disco).""",
     "treinamento/warmup_steps": """#| Passos de aquecimento. Recomendado: 5-10% do total de steps.
 #| [7B] Aumentar para 10-20 steps em modelos maiores.""",
     "treinamento/weight_decay": "#| Decaimento de peso (regularização). Padrão 0.01.",

@@ -69,10 +69,10 @@ Ao final do treinamento (ou via `--stats`), o sistema gera automaticamente um re
 
 | Gráfico | Arquivo | Conteúdo |
 |---------|---------|----------|
-| Evolução do Loss | `treinamento_loss.png` | Train loss, eval loss, eval global, transições de etapa curriculum |
+| Evolução do Loss | `treinamento_loss.png` | Train loss, eval loss por etapa, eval loss global, transições de etapa curriculum. Escala log automática quando o range dinâmico é grande. Raleamento de labels de época quando > 10 épocas. |
 | Custo Computacional | `treinamento_tokens.png` | Tokens reais acumulados × instâncias treinadas ao longo dos steps |
-| Eficiência Tokens/Δloss | `treinamento_eficiencia_tokens.png` | Custo marginal (tokens/Δloss) e eval_loss ao longo do treinamento |
-| Uso de Memória | `hardware_memoria.png` | RAM, GPU VRAM reservada/alocada ao longo do treinamento |
+| Eficiência Tokens/Loss | `treinamento_eficiencia_tokens.png` | eval_loss global × eficiência marginal suavizada ao longo dos tokens acumulados |
+| Uso de Memória | `hardware_memoria.png` | RAM, GPU VRAM reservada (treino e avaliação) ao longo do treinamento |
 
 ### Contagem Real de Tokens
 
@@ -94,11 +94,24 @@ tokens_por_delta_loss = tokens_processados / (eval_loss_inicial - eval_loss_fina
 ```
 
 - **Referência:** Usa `eval_loss` (validation loss), não training loss — padrão acadêmico que evita decisões baseadas em overfitting.
-- **Cálculo global:** Eficiência total do treinamento inteiro.
-- **Cálculo por etapa:** Eficiência de cada etapa do curriculum separadamente. Permite identificar quais etapas têm melhor custo-benefício.
-- **Gráfico:** O eixo X mostra tokens acumulados, eixo Y esquerdo mostra o custo marginal entre avaliações consecutivas (tokens/Δloss — vermelho, quanto menor melhor), eixo Y direito mostra eval_loss (azul). Marcadores violeta indicam transições de etapa.
-- **Interpretação:** A curva vermelha mostra o custo marginal — se sobe, o modelo está em retornos decrescentes (investindo mais tokens por unidade de melhoria). Em treinamentos saudáveis, o custo marginal sobe gradualmente.
+- **Cálculo global:** Usa **eval_loss_global** (avaliação no dataset combinado de todas as etapas). Comparável entre etapas do curriculum porque avalia sempre o mesmo dataset. É o valor apresentado no gráfico e no info text.
+- **Cálculo por etapa:** Usa **eval_loss por etapa** (avaliação no dataset específico daquela etapa). Permite comparar a eficiência de cada etapa isoladamente: etapas mais fáceis tipicamente têm melhor custo-benefício. Apresentado na tabela do relatório.
+- **Gráfico:** O eixo X mostra tokens acumulados (total global desde o início do treinamento). Eixo Y esquerdo mostra **eval_loss global** (azul — onde o modelo está). Eixo Y direito mostra **eficiência marginal suavizada** (vermelho — |Δloss|/Δtokens entre avaliações, suavizado com média móvel janela=3). Marcadores violeta indicam transições de etapa.
+- **Interpretação:**
+  - **Eficiência alta** → aprendizado rápido (cada token processado contribui significativamente)
+  - **Eficiência caindo** → retornos decrescentes (modelo está convergindo)
+  - **Eficiência ≈ 0** → modelo parou de melhorar (sinal natural de parada)
+  - Picos de eficiência em transições de etapa indicam que o curriculum introduziu exemplos que impulsionaram o aprendizado.
 - **Caso sem melhoria:** Se eval_loss não diminui (Δloss ≤ 0), a métrica é reportada como "∞ (sem melhoria)".
+
+### Visualização Adaptativa
+
+Todos os gráficos de treinamento se adaptam automaticamente à densidade dos dados:
+
+- **Modo denso (> 150 pontos):** Remove marcadores de ponto individuais das séries, usa linhas mais finas (1.5px) e alpha reduzido, semelhante à visualização do TensorBoard/W&B.
+- **Escala log automática (gráfico de loss):** Quando o range dinâmico do loss é grande (max/min > 5×), ativa escala logarítmica no eixo Y, padrão acadêmico para curvas de loss com decaimento rápido seguido de plateau.
+- **Raleamento de épocas:** Quando > 10 épocas, exibe labels apenas a cada N-ésima época (~8-10 visíveis), com as demais como linhas sutis sem texto.
+- **Melhor checkpoint global:** Marcado em todos os gráficos como "Melhor global" (laranja), baseado no menor eval_loss_global (ou eval_loss se não houver avaliação global).
 
 ---
 

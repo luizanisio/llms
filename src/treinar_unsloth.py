@@ -523,20 +523,33 @@ class MetricsLoggerCallback(TrainerCallback):
 
 class CheckpointRenameCallback(TrainerCallback):
     """
-    Callback para renomear checkpoints com zero-padding e step global.
+    Callback para renomear checkpoints com zero-padding e step global,
+    e limpar checkpoints antigos preservando melhor + último + extras.
     
     Em modo curriculum, global_step reseta em cada etapa. Usa step_offset
     para nomear checkpoints com step global contínuo:
         checkpoint-1 (step_offset=2) -> checkpoint-00003
+    
+    Limpeza de checkpoints:
+        Substitui o save_total_limit nativo do HF Trainer (que não funciona
+        corretamente com pastas renomeadas via zero-padding). A cada novo
+        checkpoint, analisa as pastas existentes e remove as mais antigas,
+        preservando SEMPRE:
+          - O melhor checkpoint (menor eval_loss) — modelo de melhor qualidade
+          - O último checkpoint (mais recente) — necessário para retomada (resume)
+        Além desses dois protegidos, mantém (save_checkpoints_qtd - 1)
+        checkpoints extras mais recentes. Quando qtd=1 (padrão): melhor + último.
     """
     
-    def __init__(self, checkpoint_base_dir: str, step_offset: int = 0, padding: int = 5):
+    def __init__(self, checkpoint_base_dir: str, step_offset: int = 0,
+                 padding: int = 5, save_checkpoints_qtd: int = 0):
         self.checkpoint_base_dir = checkpoint_base_dir
         self.step_offset = step_offset
         self.padding = padding
+        self.save_checkpoints_qtd = save_checkpoints_qtd  # 0 = manter todos
     
     def on_save(self, args, state, control, **kwargs):
-        """Renomeia o checkpoint salvo para usar zero-padding com step global."""
+        """Renomeia o checkpoint salvo e limpa checkpoints antigos."""
         if not state.global_step:
             return
             
@@ -567,6 +580,219 @@ class CheckpointRenameCallback(TrainerCallback):
             if state.best_model_checkpoint and state.best_model_checkpoint.rstrip("/") == original_path.rstrip("/"):
                 state.best_model_checkpoint = padded_path
                 logger.debug(f"best_model_checkpoint corrigido: {padded_path}")
+        
+        # Limpa checkpoints antigos após renomear
+        self._limpar_checkpoints(state)
+    
+    def _limpar_checkpoints(self, state) -> None:
+        """Remove checkpoints antigos preservando melhor + último + extras.
+        
+        Protegidos (SEMPRE mantidos, independente de save_checkpoints_qtd):
+          - Melhor checkpoint (menor eval_loss via state.best_model_checkpoint)
+          - Último checkpoint (mais recente — necessário para resume)
+        
+        Extras: max(0, save_checkpoints_qtd - 1) mais recentes dentre os
+        não-protegidos. Quando save_checkpoints_qtd=1: apenas melhor + último.
+        
+        Apenas checkpoints da etapa atual (step > step_offset) são
+        considerados para remoção. Checkpoints de etapas anteriores
+        (step <= step_offset) são preservados — a limpeza de etapas
+        anteriores ocorre ao final de cada etapa.
+        """
+        import shutil
+        import re
+        
+        if self.save_checkpoints_qtd <= 0:
+            return  # 0 = manter todos
+        
+        # Lista todas as pastas checkpoint-NNNNN
+        try:
+            dirs = [
+                d for d in os.listdir(self.checkpoint_base_dir)
+                if d.startswith("checkpoint-") and os.path.isdir(
+                    os.path.join(self.checkpoint_base_dir, d)
+                )
+            ]
+        except OSError:
+            return
+        
+        # Extrai step numérico de cada pasta
+        checkpoints = []
+        for d in dirs:
+            match = re.match(r"checkpoint-(\d+)", d)
+            if match:
+                step_num = int(match.group(1))
+                checkpoints.append((step_num, d))
+        
+        # Filtra apenas checkpoints da etapa atual (step > step_offset)
+        etapa_checkpoints = [(s, d) for s, d in checkpoints if s > self.step_offset]
+        
+        if len(etapa_checkpoints) <= 2:
+            return  # Com 2 ou menos não há o que limpar (melhor + último no mínimo)
+        
+        # Ordena por step (crescente — mais antigo primeiro)
+        etapa_checkpoints.sort(key=lambda x: x[0])
+        
+        # --- Identifica checkpoints protegidos ---
+        protegidos = set()
+        
+        # 1. Último checkpoint (mais recente) — necessário para retomada
+        ultimo_step = etapa_checkpoints[-1][0]
+        protegidos.add(ultimo_step)
+        
+        # 2. Melhor checkpoint (menor eval_loss)
+        best_path = None
+        if state.best_model_checkpoint:
+            best_path = os.path.normpath(state.best_model_checkpoint)
+        
+        melhor_nome = None
+        for step_num, dirname in etapa_checkpoints:
+            full_path = os.path.normpath(os.path.join(self.checkpoint_base_dir, dirname))
+            if best_path and full_path == best_path:
+                protegidos.add(step_num)
+                melhor_nome = dirname
+                break
+        
+        # --- Calcula extras (além dos protegidos) ---
+        # save_checkpoints_qtd define o "orçamento" de checkpoints:
+        #   qtd=1 → melhor + último (mínimo absoluto)
+        #   qtd=2 → melhor + último + 0 extras (mesmo que 1 se melhor != último)
+        #   qtd=3 → melhor + último + 1 extra recente
+        extras_desejados = max(0, self.save_checkpoints_qtd - 1)
+        
+        # Checkpoints não-protegidos, ordenados por step (crescente)
+        nao_protegidos = [(s, d) for s, d in etapa_checkpoints if s not in protegidos]
+        
+        if len(nao_protegidos) <= extras_desejados:
+            return  # Nada para remover
+        
+        # Mantém os extras mais recentes
+        manter = set(protegidos)
+        if extras_desejados > 0:
+            for s, d in nao_protegidos[-extras_desejados:]:
+                manter.add(s)
+        
+        # Remove tudo que não está em manter
+        para_remover = [(s, d) for s, d in etapa_checkpoints if s not in manter]
+        
+        for step_num, dirname in para_remover:
+            path = os.path.join(self.checkpoint_base_dir, dirname)
+            try:
+                shutil.rmtree(path, ignore_errors=True)
+                logger.info(f"🗑️  Checkpoint removido: {dirname} (liberando espaço)")
+            except Exception as e:
+                logger.warning(f"Erro ao remover checkpoint {dirname}: {e}")
+        
+        if para_remover:
+            mantidos = len(manter)
+            best_info = f" (melhor: {melhor_nome})" if melhor_nome else ""
+            ultimo_info = f" (último: checkpoint-{ultimo_step:0{self.padding}d})"
+            logger.info(
+                f"📦 Limpeza: {len(para_remover)} removido(s), "
+                f"{mantidos} mantido(s){best_info}{ultimo_info}"
+            )
+    
+    @staticmethod
+    def limpar_checkpoints_etapa_anterior(
+        checkpoint_base_dir: str,
+        step_offset_anterior: int,
+        step_offset_atual: int,
+        save_checkpoints_qtd: int = 1,
+    ) -> None:
+        """Limpa checkpoints de uma etapa anterior do curriculum, mantendo apenas o melhor.
+        
+        Chamado ao iniciar uma nova etapa do curriculum para liberar espaço
+        dos checkpoints da etapa que acabou de concluir.
+        Mantém o melhor checkpoint da etapa (identificado pelo trainer_state.json
+        dentro do checkpoint) e remove os demais.
+        
+        Args:
+            checkpoint_base_dir: Diretório base dos checkpoints (ex: modelo/chkpt)
+            step_offset_anterior: Step offset da etapa anterior (checkpoints > este valor)
+            step_offset_atual: Step offset da etapa atual (checkpoints <= este valor)
+            save_checkpoints_qtd: Quantos manter (padrão 1 = apenas o melhor)
+        """
+        import shutil
+        import re
+        
+        if save_checkpoints_qtd <= 0:
+            return
+        
+        try:
+            dirs = [
+                d for d in os.listdir(checkpoint_base_dir)
+                if d.startswith("checkpoint-") and os.path.isdir(
+                    os.path.join(checkpoint_base_dir, d)
+                )
+            ]
+        except OSError:
+            return
+        
+        # Extrai step e filtra checkpoints da etapa anterior
+        etapa_anterior = []
+        for d in dirs:
+            match = re.match(r"checkpoint-(\d+)", d)
+            if match:
+                step_num = int(match.group(1))
+                if step_offset_anterior < step_num <= step_offset_atual:
+                    etapa_anterior.append((step_num, d))
+        
+        if len(etapa_anterior) <= save_checkpoints_qtd:
+            return
+        
+        etapa_anterior.sort(key=lambda x: x[0])
+        
+        # Identifica melhor checkpoint: lê trainer_state.json dentro de cada checkpoint
+        melhor_step = None
+        melhor_loss = float('inf')
+        for step_num, dirname in etapa_anterior:
+            state_file = os.path.join(checkpoint_base_dir, dirname, "trainer_state.json")
+            if os.path.exists(state_file):
+                try:
+                    import json
+                    with open(state_file, 'r') as f:
+                        ts = json.load(f)
+                    best_ckpt = ts.get("best_model_checkpoint", "")
+                    best_metric = ts.get("best_metric")
+                    # Se este checkpoint é o best_model_checkpoint registrado
+                    if best_ckpt and dirname in best_ckpt:
+                        melhor_step = step_num
+                        break
+                    # Fallback: compara eval_loss se disponível
+                    if best_metric is not None and best_metric < melhor_loss:
+                        melhor_loss = best_metric
+                        melhor_step = step_num
+                except Exception:
+                    pass
+        
+        # Se não encontrou melhor, usa o mais recente
+        if melhor_step is None:
+            melhor_step = etapa_anterior[-1][0]
+        
+        # Mantém melhor + (qtd-1) mais recentes
+        melhor_dirs = {melhor_step}
+        recentes = [s for s, _ in etapa_anterior if s != melhor_step]
+        manter_extra = save_checkpoints_qtd - 1
+        if manter_extra > 0:
+            for s in recentes[-manter_extra:]:
+                melhor_dirs.add(s)
+        
+        removidos = 0
+        for step_num, dirname in etapa_anterior:
+            if step_num not in melhor_dirs:
+                path = os.path.join(checkpoint_base_dir, dirname)
+                try:
+                    shutil.rmtree(path, ignore_errors=True)
+                    logger.info(f"🗑️  Checkpoint etapa anterior removido: {dirname}")
+                    removidos += 1
+                except Exception as e:
+                    logger.warning(f"Erro ao remover checkpoint {dirname}: {e}")
+        
+        if removidos > 0:
+            logger.info(
+                f"📦 Limpeza etapa anterior: {removidos} checkpoint(s) removido(s), "
+                f"{len(melhor_dirs)} mantido(s)"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1417,7 +1643,9 @@ class LLMsTrainer:
         log_steps = eval_steps if isinstance(eval_steps, int) and eval_steps > 0 else 50
         
         if self.save_checkpoints:
-            print_cores(f'<cinza> - gravando checkpoints a cada {log_steps} steps</cinza>', color_auto=False)
+            _qtd = treino_cfg.save_checkpoints_qtd
+            _qtd_info = f" (melhor + último + {_qtd - 1} extras)" if _qtd > 1 else " (melhor + último)" if _qtd == 1 else " (mantendo todos)"
+            print_cores(f'<cinza> - gravando checkpoints a cada {log_steps} steps{_qtd_info}</cinza>', color_auto=False)
         
         # Log train_on_responses_only
         if treino_cfg.train_on_responses_only:
@@ -1444,9 +1672,15 @@ class LLMsTrainer:
             output_dir=os.path.join(self._yaml_config.modelo.saida, "chkpt"),  # checkpoints em subpasta
             save_strategy="steps" if self.save_checkpoints else "no",
             save_steps=log_steps if self.save_checkpoints else 0,
+            # Nota: NÃO usamos save_total_limit do HF Trainer porque ele executa
+            # a rotação ANTES do nosso callback renomear os checkpoints (zero-padding),
+            # o que causa ordenação incorreta. A limpeza é feita pelo
+            # CheckpointRenameCallback._limpar_checkpoints() após cada renomeação.
             eval_strategy="steps" if self.eval_ds and eval_steps > 0 else "no",
             eval_steps=eval_steps if self.eval_ds and eval_steps > 0 else None,
             load_best_model_at_end=True if self.eval_ds and eval_steps > 0 else False,
+            metric_for_best_model="eval_loss",  # Explícito: melhor modelo = menor eval_loss
+            greater_is_better=False,  # Menor eval_loss é melhor
             report_to="none",
             gradient_checkpointing=True,  # Ativa gradient checkpointing (era "unsloth" antes)
             gradient_checkpointing_kwargs={"use_reentrant": False},  # Evita stream mismatch
@@ -1570,11 +1804,14 @@ class LLMsTrainer:
             retomada=is_retomada,
         ))
         
-        # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding)
+        # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding + limpeza)
         if self.save_checkpoints:
             chkpt_dir = os.path.join(self._yaml_config.modelo.saida, "chkpt")
             os.makedirs(chkpt_dir, exist_ok=True)
-            trainer.add_callback(CheckpointRenameCallback(chkpt_dir, step_offset=step_offset))
+            trainer.add_callback(CheckpointRenameCallback(
+                chkpt_dir, step_offset=step_offset,
+                save_checkpoints_qtd=self._yaml_config.treinamento.save_checkpoints_qtd,
+            ))
         
         # 4. GlobalEvalCallback (avaliação em todas as etapas do curriculum)
         # O dataset global já foi tokenizado pelo SFTTrainer junto com eval_ds
@@ -1943,6 +2180,13 @@ class LLMsTrainer:
         # Isso permite pular etapas concluídas e retomar na etapa interrompida
         # com o checkpoint correto e dataset correto.
         etapa_retomada, acumulados_retomada = self._tracker.obter_estado_retomada(total_etapas)
+        # Garante que o índice de retomada está dentro dos limites válidos
+        if etapa_retomada >= total_etapas:
+            logger.warning(
+                f"etapa_retomada ({etapa_retomada}) >= total_etapas ({total_etapas}), "
+                f"ajustando para última etapa ({total_etapas - 1})"
+            )
+            etapa_retomada = max(0, total_etapas - 1)
         is_retomada = etapa_retomada > 0
 
         if is_retomada:
@@ -2051,6 +2295,52 @@ class LLMsTrainer:
             tempo_total = time.time() - tempo_inicio
             print_cores("<verde>[5/6] Tempo de execução: {:.2f} s</verde>".format(train_stats.metrics["train_runtime"]), color_auto=False)
 
+            # Log sobre o melhor modelo (load_best_model_at_end)
+            _best_ckpt = getattr(self.trainer.state, 'best_model_checkpoint', None)
+            _best_metric = getattr(self.trainer.state, 'best_metric', None)
+            if self.trainer.args.load_best_model_at_end and _best_ckpt:
+                logger.info(
+                    f"🏆 Melhor modelo carregado: {os.path.basename(_best_ckpt)} "
+                    f"(eval_loss={_best_metric:.4f})" if _best_metric is not None
+                    else f"🏆 Melhor modelo carregado: {os.path.basename(_best_ckpt)}"
+                )
+            elif not self.trainer.args.load_best_model_at_end:
+                logger.info("ℹ️  Modelo final = último step (sem dataset de validação para selecionar melhor checkpoint)")
+
+            # Coleta informações do melhor checkpoint (tokens e instâncias até ele)
+            _best_step = None
+            _best_tokens = None
+            _best_instancias = None
+            if _best_ckpt:
+                import re as _re
+                _match = _re.search(r"checkpoint-(\d+)", os.path.basename(_best_ckpt))
+                if _match:
+                    _best_step = int(_match.group(1))
+                # Busca tokens/instâncias no training_metrics.jsonl para o step do melhor checkpoint
+                if _best_step is not None:
+                    _metrics_file = os.path.join(self._yaml_config.modelo.saida, "treinamento", "training_metrics.jsonl")
+                    if os.path.exists(_metrics_file):
+                        try:
+                            import json as _json
+                            with open(_metrics_file, 'r') as _f:
+                                for _line in _f:
+                                    _line = _line.strip()
+                                    if not _line:
+                                        continue
+                                    _rec = _json.loads(_line)
+                                    _rec_step = _rec.get("step_global") or _rec.get("step")
+                                    if _rec_step == _best_step:
+                                        _best_tokens = _rec.get("tokens_acumulados")
+                                        _best_instancias = _rec.get("instancias_acumuladas")
+                                        break
+                        except Exception as _e:
+                            logger.debug(f"Erro ao buscar tokens no melhor checkpoint: {_e}")
+                if _best_tokens is not None:
+                    logger.info(
+                        f"   📊 No melhor checkpoint: {_best_tokens:,} tokens, "
+                        f"{_best_instancias:,} instâncias processadas"
+                    )
+
             # Valida o modelo após o treinamento
             print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
             info_modelo = self.print_modelo_status()
@@ -2067,6 +2357,12 @@ class LLMsTrainer:
                 "etapa_alias": etapa_atual.alias,
                 "etapa_tipo": etapa_atual.tipo,
                 "parametros_treinaveis": info_modelo.get("parametros_treinaveis", 0) if isinstance(info_modelo, dict) else 0,
+                # Informações do melhor checkpoint
+                "best_checkpoint": os.path.basename(_best_ckpt) if _best_ckpt else None,
+                "best_eval_loss": round(_best_metric, 6) if _best_metric is not None else None,
+                "best_checkpoint_step": _best_step,
+                "best_checkpoint_tokens": _best_tokens,
+                "best_checkpoint_instancias": _best_instancias,
             }
 
             # Registra informação do pace_loss (se callback ativo)
@@ -2184,6 +2480,19 @@ class LLMsTrainer:
                 tokens_acumulados=tokens_acumulados,
             )
 
+            # Limpeza de checkpoints da etapa que acabou de concluir
+            # Em curriculum com múltiplas etapas, mantém apenas o melhor
+            # checkpoint das etapas anteriores para liberar espaço.
+            if self.save_checkpoints and is_curriculum and step_index < total_etapas - 1:
+                chkpt_dir = os.path.join(self._yaml_config.modelo.saida, "chkpt")
+                _prev_offset = step_offset_global - train_stats.global_step
+                CheckpointRenameCallback.limpar_checkpoints_etapa_anterior(
+                    checkpoint_base_dir=chkpt_dir,
+                    step_offset_anterior=_prev_offset,
+                    step_offset_atual=step_offset_global,
+                    save_checkpoints_qtd=1,  # Etapa concluída: manter apenas o melhor
+                )
+
         if is_curriculum:
             logger.info(f"<verde>✅ TREINAMENTO COMPLETO — {total_etapas} etapas de curriculum finalizadas</verde>")
             self._historico.registrar_evento(
@@ -2203,7 +2512,14 @@ class LLMsTrainer:
     def _save_model(self, stats = None):
         out_dir = self._yaml_config.modelo.saida
         os.makedirs(out_dir, exist_ok=True)
-        print_cores(f"<azul>[6/6] Salvando modelo em {out_dir}…</azul>", color_auto=False)
+        
+        # Indica se o modelo sendo salvo é o melhor (load_best_model_at_end) ou o último
+        _is_best = False
+        if self.trainer is not None:
+            _best_ckpt = getattr(self.trainer.state, 'best_model_checkpoint', None)
+            _is_best = self.trainer.args.load_best_model_at_end and _best_ckpt is not None
+        _tipo_modelo = "melhor (menor eval_loss)" if _is_best else "último step"
+        print_cores(f"<azul>[6/6] Salvando modelo ({_tipo_modelo}) em {out_dir}…</azul>", color_auto=False)
         
         # Salva o modelo (LoRA ou modelo completo)
         self.model.save_pretrained(out_dir)
@@ -2936,6 +3252,7 @@ def _create_default_cfg(path: str) -> None:
             "max_seq_length": 4096,
             "learning_rate": 2e-4,
             "save_checkpoints": True,
+            "save_checkpoints_qtd": 1,
             "resume_from_checkpoint": True,
             "warmup_steps": 5,
             "nbits": 4,
