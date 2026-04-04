@@ -42,34 +42,34 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
   divisao:
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_facil.csv
       alias: "fácil"
-      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
+      pace_epochs_max: 3
+      pace_loss: 0.2
       #max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
       batch_size: 2
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_medio.csv
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_medio.csv
       alias: "médio"
       tipo: "lora"
       pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
+      pace_epochs_max: 3
+      pace_loss: 0.2
       #max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_dificil.csv
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_dificil.csv
       alias: "difícil"
       tipo: "lora"
       pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
+      pace_epochs_max: 3
+      pace_loss: 0.2
       #max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
+    - arquivo: ./treino_simples/_divisao_alguns/divisao_unica.csv
       alias: "completo"
       tipo: "lora"
       pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
+      pace_epochs_max: 3
+      pace_loss: 0.2
       #max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
@@ -85,7 +85,7 @@ modelo:
   #base_model_name: Qwen/Qwen2.5-3B-Instruct
   base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum)
+  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MICRO curriculum)
 
 #| =========================================================================
 #| TREINAMENTO
@@ -144,6 +144,7 @@ treinamento:
   
   save_checkpoints: true
   resume_from_checkpoint: true
+  save_checkpoints_qtd: 1
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
@@ -164,7 +165,7 @@ treinamento:
   
   #| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
   #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.
-  nbits: 4
+  nbits: 16
   
   #| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.
   train_on_responses_only: true

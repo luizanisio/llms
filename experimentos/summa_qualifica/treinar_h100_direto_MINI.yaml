@@ -45,8 +45,9 @@ curriculum:
     - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
       alias: "completo"
       tipo: "lora"
-      pace_epochs: 4     # (Padrão) Transita após 1 época.
-      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
+      pace_epochs: 20     # (Padrão) Transita após 1 época.
+      pace_loss: 0.15
+      #max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
       alias: "fácil"
       tipo: ""       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)

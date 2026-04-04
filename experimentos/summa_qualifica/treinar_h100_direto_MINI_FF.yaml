@@ -42,35 +42,27 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
   divisao:
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
-      alias: "fácil"
-      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
-      pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
-      #max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
-      batch_size: 2
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_medio.csv
-      alias: "médio"
-      tipo: "lora"
-      pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
-      #max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
-    - arquivo: ./treino_simples/_divisao_fold11/divisao_dificil.csv
-      alias: "difícil"
-      tipo: "lora"
-      pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
-      pace_loss: 0.15
-      #max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
     - arquivo: ./treino_simples/_divisao_fold11/divisao_unica.csv
       alias: "completo"
-      tipo: "lora"
-      pace_epochs: 1     # (Padrão) Transita após 1 época.
-      pace_epochs_max: 10
+      tipo: "full"
+      pace_epochs: 20     # (Padrão) Transita após 1 época.
       pace_loss: 0.15
       #max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
+      alias: "fácil"
+      tipo: ""       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 30720  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_medio.csv
+      alias: "médio"
+      tipo: ""
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 32768  # [Opcional] Pode sobrepor config geral.
+    - arquivo: ./treino_simples/_divisao_fold11/divisao_dificil.csv
+      alias: "difícil"
+      tipo: ""
+      pace_epochs: 2     # (Padrão) Transita após 1 época.
+      max_seq_length: 35840  # [Opcional] Pode sobrepor config geral.
 
 #| =========================================================================
 #| MODELO
@@ -85,7 +77,7 @@ modelo:
   #base_model_name: Qwen/Qwen2.5-3B-Instruct
   base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum)
+  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI direto FF)
 
 #| =========================================================================
 #| TREINAMENTO
@@ -94,12 +86,12 @@ modelo:
 #| Guia: https://unsloth.ai/docs/get-started/fine-tuning-llms-guide/lora-hyperparameters-guide
 treinamento:
   #| Recomendados para melhor desempenho e menor uso de VRAM, especialmente em H100. Padrão: true.
-  flash_attention_2: true
-  liger_kernel: true
+  flash_attention_2: true  
+  liger_kernel: true  
 
   #| Frequência de avaliação (ex: '15%' das steps ou número inteiro).
   eval_steps: 20%
-  #| Avaliação global a cada `eval_steps` (recomendada para monitorar progresso geral, padrao true).
+  #| Avaliação global a cada `eval_steps` (recomendada para monitorar progresso geral, padrão true).
   eval_global: true
   
   #| Amostras por GPU. Menor gasta menos VRAM.
@@ -130,7 +122,7 @@ treinamento:
   #| Em modo curriculum, cada etapa pode sobrepor este valor (ver curriculum.divisao).
   #| 0 = valor absoluto do máximo do dataset (ajuste automático).
   #| ⚠️ Com sequências longas, reduza batch_size para 1 e aumente grad_batch_size.
-  #max_seq_length: 35840
+  max_seq_length: 35840
   
   #| Validação de tokens segura. Recomendado: true.
   #| Se `false` e o max_seq_length for > 0, o sistema confia na sua configuração
@@ -164,7 +156,7 @@ treinamento:
   
   #| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
   #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.
-  nbits: 4
+  nbits: 16
   
   #| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.
   train_on_responses_only: true

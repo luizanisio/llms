@@ -44,7 +44,7 @@ curriculum:
   divisao:
     - arquivo: ./treino_simples/_divisao_fold11/divisao_facil.csv
       alias: "fácil"
-      tipo: "lora"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
+      tipo: "full"       # "full" ou "lora" (Se "lora", obedece configurações de `lora` raíz)
       pace_epochs: 1     # (Padrão) Transita após 1 época.
       pace_epochs_max: 10
       pace_loss: 0.15
@@ -85,7 +85,7 @@ modelo:
   #base_model_name: Qwen/Qwen2.5-3B-Instruct
   base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #| Diretório de saída para o adaptador LoRA.
-  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum)
+  saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI curriculum FF)
 
 #| =========================================================================
 #| TREINAMENTO
@@ -144,6 +144,7 @@ treinamento:
   
   save_checkpoints: true
   resume_from_checkpoint: true
+  save_checkpoints_qtd: 3
   
   #| Passos de aquecimento. Recomendado: 5-10% do total de steps.
   #| [7B] Aumentar para 10-20 steps em modelos maiores.
@@ -164,7 +165,7 @@ treinamento:
   
   #| Quantização: 4 (QLoRA) economiza muita memória. 16 (LoRA) para máxima precisão.
   #| [H100] Pode usar 8 ou 16 (Full Precision) para máxima qualidade.
-  nbits: 4
+  nbits: 16
   
   #| True: treina apenas nas respostas (recomendado para chat). Aumenta acurácia.
   train_on_responses_only: true
