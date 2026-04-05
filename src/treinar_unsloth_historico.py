@@ -37,15 +37,18 @@ logger = get_logger(__name__)
 class HistoricoTreinamento:
     """Gerencia os arquivos de histórico na pasta 'treinamento' do modelo."""
 
-    def __init__(self, output_dir: str, yaml_path: str):
+    def __init__(self, output_dir: str, yaml_path: str, alias: str = ""):
         """
         Args:
             output_dir: Diretório de saída do modelo (modelo.saida)
             yaml_path: Caminho absoluto para o YAML de treinamento
+            alias: Alias do modelo (para nomear pasta 'treinamento (<alias>)')
         """
+        from treinar_unsloth_util import resolver_pasta_treinamento
+        
         self.output_dir = output_dir
         self.yaml_path = os.path.abspath(yaml_path)
-        self.treino_dir = os.path.join(output_dir, "treinamento")
+        self.treino_dir = resolver_pasta_treinamento(output_dir, alias)
         self.config_dir = os.path.join(self.treino_dir, "treinamento_config")
 
         # Caminhos dos arquivos

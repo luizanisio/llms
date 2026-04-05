@@ -258,7 +258,7 @@ def executar_reset(yaml_path: str, confirmar: bool = True) -> bool:
             logger.info(f"<verde>   ✅ Modelo LoRA removido de: {output_dir}</verde>")
         
         # Limpa arquivos de histórico (serão recriados no próximo treinamento)
-        treino_dir = os.path.join(output_dir, "treinamento")
+        treino_dir = yaml_config.treinamento_dir
         config_dir = os.path.join(treino_dir, "treinamento_config")
         
         # Remove cópias versionadas do YAML (apenas arquivos .yaml/.yml)

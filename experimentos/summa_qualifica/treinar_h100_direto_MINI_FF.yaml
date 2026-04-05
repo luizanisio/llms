@@ -78,6 +78,7 @@ modelo:
   base_model_name: Qwen/Qwen2.5-1.5B-Instruct
   #| Diretório de saída para o adaptador LoRA.
   saida: ./treino_simples/Qwen2.5-1.5B-Instruct(MINI direto FF)
+  alias: "MINI direto FF"
 
 #| =========================================================================
 #| TREINAMENTO

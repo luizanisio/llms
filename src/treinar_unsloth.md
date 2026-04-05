@@ -33,7 +33,8 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
 
 - **`modelo`**:
   - `base_model_name`: Identificador no Hugging Face (ex: `Qwen/Qwen2.5-1.5B-Instruct`) ou caminho local de um fallback preexistente.
-  - `saida`: Pasta raiz onde **tudo** que seu modelo evolutivo produzir nascerá. Os checkpoints ficarão em `/chkpt`, os gráficos em `/treinamento`, e as respostas na pasta de sua escolha.
+  - `saida`: Pasta raiz onde **tudo** que seu modelo evolutivo produzir nascerá. Os checkpoints ficarão em `/chkpt`, os gráficos na pasta de treinamento, e as respostas na pasta de sua escolha.
+  - `alias`: (Opcional) Alias descritivo do experimento (ex: `"Grupo01-MINI curriculum"`). Se preenchido, a pasta de relatórios e logs será nomeada `treinamento (<alias>)` em vez de `treinamento`. Isso permite reunir outputs de múltiplos experimentos numa mesma pasta para análise comparativa, pois cada um terá nome diferenciado. Se o alias for adicionado **depois** de um treinamento já iniciado, a pasta `treinamento` existente é **renomeada automaticamente** para `treinamento (<alias>)` na próxima execução.
   - `ollama`: Se for avaliar um modelo consolidado convertido lá.
 
 - **`curriculum` (Fluxo de Entrada e Avaliação)**: A subchave principal de arquitetura experimental.
@@ -56,14 +57,14 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
 
 ## 🔄 Como Replicar Experimentos e Reutilizar Código
 - **Retomada Autônoma**: Se um experimento for interrompido, baste re-rodar `--treinar`. O script escaneará `/chkpt`, subirá o state de onde parou as loss das métricas, e continuará exatamente na Época ou Pace que foi interrompido.
-- **Versionamento Embutido**: Sem precisar versionar pelo git. A cada iteração ou "Resume" válido da sua frente, dentro da pasta `saida` alçada em `treinamento/treinamento_config`, viverão `.yaml` prefixados como cópia física perfeita congelada em tempo dos specs do dia (`(v001)`, `(v002)...`).
-- Todo **log** e **visualização** ficará eternizado perfeitamente grafado em `<saida>/treinamento`. Os perfis de RAM consumida, Tokens Processados e curvas de convergência residirão em `/treinamento/*hardware*, *loss*`.
+- **Versionamento Embutido**: Sem precisar versionar pelo git. A cada iteração ou "Resume" válido da sua frente, dentro da pasta `saida` alçada na pasta de treinamento em `treinamento_config`, viverão `.yaml` prefixados como cópia física perfeita congelada em tempo dos specs do dia (`(v001)`, `(v002)...`).
+- Todo **log** e **visualização** ficará eternizado perfeitamente grafado na pasta de treinamento (`treinamento` ou `treinamento (<alias>)` se `modelo.alias` estiver configurado). Os perfis de RAM consumida, Tokens Processados e curvas de convergência residirão lá.
 
 ---
 
 ## � Relatório Estatístico e Gráficos (`--stats`)
 
-Ao final do treinamento (ou via `--stats`), o sistema gera automaticamente um relatório completo em `<saida>/treinamento/relatorio_estatistico.md` com gráficos e tabelas:
+Ao final do treinamento (ou via `--stats`), o sistema gera automaticamente um relatório completo na pasta de treinamento (ex: `<saida>/treinamento/relatorio_estatistico.md` ou `<saida>/treinamento (Grupo01-curriculum)/relatorio_estatistico.md` se `modelo.alias` estiver configurado) com gráficos e tabelas:
 
 ### Gráficos Gerados
 

@@ -90,6 +90,57 @@ def calcular_rouge_l(referencia: str, hipotese: str) -> Tuple[Optional[Dict[str,
 
 
 # ---------------------------------------------------------------------------
+# Utilitário: nome da pasta de treinamento (com alias opcional)
+# ---------------------------------------------------------------------------
+
+def nome_pasta_treinamento(alias: str = "") -> str:
+    """Retorna o nome da pasta de treinamento, opcionalmente com alias.
+    
+    Se alias for informado, retorna 'treinamento (<alias>)', caso contrário 'treinamento'.
+    
+    Args:
+        alias: Alias do modelo (campo modelo.alias do YAML). Pode ser vazio.
+    
+    Returns:
+        Nome da pasta (sem caminho completo).
+    """
+    alias = (alias or "").strip()
+    if alias:
+        return f"treinamento ({alias})"
+    return "treinamento"
+
+
+def resolver_pasta_treinamento(output_dir: str, alias: str = "") -> str:
+    """Retorna o caminho completo da pasta de treinamento, migrando se necessário.
+    
+    Se o alias for informado e a pasta 'treinamento (<alias>)' não existir,
+    mas existir a pasta 'treinamento', ela será renomeada automaticamente.
+    Isso permite adicionar o alias após o treinamento ter iniciado.
+    
+    Args:
+        output_dir: Diretório de saída do modelo (modelo.saida).
+        alias: Alias do modelo (campo modelo.alias do YAML). Pode ser vazio.
+    
+    Returns:
+        Caminho completo da pasta de treinamento.
+    """
+    nome = nome_pasta_treinamento(alias)
+    pasta_alvo = os.path.join(output_dir, nome)
+    
+    # Migração: se alias definido e pasta com alias não existe,
+    # mas pasta "treinamento" (sem alias) existe, renomeia.
+    if alias and not os.path.exists(pasta_alvo):
+        pasta_antiga = os.path.join(output_dir, "treinamento")
+        if os.path.isdir(pasta_antiga):
+            try:
+                os.rename(pasta_antiga, pasta_alvo)
+            except OSError:
+                pass  # fallback silencioso: usa a pasta antiga
+    
+    return pasta_alvo
+
+
+# ---------------------------------------------------------------------------
 # Dataclasses para estruturação da configuração
 # ---------------------------------------------------------------------------
 
@@ -98,6 +149,7 @@ class ConfigModelo:
     """Configuração do modelo."""
     base: str = ""
     saida: str = ""  # output_dir
+    alias: str = ""  # Alias opcional para diferenciar pasta de treinamento
     ollama: str = ""  # Nome do modelo no Ollama (opcional)
     ollama_base: str = ""  # Nome do modelo base no Ollama (opcional, para usar_base=True)
     ollama_url: str = ""  # URL customizada da API Ollama (opcional)
@@ -442,6 +494,15 @@ class YamlTreinamento:
         """Retorna o diretório de saída do modelo."""
         return self.modelo.saida
     
+    @property
+    def treinamento_dir(self) -> str:
+        """Retorna o caminho da pasta de treinamento (com alias se configurado).
+        
+        Se modelo.alias estiver preenchido, a pasta será 'treinamento (<alias>)'.
+        Realiza migração automática se a pasta 'treinamento' existir sem alias.
+        """
+        return resolver_pasta_treinamento(self.modelo.saida, self.modelo.alias)
+    
     def base_model_name(self) -> str:
         """Retorna o nome do modelo base."""
         return self.modelo.base
@@ -691,6 +752,7 @@ class YamlTreinamento:
         return ConfigModelo(
             base=modelo_raw.get("base", "") or modelo_raw.get("base_model_name", ""),
             saida=saida,
+            alias=(modelo_raw.get("alias", "") or "").strip(),
             ollama=modelo_raw.get("ollama", ""),
             ollama_base=modelo_raw.get("ollama_base", ""),
             ollama_url=modelo_raw.get("ollama_url", "")

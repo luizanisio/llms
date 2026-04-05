@@ -88,6 +88,7 @@ DICAS_YAML = {
     "modelo/base_model_name": """#| Slug HuggingFace ou caminho local.
 #| [7B] Ex: Qwen/Qwen2.5-7B-Instruct (requer ~24GB VRAM em 4-bit)""",
     "modelo/saida": "#| Diretório de saída para o adaptador LoRA.",
+    "modelo/alias": "#| (Opcional) Alias do experimento. Se preenchido, a pasta de relatórios será 'treinamento (<alias>)'.",
 
     # Dicas Específicas - LoRA
     "lora/r": """#| Rank: 8, 16, 32, 64, 128. Recomendado: 16 ou 32.

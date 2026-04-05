@@ -40,7 +40,7 @@ import torch
 from treinar_unsloth_logging import get_logger, log_separador
 from util_print import exibir_menu_opcoes, print_cores
 from treinar_unsloth_util import (
-    YamlTreinamento, FORMATO_SAIDA_JSON
+    YamlTreinamento, FORMATO_SAIDA_JSON, nome_pasta_treinamento
 )
 from treinar_unsloth_actions import (
     _exibir_cabecalho_modelo,
@@ -812,8 +812,9 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
                 else:
                     _executar_merge_hf(yaml_config, output_dir, merge_dir, quantizacao)
                 
-                src_treinamento = os.path.join(output_dir, "treinamento")
-                dst_treinamento = os.path.join(merge_dir, "treinamento")
+                _nome_treino = nome_pasta_treinamento(yaml_config.modelo.alias)
+                src_treinamento = os.path.join(output_dir, _nome_treino)
+                dst_treinamento = os.path.join(merge_dir, _nome_treino)
                 
                 if os.path.exists(src_treinamento):
                     logger.info("📋 Copiando relatórios e gráficos...")
@@ -866,8 +867,9 @@ def executar_merge(yaml_path: str, quantizacao: str = None, gerar_zip: bool = Fa
         else:
             _executar_merge_hf(yaml_config, output_dir, dirname, quantizacao)
         
-        src_treinamento = os.path.join(output_dir, "treinamento")
-        dst_treinamento = os.path.join(dirname, "treinamento")
+        _nome_treino = nome_pasta_treinamento(yaml_config.modelo.alias)
+        src_treinamento = os.path.join(output_dir, _nome_treino)
+        dst_treinamento = os.path.join(dirname, _nome_treino)
         
         if os.path.exists(src_treinamento):
             logger.info("📋 Copiando relatórios e gráficos...")

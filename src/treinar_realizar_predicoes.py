@@ -252,6 +252,7 @@ class UtilPredicao(ABC):
                 output_dir=output_dir,
                 intervalo_segundos=0.5,
                 nome_arquivo=nome_arquivo,
+                alias=getattr(self.yaml_config.modelo, 'alias', ''),
             )
             self._monitor.iniciar()
         except Exception as e:

@@ -284,7 +284,7 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
     """
     from treinar_unsloth_graficos import GraficoTreinamento, GraficoEficiencia, GraficoHardware
 
-    report_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
+    report_dir = yaml_config.treinamento_dir
     os.makedirs(report_dir, exist_ok=True)
 
     if not silencioso:
@@ -533,7 +533,7 @@ def executar_info(yaml_path: str) -> None:
     
     # Salva info.md na pasta de treinamento
     try:
-        report_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
+        report_dir = yaml_config.treinamento_dir
         os.makedirs(report_dir, exist_ok=True)
         info_path = os.path.join(report_dir, "info.md")
         with open(info_path, "w", encoding="utf-8") as f:
@@ -667,7 +667,7 @@ def executar_stats(yaml_path: str) -> None:
     _exibir_cabecalho_modelo(yaml_config)
     
     # Cria diretório de saída para relatório
-    report_dir = os.path.join(yaml_config.modelo.saida, "treinamento")
+    report_dir = yaml_config.treinamento_dir
     os.makedirs(report_dir, exist_ok=True)
     
     # Carrega dados para estatísticas

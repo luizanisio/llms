@@ -99,7 +99,7 @@ class GeradorRelatorio:
     def __init__(self, yaml_config: YamlTreinamento):
         self.yaml_config = yaml_config
         self.output_dir = yaml_config.modelo.saida
-        self.report_dir = os.path.join(self.output_dir, "treinamento")
+        self.report_dir = yaml_config.treinamento_dir
         self.report_file = os.path.join(self.report_dir, "relatorio_treinamento.md")
         
 
@@ -583,6 +583,16 @@ class GeradorRelatorio:
                 conteudo.append("")
                 conteudo.append("> 💡 O modelo final salvo corresponde ao melhor checkpoint (menor eval_loss),")
                 conteudo.append("> carregado automaticamente via `load_best_model_at_end=True`.")
+                
+                # Status de verificação (best_verificado)
+                _verificado = train_stats.get("best_verificado")
+                if _verificado is True:
+                    conteudo.append(">")
+                    conteudo.append("> ✅ **VERIFICADO:** eval no modelo salvo confirmou eval_loss compatível com best_metric.")
+                elif _verificado is False:
+                    conteudo.append(">")
+                    conteudo.append("> ⚠️ **ATENÇÃO:** eval no modelo salvo apresentou eval_loss DIVERGENTE do best_metric registrado.")
+                    conteudo.append("> O modelo salvo pode NÃO corresponder ao melhor checkpoint.")
                 
             # Memória GPU se disponível (no train_stats customizado)
             if 'mem_gpu_before' in train_stats:

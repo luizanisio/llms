@@ -265,7 +265,7 @@ class MetricsLoggerCallback(TrainerCallback):
                  etapa_index: int = 0, instancias_previas: int = 0,
                  step_offset: int = 0, epoch_offset: float = 0.0,
                  media_tokens_por_instancia: float = 0, tokens_previos: int = 0,
-                 retomada: bool = False):
+                 retomada: bool = False, modelo_alias: str = ""):
         """
         Args:
             output_dir: Diretório onde salvar o arquivo de métricas
@@ -277,9 +277,13 @@ class MetricsLoggerCallback(TrainerCallback):
             media_tokens_por_instancia: Média de tokens reais por instância do dataset tokenizado
             tokens_previos: Total de tokens processados em etapas anteriores
             retomada: Se True, preserva métricas anteriores (não trunca arquivo)
+            modelo_alias: Alias do modelo (para nomear pasta 'treinamento (<alias>)')
         """
+        from treinar_unsloth_util import resolver_pasta_treinamento
+        
         self.output_dir = output_dir
-        self.metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
+        _treino_dir = resolver_pasta_treinamento(output_dir, modelo_alias)
+        self.metrics_file = os.path.join(_treino_dir, "training_metrics.jsonl")
         self._train_start_time = None
         self._best_eval_loss = float('inf')
         self._train_losses = []  # Para calcular média móvel
@@ -1043,7 +1047,8 @@ class LLMsTrainer:
         from treinar_unsloth_historico import HistoricoTreinamento
         self._historico = HistoricoTreinamento(
             output_dir=self._yaml_config.modelo.saida,
-            yaml_path=cfg_path
+            yaml_path=cfg_path,
+            alias=self._yaml_config.modelo.alias,
         )
         
         # Determina se é novo treinamento (sem modelo LoRA existente)
@@ -1802,6 +1807,7 @@ class LLMsTrainer:
             media_tokens_por_instancia=_media_tokens,
             tokens_previos=tokens_previos,
             retomada=is_retomada,
+            modelo_alias=self._yaml_config.modelo.alias,
         ))
         
         # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding + limpeza)
@@ -1818,7 +1824,9 @@ class LLMsTrainer:
         # (via dict eval_dataset na construção) e extraído em _global_ds_tokenized acima.
         self._global_eval_callback = None
         if _global_ds_tokenized is not None and len(_global_ds_tokenized) > 0:
-            metrics_file = os.path.join(output_dir, "treinamento", "training_metrics.jsonl")
+            from treinar_unsloth_util import resolver_pasta_treinamento
+            _treino_dir = resolver_pasta_treinamento(output_dir, self._yaml_config.modelo.alias)
+            metrics_file = os.path.join(_treino_dir, "training_metrics.jsonl")
             self._global_eval_callback = GlobalEvalCallback(
                 global_eval_dataset=_global_ds_tokenized,
                 metrics_file=metrics_file,
@@ -1925,7 +1933,7 @@ class LLMsTrainer:
         Args:
             etapa_retomada: Índice da etapa a retomar (registros com etapa_index >= este valor são removidos)
         """
-        metrics_file = os.path.join(self._yaml_config.modelo.saida, "treinamento", "training_metrics.jsonl")
+        metrics_file = os.path.join(self._yaml_config.treinamento_dir, "training_metrics.jsonl")
         if not os.path.isfile(metrics_file):
             return
         
@@ -2298,12 +2306,40 @@ class LLMsTrainer:
             # Log sobre o melhor modelo (load_best_model_at_end)
             _best_ckpt = getattr(self.trainer.state, 'best_model_checkpoint', None)
             _best_metric = getattr(self.trainer.state, 'best_metric', None)
+            _best_verificado = None  # None=não verificado, True=ok, False=divergente
             if self.trainer.args.load_best_model_at_end and _best_ckpt:
                 logger.info(
                     f"🏆 Melhor modelo carregado: {os.path.basename(_best_ckpt)} "
                     f"(eval_loss={_best_metric:.4f})" if _best_metric is not None
                     else f"🏆 Melhor modelo carregado: {os.path.basename(_best_ckpt)}"
                 )
+                # --- Verificação: eval rápido para confirmar que o modelo em memória
+                #     realmente corresponde ao melhor checkpoint (load_best_model_at_end) ---
+                if self.eval_ds and _best_metric is not None:
+                    try:
+                        _orig_load = self.trainer.args.load_best_model_at_end
+                        self.trainer.args.load_best_model_at_end = False
+                        _verif_eval = self.trainer.evaluate()
+                        self.trainer.args.load_best_model_at_end = _orig_load
+                        _verif_loss = _verif_eval.get("eval_loss")
+                        if _verif_loss is not None:
+                            _tolerancia = 0.005  # tolerância para diferenças de arredondamento
+                            _diff = abs(_verif_loss - _best_metric)
+                            if _diff <= _tolerancia:
+                                _best_verificado = True
+                                logger.info(
+                                    f"✅ VERIFICAÇÃO: modelo em memória confirmado como melhor checkpoint "
+                                    f"(eval_loss={_verif_loss:.4f} ≈ best={_best_metric:.4f}, diff={_diff:.6f})"
+                                )
+                            else:
+                                _best_verificado = False
+                                logger.warning(
+                                    f"⚠️  VERIFICAÇÃO: eval_loss do modelo em memória ({_verif_loss:.4f}) "
+                                    f"DIVERGE do best_metric registrado ({_best_metric:.4f}), diff={_diff:.6f}. "
+                                    f"O modelo salvo pode NÃO ser o melhor checkpoint!"
+                                )
+                    except Exception as _e:
+                        logger.warning(f"⚠️  Erro na verificação do melhor modelo: {_e}")
             elif not self.trainer.args.load_best_model_at_end:
                 logger.info("ℹ️  Modelo final = último step (sem dataset de validação para selecionar melhor checkpoint)")
 
@@ -2318,7 +2354,7 @@ class LLMsTrainer:
                     _best_step = int(_match.group(1))
                 # Busca tokens/instâncias no training_metrics.jsonl para o step do melhor checkpoint
                 if _best_step is not None:
-                    _metrics_file = os.path.join(self._yaml_config.modelo.saida, "treinamento", "training_metrics.jsonl")
+                    _metrics_file = os.path.join(self._yaml_config.treinamento_dir, "training_metrics.jsonl")
                     if os.path.exists(_metrics_file):
                         try:
                             import json as _json
@@ -2363,6 +2399,7 @@ class LLMsTrainer:
                 "best_checkpoint_step": _best_step,
                 "best_checkpoint_tokens": _best_tokens,
                 "best_checkpoint_instancias": _best_instancias,
+                "best_verificado": _best_verificado,
             }
 
             # Registra informação do pace_loss (se callback ativo)
@@ -2548,7 +2585,167 @@ class LLMsTrainer:
         if stats is not None:
             with open(os.path.join(self._yaml_config.modelo.saida, "metrics_summary.json"), "w") as fp:
                  Util.json_dump(stats, fp, indent=2)
+            # --- Gera RESUMO_TREINO.md junto com o modelo ---
+            self._gerar_resumo_treino(out_dir, stats, _is_best)
         print_cores(r"<verde>Modelo salvo com sucesso \o/</verde>", color_auto=False)
+
+    def _gerar_resumo_treino(self, out_dir: str, stats: dict, is_best: bool) -> None:
+        """Gera RESUMO_TREINO.md na pasta do modelo com dados essenciais do ponto salvo.
+        
+        Este arquivo serve como prova documental de qual versão do modelo foi salva,
+        incluindo verificação de integridade (best checkpoint vs modelo em memória).
+        """
+        try:
+            linhas = []
+            linhas.append("# RESUMO DO TREINAMENTO")
+            linhas.append("")
+            linhas.append(f"**Data/hora:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            linhas.append(f"**Pasta:** `{out_dir}`")
+            linhas.append("")
+            
+            # --- Modelo ---
+            linhas.append("## Modelo")
+            linhas.append("")
+            linhas.append(f"| Informação | Valor |")
+            linhas.append(f"|---|---|")
+            linhas.append(f"| Modelo base | `{self._yaml_config.modelo.base}` |")
+            
+            _etapa_alias = stats.get("etapa_alias", "Principal")
+            _etapa_tipo = stats.get("etapa_tipo", "")
+            _tipo_label = "Full Fine-Tuning" if _etapa_tipo == "full" else f"LoRA (r={self._yaml_config.lora.r}, alpha={self._yaml_config.lora.alpha})" if _etapa_tipo == "lora" else _etapa_tipo
+            linhas.append(f"| Modo de treino | {_tipo_label} |")
+            
+            _params = stats.get("parametros_treinaveis", 0)
+            if _params:
+                linhas.append(f"| Parâmetros treináveis | {_params:,} |")
+            
+            linhas.append(f"| Quantização (nbits) | {self._yaml_config.treinamento.nbits} |")
+            linhas.append(f"| max_seq_length | {self._yaml_config.treinamento.max_seq_length} |")
+            linhas.append("")
+            
+            # --- Qual versão foi salva ---
+            linhas.append("## Versão do Modelo Salvo")
+            linhas.append("")
+            
+            _best_ckpt = stats.get("best_checkpoint")
+            _best_loss = stats.get("best_eval_loss")
+            _best_step = stats.get("best_checkpoint_step")
+            _global_step = stats.get("global_step", 0)
+            _verificado = stats.get("best_verificado")
+            
+            if is_best and _best_ckpt:
+                _epoca_best = round(_best_step / (_global_step / stats.get("epoch", 1)), 2) if _global_step and stats.get("epoch") else "?"
+                linhas.append(f"| Informação | Valor |")
+                linhas.append(f"|---|---|")
+                linhas.append(f"| **Status** | ✅ **MELHOR CHECKPOINT** (menor eval_loss) |")
+                linhas.append(f"| Checkpoint de origem | `{_best_ckpt}` |")
+                linhas.append(f"| eval_loss (best) | **{_best_loss:.6f}** |" if _best_loss is not None else f"| eval_loss (best) | N/A |")
+                linhas.append(f"| Step do best | {_best_step} de {_global_step} ({(_best_step/_global_step*100):.1f}% do treino) |" if _best_step and _global_step else "")
+                linhas.append(f"| Época aprox. do best | ~{_epoca_best} |")
+                
+                _best_tokens = stats.get("best_checkpoint_tokens")
+                if _best_tokens:
+                    linhas.append(f"| Tokens até best | {_best_tokens:,} |")
+                
+                # Verificação de integridade
+                if _verificado is True:
+                    linhas.append(f"| **Verificação** | ✅ **CONFIRMADO** — eval no modelo salvo confere com best_metric |")
+                elif _verificado is False:
+                    linhas.append(f"| **Verificação** | ⚠️ **DIVERGENTE** — eval_loss do modelo salvo NÃO confere com best_metric |")
+                else:
+                    linhas.append(f"| **Verificação** | ⚙️ Não realizada |")
+                
+                linhas.append(f"| Mecanismo | `load_best_model_at_end=True` (HuggingFace Trainer) |")
+            else:
+                linhas.append(f"| Informação | Valor |")
+                linhas.append(f"|---|---|")
+                linhas.append(f"| **Status** | ℹ️ Último step (sem validação ou best checkpoint indisponível) |")
+                linhas.append(f"| Step final | {_global_step} |")
+                if _best_ckpt:
+                    linhas.append(f"| Best checkpoint registrado | `{_best_ckpt}` |")
+                    linhas.append(f"| eval_loss (best) | {_best_loss:.6f} |" if _best_loss is not None else "")
+                    linhas.append(f"| ⚠️  ATENÇÃO | O modelo salvo pode NÃO ser o melhor — `load_best_model_at_end` desativado |")
+            
+            # Remove linhas vazias acidentais
+            linhas = [l for l in linhas if l is not None]
+            linhas.append("")
+            
+            # --- Métricas do treinamento ---
+            linhas.append("## Métricas do Treinamento")
+            linhas.append("")
+            linhas.append(f"| Métrica | Valor |")
+            linhas.append(f"|---|---|")
+            
+            _train_loss = stats.get("training_loss")
+            if _train_loss is not None:
+                linhas.append(f"| Training loss (média total) | {_train_loss:.6f} |")
+            
+            _eval_loss_final = stats.get("eval_loss")
+            if _eval_loss_final is not None:
+                linhas.append(f"| eval_loss (final) | {_eval_loss_final:.6f} |")
+            
+            _eval_loss_global = stats.get("eval_loss_global")
+            if _eval_loss_global is not None:
+                linhas.append(f"| eval_loss_global (final) | {_eval_loss_global:.6f} |")
+            
+            linhas.append(f"| Épocas | {stats.get('epoch', '?')} |")
+            linhas.append(f"| Steps totais | {_global_step} |")
+            linhas.append(f"| Dataset treino | {stats.get('ds_train_len', '?')} instâncias |")
+            linhas.append(f"| Dataset eval | {stats.get('ds_eval_len', '?')} instâncias |")
+            
+            _runtime = stats.get("train_runtime")
+            if _runtime:
+                _horas = _runtime / 3600
+                linhas.append(f"| Tempo de treino | {_runtime:.0f}s ({_horas:.2f}h) |")
+            
+            # pace_loss info
+            if stats.get("pace_loss_atingido"):
+                linhas.append(f"| pace_loss | Atingido na época {stats.get('pace_loss_epoch')} (loss={stats.get('pace_loss_valor', '?')}) |")
+            
+            linhas.append("")
+            
+            # --- Hiperparâmetros ---
+            linhas.append("## Hiperparâmetros")
+            linhas.append("")
+            treino_cfg = self._yaml_config.treinamento
+            linhas.append(f"| Parâmetro | Valor |")
+            linhas.append(f"|---|---|")
+            linhas.append(f"| learning_rate | {treino_cfg.learning_rate} |")
+            linhas.append(f"| batch_size | {treino_cfg.batch_size} |")
+            linhas.append(f"| grad_batch_size | {treino_cfg.grad_batch_size} |")
+            linhas.append(f"| weight_decay | {treino_cfg.weight_decay} |")
+            linhas.append(f"| warmup_steps | {treino_cfg.warmup_steps} |")
+            linhas.append(f"| lr_scheduler | {treino_cfg.lr_scheduler_type} |")
+            linhas.append(f"| optim | {treino_cfg.optim} |")
+            linhas.append(f"| seed | {treino_cfg.seed} |")
+            linhas.append(f"| flash_attention_2 | {treino_cfg.flash_attention_2} |")
+            linhas.append(f"| liger_kernel | {treino_cfg.liger_kernel} |")
+            linhas.append(f"| train_on_responses_only | {treino_cfg.train_on_responses_only} |")
+            linhas.append("")
+            
+            # --- Hardware (resumido) ---
+            _mem_after = stats.get("mem_gpu_after", {})
+            if isinstance(_mem_after, dict) and _mem_after:
+                linhas.append("## Hardware (ao salvar)")
+                linhas.append("")
+                _gpus = _mem_after.get("gpu", {}).get("gpus", [])
+                if _gpus:
+                    linhas.append(f"| GPU | Modelo | Reservada | Alocada |")
+                    linhas.append(f"|---|---|---|---|")
+                    for g in _gpus:
+                        linhas.append(f"| GPU {g.get('idx', '?')} | {g.get('nome', '?')} | {g.get('mem_reservada_gb', '?')} GB | {g.get('mem_alocada_gb', '?')} GB |")
+                linhas.append("")
+            
+            linhas.append("---")
+            linhas.append(f"*Gerado automaticamente por treinar_unsloth.py em {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+            
+            # Grava o arquivo
+            resumo_path = os.path.join(out_dir, "RESUMO_TREINO.md")
+            with open(resumo_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(linhas) + "\n")
+            logger.info(f"📝 RESUMO_TREINO.md salvo em: {resumo_path}")
+        except Exception as e:
+            logger.warning(f"⚠️  Erro ao gerar RESUMO_TREINO.md: {e}")
 
     def _place_inputs(self, inputs):
         try:
@@ -2645,7 +2842,8 @@ class LLMsTrainer:
             monitor = MonitorRecursos(
                 output_dir=self._yaml_config.modelo.saida,
                 intervalo_segundos=0.5,
-                nome_arquivo="memoria_predicao"
+                nome_arquivo="memoria_predicao",
+                alias=self._yaml_config.modelo.alias,
             )
             monitor.iniciar()
         
@@ -2712,7 +2910,10 @@ class LLMsTrainer:
                         monitor_snapshot = monitor
                         if not monitor_snapshot:
                             # Cria instância temporária se monitoramento contínuo estiver desativado
-                            monitor_snapshot = MonitorRecursos(self._yaml_config.modelo.saida)
+                            monitor_snapshot = MonitorRecursos(
+                                self._yaml_config.modelo.saida,
+                                alias=self._yaml_config.modelo.alias,
+                            )
                         
                         mem_antes = monitor_snapshot.coletar_metricas()
                         

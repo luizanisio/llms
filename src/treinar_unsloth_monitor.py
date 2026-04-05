@@ -80,14 +80,18 @@ class MonitorRecursos:
         self,
         output_dir: str,
         intervalo_segundos: float = 0.5,
-        nome_arquivo: str = "memoria_predicao"
+        nome_arquivo: str = "memoria_predicao",
+        alias: str = "",
     ):
         """
         Args:
             output_dir: Diretório para salvar métricas e gráfico
             intervalo_segundos: Intervalo entre coletas de métricas
             nome_arquivo: Nome base dos arquivos de saída
+            alias: Alias do modelo (para nomear pasta 'treinamento (<alias>)')
         """
+        from treinar_unsloth_util import resolver_pasta_treinamento
+        
         self.output_dir = output_dir
         self.intervalo = intervalo_segundos
         self.nome_arquivo = nome_arquivo
@@ -98,12 +102,13 @@ class MonitorRecursos:
         self._metricas: List[MetricaInstante] = []
         self._tempo_inicio: float = 0
         
-        # Cria diretório de saída
-        os.makedirs(os.path.join(output_dir, "treinamento"), exist_ok=True)
+        # Resolve pasta de treinamento (com alias e migração automática)
+        _treino_dir = resolver_pasta_treinamento(output_dir, alias)
+        os.makedirs(_treino_dir, exist_ok=True)
         
         # Arquivos de saída
-        self._arquivo_jsonl = os.path.join(output_dir, "treinamento", f"{nome_arquivo}.jsonl")
-        self._arquivo_grafico = os.path.join(output_dir, "treinamento", f"{nome_arquivo}.png")
+        self._arquivo_jsonl = os.path.join(_treino_dir, f"{nome_arquivo}.jsonl")
+        self._arquivo_grafico = os.path.join(_treino_dir, f"{nome_arquivo}.png")
     
     def coletar_metricas(self) -> MetricaInstante:
         """Coleta métricas atuais de RAM e GPU."""
