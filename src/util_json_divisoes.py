@@ -26,6 +26,28 @@ Grava a tabela csv na pasta do modelo, ordenada pela pontuação mais baixa (fá
 Considera a pasta jsons criada pela classe JsonAnaliseDataFrame.
 Cria uma pasta "divisoes" dentro da pasta de análises
 Dentro da pasta "divisoes" cria um arquivo csv para cada modelo.
+
+    Cálculo de Dificuldade e Distribuição de Notas:
+    ----------------------------------------------
+    1. Fórmula Base (Score de Dificuldade):
+       O grau de dificuldade de cada documento é mensurado pelo desempenho do modelo e pela complexidade do documento-alvo:
+       Score de Avaliação = Soma(Métricas_F1) - Peso_Chaves
+       - Soma(Métricas_F1): Somatório das métricas dinâmicas de F1 (globais e de estruturas).
+       - Peso_Chaves: Número de chaves-alvo extrativas do documento normalizado (0 a 1). Documentos mais verbosos penalizam o score numérico.
+       * Notas menores de "Score de Avaliação" indicam maior desafio para a predição, ou seja, maior dificuldade.
+
+    2. Estratégia de Partição (Rótulos de Dificuldade):
+       Os documentos são ordenados sucessivamente de forma ascendente pelo Score (do mais difícil para o mais fácil) e segmentados:
+       - Difícil: 30% dos documentos com os menores scores.
+       - Médio: 40% intermédio da massa de documentos.
+       - Fácil: 30% dos documentos com as maiores métricas.
+
+    3. Distribuição das Notas (1 a 10):
+       Para conferir maior granularidade útil à fase de treinamento em abordagens de Curriculum Learning, atribui-se uma nota no intervalo [1, 10]. 
+       O ordenamento por nível e score aplica buckets quantílicos (equiproporcionais via distribuições quantílicas predefinidas):
+       - Terço mais complexo (Difícil): preenchido progressivamente com as notas 10, 9 e 8.
+       - Núcleo mediano (Médio): estratificado de maneira quantílica nas notas 7, 6, 5 e 4.
+       - Fração mais adaptada (Fácil): categorizada nas notas 3, 2 e 1.
 '''
 
 import os
