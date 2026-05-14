@@ -1,6 +1,9 @@
 # LLMs 2025
 
 Este repositório contém pacotes e utilitários para treinamento, avaliação, uso e comparação de Large Language Models (LLMs), com foco inicial na família Gemma, Qwen, Deepseek e Llama.
+- o repositório está armazenando códigos usados em pesquisa científica na área de inteligência artificial e está sendo atualizado constantemente, mas pode não refletir as versões atuais em alguns momentos.
+- ao final do experimento, uma tag será gerada para congelar o código que vai refletir fielmente o que foi utilizado na pesquisa.
+- os exemplos para uso em notebooks na nuvem são simples, o iteal é baixar o projeto em um env específico e fazer os experimentos no computador.
 
 ## 📁 Estrutura do Projeto (`src/`)
 
@@ -22,10 +25,10 @@ Os scripts principais de execução estão organizados na pasta `src/`:
 -  Notebook com exemplo para predições: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)
 
 -  Notebook com exemplo para treinamento: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//ntb_treinamento/Passo_a_Passo_LLM_Fine_Tuning_2025.ipynb)
+> ⚠️ Importante, por questões de otimização e compatibilidade de pacotes, não estou mais usando unsloth, a documentação será atualizada em breve para refletir as versões atuais do código.<br>
+
 > 💡 Escolha o modelo de acordo com sua GPU no colab. A A100 é sempre a melhor escolha. A L4 dá para treinar modelos pequenos.<br>
-
 - Notebook com exemplo de treinamento com **Unsloth** - amplia o leque de treinamento em GPUs com menos memória: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//ntb_treinamento/Passo_a_Passo_Unsloth_LLM_Fine_Tuning_2025.ipynb)
-
 
 > 💡 **Instalação manual do unsloth.** Consultar: [Unsloth Notebooks](https://docs.unsloth.ai/get-started/unsloth-notebooks)
 ```python
