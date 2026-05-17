@@ -676,6 +676,7 @@ if __name__ == "__main__":
     # Inicializando modelo SBERT para testes (uma única vez)...
     # identifica o tamanho do modelo pelo argumento
     import sys
+    from util_print import print_cores
     if len(sys.argv) > 1:
         modelo = sys.argv[1]
     else:
@@ -683,21 +684,54 @@ if __name__ == "__main__":
     m = BERTScoreLike(modelo=modelo)
 
     # Texto: BERTScore-like com SBERT
-    print(m.comparar_textos("A decisão foi reformada.", "O acórdão foi modificado.", metodo="bertscore_like", threshold=0.70))
+    print_cores("\n<azul>=== TESTE DE COMPARAÇÃO DE TEXTOS ===</azul>")
+    textos = [("A decisão foi reformada.", "O acórdão foi modificado."), 
+              ("O recurso especial não foi conhecido no Tribunal por ausência de prequestionamento.", 
+               "O STJ não conheceu do recurso especial em razão da falta de prequestionamento."), 
+              ("O recurso especial não foi conhecido no Tribunal por ausência de prequestionamento.", 
+               "O recurso especial foi conhecido e provido, afastando a alegada ausência de prequestionamento."),
+    ]
+    for i, texto in enumerate(textos, 1):
+        p1, p2 = texto
+        resultado = m.comparar_textos(p1, p2, metodo="bertscore_like", threshold=0.50)
+        print_cores(f"<amarelo>Par {i}:</amarelo>")
+        print_cores(f"  <cinza>Texto 1:</cinza> {p1}")
+        print_cores(f"  <cinza>Texto 2:</cinza> {p2}")
+        f1, p, r = resultado.get('F1', 0), resultado.get('P', 0), resultado.get('R', 0)
+        cor = "verde" if f1 >= 0.7 else "vermelho"
+        print_cores(f"  <cinza>Resultado:</cinza> <{cor}>P: {p:.3f} | R: {r:.3f} | F1: {f1:.3f}</{cor}>")
+        print_cores("<cinza>" + "-" * 50 + "</cinza>")
 
+    print_cores("\n<azul>=== TESTE DE COMPARAÇÃO DE JSON ===</azul>")
     # JSON: robusto a troca de chave
     gold = {"decisao": "negou provimento", "fundamento": "ausência de prova"}
     pred = {"fundamento": "não havia prova suficiente", "decisao": "provimento negado"}
-    print(m.comparar_json(pred, gold, include_key_ctx=True, threshold=0.65))
+    resultado = m.comparar_json(pred, gold, include_key_ctx=True, threshold=0.65)
+    print_cores("<amarelo>Robusto a troca de chave:</amarelo>")
+    print_cores(f"  <cinza>Gold:</cinza> {gold}")
+    print_cores(f"  <cinza>Pred:</cinza> {pred}")
+    f1, p, r = resultado.get('F1', 0), resultado.get('P', 0), resultado.get('R', 0)
+    cor = "verde" if f1 >= 0.7 else "vermelho"
+    print_cores(f"  <cinza>Resultado:</cinza> <{cor}>P: {p:.3f} | R: {r:.3f} | F1: {f1:.3f}</{cor}>")
+    print_cores("<cinza>" + "-" * 50 + "</cinza>")
 
-    print("-" * 50)
-    print("Exemplo com Precision alto e Recall baixo")
+    print_cores("<amarelo>Exemplo com Precision alto e Recall baixo:</amarelo>")
     gold = {"decisao": "negou provimento", "fundamento": "ausência de prova"}
     pred = {"decisao": "negou provimento"}
-    print(m.comparar_json(pred, gold, include_key_ctx=True, threshold=0.65))
+    resultado = m.comparar_json(pred, gold, include_key_ctx=True, threshold=0.65)
+    print_cores(f"  <cinza>Gold:</cinza> {gold}")
+    print_cores(f"  <cinza>Pred:</cinza> {pred}")
+    f1, p, r = resultado.get('F1', 0), resultado.get('P', 0), resultado.get('R', 0)
+    cor = "verde" if f1 >= 0.7 else "vermelho"
+    print_cores(f"  <cinza>Resultado:</cinza> <{cor}>P: {p:.3f} | R: {r:.3f} | F1: {f1:.3f}</{cor}>")
+    print_cores("<cinza>" + "-" * 50 + "</cinza>")
 
-    print("-" * 50)
-    print("Exemplo com Precision baixo e Recall alto")
+    print_cores("<amarelo>Exemplo com Precision baixo e Recall alto:</amarelo>")
     gold = {"decisao": "negou provimento", "fundamento": "ausência de prova"}
     pred = {"decisao": "negou provimento", "fundamento": "ausência de prova", "outro": "outro"}
-    print(m.comparar_json(pred, gold, include_key_ctx=True, threshold=0.65))
+    resultado = m.comparar_json(pred, gold, include_key_ctx=True, threshold=0.65)
+    print_cores(f"  <cinza>Gold:</cinza> {gold}")
+    print_cores(f"  <cinza>Pred:</cinza> {pred}")
+    f1, p, r = resultado.get('F1', 0), resultado.get('P', 0), resultado.get('R', 0)
+    cor = "verde" if f1 >= 0.7 else "vermelho"
+    print_cores(f"  <cinza>Resultado:</cinza> <{cor}>P: {p:.3f} | R: {r:.3f} | F1: {f1:.3f}</{cor}>")
