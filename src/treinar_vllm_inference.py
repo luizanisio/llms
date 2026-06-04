@@ -46,6 +46,8 @@ except ImportError:
     LoRARequest = None
 
 
+from dataclasses import dataclass, field
+
 @dataclass
 class VLLMConfig:
     """Configuração do motor vLLM."""
@@ -55,6 +57,9 @@ class VLLMConfig:
     trust_remote_code: bool = True
     max_model_len: Optional[int] = None  # None = auto-detecta
     enforce_eager: bool = False  # True desabilita CUDA graphs (mais lento, menos memória)
+    quantization: Optional[str] = None
+    load_format: str = "auto"
+    extra_kwargs: dict = field(default_factory=dict)
 
 
 class VLLMInferenceEngine:
@@ -116,16 +121,22 @@ class VLLMInferenceEngine:
         # em ambiente controlado de experimento com valores conhecidos
         os.environ.setdefault("VLLM_ALLOW_LONG_MAX_MODEL_LEN", "1")
         try:
-            self.llm = LLM(
-                model=model_path,
-                tensor_parallel_size=self.config.tensor_parallel_size,
-                gpu_memory_utilization=self.config.gpu_memory_utilization,
-                dtype=self.config.dtype,
-                trust_remote_code=self.config.trust_remote_code,
-                max_model_len=self.config.max_model_len,
-                enforce_eager=self.config.enforce_eager,
-                enable_lora=bool(lora_path),
-            )
+            kwargs = {
+                "model": model_path,
+                "tensor_parallel_size": self.config.tensor_parallel_size,
+                "gpu_memory_utilization": self.config.gpu_memory_utilization,
+                "dtype": self.config.dtype,
+                "trust_remote_code": self.config.trust_remote_code,
+                "max_model_len": self.config.max_model_len,
+                "enforce_eager": self.config.enforce_eager,
+                "enable_lora": bool(lora_path),
+                "quantization": self.config.quantization,
+                "load_format": self.config.load_format,
+            }
+            if hasattr(self.config, 'extra_kwargs') and self.config.extra_kwargs:
+                kwargs.update(self.config.extra_kwargs)
+            
+            self.llm = LLM(**kwargs)
             # Cria LoRARequest se adapter informado
             if lora_path:
                 self._lora_request = LoRARequest(
