@@ -921,7 +921,9 @@ class BatchLog:
     def __init__(self, config: Dict[str, Any]):
         arquivo_saida = config["saida"]["arquivo"]
         if _saida_eh_parquet(config):
-            self._log_path = arquivo_saida + ".log"
+            pasta = os.path.dirname(os.path.abspath(arquivo_saida))
+            prefixo = os.path.splitext(os.path.basename(arquivo_saida))[0] + "_"
+            self._log_path = os.path.join(pasta, f"{prefixo}processamento.log")
         else:
             pasta = os.path.abspath(arquivo_saida)
             os.makedirs(pasta, exist_ok=True)
@@ -1787,8 +1789,10 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
     
     if eh_parquet:
         pasta_saida = os.path.dirname(os.path.abspath(arquivo_saida))
+        prefixo = os.path.splitext(os.path.basename(arquivo_saida))[0] + "_"
     else:
         pasta_saida = os.path.abspath(arquivo_saida)
+        prefixo = ""
         
     if not os.path.isdir(pasta_saida):
         os.makedirs(pasta_saida, exist_ok=True)
@@ -1838,7 +1842,7 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
 
     # --- CSV ---
     import csv
-    csv_path = os.path.join(pasta_saida, 'predicoes.csv')
+    csv_path = os.path.join(pasta_saida, f'{prefixo}predicoes.csv')
     try:
         with open(csv_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=['id', 'input_tokens', 'output_tokens', 'time_s'])
@@ -1860,7 +1864,7 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
         'output_tokens_total': sum(r['output_tokens'] for r in registros),
         'tempo_total_s': round(stats.get('tempo_total', 0), 2),
     }
-    resumo_file = os.path.join(pasta_saida, "resumo.json")
+    resumo_file = os.path.join(pasta_saida, f'{prefixo}resumo.json')
     try:
         with open(resumo_file, 'w', encoding='utf-8') as f:
             json.dump(resumo_geral, f, ensure_ascii=False, indent=2)
@@ -1879,7 +1883,7 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
         nota_maximos = (f"max(entrada)={max(inputs):,}  "
                         f"max(saída)={max(outputs):,}  "
                         f"max(total)={max(totais):,}").replace(',', '.')
-        tokens_png = os.path.join(pasta_saida, 'predicoes_tokens.png')
+        tokens_png = os.path.join(pasta_saida, f'{prefixo}predicoes_tokens.png')
         UtilGraficos.gerar_boxplot(
             dados={'Entrada': inputs, 'Saída': outputs, 'Total': totais},
             titulo='Distribuição de Tokens — Predições vLLM Batch',
@@ -1894,7 +1898,7 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
         nota_tempo = (f"min={min(tempos):.1f}s  "
                       f"Q1={q1_tempo:.1f}s (75% acima)  "
                       f"max={max(tempos):.1f}s")
-        tempo_png = os.path.join(pasta_saida, 'predicoes_tempo.png')
+        tempo_png = os.path.join(pasta_saida, f'{prefixo}predicoes_tempo.png')
         UtilGraficos.gerar_boxplot(
             dados={'Tempo (s)': tempos},
             titulo='Distribuição de Tempo de Geração — Predições vLLM Batch',
