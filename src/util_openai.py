@@ -335,7 +335,15 @@ def get_resposta(prompt:str, papel:str='',
 class UtilJson():
     @classmethod
     def mensagem_to_json(cls, mensagem:str, padrao = dict({}), _corrigir_json_ = True):
-        ''' O objetivo é receber uma resposta de um modelo LLM e identificar o json dentro dela
+        ''' O objetivo é receber uma resposta de um modelo LLM e extrair o objeto JSON contido nela.
+        
+        Args:
+            mensagem (str): A resposta em texto do modelo LLM que pode conter um JSON.
+            padrao (dict, opcional): Valor padrão retornado caso a extração ou decodificação falhe. Padrão é {}.
+            _corrigir_json_ (bool, opcional): Se True, em caso de erro na decodificação, tenta corrigir aspas internas não escapadas e tenta novamente. Padrão é True.
+            
+        Returns:
+            dict/list: O JSON extraído e decodificado da mensagem, ou o valor de `padrao` em caso de falha.
         '''
         if isinstance(mensagem, dict):
             return mensagem
