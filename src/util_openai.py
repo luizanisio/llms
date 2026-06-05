@@ -766,6 +766,88 @@ class UtilVllm:
             pass
         return resultado
 
+# ---------------------------------------------------------------------------
+# Helpers para detecção e validação de modelos de API remota
+# ---------------------------------------------------------------------------
+
+# Prefixos reconhecidos por este pacote e suas descrições
+_PREFIXOS_API_REMOTA = {
+    'or:': 'OpenRouter',
+    'tg:': 'Together.ai',
+    'vl:': 'vLLM Server',
+    'oa:': 'OpenAIA',
+}
+
+def eh_modelo_api_remota(caminho: str) -> bool:
+    '''Verifica se o caminho do modelo corresponde a uma API remota conhecida.
+
+    Retorna True se o caminho iniciar com um dos prefixos reconhecidos:
+    or: (OpenRouter), tg: (Together.ai), vl: (vLLM Server), oa: (OpenAI).
+
+    Args:
+        caminho: caminho ou identificador do modelo (ex: "or:qwen/qwen3.5-35b-a3b")
+
+    Returns:
+        True se for modelo de API remota, False caso contrário
+    '''
+    if not isinstance(caminho, str) or not caminho.strip():
+        return False
+    caminho_lower = caminho.strip().lower()
+    return any(caminho_lower.startswith(p) for p in _PREFIXOS_API_REMOTA)
+
+
+def extrair_nome_modelo_api(caminho: str) -> str:
+    '''Extrai o nome do modelo sem o prefixo de API, para uso em logs e exibição.
+
+    Ex: "or:qwen/qwen3.5-35b-a3b" -> "qwen/qwen3.5-35b-a3b"
+        "/caminho/local/modelo" -> "/caminho/local/modelo"
+
+    Args:
+        caminho: caminho ou identificador do modelo
+
+    Returns:
+        Nome do modelo sem o prefixo, ou o caminho original se não for API remota
+    '''
+    if not isinstance(caminho, str) or not caminho.strip():
+        return caminho or ''
+    caminho_strip = caminho.strip()
+    caminho_lower = caminho_strip.lower()
+    for prefixo in _PREFIXOS_API_REMOTA:
+        if caminho_lower.startswith(prefixo):
+            return caminho_strip[len(prefixo):]
+    return caminho_strip
+
+
+def validar_modelo_api(caminho: str) -> tuple:
+    '''Valida se o caminho do modelo é reconhecido como API remota.
+
+    Verifica se o prefixo é conhecido e se o nome do modelo após o prefixo
+    não está vazio. Não faz chamada de rede — é apenas validação local.
+
+    Args:
+        caminho: caminho ou identificador do modelo (ex: "or:qwen/qwen3.5-35b-a3b")
+
+    Returns:
+        Tupla (ok: bool, mensagem: str):
+        - (True, "descrição da API") se o modelo é válido
+        - (False, "mensagem de erro") se não for reconhecido ou estiver incompleto
+    '''
+    if not isinstance(caminho, str) or not caminho.strip():
+        return False, 'Caminho do modelo está vazio'
+
+    caminho_strip = caminho.strip()
+    caminho_lower = caminho_strip.lower()
+
+    for prefixo, descricao in _PREFIXOS_API_REMOTA.items():
+        if caminho_lower.startswith(prefixo):
+            nome = caminho_strip[len(prefixo):].strip()
+            if not nome:
+                return False, f'Nome do modelo está vazio após o prefixo "{prefixo}" ({descricao})'
+            return True, f'{descricao} ({nome})'
+
+    return False, f'Prefixo não reconhecido em "{caminho}". Prefixos válidos: {", ".join(_PREFIXOS_API_REMOTA.keys())}'
+
+
 if __name__ == '__main__':
     import sys
     import util  # garante que a pasta src está no sys.path
