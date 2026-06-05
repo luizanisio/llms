@@ -1808,7 +1808,7 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
                     try:
                         r_json = json.loads(row["resumo"])
                         registros.append({
-                            'id': row["chave"],
+                            'id': str(row["chave"]),
                             'input_tokens': int(r_json.get("prompt_tokens", 0)),
                             'output_tokens': int(r_json.get("completion_tokens", 0)),
                             'time_s': float(r_json.get("tempo", 0)),
@@ -1825,8 +1825,9 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
                 caminho = os.path.join(pasta_saida, nome)
                 with open(caminho, 'r', encoding='utf-8') as f:
                     dados = json.load(f)
+                chave_str = str(dados.get('chave', nome.replace('.json', '')))
                 registros.append({
-                    'id': dados.get('chave', nome.replace('.json', '')),
+                    'id': chave_str,
                     'input_tokens': int(dados.get('prompt_tokens', dados.get('input_tokens', 0))),
                     'output_tokens': int(dados.get('completion_tokens', dados.get('output_tokens', 0))),
                     'time_s': float(dados.get('tempo', dados.get('time_s', 0))),
@@ -2004,6 +2005,15 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
 
     if not itens_pendentes:
         print(f"✅ Todos os {len(itens)} itens já foram processados com sucesso!")
+        print("   Gerando gráficos e resumos para os dados existentes...")
+        stats_vazio = {
+            'processados_ok': 0,
+            'processados_erro': 0,
+            'tokens_entrada': 0,
+            'tokens_saida': 0,
+            'tempo_total': 0,
+        }
+        _gerar_resumo_e_graficos(config, stats_vazio)
         sys.exit(0)
 
     skip_count = len(itens) - len(itens_pendentes)
