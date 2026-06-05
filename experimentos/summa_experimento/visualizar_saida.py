@@ -1,7 +1,12 @@
 import pandas as pd
 import json
 import numpy as np
-arq = './saida/saida.parquet'
+import sys
+# TODO: pode receber o nome do arquivo de saída via args
+if len(sys.argv) > 1:
+    arq = sys.argv[1]
+else:
+    arq = './saida/saida.parquet'
 arq_origem = './dados/integras_experimento_summa.parquet'
 dados = pd.read_parquet(arq)
 dados_origem = pd.read_parquet(arq_origem)
