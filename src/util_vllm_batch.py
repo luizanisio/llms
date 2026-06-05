@@ -1373,7 +1373,13 @@ def finalizar_engine(engine) -> None:
             llm_engine = getattr(llm, "llm_engine", None)
             engine_core = getattr(llm_engine, "engine_core", None)
             if engine_core is not None and hasattr(engine_core, "shutdown"):
-                engine_core.shutdown(timeout=15)
+                try:
+                    engine_core.shutdown(timeout=15)
+                except TypeError as err:
+                    if "timeout" in str(err):
+                        engine_core.shutdown()
+                    else:
+                        raise
                 print("✅ vLLM EngineCore shutdown concluído.")
             elif hasattr(llm, "shutdown"):
                 llm.shutdown()
