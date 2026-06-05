@@ -13,27 +13,72 @@ dados_origem = pd.read_parquet(arq_origem)
 print(dados.head())
 q = len(dados)
 
-print('#'*80)
-print(f'Total de registros: {q}')
-print('#'*80)
-print('Documento:', dados['chave'][q-1])
-print('-='*40)
-print('RESPOSTA:')
-print(dados['resposta'][q-1])
-print('-='*40)
-print('RESUMO:')
-print(dados['resumo'][q-1])
-print('-='*40)
-# busca o registro com seq_documento_acordao igual à chave do documento na origem
-chave = dados['chave'][q-1]
-itens = dados_origem[dados_origem['seq_documento_acordao'] == int(chave)]
-if len(itens) >  0:
-    print('INTEGRA:')
-    print(itens['integra'].values[0].replace('<br>','\n'))
-else:    
-    print('INTEGRA NÃO ENCONTRADA')
+# Buscar um registro com erro e um sem erro
+reg_com_erro = None
+reg_sem_erro = None
 
-print('-='*40)
+for _, row in dados.iterrows():
+    # Verifica se há conteúdo de erro
+    tem_erro = bool(row['erro'] and str(row['erro']).strip() not in ('None', 'nan', ''))
+    if tem_erro and reg_com_erro is None:
+        reg_com_erro = row
+    elif not tem_erro and reg_sem_erro is None:
+        reg_sem_erro = row
+    
+    if reg_com_erro is not None and reg_sem_erro is not None:
+        break
+
+def print_json(valor:str):
+    """Imprime um valor string formatado como json"""
+    try:
+        print('JSON ✅', json.dumps(json.loads(valor), indent=4, ensure_ascii=False))
+    except Exception as e:
+        print('JSON ❌', valor)
+
+def exibir_registro(titulo_bloco, row):
+    if row is None:
+        print(f"\n{'='*80}\n--- NENHUM REGISTRO {titulo_bloco} ENCONTRADO ---\n{'='*80}")
+        return
+        
+    print(f"\n{'='*80}")
+    print(f"--- EXEMPLO DE REGISTRO {titulo_bloco} ---")
+    print(f"{'='*80}")
+    
+    chave = row['chave']
+    
+    # Busca na origem
+    itens = dados_origem[dados_origem['seq_documento_acordao'] == int(chave)]
+    if len(itens) > 0:
+        dados_item = itens.iloc[0]
+        print(f"🎯 Documento: {chave} | Registro: {dados_item.get('num_registro', '')} | Classe: {dados_item.get('sg_classe', '')} | Publicação: {dados_item.get('dt_publicacao', '')}")
+        print('-'*80)
+        print("📄 ÍNTEGRA DA ORIGEM:")
+        print(str(dados_item['integra']).replace('<br>', '\n'))
+    else:
+        print(f"🎯 Documento: {chave}")
+        print('-'*80)
+        print("📄 ÍNTEGRA DA ORIGEM: NÃO ENCONTRADA")
+        
+    print('-'*80)
+    print("🤖 RESPOSTA DA EXTRAÇÃO:")
+    print_json(row['resposta'])
+    
+    if row['erro'] and str(row['erro']).strip() not in ('None', 'nan', ''):
+        print('-'*80)
+        print("❌ ERRO DA EXTRAÇÃO:")
+        print(str(row['erro'])[:200])
+        
+    print('-'*80)
+    print("📊 RESUMO (Tempos/Tokens):")
+    print_json(row['resumo'])
+    print(f"{'='*80}\n")
+
+print('#'*80)
+print(f'Total de registros lidos na saída: {q}')
+print('#'*80)
+
+exibir_registro("COM SUCESSO (SEM ERRO)", reg_sem_erro)
+exibir_registro("COM FALHA (COM ERRO)", reg_com_erro)
 
 # Imprime resumo de total de erros ou json não válido, total com json válido, métricas e token de entrada e saída
 # TODO: finalizar implementação da impressão do resumo
