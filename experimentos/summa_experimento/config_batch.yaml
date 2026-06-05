@@ -38,7 +38,7 @@ geracao:
   top_k: 2
   top_p: 0.9
   # batch_size: 64
-  max_itens: 2 # para limitar a saída no caso de testes
+  max_itens: 64 # para limitar a saída no caso de testes
 
 # --- Entrada ---
 # arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
@@ -54,7 +54,7 @@ geracao:
 #   Se informado, o chat template do modelo é aplicado automaticamente.
 #   Se vazio, o texto montado é enviado diretamente ao modelo (sem chat template).
 entrada:
-  arquivo: "./dados/integras_experimento_summa.parquet"
+  arquivo: "./dados/integras_experimento_summa_novos.parquet"
   campo_chave: "seq_documento_acordao"
   campo_texto: "integra"
   prompt_template: "./dados/prompt_summa_raw.txt"
@@ -73,5 +73,5 @@ entrada:
 # Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
 #   Itens com erro ou ausentes são reprocessados automaticamente.
 saida:
-  arquivo: "./saida/saida.parquet"
+  arquivo: "./saida/saida_1.5b.parquet"
   tipo_saida: "json"
