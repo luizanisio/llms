@@ -21,7 +21,7 @@ LOG_BRUTO = os.getenv('LOG_BRUTO','').lower()
 '''
  Autor Luiz Anísio 17/10/2025
  Fonte: https://github.com/luizanisio/llms/tree/main/src
- Utilitários para acionar apis generativas da openai ou openrouter
+ Utilitários para acionar apis generativas da openai, openrouter, together.ai, ollama e vllm
  Realiza tratamento de erros comuns e padroniza retorno json ou texto
  Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento
 
@@ -56,7 +56,7 @@ def get_resposta(prompt:str, papel:str='',
         * modelo iniciado com ol: vai usar o ollama local via UtilOllama (http://localhost:11434/api)
         * raw: se True, retorna o dict bruto da API (sem padronização), apenas com 'tempo' adicionado
         * max_ctx: tamanho máximo da janela de contexto (entrada + saída) em tokens
-                   - Para Ollama: define o num_ctx (padrão do método: 49152 = 48k)
+                   - Para Ollama: define o num_ctx (padrão do método: 16k)
                    - Para outras APIs: ignorado no momento
         * think: mi/low/medium/high para modelos com reasoning
                  :low/medium/high para definir verbosity
@@ -78,6 +78,7 @@ def get_resposta(prompt:str, papel:str='',
         Quando raw=True, retorna o dict bruto da API + 'tempo'.
     '''
     tempo = time()
+    original_model = modelo  # Guarda o modelo original com o prefixo para os retentativas
     if 'modelo_think' in kwargs and kwargs['modelo_think']:
         think = kwargs['modelo_think'] 
 
@@ -111,6 +112,31 @@ def get_resposta(prompt:str, papel:str='',
                return {'resposta': res_status, 'modelo': 'ol:status', 'tempo': round(time() - tempo, 3)}
            except Exception as e:
                return {'erro': f'Erro ao verificar status do Ollama: {str(e)}', 'tempo': round(time() - tempo, 3)}
+    elif modelo.lower().startswith('vl:'):
+       if MSG_OPENAI:
+          raise ImportError(MSG_OPENAI)
+       # vllm server via API compatível com OpenAI
+       tipo_api = 'vllm'
+       modelo = modelo[3:]
+       # Caso especial: listar modelos disponíveis
+       if modelo.lower() == 'models':
+           try:
+               res_models = UtilVllm.models()
+               return {'resposta': res_models, 'modelo': 'vl:models', 'tempo': round(time() - tempo, 3)}
+           except Exception as e:
+               return {'erro': f'Erro ao listar modelos vLLM: {str(e)}', 'tempo': round(time() - tempo, 3)}
+       # Caso especial: status do vLLM
+       if modelo.lower() == 'status':
+           try:
+               res_status = UtilVllm.status()
+               return {'resposta': res_status, 'modelo': 'vl:status', 'tempo': round(time() - tempo, 3)}
+           except Exception as e:
+               return {'erro': f'Erro ao verificar status do vLLM: {str(e)}', 'tempo': round(time() - tempo, 3)}
+
+       url = os.getenv("VLLM_URL", "http://localhost:8000/v1")
+       api_key = api_key or os.getenv("VLLM_API_KEY", "EMPTY")
+       client_gpt = OpenAI(api_key=api_key, timeout=timeout, base_url=url)
+       
     elif modelo.lower().startswith('tg:'):
        if MSG_TOGETHER:
           raise ImportError(MSG_TOGETHER)
@@ -215,6 +241,12 @@ def get_resposta(prompt:str, papel:str='',
     if tipo_api == 'together':
         args.pop('max_completion_tokens',None)
         assert max_tokens is None or 'max_tokens' in args, 'max_tokens é o parâemtro do Together AI'
+    elif tipo_api == 'vllm':
+        # vLLM geralmente aceita max_tokens e pode não aceitar reasoning_effort
+        args.pop('reasoning_effort', None)
+        args.pop('max_completion_tokens', None)
+        if isinstance(max_tokens, int):
+            args['max_tokens'] = max_tokens
 
     try:
         response = client_gpt.chat.completions.create(**args)
@@ -307,26 +339,26 @@ def get_resposta(prompt:str, papel:str='',
     except APIConnectionError as e:
         print(f'Erro de conexão: {str(e)}')
         if max_retry <= 0:
-            return {'erro': f'Erro de conexão com API após todas as tentativas: {str(e)}', 'model': modelo}
+            return {'erro': f'Erro de conexão com API após todas as tentativas: {str(e)}', 'model': original_model}
         print(f'Tentando novamente... (tentativas restantes: {max_retry})')
         import time as time_module
         time_module.sleep(2)
-        return get_resposta(prompt=prompt, papel=papel, modelo=modelo, think=think, as_json=as_json,
+        return get_resposta(prompt=prompt, papel=papel, modelo=original_model, think=think, as_json=as_json,
                            temperature=temperature, max_tokens=max_tokens, max_ctx=max_ctx,
                            max_retry=max_retry - 1, timeout=timeout, api_key=api_key, raw=raw)
     
     except RateLimitError as r:
         print(f'Erro de RateLimit: {str(r)}')
         if max_retry <= 0:
-            return {'erro': 'rate limit alcançado, sem mais tentativas', 'model': modelo}
+            return {'erro': 'rate limit alcançado, sem mais tentativas', 'model': original_model}
         print(f'Tentando novamente... (tentativas restantes: {max_retry})')
-        return get_resposta(prompt=prompt, papel=papel, modelo=modelo, think=think, as_json=as_json,
+        return get_resposta(prompt=prompt, papel=papel, modelo=original_model, think=think, as_json=as_json,
                            temperature=temperature, max_tokens=max_tokens, max_ctx=max_ctx,
                            max_retry=max_retry - 1, timeout=timeout, api_key=api_key, raw=raw, silencioso=silencioso)
     
     except Exception as e:
         print('ERRO inesperado:', traceback.format_exc())
-        return {'erro': f'Erro inesperado: {type(e).__name__}: {str(e)}', 'model': modelo}
+        return {'erro': f'Erro inesperado: {type(e).__name__}: {str(e)}', 'model': original_model}
 
     tempo = time() - tempo
     res['tempo'] = round(tempo, 3)
@@ -691,6 +723,48 @@ class UtilOllama:
         resultado['tempo'] = round(time() - tempo, 3)
         return resultado
 
+class UtilVllm:
+    ''' Utilitário para facilitar consultas de status e modelos em servidores vLLM (API OpenAI Compatível)
+    '''
+    @classmethod
+    def get_base_url(cls, api_url:str=None) -> str:
+        base = api_url or os.getenv("VLLM_URL", "http://localhost:8000/v1")
+        if base.endswith('/chat/completions'):
+             base = base.replace('/chat/completions', '')
+        if base.endswith('/'):
+             base = base[:-1]
+        return base
+
+    @classmethod
+    def models(cls, api_url:str=None):
+        ''' Lista modelos disponíveis no servidor vLLM.
+            GET /models
+        '''
+        base = cls.get_base_url(api_url)
+        url = f'{base}/models'
+        
+        headers = {}
+        api_key = os.getenv("VLLM_API_KEY")
+        if api_key:
+            headers['Authorization'] = f'Bearer {api_key}'
+            
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data.get('data', [])
+
+    @classmethod
+    def status(cls, api_url:str=None):
+        ''' Verifica se a API vLLM está disponível e retorna os modelos carregados.
+        '''
+        resultado = {'api': False, 'modelos': []}
+        try:
+            modelos = cls.models(api_url=api_url)
+            resultado['modelos'] = [m.get('id', '?') for m in modelos]
+            resultado['api'] = True
+        except Exception:
+            pass
+        return resultado
 
 if __name__ == '__main__':
     import sys
