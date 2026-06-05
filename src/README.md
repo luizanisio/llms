@@ -30,6 +30,7 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `util_tiktoken.py` | Token counting via tiktoken for cost estimation |
 | `util_sysinfo.py` | System resource monitoring (CPU, RAM, GPU) |
 | `util_get_resposta.py` | LLM response retrieval and parsing helpers |
+| `util_vllm_batch.py` | Batch inference utility using vLLM configured via YAML |
 
 ### Training Pipeline (Unsloth / HF / vLLM)
 
@@ -52,6 +53,7 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `treinar_model_loader.py` | Model loading via HF Transformers + PEFT (base & LoRA), 4-bit/8-bit quantization |
 | `treinar_chat_templates.py` | Native HF chat-template module — auto-detects template by model family |
 | `treinar_vllm_inference.py` | Fast inference engine using vLLM (PagedAttention, continuous batching, multi-GPU) |
+| `treinar_realizar_predicoes.py` | Prediction and interactive inference classes for LLM models (HF, vLLM, Unsloth, Ollama) |
 | `treinar_gemma3.py` | Gemma-3 specific fine-tuning configuration |
 | `treinar_to_ollama.py` | Ollama Modelfile generator for importing merged HF models into Ollama |
 | `exportar_gguf.py` | GGUF export utility using Unsloth for quantized conversion |
