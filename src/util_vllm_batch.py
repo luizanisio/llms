@@ -479,6 +479,17 @@ def carregar_saida_existente(config: Dict[str, Any]) -> set:
 
 def _carregar_saida_parquet(arquivo: str) -> set:
     """Identifica chaves ok no parquet de saída."""
+    arquivo_bak = arquivo + ".bak"
+
+    # Se o arquivo principal não existe mas o backup existe, restaura
+    if not os.path.isfile(arquivo) and os.path.isfile(arquivo_bak):
+        print(f"⚠️  Arquivo '{arquivo}' não encontrado. Restaurando do backup '{arquivo_bak}'...")
+        import shutil
+        try:
+            shutil.copy2(arquivo_bak, arquivo)
+        except Exception as e:
+            print(f"⚠️  Erro ao restaurar backup: {e}")
+
     if not os.path.isfile(arquivo):
         return set()
 
@@ -486,7 +497,17 @@ def _carregar_saida_parquet(arquivo: str) -> set:
         df = pd.read_parquet(arquivo)
     except Exception as e:
         print(f"⚠️  Erro ao ler parquet de saída existente: {e}")
-        return set()
+        if os.path.isfile(arquivo_bak):
+            print(f"⚠️  Tentando restaurar do backup '{arquivo_bak}'...")
+            import shutil
+            try:
+                shutil.copy2(arquivo_bak, arquivo)
+                df = pd.read_parquet(arquivo)
+            except Exception as e2:
+                print(f"⚠️  Erro ao ler parquet do backup: {e2}")
+                return set()
+        else:
+            return set()
 
     if "chave" not in df.columns:
         return set()
@@ -537,6 +558,11 @@ def salvar_resultados_parquet(
 
     if append and os.path.isfile(arquivo_saida):
         try:
+            # Cria backup do arquivo antes de abri-lo/modificá-lo
+            import shutil
+            arquivo_bak = arquivo_saida + ".bak"
+            shutil.copy2(arquivo_saida, arquivo_bak)
+
             df_existente = pd.read_parquet(arquivo_saida)
             # Remove itens que serão atualizados
             chaves_novas = set(df_novo["chave"].astype(str))
@@ -544,7 +570,8 @@ def salvar_resultados_parquet(
                 ~df_existente["chave"].astype(str).isin(chaves_novas)
             ]
             df_final = pd.concat([df_existente, df_novo], ignore_index=True)
-        except Exception:
+        except Exception as e:
+            print(f"⚠️  Erro ao mesclar com parquet existente: {e}")
             df_final = df_novo
     else:
         df_final = df_novo
@@ -554,7 +581,10 @@ def salvar_resultados_parquet(
     if pasta:
         os.makedirs(pasta, exist_ok=True)
 
-    df_final.to_parquet(arquivo_saida, index=False)
+    # Escrita atômica: salva num arquivo temporário e renomeia
+    arquivo_tmp = arquivo_saida + ".tmp"
+    df_final.to_parquet(arquivo_tmp, index=False)
+    os.replace(arquivo_tmp, arquivo_saida)
 
 
 def salvar_resultado_pasta(
@@ -1085,8 +1115,8 @@ def _gerar_resumo_e_graficos(config: Dict[str, Any], stats: Dict[str, Any]) -> N
             nota=nota_tempo,
         )
         print(f"   ⏱️  Boxplot tempo: {tempo_png}")
-    except ImportError:
-        print("   ⚠️  util_graficos não encontrado, gráficos não gerados.")
+    except ImportError as e:
+        print(f"   ⚠️  util_graficos não encontrado, gráficos não gerados. Erro original: {e}")
     except Exception as e:
         print(f"   ⚠️  Não foi possível gerar gráficos: {e}")
 
