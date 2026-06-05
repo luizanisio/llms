@@ -30,6 +30,7 @@ import json
 import time
 import argparse
 from datetime import datetime
+from datetime import timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
 # Garante que a pasta src está no sys.path
@@ -470,11 +471,15 @@ def montar_prompt(texto: str, config: Dict[str, Any]) -> str:
 
 
 def _processar_resposta(texto_resposta: str, config: Dict[str, Any]) -> Tuple[str, str]:
-    """Processa a resposta do modelo conforme tipo_saida configurado.
+    """Processa e valida a resposta do modelo conforme tipo_saida configurado.
 
-    Se tipo_saida == "json", tenta extrair JSON da resposta usando
-    UtilJson.mensagem_to_json (mesmo padronizador de util_openai.py).
-    Se a extração falhar, retorna a resposta original com mensagem de erro.
+    Validações aplicadas:
+    - tipo_saida == "str": verifica se a resposta tem conteúdo (não vazia).
+    - tipo_saida == "json": tenta extrair JSON da resposta usando
+      UtilJson.mensagem_to_json e valida o JSON resultante com json.loads.
+      Se a extração ou validação falhar, retorna a resposta original com erro.
+
+    Itens com erro serão reprocessados automaticamente na próxima execução.
 
     Args:
         texto_resposta: texto bruto da resposta do modelo
@@ -487,19 +492,31 @@ def _processar_resposta(texto_resposta: str, config: Dict[str, Any]) -> Tuple[st
     """
     tipo_saida = config["saida"].get("tipo_saida", "str")
 
+    # --- Validação para saída texto (str) ---
     if tipo_saida != "json":
+        if not texto_resposta or not texto_resposta.strip():
+            return texto_resposta, "Resposta vazia gerada pelo modelo"
         return texto_resposta, ""
 
+    # --- Validação para saída JSON ---
     if not texto_resposta or not texto_resposta.strip():
         return texto_resposta, "Resposta vazia — não foi possível extrair JSON"
+
+    def _validar_json_serializado(json_str: str) -> Tuple[str, str]:
+        """Valida se a string JSON serializada é um JSON válido."""
+        try:
+            json.loads(json_str)
+            return json_str, ""
+        except (json.JSONDecodeError, ValueError) as e:
+            return json_str, f"JSON extraído é inválido: {e}"
 
     try:
         from util_openai import UtilJson
         resultado_json = UtilJson.mensagem_to_json(texto_resposta, padrao=None)
         if resultado_json is None:
             return texto_resposta, "Não foi possível extrair JSON da resposta"
-        # Serializa o dict para string JSON formatada
-        return json.dumps(resultado_json, ensure_ascii=False, indent=2), ""
+        json_str = json.dumps(resultado_json, ensure_ascii=False, indent=2)
+        return _validar_json_serializado(json_str)
     except ImportError:
         # Fallback: tenta com Util.mensagem_to_json de util.py
         try:
@@ -507,7 +524,8 @@ def _processar_resposta(texto_resposta: str, config: Dict[str, Any]) -> Tuple[st
             resultado_json = Util.mensagem_to_json(texto_resposta, padrao=None)
             if resultado_json is None:
                 return texto_resposta, "Não foi possível extrair JSON da resposta"
-            return json.dumps(resultado_json, ensure_ascii=False, indent=2), ""
+            json_str = json.dumps(resultado_json, ensure_ascii=False, indent=2)
+            return _validar_json_serializado(json_str)
         except Exception as e:
             return texto_resposta, f"Erro ao extrair JSON: {type(e).__name__}: {e}"
     except Exception as e:
@@ -799,6 +817,162 @@ def _formatar_tempo(segundos: float) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Funções de Saída Existente — Chaves com Erro
+# ---------------------------------------------------------------------------
+
+def _carregar_chaves_com_erro_parquet(arquivo: str) -> set:
+    """Identifica chaves com erro no parquet de saída."""
+    if not os.path.isfile(arquivo):
+        return set()
+    try:
+        df = pd.read_parquet(arquivo)
+    except Exception:
+        return set()
+    if "chave" not in df.columns or "erro" not in df.columns:
+        return set()
+    mask_com_erro = df["erro"].notna() & (df["erro"].astype(str).str.strip() != "")
+    return set(df[mask_com_erro]["chave"].astype(str))
+
+
+def _carregar_chaves_com_erro_pasta(pasta: str) -> set:
+    """Identifica chaves com erro na pasta de saída (arquivos .txt vazios ou ausentes com .json)."""
+    if not os.path.isdir(pasta):
+        return set()
+    chaves_erro = set()
+    for nome in os.listdir(pasta):
+        if not nome.lower().endswith(".json"):
+            continue
+        chave = os.path.splitext(nome)[0]
+        caminho_json = os.path.join(pasta, nome)
+        caminho_txt = os.path.join(pasta, f"{chave}.txt")
+        try:
+            with open(caminho_json, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+            if dados.get("erro"):
+                chaves_erro.add(chave)
+                continue
+        except Exception:
+            pass
+        # txt vazio ou ausente = erro
+        if not os.path.isfile(caminho_txt):
+            chaves_erro.add(chave)
+        else:
+            try:
+                if os.path.getsize(caminho_txt) == 0:
+                    chaves_erro.add(chave)
+            except Exception:
+                chaves_erro.add(chave)
+    return chaves_erro
+
+
+def carregar_chaves_com_erro(config: Dict[str, Any]) -> set:
+    """Retorna conjunto de chaves que possuem erro na saída existente."""
+    arquivo_saida = config["saida"]["arquivo"]
+    if _saida_eh_parquet(config):
+        return _carregar_chaves_com_erro_parquet(arquivo_saida)
+    else:
+        return _carregar_chaves_com_erro_pasta(arquivo_saida)
+
+
+# ---------------------------------------------------------------------------
+# Log de Processamento (incremental)
+# ---------------------------------------------------------------------------
+
+class BatchLog:
+    """Gerencia o log incremental de processamento em lote.
+
+    O log é gravado em arquivo texto junto à saída, com blocos estruturados
+    para facilitar a leitura e o registro de experimentos.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        arquivo_saida = config["saida"]["arquivo"]
+        if _saida_eh_parquet(config):
+            self._log_path = arquivo_saida + ".log"
+        else:
+            pasta = os.path.abspath(arquivo_saida)
+            os.makedirs(pasta, exist_ok=True)
+            self._log_path = os.path.join(pasta, "processamento.log")
+
+    # -- helpers --
+    @staticmethod
+    def _agora() -> str:
+        return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    def _escrever(self, texto: str) -> None:
+        pasta = os.path.dirname(self._log_path)
+        if pasta:
+            os.makedirs(pasta, exist_ok=True)
+        with open(self._log_path, "a", encoding="utf-8") as f:
+            f.write(texto)
+
+    # -- blocos --
+    def registrar_inicio(
+        self, itens_novos: int, itens_erro: int, itens_concluidos: int
+    ) -> None:
+        bloco = (
+            "\n==========================\n"
+            f"Processamento iniciado em: {self._agora()}\n"
+            f"Itens novos: {itens_novos}\n"
+            f"Itens com erro: {itens_erro}\n"
+            f"Itens concluídos: {itens_concluidos}\n"
+        )
+        self._escrever(bloco)
+
+    def registrar_batch(
+        self,
+        batch_num: int,
+        itens_batch: int,
+        itens_corrigidos: int,
+        itens_concluidos: int,
+        itens_erro: int,
+        inicio_batch: float,
+        velocidade: float,
+        previsao_termino: str,
+        tokens_gerados_minuto: float = 0,
+        tokens_processados_minuto: float = 0,
+    ) -> None:
+        bloco = (
+            "---------------------------------------------\n"
+            f"Batch {batch_num} iniciado em: {datetime.fromtimestamp(inicio_batch).strftime('%d/%m/%Y %H:%M:%S')}\n"
+            f"Itens do batch: {itens_batch}\n"
+            f"Itens corrigidos: {itens_corrigidos}\n"
+            f"Itens concluídos: {itens_concluidos}\n"
+            f"Itens com erro: {itens_erro}\n"
+            f"Batch finalizado em: {self._agora()}\n"
+            f"Velocidade: {velocidade:.1f} itens/minuto\n"
+            f"Tokens gerados/minuto: {tokens_gerados_minuto:.1f}\n"
+            f"Tokens processados/minuto: {tokens_processados_minuto:.1f}\n"
+            f"Previsão de término: {previsao_termino}\n"
+        )
+        self._escrever(bloco)
+
+    def registrar_final(
+        self,
+        itens_processados: int,
+        itens_corrigidos: int,
+        itens_concluidos: int,
+        itens_erro: int,
+        velocidade: float,
+        tokens_gerados_minuto: float = 0,
+        tokens_processados_minuto: float = 0,
+    ) -> None:
+        bloco = (
+            "---------------------------------------------\n"
+            f"Processamento finalizado em: {self._agora()}\n"
+            f"Itens processados: {itens_processados}\n"
+            f"Itens corrigidos: {itens_corrigidos}\n"
+            f"Itens concluídos: {itens_concluidos}\n"
+            f"Itens com erro: {itens_erro}\n"
+            f"Velocidade: {velocidade:.1f} itens/minuto\n"
+            f"Tokens gerados/minuto: {tokens_gerados_minuto:.1f}\n"
+            f"Tokens processados/minuto: {tokens_processados_minuto:.1f}\n"
+            "==========================\n"
+        )
+        self._escrever(bloco)
+
+
+# ---------------------------------------------------------------------------
 # Processamento em Batch
 # ---------------------------------------------------------------------------
 
@@ -807,6 +981,8 @@ def processar_batch(
     tokenizer,
     itens_pendentes: List[Dict[str, str]],
     config: Dict[str, Any],
+    batch_log: Optional["BatchLog"] = None,
+    chaves_erro_anteriores: Optional[set] = None,
 ) -> Dict[str, Any]:
     """Processa itens pendentes em batches, salvando incrementalmente.
 
@@ -815,6 +991,8 @@ def processar_batch(
         tokenizer: tokenizer do modelo
         itens_pendentes: lista de {chave, texto}
         config: configuração completa
+        batch_log: instância de BatchLog para registrar o log incremental
+        chaves_erro_anteriores: chaves que tinham erro antes desta execução
 
     Returns:
         Dicionário com estatísticas do processamento
@@ -829,12 +1007,18 @@ def processar_batch(
     eh_parquet = _saida_eh_parquet(config)
     arquivo_saida = config["saida"]["arquivo"]
 
+    if chaves_erro_anteriores is None:
+        chaves_erro_anteriores = set()
+
     total = len(itens_pendentes)
     stats = {
         "processados_ok": 0,
         "processados_erro": 0,
         "tokens_entrada": 0,
         "tokens_saida": 0,
+        "corrigidos": 0,
+        "erros_mantidos": 0,
+        "erros_novos": 0,
     }
 
     print(f"\n🔄 Processando {total} item(ns) em batches de {batch_size}...")
@@ -889,6 +1073,11 @@ def processar_batch(
                     "erro": f"{type(e).__name__}: {e}",
                 })
                 stats["processados_erro"] += 1
+                # Classifica erro para o log
+                if item["chave"] in chaves_erro_anteriores:
+                    stats["erros_mantidos"] += 1
+                else:
+                    stats["erros_novos"] += 1
 
             if eh_parquet:
                 salvar_resultados_parquet(arquivo_saida, resultados_batch)
@@ -899,10 +1088,42 @@ def processar_batch(
                         arquivo_saida, r["chave"], r["resposta"],
                         resumo, r["erro"]
                     )
+
+            # Log do batch com erro total
+            if batch_log:
+                batch_corrigidos = 0
+                batch_ok = 0
+                batch_erros = len(batch_itens)
+                velocidade = len(batch_itens) / (tempo_batch / 60) if tempo_batch > 0 else 0
+                feitos = min(batch_start + len(batch_itens), total)
+                restantes = total - feitos
+                if velocidade > 0:
+                    minutos_restantes = restantes / velocidade
+                    eta_dt = datetime.now() + timedelta(minutes=minutos_restantes)
+                    previsao = eta_dt.strftime("%d/%m/%Y %H:%M:%S")
+                else:
+                    previsao = "—"
+                batch_log.registrar_batch(
+                    batch_num=batch_num,
+                    itens_batch=len(batch_itens),
+                    itens_corrigidos=batch_corrigidos,
+                    itens_concluidos=batch_ok,
+                    itens_erro=batch_erros,
+                    inicio_batch=inicio_batch,
+                    velocidade=velocidade,
+                    previsao_termino=previsao,
+                    tokens_gerados_minuto=0,
+                    tokens_processados_minuto=0,
+                )
             continue
 
         tempo_batch = time.time() - inicio_batch
         tempo_por_item = tempo_batch / len(batch_itens) if batch_itens else 0
+
+        # Contadores do batch para o log
+        batch_corrigidos = 0
+        batch_ok = 0
+        batch_erros = 0
 
         # Processa resultados do batch
         resultados_batch = []
@@ -935,16 +1156,22 @@ def processar_batch(
                     "erro": erro_json,
                 })
 
-                # Resposta vazia também é considerada erro
                 tem_erro = bool(erro_json)
-                if not tem_erro and (not resposta_final or not resposta_final.strip()):
-                    resultados_batch[-1]["erro"] = "Resposta vazia gerada pelo modelo"
-                    tem_erro = True
 
                 if not tem_erro:
                     stats["processados_ok"] += 1
+                    batch_ok += 1
+                    # Era erro antes? Então foi corrigido
+                    if item["chave"] in chaves_erro_anteriores:
+                        stats["corrigidos"] += 1
+                        batch_corrigidos += 1
                 else:
                     stats["processados_erro"] += 1
+                    batch_erros += 1
+                    if item["chave"] in chaves_erro_anteriores:
+                        stats["erros_mantidos"] += 1
+                    else:
+                        stats["erros_novos"] += 1
                 stats["tokens_entrada"] += prompt_tokens
                 stats["tokens_saida"] += completion_tokens
             else:
@@ -959,6 +1186,11 @@ def processar_batch(
                     "erro": "Resultado ausente do vLLM",
                 })
                 stats["processados_erro"] += 1
+                batch_erros += 1
+                if item["chave"] in chaves_erro_anteriores:
+                    stats["erros_mantidos"] += 1
+                else:
+                    stats["erros_novos"] += 1
 
         # Salvamento incremental
         if eh_parquet:
@@ -983,7 +1215,61 @@ def processar_batch(
             f"progresso: {feitos}/{total} ({100 * feitos // total}%)"
         )
 
+        # Log do batch
+        if batch_log:
+            elapsed_total = time.time() - inicio_total
+            velocidade = feitos / (elapsed_total / 60) if elapsed_total > 0 else 0
+            restantes = total - feitos
+            if velocidade > 0:
+                minutos_restantes = restantes / velocidade
+                eta_dt = datetime.now() + timedelta(minutes=minutos_restantes)
+                previsao = eta_dt.strftime("%d/%m/%Y %H:%M:%S")
+            else:
+                previsao = "—"
+            # Calcula métricas de tokens do batch
+            batch_tokens_saida = sum(
+                json.loads(r["resumo"]).get("completion_tokens", 0)
+                for r in resultados_batch
+            )
+            batch_tokens_entrada = sum(
+                json.loads(r["resumo"]).get("prompt_tokens", 0)
+                for r in resultados_batch
+            )
+            minutos_batch = tempo_batch / 60 if tempo_batch > 0 else 1
+            tg_min = batch_tokens_saida / minutos_batch
+            tp_min = (batch_tokens_entrada + batch_tokens_saida) / minutos_batch
+            batch_log.registrar_batch(
+                batch_num=batch_num,
+                itens_batch=len(batch_itens),
+                itens_corrigidos=batch_corrigidos,
+                itens_concluidos=batch_ok,
+                itens_erro=batch_erros,
+                inicio_batch=inicio_batch,
+                velocidade=velocidade,
+                previsao_termino=previsao,
+                tokens_gerados_minuto=tg_min,
+                tokens_processados_minuto=tp_min,
+            )
+
     stats["tempo_total"] = time.time() - inicio_total
+
+    # Log final
+    if batch_log:
+        tempo_total = stats["tempo_total"]
+        velocidade_final = total / (tempo_total / 60) if tempo_total > 0 else 0
+        minutos_total = tempo_total / 60 if tempo_total > 0 else 1
+        tg_min_final = stats["tokens_saida"] / minutos_total
+        tp_min_final = (stats["tokens_entrada"] + stats["tokens_saida"]) / minutos_total
+        batch_log.registrar_final(
+            itens_processados=total,
+            itens_corrigidos=stats["corrigidos"],
+            itens_concluidos=stats["processados_ok"],
+            itens_erro=stats["processados_erro"],
+            velocidade=velocidade_final,
+            tokens_gerados_minuto=tg_min_final,
+            tokens_processados_minuto=tp_min_final,
+        )
+
     return stats
 
 
@@ -1346,9 +1632,16 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
 
     print(f"   📊 {len(itens)} item(ns) carregado(s)")
 
+    # Aplica limite max_itens (se configurado) logo após a carga
+    max_itens = config["geracao"].get("max_itens", 0)
+    if max_itens > 0 and len(itens) > max_itens:
+        print(f"   ⚠️  Limitando dados de entrada aos {max_itens} primeiros itens (configuração max_itens)")
+        itens = itens[:max_itens]
+
     # --- Verifica saída existente (retomada) ---
     print(f"\n🔍 Verificando saída existente: {config['saida']['arquivo']}")
     chaves_ok = carregar_saida_existente(config)
+    chaves_erro = carregar_chaves_com_erro(config)
 
     # Filtra pendentes
     itens_pendentes = [item for item in itens if item["chave"] not in chaves_ok]
@@ -1400,12 +1693,6 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         print("="*80)
         sys.exit(0)
 
-    # Aplica limite max_itens (se configurado)
-    max_itens = config["geracao"].get("max_itens", 0)
-    if max_itens > 0 and len(itens_pendentes) > max_itens:
-        print(f"   ⚠️  Limitando processamento a {max_itens} itens (configuração max_itens)")
-        itens_pendentes = itens_pendentes[:max_itens]
-
     # --- Exibe configuração ---
     # TODO: incluir na impressão um resumo das configurações do vLLM
     cfg_geracao = config["geracao"]
@@ -1421,21 +1708,41 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
     saida_tipo = "parquet" if _saida_eh_parquet(config) else "pasta"
     print(f"   Saída: {config['saida']['arquivo']} ({saida_tipo})")
 
+    # --- Inicializa log de processamento ---
+    batch_log = BatchLog(config)
+    # Calcula itens novos: pendentes que não tinham erro antes (são realmente novos)
+    itens_novos = len([it for it in itens_pendentes if it["chave"] not in chaves_erro])
+    batch_log.registrar_inicio(
+        itens_novos=itens_novos,
+        itens_erro=len(chaves_erro),
+        itens_concluidos=len(chaves_ok),
+    )
+
     # --- Inicializa vLLM ---
     engine = None
     try:
         engine, tokenizer = inicializar_engine(config)
 
         # --- Processa ---
-        stats = processar_batch(engine, tokenizer, itens_pendentes, config)
+        stats = processar_batch(
+            engine, tokenizer, itens_pendentes, config,
+            batch_log=batch_log,
+            chaves_erro_anteriores=chaves_erro,
+        )
 
         # --- Resumo final ---
         print("\n" + "=" * 70)
         print("📊 RESUMO FINAL")
         print("=" * 70)
         print(f"   ✅ Processados com sucesso: {stats['processados_ok']}")
+        if stats.get('corrigidos', 0) > 0:
+            print(f"   🔧 Erros corrigidos: {stats['corrigidos']}")
         if stats["processados_erro"] > 0:
             print(f"   ❌ Processados com erro: {stats['processados_erro']}")
+        if stats.get('erros_mantidos', 0) > 0:
+            print(f"   🔁 Erros mantidos: {stats['erros_mantidos']}")
+        if stats.get('erros_novos', 0) > 0:
+            print(f"   🆕 Erros novos: {stats['erros_novos']}")
         print(f"   🔢 Tokens entrada: {stats['tokens_entrada']:,}")
         print(f"   🔢 Tokens saída: {stats['tokens_saida']:,}")
         print(f"   ⏱️  Tempo total: {_formatar_tempo(stats['tempo_total'])}")
