@@ -52,6 +52,8 @@ except ImportError:
     print("   Instale com: pip install pandas")
     sys.exit(1)
 
+# Helpers de detecção de API remota (util_openai.py)
+from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_modelo_api
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -67,12 +69,18 @@ _YAML_EXEMPLO = """\
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
+#   Prefixos para APIs remotas (não usa vLLM local):
+#     or:modelo  — OpenRouter (ex: "or:qwen/qwen3.5-35b-a3b")
+#     tg:modelo  — Together.ai (ex: "tg:meta-llama/Llama-3-70b-chat-hf")
+#     vl:modelo  — vLLM Server remoto (ex: "vl:meu-modelo")
+#     oa:modelo  — OpenAI (ex: "oa:gpt-5-nano")
+#   Sem prefixo: usa vLLM local com modelo HuggingFace
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
   caminho: "/caminho/para/modelo"
   lora: ""
 
-# --- Configuração do vLLM ---
+# --- Configuração do vLLM (ignorada para modelos de API remota) ---
 # gpu_memory_utilization: fração da VRAM a usar (0.0 a 1.0). Padrão: 0.90
 # max_model_len: tamanho máximo do contexto em tokens. Ajuste conforme o modelo.
 # tensor_parallel_size: número de GPUs para paralelismo de tensor (1 = single GPU)
@@ -100,7 +108,11 @@ vllm:
 # top_k: top-k sampling (2 = quase determinístico)
 # top_p: nucleus sampling
 # batch_size: quantos prompts enviar por vez (controla salvamento parcial). Opcional.
+#   Para APIs remotas: define o número de chamadas concorrentes (threads).
 # max_itens: limite máximo de itens a processar (útil para testes). Opcional.
+# think: controle de reasoning para APIs remotas (opcional).
+#   Valores: "low", "medium", "high", "minimal" ou combinação "high:medium" (reasoning:verbosity)
+#   Deixe vazio ou omita para desabilitar reasoning.
 geracao:
   max_tokens: 2048
   temperature: 0.01
@@ -108,6 +120,7 @@ geracao:
   top_p: 0.9
   # batch_size: 64
   # max_itens: 10
+  # think: "low"
 
 # --- Entrada ---
 # arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
@@ -189,7 +202,11 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     caminho_modelo = modelo.get("caminho", "")
     if not caminho_modelo:
         raise ValueError("modelo.caminho é obrigatório no YAML")
-    modelo["caminho"] = _resolver_caminho(caminho_modelo, base_dir)
+    # Para modelos de API remota (or:, tg:, vl:, oa:), preserva o prefixo
+    if eh_modelo_api_remota(caminho_modelo):
+        modelo["caminho"] = caminho_modelo.strip()
+    else:
+        modelo["caminho"] = _resolver_caminho(caminho_modelo, base_dir)
     lora = modelo.get("lora", "")
     if lora:
         modelo["lora"] = _resolver_caminho(lora, base_dir)
@@ -212,6 +229,11 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     geracao.setdefault("top_p", 0.9)
     geracao.setdefault("batch_size", 64)
     geracao.setdefault("max_itens", 0)
+    # think: controle de reasoning para APIs remotas (None = sem reasoning)
+    if "think" not in geracao or geracao["think"] is None:
+        geracao["think"] = None
+    else:
+        geracao["think"] = str(geracao["think"]).strip() or None
     config["geracao"] = geracao
 
     # --- Entrada (obrigatório) ---
@@ -264,11 +286,20 @@ def validar_config(config: Dict[str, Any]) -> List[str]:
 
     # --- Modelo ---
     caminho_modelo = config["modelo"]["caminho"]
-    if not os.path.exists(caminho_modelo):
-        erros.append(
-            f"Modelo não encontrado: '{caminho_modelo}'\n"
-            f"   Verifique modelo.caminho no YAML."
-        )
+    if eh_modelo_api_remota(caminho_modelo):
+        # Valida modelo de API remota via util_openai
+        ok, msg = validar_modelo_api(caminho_modelo)
+        if not ok:
+            erros.append(
+                f"Modelo de API remota inválido: {msg}\n"
+                f"   Verifique modelo.caminho no YAML."
+            )
+    else:
+        if not os.path.exists(caminho_modelo):
+            erros.append(
+                f"Modelo não encontrado: '{caminho_modelo}'\n"
+                f"   Verifique modelo.caminho no YAML."
+            )
 
     lora = config["modelo"].get("lora", "")
     if lora and not os.path.exists(lora):
@@ -332,12 +363,14 @@ def validar_config(config: Dict[str, Any]) -> List[str]:
             f"geracao.temperature deve ser >= 0, recebido: {temperature}"
         )
 
-    gpu_mem = config["vllm"].get("gpu_memory_utilization", 0.9)
-    if not isinstance(gpu_mem, (int, float)) or not (0.0 < gpu_mem <= 1.0):
-        erros.append(
-            f"vllm.gpu_memory_utilization deve estar entre 0.0 e 1.0 (exclusive/inclusive), "
-            f"recebido: {gpu_mem}"
-        )
+    # Validações de vLLM só fazem sentido para modelo local
+    if not eh_modelo_api_remota(caminho_modelo):
+        gpu_mem = config["vllm"].get("gpu_memory_utilization", 0.9)
+        if not isinstance(gpu_mem, (int, float)) or not (0.0 < gpu_mem <= 1.0):
+            erros.append(
+                f"vllm.gpu_memory_utilization deve estar entre 0.0 e 1.0 (exclusive/inclusive), "
+                f"recebido: {gpu_mem}"
+            )
 
     return erros
 
@@ -1270,6 +1303,319 @@ def processar_batch(
             tokens_processados_minuto=tp_min_final,
         )
 
+
+# ---------------------------------------------------------------------------
+# Processamento em Batch via API remota (or:, tg:, vl:, oa:)
+# ---------------------------------------------------------------------------
+
+def _chamar_api_item(
+    item: Dict[str, str],
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Chama get_resposta para um item individual e retorna resultado padronizado.
+
+    Args:
+        item: dict com {chave, texto}
+        config: configuração completa
+
+    Returns:
+        Dict com {chave, resumo (json string), resposta, erro}
+    """
+    from util_openai import get_resposta
+
+    cfg_geracao = config["geracao"]
+    caminho_modelo = config["modelo"]["caminho"]
+    system_prompt = config["entrada"].get("system_prompt", "")
+    tipo_saida = config["saida"].get("tipo_saida", "str")
+
+    # Monta o conteúdo do prompt (template + texto)
+    conteudo = montar_prompt(item["texto"], config)
+
+    # Monta messages no formato da API
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": conteudo})
+
+    # Parâmetros da chamada
+    max_tokens = cfg_geracao.get("max_tokens", 2048)
+    temperature = cfg_geracao.get("temperature", 0.01)
+    think = cfg_geracao.get("think", None)
+    as_json = (tipo_saida == "json")
+
+    inicio_item = time.time()
+    try:
+        resultado_api = get_resposta(
+            prompt=messages,
+            modelo=caminho_modelo,
+            think=think,
+            as_json=as_json,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            silencioso=True,
+        )
+    except Exception as e:
+        tempo_item = time.time() - inicio_item
+        return {
+            "chave": item["chave"],
+            "resumo": json.dumps({
+                "model": caminho_modelo,
+                "tempo": round(tempo_item, 3),
+            }, ensure_ascii=False),
+            "resposta": "",
+            "erro": f"{type(e).__name__}: {e}",
+        }
+
+    tempo_item = time.time() - inicio_item
+
+    # Extrai informações do retorno padronizado de get_resposta
+    erro_api = resultado_api.get("erro", "")
+    usage = resultado_api.get("usage", {})
+    model_usado = resultado_api.get("model", caminho_modelo)
+
+    prompt_tokens = usage.get("prompt_tokens", 0) or 0
+    completion_tokens = usage.get("completion_tokens", 0) or 0
+    finish_reason = usage.get("finished_reason", "")
+
+    resumo = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "finish_reason": finish_reason,
+        "model": model_usado,
+        "tempo": round(tempo_item, 3),
+    }
+
+    if erro_api:
+        # Erro da API — retorna sem resposta
+        return {
+            "chave": item["chave"],
+            "resumo": json.dumps(resumo, ensure_ascii=False),
+            "resposta": str(resultado_api.get("resposta", "")),
+            "erro": erro_api,
+        }
+
+    # Processa resposta
+    resposta_raw = resultado_api.get("resposta", "")
+    if as_json:
+        # Quando as_json=True, get_resposta já fez o parse — serializa de volta
+        if isinstance(resposta_raw, (dict, list)):
+            resposta_final = json.dumps(resposta_raw, ensure_ascii=False, indent=2)
+            erro_json = ""
+        else:
+            # Fallback: a API retornou texto — aplica pós-processamento
+            resposta_final, erro_json = _processar_resposta(str(resposta_raw), config)
+    else:
+        resposta_final, erro_json = _processar_resposta(str(resposta_raw), config)
+
+    return {
+        "chave": item["chave"],
+        "resumo": json.dumps(resumo, ensure_ascii=False),
+        "resposta": resposta_final,
+        "erro": erro_json,
+    }
+
+
+def processar_batch_api(
+    itens_pendentes: List[Dict[str, str]],
+    config: Dict[str, Any],
+    batch_log: Optional["BatchLog"] = None,
+    chaves_erro_anteriores: Optional[set] = None,
+) -> Dict[str, Any]:
+    """Processa itens pendentes via API remota (or:, tg:, vl:, oa:).
+
+    Usa ThreadPoolExecutor com batch_size como limite de concorrência.
+    Compatível com o mesmo sistema de salvamento, log e retomada do modo vLLM.
+
+    Args:
+        itens_pendentes: lista de {chave, texto}
+        config: configuração completa
+        batch_log: instância de BatchLog para registrar o log incremental
+        chaves_erro_anteriores: chaves que tinham erro antes desta execução
+
+    Returns:
+        Dicionário com estatísticas do processamento
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    cfg_geracao = config["geracao"]
+    batch_size = cfg_geracao.get("batch_size", 64)
+
+    eh_parquet = _saida_eh_parquet(config)
+    arquivo_saida = config["saida"]["arquivo"]
+
+    if chaves_erro_anteriores is None:
+        chaves_erro_anteriores = set()
+
+    total = len(itens_pendentes)
+    stats = {
+        "processados_ok": 0,
+        "processados_erro": 0,
+        "tokens_entrada": 0,
+        "tokens_saida": 0,
+        "corrigidos": 0,
+        "erros_mantidos": 0,
+        "erros_novos": 0,
+    }
+
+    nome_modelo = extrair_nome_modelo_api(config["modelo"]["caminho"])
+    print(f"\n🌐 Processando {total} item(ns) via API remota ({nome_modelo})")
+    print(f"   Concorrência: {batch_size} threads")
+    inicio_total = time.time()
+
+    for batch_start in range(0, total, batch_size):
+        batch_itens = itens_pendentes[batch_start : batch_start + batch_size]
+        batch_num = batch_start // batch_size + 1
+        total_batches = (total + batch_size - 1) // batch_size
+
+        # Info do batch
+        eta = _formatar_eta(inicio_total, batch_start, total)
+        print(
+            f"\n📦 Batch {batch_num}/{total_batches} "
+            f"({len(batch_itens)} itens) {eta}"
+        )
+
+        inicio_batch = time.time()
+
+        # Contadores do batch para o log
+        batch_corrigidos = 0
+        batch_ok = 0
+        batch_erros = 0
+
+        # Executa chamadas em paralelo usando ThreadPoolExecutor
+        resultados_batch = [None] * len(batch_itens)
+        with ThreadPoolExecutor(max_workers=min(batch_size, len(batch_itens))) as executor:
+            future_to_idx = {
+                executor.submit(_chamar_api_item, item, config): i
+                for i, item in enumerate(batch_itens)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    resultados_batch[idx] = future.result()
+                except Exception as e:
+                    # Erro inesperado no future — não deveria acontecer
+                    item = batch_itens[idx]
+                    resultados_batch[idx] = {
+                        "chave": item["chave"],
+                        "resumo": json.dumps({
+                            "model": config["modelo"]["caminho"],
+                            "tempo": 0,
+                        }, ensure_ascii=False),
+                        "resposta": "",
+                        "erro": f"Erro inesperado: {type(e).__name__}: {e}",
+                    }
+
+        tempo_batch = time.time() - inicio_batch
+
+        # Classifica resultados e atualiza stats
+        for i, resultado in enumerate(resultados_batch):
+            item = batch_itens[i]
+            tem_erro = bool(resultado["erro"])
+
+            # Extrai tokens do resumo para stats
+            try:
+                resumo_dict = json.loads(resultado["resumo"])
+                prompt_tokens = resumo_dict.get("prompt_tokens", 0) or 0
+                completion_tokens = resumo_dict.get("completion_tokens", 0) or 0
+            except Exception:
+                prompt_tokens = 0
+                completion_tokens = 0
+
+            if not tem_erro:
+                stats["processados_ok"] += 1
+                batch_ok += 1
+                if item["chave"] in chaves_erro_anteriores:
+                    stats["corrigidos"] += 1
+                    batch_corrigidos += 1
+            else:
+                stats["processados_erro"] += 1
+                batch_erros += 1
+                if item["chave"] in chaves_erro_anteriores:
+                    stats["erros_mantidos"] += 1
+                else:
+                    stats["erros_novos"] += 1
+
+            stats["tokens_entrada"] += prompt_tokens
+            stats["tokens_saida"] += completion_tokens
+
+        # Salvamento incremental
+        if eh_parquet:
+            salvar_resultados_parquet(arquivo_saida, resultados_batch)
+        else:
+            for r in resultados_batch:
+                resumo = json.loads(r["resumo"])
+                salvar_resultado_pasta(
+                    arquivo_saida, r["chave"], r["resposta"],
+                    resumo, r["erro"]
+                )
+
+        tokens_batch = sum(
+            json.loads(r["resumo"]).get("completion_tokens", 0)
+            for r in resultados_batch
+            if not r["erro"]
+        )
+        feitos = min(batch_start + len(batch_itens), total)
+        print(
+            f"   ✅ Batch {batch_num} concluído em {_formatar_tempo(tempo_batch)} "
+            f"({tokens_batch} tokens gerados) — "
+            f"progresso: {feitos}/{total} ({100 * feitos // total}%)"
+        )
+
+        # Log do batch
+        if batch_log:
+            elapsed_total = time.time() - inicio_total
+            velocidade = feitos / (elapsed_total / 60) if elapsed_total > 0 else 0
+            restantes = total - feitos
+            if velocidade > 0:
+                minutos_restantes = restantes / velocidade
+                eta_dt = datetime.now() + timedelta(minutes=minutos_restantes)
+                previsao = eta_dt.strftime("%d/%m/%Y %H:%M:%S")
+            else:
+                previsao = "—"
+            batch_tokens_saida = sum(
+                json.loads(r["resumo"]).get("completion_tokens", 0)
+                for r in resultados_batch
+            )
+            batch_tokens_entrada = sum(
+                json.loads(r["resumo"]).get("prompt_tokens", 0)
+                for r in resultados_batch
+            )
+            minutos_batch = tempo_batch / 60 if tempo_batch > 0 else 1
+            tg_min = batch_tokens_saida / minutos_batch
+            tp_min = (batch_tokens_entrada + batch_tokens_saida) / minutos_batch
+            batch_log.registrar_batch(
+                batch_num=batch_num,
+                itens_batch=len(batch_itens),
+                itens_corrigidos=batch_corrigidos,
+                itens_concluidos=batch_ok,
+                itens_erro=batch_erros,
+                inicio_batch=inicio_batch,
+                velocidade=velocidade,
+                previsao_termino=previsao,
+                tokens_gerados_minuto=tg_min,
+                tokens_processados_minuto=tp_min,
+            )
+
+    stats["tempo_total"] = time.time() - inicio_total
+
+    # Log final
+    if batch_log:
+        tempo_total = stats["tempo_total"]
+        velocidade_final = total / (tempo_total / 60) if tempo_total > 0 else 0
+        minutos_total = tempo_total / 60 if tempo_total > 0 else 1
+        tg_min_final = stats["tokens_saida"] / minutos_total
+        tp_min_final = (stats["tokens_entrada"] + stats["tokens_saida"]) / minutos_total
+        batch_log.registrar_final(
+            itens_processados=total,
+            itens_corrigidos=stats["corrigidos"],
+            itens_concluidos=stats["processados_ok"],
+            itens_erro=stats["processados_erro"],
+            velocidade=velocidade_final,
+            tokens_gerados_minuto=tg_min_final,
+            tokens_processados_minuto=tp_min_final,
+        )
+
     return stats
 
 
@@ -1674,42 +2020,76 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
             print(conteudo[:_tamanho], '[..]', conteudo[-_tamanho:])
         else:
             print(conteudo)
-        
-        print("\n--- Aplicando Chat Template ---")
-        system_prompt = config["entrada"].get("system_prompt", "")
-        if system_prompt:
-            print(f"System prompt: {system_prompt[:200]}...")
+
+        caminho_modelo = config["modelo"]["caminho"]
+        if eh_modelo_api_remota(caminho_modelo):
+            # Modo API remota: exibe messages no formato JSON
+            print("\n--- Messages (formato API remota) ---")
+            system_prompt = config["entrada"].get("system_prompt", "")
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": conteudo})
+            print(f"Modelo: {caminho_modelo}")
+            think = config["geracao"].get("think")
+            if think:
+                print(f"Think: {think}")
+            tipo_saida = config["saida"].get("tipo_saida", "str")
+            print(f"as_json: {tipo_saida == 'json'}")
+            print(f"\n--- Messages JSON ({len(messages)} mensagem(ns)) ---")
+            for msg in messages:
+                role = msg['role']
+                content = msg['content']
+                if len(content) > 2000:
+                    _tamanho = min(int(len(content) / 2), 1000)
+                    content = content[:_tamanho] + ' [..]' + content[-_tamanho:]
+                print(f"  [{role}]: {content[:200]}{'...' if len(content)>200 else ''}")
         else:
-            print("(sem system prompt — chat template aplicado apenas com role=user)")
-        print("Carregando tokenizer do HuggingFace...")
-        try:
-            from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(config["modelo"]["caminho"])
-            prompt_final = formatar_prompt_final(conteudo, config, tokenizer)
-            print(f"\n--- Prompt Final ({len(prompt_final)} chars, enviado ao modelo) ---")
-            if len(prompt_final) > 2000:
-                _tamanho = min(int(len(prompt_final) / 2), 1000)
-                print(prompt_final[:_tamanho], '[..]', prompt_final[-_tamanho:])
+            # Modo vLLM local: aplica chat template
+            print("\n--- Aplicando Chat Template ---")
+            system_prompt = config["entrada"].get("system_prompt", "")
+            if system_prompt:
+                print(f"System prompt: {system_prompt[:200]}...")
             else:
-                print(prompt_final)
-        except ImportError:
-            print("❌ Biblioteca 'transformers' não encontrada para o teste.")
-        except Exception as e:
-            print(f"❌ Erro ao carregar tokenizer: {e}")
+                print("(sem system prompt — chat template aplicado apenas com role=user)")
+            print("Carregando tokenizer do HuggingFace...")
+            try:
+                from transformers import AutoTokenizer
+                tokenizer = AutoTokenizer.from_pretrained(config["modelo"]["caminho"])
+                prompt_final = formatar_prompt_final(conteudo, config, tokenizer)
+                print(f"\n--- Prompt Final ({len(prompt_final)} chars, enviado ao modelo) ---")
+                if len(prompt_final) > 2000:
+                    _tamanho = min(int(len(prompt_final) / 2), 1000)
+                    print(prompt_final[:_tamanho], '[..]', prompt_final[-_tamanho:])
+                else:
+                    print(prompt_final)
+            except ImportError:
+                print("❌ Biblioteca 'transformers' não encontrada para o teste.")
+            except Exception as e:
+                print(f"❌ Erro ao carregar tokenizer: {e}")
         print("="*80)
         sys.exit(0)
 
     # --- Exibe configuração ---
-    # TODO: incluir na impressão um resumo das configurações do vLLM
+    caminho_modelo = config["modelo"]["caminho"]
+    modo_api = eh_modelo_api_remota(caminho_modelo)
     cfg_geracao = config["geracao"]
     print(f"\n⚙️  Configuração de geração:")
+    if modo_api:
+        _, desc_api = validar_modelo_api(caminho_modelo)
+        print(f"   🌐 Modo: API remota — {desc_api}")
+    else:
+        print(f"   🖥️  Modo: vLLM local")
     print(f"   Max tokens: {cfg_geracao['max_tokens']}")
     print(f"   Temperature: {cfg_geracao['temperature']}")
-    print(f"   Top-k: {cfg_geracao['top_k']}")
-    print(f"   Top-p: {cfg_geracao['top_p']}")
+    if not modo_api:
+        print(f"   Top-k: {cfg_geracao['top_k']}")
+        print(f"   Top-p: {cfg_geracao['top_p']}")
     print(f"   Batch size: {cfg_geracao.get('batch_size', 64)}")
     if cfg_geracao.get('max_itens', 0) > 0:
         print(f"   Max itens: {cfg_geracao['max_itens']}")
+    if modo_api and cfg_geracao.get('think'):
+        print(f"   Think: {cfg_geracao['think']}")
 
     saida_tipo = "parquet" if _saida_eh_parquet(config) else "pasta"
     print(f"   Saída: {config['saida']['arquivo']} ({saida_tipo})")
@@ -1724,56 +2104,101 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         itens_concluidos=len(chaves_ok),
     )
 
-    # --- Inicializa vLLM ---
-    engine = None
-    try:
-        engine, tokenizer = inicializar_engine(config)
+    # --- Processamento: API remota ou vLLM local ---
+    if modo_api:
+        # Modo API remota — não precisa de engine vLLM
+        try:
+            stats = processar_batch_api(
+                itens_pendentes, config,
+                batch_log=batch_log,
+                chaves_erro_anteriores=chaves_erro,
+            )
 
-        # --- Processa ---
-        stats = processar_batch(
-            engine, tokenizer, itens_pendentes, config,
-            batch_log=batch_log,
-            chaves_erro_anteriores=chaves_erro,
-        )
+            # --- Resumo final ---
+            print("\n" + "=" * 70)
+            print("📊 RESUMO FINAL")
+            print("=" * 70)
+            print(f"   ✅ Processados com sucesso: {stats['processados_ok']}")
+            if stats.get('corrigidos', 0) > 0:
+                print(f"   🔧 Erros corrigidos: {stats['corrigidos']}")
+            if stats["processados_erro"] > 0:
+                print(f"   ❌ Processados com erro: {stats['processados_erro']}")
+            if stats.get('erros_mantidos', 0) > 0:
+                print(f"   🔁 Erros mantidos: {stats['erros_mantidos']}")
+            if stats.get('erros_novos', 0) > 0:
+                print(f"   🆕 Erros novos: {stats['erros_novos']}")
+            print(f"   🔢 Tokens entrada: {stats['tokens_entrada']:,}")
+            print(f"   🔢 Tokens saída: {stats['tokens_saida']:,}")
+            print(f"   ⏱️  Tempo total: {_formatar_tempo(stats['tempo_total'])}")
+            if stats["processados_ok"] > 0 and stats["tempo_total"] > 0:
+                throughput = stats["tokens_saida"] / stats["tempo_total"]
+                print(f"   🚀 Throughput: {throughput:.0f} tokens/s")
+            print(f"   💾 Saída: {config['saida']['arquivo']}")
 
-        # --- Resumo final ---
-        print("\n" + "=" * 70)
-        print("📊 RESUMO FINAL")
-        print("=" * 70)
-        print(f"   ✅ Processados com sucesso: {stats['processados_ok']}")
-        if stats.get('corrigidos', 0) > 0:
-            print(f"   🔧 Erros corrigidos: {stats['corrigidos']}")
-        if stats["processados_erro"] > 0:
-            print(f"   ❌ Processados com erro: {stats['processados_erro']}")
-        if stats.get('erros_mantidos', 0) > 0:
-            print(f"   🔁 Erros mantidos: {stats['erros_mantidos']}")
-        if stats.get('erros_novos', 0) > 0:
-            print(f"   🆕 Erros novos: {stats['erros_novos']}")
-        print(f"   🔢 Tokens entrada: {stats['tokens_entrada']:,}")
-        print(f"   🔢 Tokens saída: {stats['tokens_saida']:,}")
-        print(f"   ⏱️  Tempo total: {_formatar_tempo(stats['tempo_total'])}")
-        if stats["processados_ok"] > 0:
-            throughput = stats["tokens_saida"] / stats["tempo_total"]
-            print(f"   🚀 Throughput: {throughput:.0f} tokens/s")
-        print(f"   💾 Saída: {config['saida']['arquivo']}")
-        
-        # Gera resumo final e gráficos
-        _gerar_resumo_e_graficos(config, stats)
-        
-        print("=" * 70)
+            # Gera resumo final e gráficos
+            _gerar_resumo_e_graficos(config, stats)
 
-    except KeyboardInterrupt:
-        print("\n\n⚠️  Interrompido pelo usuário.")
-        print("   Os resultados parciais foram salvos.")
-        print(f"   Execute novamente para continuar de onde parou.")
-    except Exception as e:
-        print(f"\n❌ Erro: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        if engine is not None:
-            print("\n🛑 Finalizando engine vLLM...")
-            finalizar_engine(engine)
+            print("=" * 70)
+
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Interrompido pelo usuário.")
+            print("   Os resultados parciais foram salvos.")
+            print(f"   Execute novamente para continuar de onde parou.")
+        except Exception as e:
+            print(f"\n❌ Erro: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        # Modo vLLM local
+        engine = None
+        try:
+            engine, tokenizer = inicializar_engine(config)
+
+            # --- Processa ---
+            stats = processar_batch(
+                engine, tokenizer, itens_pendentes, config,
+                batch_log=batch_log,
+                chaves_erro_anteriores=chaves_erro,
+            )
+
+            # --- Resumo final ---
+            print("\n" + "=" * 70)
+            print("📊 RESUMO FINAL")
+            print("=" * 70)
+            print(f"   ✅ Processados com sucesso: {stats['processados_ok']}")
+            if stats.get('corrigidos', 0) > 0:
+                print(f"   🔧 Erros corrigidos: {stats['corrigidos']}")
+            if stats["processados_erro"] > 0:
+                print(f"   ❌ Processados com erro: {stats['processados_erro']}")
+            if stats.get('erros_mantidos', 0) > 0:
+                print(f"   🔁 Erros mantidos: {stats['erros_mantidos']}")
+            if stats.get('erros_novos', 0) > 0:
+                print(f"   🆕 Erros novos: {stats['erros_novos']}")
+            print(f"   🔢 Tokens entrada: {stats['tokens_entrada']:,}")
+            print(f"   🔢 Tokens saída: {stats['tokens_saida']:,}")
+            print(f"   ⏱️  Tempo total: {_formatar_tempo(stats['tempo_total'])}")
+            if stats["processados_ok"] > 0:
+                throughput = stats["tokens_saida"] / stats["tempo_total"]
+                print(f"   🚀 Throughput: {throughput:.0f} tokens/s")
+            print(f"   💾 Saída: {config['saida']['arquivo']}")
+
+            # Gera resumo final e gráficos
+            _gerar_resumo_e_graficos(config, stats)
+
+            print("=" * 70)
+
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Interrompido pelo usuário.")
+            print("   Os resultados parciais foram salvos.")
+            print(f"   Execute novamente para continuar de onde parou.")
+        except Exception as e:
+            print(f"\n❌ Erro: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if engine is not None:
+                print("\n🛑 Finalizando engine vLLM...")
+                finalizar_engine(engine)
 
 
 if __name__ == "__main__":
