@@ -315,11 +315,13 @@ class VLLMInferenceEngine:
         # Processa resultados
         results = []
         for output in outputs:
+            prompt_tokens = len(output.prompt_token_ids) if hasattr(output, "prompt_token_ids") else 0
             for completion in output.outputs:
                 results.append({
                     "prompt": output.prompt,
                     "output": completion.text,
                     "tokens": len(completion.token_ids),
+                    "prompt_tokens": prompt_tokens,
                     "finish_reason": completion.finish_reason,
                 })
 

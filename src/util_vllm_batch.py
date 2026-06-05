@@ -246,6 +246,101 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     return config
 
 
+def validar_config(config: Dict[str, Any]) -> List[str]:
+    """Valida a configuração antes de iniciar o processamento.
+
+    Verifica existência de arquivos/diretórios críticos e coerência
+    dos parâmetros para evitar que o vLLM seja inicializado (processo
+    caro) apenas para falhar depois por falta de um arquivo.
+
+    Args:
+        config: configuração já carregada via carregar_config
+
+    Returns:
+        Lista de mensagens de erro. Lista vazia = tudo ok.
+    """
+    erros: List[str] = []
+
+    # --- Modelo ---
+    caminho_modelo = config["modelo"]["caminho"]
+    if not os.path.exists(caminho_modelo):
+        erros.append(
+            f"Modelo não encontrado: '{caminho_modelo}'\n"
+            f"   Verifique modelo.caminho no YAML."
+        )
+
+    lora = config["modelo"].get("lora", "")
+    if lora and not os.path.exists(lora):
+        erros.append(
+            f"Adaptador LoRA não encontrado: '{lora}'\n"
+            f"   Verifique modelo.lora no YAML."
+        )
+
+    # --- Entrada ---
+    cfg_entrada = config["entrada"]
+    arquivo_entrada = cfg_entrada["arquivo"]
+    if arquivo_entrada.lower().endswith(".parquet"):
+        if not os.path.isfile(arquivo_entrada):
+            erros.append(
+                f"Arquivo de entrada não encontrado: '{arquivo_entrada}'\n"
+                f"   Verifique entrada.arquivo no YAML."
+            )
+    else:
+        if not os.path.isdir(arquivo_entrada):
+            erros.append(
+                f"Pasta de entrada não encontrada: '{arquivo_entrada}'\n"
+                f"   Verifique entrada.arquivo no YAML."
+            )
+
+    # --- Prompt template ---
+    prompt_tpl = cfg_entrada.get("prompt_template", "")
+    if prompt_tpl:
+        if not os.path.isfile(prompt_tpl):
+            erros.append(
+                f"Arquivo de prompt template não encontrado: '{prompt_tpl}'\n"
+                f"   Verifique entrada.prompt_template no YAML."
+            )
+        else:
+            # Verifica se a variável de substituição existe no template
+            variavel = cfg_entrada.get("variavel_texto", "<--TEXTO-->")
+            try:
+                with open(prompt_tpl, "r", encoding="utf-8") as f:
+                    conteudo_tpl = f.read()
+                if variavel not in conteudo_tpl:
+                    erros.append(
+                        f"Variável '{variavel}' não encontrada no template "
+                        f"'{os.path.basename(prompt_tpl)}'.\n"
+                        f"   Verifique entrada.variavel_texto no YAML ou o conteúdo do template."
+                    )
+            except Exception as e:
+                erros.append(
+                    f"Erro ao ler template '{prompt_tpl}': {e}"
+                )
+
+    # --- Parâmetros de geração ---
+    cfg_geracao = config["geracao"]
+    max_tokens = cfg_geracao.get("max_tokens", 2048)
+    if not isinstance(max_tokens, (int, float)) or max_tokens <= 0:
+        erros.append(
+            f"geracao.max_tokens deve ser um inteiro positivo, recebido: {max_tokens}"
+        )
+
+    temperature = cfg_geracao.get("temperature", 0.01)
+    if not isinstance(temperature, (int, float)) or temperature < 0:
+        erros.append(
+            f"geracao.temperature deve ser >= 0, recebido: {temperature}"
+        )
+
+    gpu_mem = config["vllm"].get("gpu_memory_utilization", 0.9)
+    if not isinstance(gpu_mem, (int, float)) or not (0.0 < gpu_mem <= 1.0):
+        erros.append(
+            f"vllm.gpu_memory_utilization deve estar entre 0.0 e 1.0 (exclusive/inclusive), "
+            f"recebido: {gpu_mem}"
+        )
+
+    return erros
+
+
 # ---------------------------------------------------------------------------
 # Funções de Entrada
 # ---------------------------------------------------------------------------
@@ -422,11 +517,15 @@ def _processar_resposta(texto_resposta: str, config: Dict[str, Any]) -> Tuple[st
 def formatar_prompt_final(
     conteudo: str, config: Dict[str, Any], tokenizer
 ) -> str:
-    """Formata prompt com chat template do tokenizer (se system_prompt configurado).
+    """Formata prompt com chat template do tokenizer.
 
-    Se system_prompt estiver configurado, aplica chat template do modelo
-    com mensagens [system, user] + generation prompt.
-    Caso contrário, retorna o conteúdo diretamente.
+    Para modelos Instruct, o chat template é essencial para que o modelo
+    saiba quando parar de gerar. Sem ele, o modelo gera até max_tokens.
+
+    - Se system_prompt estiver configurado: aplica chat template com
+      mensagens [system, user] + generation prompt.
+    - Caso contrário: aplica chat template apenas com [user] + generation prompt.
+    - Fallback: se o tokenizer não suporta chat template, retorna o conteúdo cru.
 
     Args:
         conteudo: prompt montado (via montar_prompt)
@@ -443,6 +542,12 @@ def formatar_prompt_final(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": conteudo},
         ]
+    else:
+        messages = [
+            {"role": "user", "content": conteudo},
+        ]
+
+    if hasattr(tokenizer, "apply_chat_template"):
         return tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
@@ -512,11 +617,24 @@ def _carregar_saida_parquet(arquivo: str) -> set:
     if "chave" not in df.columns:
         return set()
 
-    # Itens com sucesso: erro está vazio/NaN
+    # Itens com sucesso: erro está vazio/NaN E resposta tem conteúdo
+    mask_sem_erro = pd.Series(True, index=df.index)
     if "erro" in df.columns:
-        ok = df[df["erro"].isna() | (df["erro"].astype(str).str.strip() == "")]
-    else:
-        ok = df  # sem coluna erro, todos são considerados ok
+        mask_sem_erro = df["erro"].isna() | (df["erro"].astype(str).str.strip() == "")
+
+    mask_com_resposta = pd.Series(True, index=df.index)
+    if "resposta" in df.columns:
+        mask_com_resposta = df["resposta"].notna() & (df["resposta"].astype(str).str.strip() != "")
+
+    ok = df[mask_sem_erro & mask_com_resposta]
+
+    # Conta itens descartados por resposta vazia (para log informativo)
+    sem_erro_sem_resposta = df[mask_sem_erro & ~mask_com_resposta]
+    if len(sem_erro_sem_resposta) > 0:
+        print(
+            f"   ⚠️  {len(sem_erro_sem_resposta)} item(ns) com resposta vazia "
+            f"serão reprocessado(s)"
+        )
 
     return set(ok["chave"].astype(str))
 
@@ -527,10 +645,34 @@ def _carregar_saida_pasta(pasta: str) -> set:
         return set()
 
     chaves = set()
+    vazios = 0
     for nome in os.listdir(pasta):
         if nome.lower().endswith(".txt"):
+            caminho = os.path.join(pasta, nome)
+            if not os.path.isfile(caminho):
+                continue
+            # Verifica se o arquivo tem conteúdo
+            try:
+                tamanho = os.path.getsize(caminho)
+                if tamanho == 0:
+                    vazios += 1
+                    continue
+                with open(caminho, "r", encoding="utf-8") as f:
+                    conteudo = f.read(512)  # lê só início para eficiência
+                if not conteudo.strip():
+                    vazios += 1
+                    continue
+            except Exception:
+                vazios += 1
+                continue
             chave = os.path.splitext(nome)[0]
             chaves.add(chave)
+
+    if vazios > 0:
+        print(
+            f"   ⚠️  {vazios} arquivo(s) .txt com resposta vazia "
+            f"serão reprocessado(s)"
+        )
 
     return chaves
 
@@ -767,13 +909,15 @@ def processar_batch(
         for i, item in enumerate(batch_itens):
             if i < len(resultados_vllm):
                 res = resultados_vllm[i]
-                prompt_tokens = len(tokenizer.encode(prompts[i]))
+                prompt_tokens = res.get("prompt_tokens", 0) or len(tokenizer.encode(prompts[i]))
                 completion_tokens = res.get("tokens", 0)
+                finish_reason = res.get("finish_reason", "")
 
                 resumo = {
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": prompt_tokens + completion_tokens,
+                    "finish_reason": finish_reason,
                     "model": config["modelo"]["caminho"],
                     "tempo": round(tempo_por_item, 3),
                 }
@@ -791,7 +935,13 @@ def processar_batch(
                     "erro": erro_json,
                 })
 
-                if not erro_json:
+                # Resposta vazia também é considerada erro
+                tem_erro = bool(erro_json)
+                if not tem_erro and (not resposta_final or not resposta_final.strip()):
+                    resultados_batch[-1]["erro"] = "Resposta vazia gerada pelo modelo"
+                    tem_erro = True
+
+                if not tem_erro:
                     stats["processados_ok"] += 1
                 else:
                     stats["processados_erro"] += 1
@@ -822,7 +972,7 @@ def processar_batch(
                 )
 
         tokens_batch = sum(
-            json.loads(r["resumo"]).get("usage", {}).get("completion_tokens", 0)
+            json.loads(r["resumo"]).get("completion_tokens", 0)
             for r in resultados_batch
             if not r["erro"]
         )
@@ -1172,6 +1322,16 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         print(f"❌ Erro na configuração: {e}")
         sys.exit(1)
 
+    # --- Validação pré-execução ---
+    erros_validacao = validar_config(config)
+    if erros_validacao:
+        print(f"\n❌ {len(erros_validacao)} erro(s) de validação encontrado(s):")
+        for i, erro in enumerate(erros_validacao, 1):
+            print(f"   {i}. {erro}")
+        print("\n   Corrija os erros acima e execute novamente.")
+        sys.exit(1)
+    print("✅ Configuração validada com sucesso.")
+
     # --- Carrega entrada ---
     print(f"\n📂 Carregando entrada: {config['entrada']['arquivo']}")
     try:
@@ -1216,23 +1376,27 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         else:
             print(conteudo)
         
+        print("\n--- Aplicando Chat Template ---")
         system_prompt = config["entrada"].get("system_prompt", "")
         if system_prompt:
-            print("\n--- Aplicando Chat Template ---")
-            print("Carregando tokenizer do HuggingFace...")
-            try:
-                from transformers import AutoTokenizer
-                tokenizer = AutoTokenizer.from_pretrained(config["modelo"]["caminho"])
-                prompt_final = formatar_prompt_final(conteudo, config, tokenizer)
-                print("\n--- Prompt Final (enviado ao modelo) ---")
-                print(prompt_final)
-            except ImportError:
-                print("❌ Biblioteca 'transformers' não encontrada para o teste.")
-            except Exception as e:
-                print(f"❌ Erro ao carregar tokenizer: {e}")
+            print(f"System prompt: {system_prompt[:200]}...")
         else:
-            print("\n--- Prompt Final (sem system prompt/chat template) ---")
-            print(conteudo)
+            print("(sem system prompt — chat template aplicado apenas com role=user)")
+        print("Carregando tokenizer do HuggingFace...")
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(config["modelo"]["caminho"])
+            prompt_final = formatar_prompt_final(conteudo, config, tokenizer)
+            print(f"\n--- Prompt Final ({len(prompt_final)} chars, enviado ao modelo) ---")
+            if len(prompt_final) > 2000:
+                _tamanho = min(int(len(prompt_final) / 2), 1000)
+                print(prompt_final[:_tamanho], '[..]', prompt_final[-_tamanho:])
+            else:
+                print(prompt_final)
+        except ImportError:
+            print("❌ Biblioteca 'transformers' não encontrada para o teste.")
+        except Exception as e:
+            print(f"❌ Erro ao carregar tokenizer: {e}")
         print("="*80)
         sys.exit(0)
 
