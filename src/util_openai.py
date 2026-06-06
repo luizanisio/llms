@@ -262,8 +262,12 @@ class UtilOpenAI:
             res_dict['tempo'] = round(time() - tempo, 3)
             return res_dict
 
-        conteudo = res_dict['choices'][0]['message']['content'] if res_dict.get('choices') else ''
-        usage_data = res_dict.get('usage', {})
+        choices = res_dict.get('choices', [])
+        if not choices:
+            return {'erro': 'Resposta da OpenAI sem choices', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        conteudo = choices[0].get('message', {}).get('content', '')
+        usage_data = res_dict.get('usage', {}) or {}
         comp_det = usage_data.get('completion_tokens_details', {}) or {}
         prompt_det = usage_data.get('prompt_tokens_details', {}) or {}
         
@@ -273,8 +277,8 @@ class UtilOpenAI:
             'total_tokens': usage_data.get('total_tokens', 0),
             'cached_tokens': prompt_det.get('cached_tokens', 0),
             'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
-            'finished_reason': res_dict['choices'][0].get('finish_reason', 'unknown') if res_dict.get('choices') else 'unknown',
-            'temperature': args.get('temperature')
+            'finished_reason': choices[0].get('finish_reason', 'unknown'),
+            'temperature': temperature
         }
         return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
@@ -317,16 +321,23 @@ class UtilTogether:
             res_dict['tempo'] = round(time() - tempo, 3)
             return res_dict
 
-        conteudo = str(response.choices[0].message.content) if response.choices else ''
+        choices = res_dict.get('choices', [])
+        if not choices:
+            return {'erro': 'Resposta da Together sem choices', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        conteudo = choices[0].get('message', {}).get('content', '')
+        usage_data = res_dict.get('usage', {}) or {}
+        comp_det = usage_data.get('completion_tokens_details', {}) or {}
+        prompt_det = usage_data.get('prompt_tokens_details', {}) or {}
         
         usage = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
             'completion_tokens': usage_data.get('completion_tokens', 0),
             'total_tokens': usage_data.get('total_tokens', 0),
-            'cached_tokens': 0,
-            'reasoning_tokens': 0,
-            'finished_reason': response.choices[0].finish_reason if response.choices else 'unknown',
-            'temperature': args.get('temperature')
+            'cached_tokens': prompt_det.get('cached_tokens', 0),
+            'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
+            'finished_reason': choices[0].get('finish_reason', 'unknown'),
+            'temperature': temperature
         }
         return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
@@ -360,17 +371,23 @@ class UtilVllmServer:
             res_dict['tempo'] = round(time() - tempo, 3)
             return res_dict
 
-        conteudo = res_dict['choices'][0]['message']['content'] if res_dict.get('choices') else ''
-        usage_data = res_dict.get('usage', {})
+        choices = res_dict.get('choices', [])
+        if not choices:
+            return {'erro': 'Resposta do vLLM sem choices', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        conteudo = choices[0].get('message', {}).get('content', '')
+        usage_data = res_dict.get('usage', {}) or {}
+        comp_det = usage_data.get('completion_tokens_details', {}) or {}
+        prompt_det = usage_data.get('prompt_tokens_details', {}) or {}
         
         usage = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
             'completion_tokens': usage_data.get('completion_tokens', 0),
             'total_tokens': usage_data.get('total_tokens', 0),
-            'cached_tokens': 0,
-            'reasoning_tokens': 0,
-            'finished_reason': res_dict['choices'][0].get('finish_reason', 'unknown') if res_dict.get('choices') else 'unknown',
-            'temperature': args.get('temperature')
+            'cached_tokens': prompt_det.get('cached_tokens', 0),
+            'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
+            'finished_reason': choices[0].get('finish_reason', 'unknown'),
+            'temperature': temperature
         }
         return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
@@ -683,13 +700,22 @@ class UtilOllama:
             return res_ollama
 
         conteudo = res_ollama.get('message', {}).get('content', '')
-        usage = {
+        usage_data = {
             'prompt_tokens': res_ollama.get('prompt_eval_count', 0),
             'completion_tokens': res_ollama.get('eval_count', 0),
-            'total_tokens': (res_ollama.get('prompt_eval_count', 0) or 0) + (res_ollama.get('eval_count', 0) or 0),
-            'cached_tokens': 0,
-            'reasoning_tokens': 0,
-            'finished_reason': res_ollama.get('done_reason', 'stop'),
+            'total_tokens': (res_ollama.get('prompt_eval_count', 0) or 0) + (res_ollama.get('eval_count', 0) or 0)
+        }
+        comp_det = {}
+        prompt_det = {}
+        choices = [{'finish_reason': res_ollama.get('done_reason', 'stop')}]
+        
+        usage = {
+            'prompt_tokens': usage_data.get('prompt_tokens', 0),
+            'completion_tokens': usage_data.get('completion_tokens', 0),
+            'total_tokens': usage_data.get('total_tokens', 0),
+            'cached_tokens': prompt_det.get('cached_tokens', 0),
+            'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
+            'finished_reason': choices[0].get('finish_reason', 'unknown'),
             'temperature': temperature
         }
         return UtilResponse.montar_resultado(conteudo, usage, res_ollama.get('model', modelo), time() - tempo, as_json, res_ollama)
@@ -1104,8 +1130,9 @@ if __name__ == '__main__':
     # teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')  # OpenRouter
     # teste_resposta(as_json=True, modelo='ol:llama3')                 # Ollama local
     #teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
-    #teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
+    teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
 
-    teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it:h:h')
+    #teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it:h:h')
+    #teste_resposta(as_json=True, modelo='gpt-5-nano')
     
     #_teste_modelo_think()
