@@ -890,7 +890,6 @@ class UtilOA:
             "usuario": self.oa_usuario,
             "senha": self.oa_senha,
             "banco": self.oa_banco,
-            "prompt": prompt,
             "sg_modelo": sg_modelo,
             "think": think,
             "resumido": True,
@@ -901,7 +900,14 @@ class UtilOA:
             
         if self.oa_controle:
             payload.update(self.oa_controle)
-            
+
+        if isinstance(prompt, (tuple,list)):
+            # se o prompt for uma lista, usa o parâmetro messages
+            payload['messages'] = prompt
+        else:
+            # caso contrário, usa o parâmetro prompt
+            payload['prompt'] = prompt
+
         try:
             response = requests.post(self.oa_url, json=payload, timeout=300)
             if not response.ok:
