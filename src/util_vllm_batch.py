@@ -1943,6 +1943,11 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         action="store_true",
         help="Apenas exibe o prompt formatado do primeiro item pendente e sai",
     )
+    parser.add_argument(
+        "--view",
+        action="store_true",
+        help="Visualiza os resultados já processados na saída e sai",
+    )
 
     args = parser.parse_args()
     config_path = args.config
@@ -1974,6 +1979,44 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         print("\n   Corrija os erros acima e execute novamente.")
         sys.exit(1)
     print("✅ Configuração validada com sucesso.")
+
+    if args.view:
+        try:
+            from util_vllm_batch_view import visualizar_saida_config
+            print("\n" + "="*80)
+            print("👁️  VISUALIZAÇÃO DE RESULTADOS")
+            print("="*80)
+            visualizar_saida_config(config)
+            sys.exit(0)
+        except ImportError as e:
+            print(f"\n❌ Erro ao importar util_vllm_batch_view: {e}")
+            sys.exit(1)
+
+    # --- Lock de Execução ---
+    lock_file_path = os.path.abspath(config_path) + ".lock"
+    _lock_fd = None
+    try:
+        import fcntl
+        _lock_fd = open(lock_file_path, 'w')
+        try:
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError):
+            print(f"\n❌ Já existe uma instância em execução para '{config_path}'.")
+            print(f"   (Lock file: {lock_file_path} está em uso)")
+            sys.exit(1)
+    except ImportError:
+        # Fallback para Windows
+        try:
+            import msvcrt
+            _lock_fd = open(lock_file_path, 'w')
+            try:
+                msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                print(f"\n❌ Já existe uma instância em execução para '{config_path}'.")
+                print(f"   (Lock file: {lock_file_path} está em uso)")
+                sys.exit(1)
+        except ImportError:
+            pass # Sem suporte a lock
 
     # --- Carrega entrada ---
     print(f"\n📂 Carregando entrada: {config['entrada']['arquivo']}")
