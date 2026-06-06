@@ -42,7 +42,7 @@ geracao:
   temperature: 0.01
   top_k: 2
   top_p: 0.9
-  batch_size: 10 # na api, é o número de threads
+  batch_size: 20 # na api, é o número de threads
   #max_itens: 20 # para limitar a saída no caso de testes
 
 # --- Entrada ---
