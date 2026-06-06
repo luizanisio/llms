@@ -723,6 +723,96 @@ class UtilOllama:
         resultado['tempo'] = round(time() - tempo, 3)
         return resultado
 
+class UtilOA:
+    ''' Utilitário para consultas no serviço OpenAIA (OA)
+    '''
+    def __init__(self):
+        oa_key = os.getenv("OA_KEY", "") # url::usuario::senha
+        self.oa_banco = 'oracle'
+        self.oa_url, self.oa_usuario, self.oa_senha = f'{oa_key}::-::-::'.split('::')[:3]
+        
+        oa_controle_str = os.getenv('OA_CONTROLE', '')
+        self.oa_controle = {}
+        if oa_controle_str:
+            try:
+                self.oa_controle = json.loads(oa_controle_str)
+            except Exception as e:
+                print(f"Aviso: Falha ao decodificar JSON de OA_CONTROLE: {e}")
+
+    def prompt(self, prompt:str, sg_modelo:str, think:str = 'm:l', as_json:bool = True, max_tokens:int = None):
+        ''' Envia um post para a url do serviço OpenAIA e retorna o resultado no padrão de get_resposta '''
+        import time
+        import requests
+        tempo_inicio = time.time()
+        
+        payload = {
+            "usuario": self.oa_usuario,
+            "senha": self.oa_senha,
+            "banco": self.oa_banco,
+            "prompt": prompt,
+            "sg_modelo": sg_modelo,
+            "think": think,
+            "resumido": True,
+            "resposta_json": as_json
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+            
+        if self.oa_controle:
+            payload.update(self.oa_controle)
+            
+        try:
+            response = requests.post(self.oa_url, json=payload, timeout=300)
+            if not response.ok:
+                return {'erro': f'Erro UtilOA HTTP {response.status_code}: {response.text}', 'model': sg_modelo, 'tempo': round(time.time() - tempo_inicio, 3)}
+            res = response.json()
+            
+            # A API retorna um dicionário que já contém 'resposta', 'usage', etc.
+            conteudo = res.get('resposta', res.get('response', ''))
+            
+            resultado = res.copy()
+            
+            if as_json:
+                try:
+                    if isinstance(conteudo, str):
+                        conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
+                        if conteudo_json is None:
+                            resultado['resposta'] = conteudo
+                            resultado['erro'] = 'Erro ao extrair JSON da resposta (conteudo=None).'
+                            resultado['json'] = False
+                        else:
+                            resultado['resposta'] = conteudo_json
+                            resultado['json'] = True
+                            # Limpa o erro se foi apenas de parse no servidor
+                            if 'erro' in resultado and 'Erro ao extrair JSON' in str(resultado['erro']):
+                                del resultado['erro']
+                    else:
+                        resultado['resposta'] = conteudo
+                        resultado['json'] = True
+                except Exception as e:
+                    resultado['resposta'] = conteudo
+                    resultado['json'] = False
+                    resultado['erro'] = f'Erro local ao extrair JSON da resposta: {str(e)}'
+            else:
+                resultado['resposta'] = conteudo
+                resultado['json'] = False
+
+            # Garante que as chaves padrão existam
+            if 'usage' not in resultado:
+                resultado['usage'] = {}
+            if 'finished_reason' not in resultado['usage']:
+                resultado['usage']['finished_reason'] = res.get('finish_reason', 'unknown')
+                
+            if 'model' not in resultado:
+                resultado['model'] = res.get('model', sg_modelo)
+            resultado['tempo'] = round(time.time() - tempo_inicio, 3)
+
+            return resultado
+
+        except Exception as e:
+            return {'erro': f'Erro UtilOA: {type(e).__name__}: {str(e)}', 'model': sg_modelo, 'tempo': round(time.time() - tempo_inicio, 3)}
+
+
 class UtilVllm:
     ''' Utilitário para facilitar consultas de status e modelos em servidores vLLM (API OpenAI Compatível)
     '''
