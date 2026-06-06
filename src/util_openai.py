@@ -21,7 +21,6 @@ import requests
 
 from threading import Lock
 LOCK_ARQUIVO_BRUTO = Lock()
-LOG_BRUTO = os.getenv('LOG_BRUTO','').lower()
 
 '''
  Autor Luiz Anísio 17/10/2025
@@ -55,118 +54,16 @@ def get_resposta(prompt:str, papel:str='',
     ''' Obtém a resposta do modelo de linguagem para o prompt informado.
         Quando as_json for True, tenta converter a resposta em JSON e retorna uma chave "erro" em caso de falha.
         Qualquer implementação de get_resposta deve seguir essa assinatura para ser usada pelos agentes.
-        * api_key: chave de API para OpenAI ou OpenRouter (se None, tenta obter do ambiente)
-                   > PESSOAL_OPENROUTER_API_KEY ou PESSOAL_OPENAI_API_KEY
-        * modelo iniciado com or: vai usar o openrouter api
-        * modelo iniciado com ol: vai usar o ollama local via UtilOllama (http://localhost:11434/api)
-        * raw: se True, retorna o dict bruto da API (sem padronização), apenas com 'tempo' adicionado
-        * max_ctx: tamanho máximo da janela de contexto (entrada + saída) em tokens
-                   - Para Ollama: define o num_ctx (padrão do método: 16k)
-                   - Para outras APIs: ignorado no momento
-        * think: mi/low/medium/high para modelos com reasoning
-                 :low/medium/high para definir verbosity
-        Ex. think = 'high:medium' significa reasoning high e verbosity medium
-        Retorna um dict com a estrutura (raw=False):
-        {   'resposta': dict,  # JSON parseado da resposta da LLM (quando as_json=True)
-            'usage': {         # Informações de tokens utilizados
-                'prompt_tokens': int,
-                'completion_tokens': int,
-                'total_tokens': int,
-                'cached_tokens': int,
-                'reasoning_tokens': int,
-                'finished_reason': str,
-                'temperature': float      # se o modelo suportar
-            },
-            'erro': str,        # Presente apenas em caso de erro
-            'tempo': float,     # Tempo de resposta em segundos
-        }
-        Quando raw=True, retorna o dict bruto da API + 'tempo'.
     '''
+    UtilLog.verificar_aviso()
+    
     tempo = time()
-    original_model = modelo  # Guarda o modelo original com o prefixo para os retentativas
+    original_model = modelo
     if 'modelo_think' in kwargs and kwargs['modelo_think']:
         think = kwargs['modelo_think'] 
 
-    # Validação da API key
-    if modelo.lower().startswith('or:'):
-       if MSG_OPENROUTER:
-          raise ImportError(MSG_OPENROUTER)
-       # openrouter.ai (SDK oficial)
-       tipo_api = 'openrouter'
-       modelo = modelo[3:]
-       api_key = api_key or os.getenv("PESSOAL_OPENROUTER_API_KEY")
-       if not api_key:
-          return {'erro': 'PESSOAL_OPENROUTER_API_KEY não encontrada no ambiente', 'model': modelo}
-    elif modelo.lower().startswith('ol:'):
-       # ollama local via UtilOllama (API nativa)
-       tipo_api = 'ollama'
-       modelo = modelo[3:]
-       # Caso especial: listar modelos disponíveis
-       if modelo.lower() == 'models':
-           try:
-               res_models = UtilOllama.models()
-               return {'resposta': res_models, 'modelo': 'ol:models', 'tempo': round(time() - tempo, 3)}
-           except Exception as e:
-               return {'erro': f'Erro ao listar modelos Ollama: {str(e)}', 'tempo': round(time() - tempo, 3)}
-       # Caso especial: status do Ollama
-       if modelo.lower() == 'status':
-           try:
-               res_status = UtilOllama.status()
-               return {'resposta': res_status, 'modelo': 'ol:status', 'tempo': round(time() - tempo, 3)}
-           except Exception as e:
-               return {'erro': f'Erro ao verificar status do Ollama: {str(e)}', 'tempo': round(time() - tempo, 3)}
-    elif modelo.lower().startswith('vl:'):
-       if MSG_OPENAI:
-          raise ImportError(MSG_OPENAI)
-       # vllm server via API compatível com OpenAI
-       tipo_api = 'vllm'
-       modelo = modelo[3:]
-       # Caso especial: listar modelos disponíveis
-       if modelo.lower() == 'models':
-           try:
-               res_models = UtilVllm.models()
-               return {'resposta': res_models, 'modelo': 'vl:models', 'tempo': round(time() - tempo, 3)}
-           except Exception as e:
-               return {'erro': f'Erro ao listar modelos vLLM: {str(e)}', 'tempo': round(time() - tempo, 3)}
-       # Caso especial: status do vLLM
-       if modelo.lower() == 'status':
-           try:
-               res_status = UtilVllm.status()
-               return {'resposta': res_status, 'modelo': 'vl:status', 'tempo': round(time() - tempo, 3)}
-           except Exception as e:
-               return {'erro': f'Erro ao verificar status do vLLM: {str(e)}', 'tempo': round(time() - tempo, 3)}
-
-       url = os.getenv("VLLM_URL", "http://localhost:8000/v1")
-       api_key = api_key or os.getenv("VLLM_API_KEY", "EMPTY")
-       client_gpt = OpenAI(api_key=api_key, timeout=timeout, base_url=url)
-       
-    elif modelo.lower().startswith('tg:'):
-       if MSG_TOGETHER:
-          raise ImportError(MSG_TOGETHER)
-       # together.ai
-       tipo_api = 'together'
-       modelo = modelo[3:]
-
-       api_key = api_key or os.getenv("PESSOAL_TOGETHER_API_KEY")
-       if not api_key:
-          return {'erro': 'PESSOAL_TOGETHER_API_KEY não encontrada no ambiente', 'model': modelo}
-       client_gpt = Together(api_key=api_key) 
-    else:
-       if MSG_OPENAI:
-          raise ImportError(MSG_OPENAI) 
-       tipo_api = 'openai'
-       api_key = api_key or os.getenv("PESSOAL_OPENAI_API_KEY")
-       url = None
-       if not api_key:
-          return {'erro': 'PESSOAL_OPENAI_API_KEY não encontrada no ambiente', 'model': modelo}
-
-       client_gpt = OpenAI(api_key=api_key, timeout=timeout, base_url=url)
-
     max_retry = max(0, min(10, max_retry))
-    if not silencioso: print(f'Chamada: {modelo}:{think} [{tipo_api}] | max retry = {max_retry} | ')
     
-    max_tokens = max(0, min(128*1024, max_tokens)) if isinstance(max_tokens, int) else None
-
     if isinstance(prompt,(tuple, list)) and len(prompt) > 0:
         messages = prompt
     elif isinstance(prompt,str) and prompt.strip(' \n\t'):    
@@ -177,210 +74,302 @@ def get_resposta(prompt:str, papel:str='',
     else:
         raise ValueError('Formato do prompt não reconhecido: deve ser messages ou string')
 
-    # ── Ollama: delega para UtilOllama e retorna ──
+    # Identificar API pelo prefixo
+    tipo_api = 'openai'
+    nome_modelo = modelo
+    
+    if modelo.lower().startswith('or:'):
+        tipo_api = 'openrouter'
+        nome_modelo = modelo[3:]
+    elif modelo.lower().startswith('ol:'):
+        tipo_api = 'ollama'
+        nome_modelo = modelo[3:]
+    elif modelo.lower().startswith('vl:'):
+        tipo_api = 'vllm'
+        nome_modelo = modelo[3:]
+    elif modelo.lower().startswith('tg:'):
+        tipo_api = 'together'
+        nome_modelo = modelo[3:]
+    elif modelo.lower().startswith('oa:'):
+        tipo_api = 'openaia'
+        nome_modelo = modelo[3:]
+
+    if not silencioso: print(f'Chamada: {original_model}:{think} [{tipo_api}] | max retry = {max_retry} | ')
+
+    # Roteamento para as classes utilitárias
     if tipo_api == 'ollama':
-        if not silencioso: print(f'get_resposta: Ollama local - modelo {modelo}')
-        ollama_kwargs = dict(
-            messages=messages, modelo=modelo,
-            temperature=temperature, max_tokens=max_tokens,
-            as_json=as_json, raw=raw, timeout=timeout,
-            tempo_inicio=tempo
-        )
+        if nome_modelo.lower() == 'models':
+            try: return {'resposta': UtilOllama.models(), 'modelo': 'ol:models', 'tempo': round(time() - tempo, 3)}
+            except Exception as e: return {'erro': f'Erro: {str(e)}', 'tempo': round(time() - tempo, 3)}
+        if nome_modelo.lower() == 'status':
+            try: return {'resposta': UtilOllama.status(), 'modelo': 'ol:status', 'tempo': round(time() - tempo, 3)}
+            except Exception as e: return {'erro': f'Erro: {str(e)}', 'tempo': round(time() - tempo, 3)}
+            
+        ollama_kwargs = dict(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, tempo_inicio=tempo)
         if isinstance(max_ctx, int) and max_ctx > 0:
             ollama_kwargs['num_ctx'] = max_ctx
         return UtilOllama.chat_completion_padronizado(**ollama_kwargs)
 
-    # ── OpenRouter: delega para UtilOpenRouter e retorna ──
     if tipo_api == 'openrouter':
-        if not silencioso: print(f'get_resposta: OpenRouter SDK - modelo {modelo}')
-        return UtilOpenRouter.chat_completion_padronizado(
-            messages=messages, modelo=modelo,
-            temperature=temperature, max_tokens=max_tokens,
-            as_json=as_json, raw=raw, timeout=timeout,
-            think=think, api_key=api_key,
-            silencioso=silencioso,
-            max_retry=max_retry,
-            tempo_inicio=tempo
-        )
+        if MSG_OPENROUTER: raise ImportError(MSG_OPENROUTER)
+        return UtilOpenRouter.chat_completion_padronizado(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry, tempo_inicio=tempo)
 
-    # ── Demais APIs (OpenAI, Together): monta args ──
-    parametros = {
-        'messages': messages,
-        'model': modelo,
-        'temperature': temperature,
-        'timeout': timeout
-    }
-    if isinstance(max_tokens,int):
-        parametros['max_tokens'] = max_tokens
+    if tipo_api == 'vllm':
+        if MSG_OPENAI: raise ImportError(MSG_OPENAI)
+        if nome_modelo.lower() == 'models':
+            try: return {'resposta': UtilVllm.models(), 'modelo': 'vl:models', 'tempo': round(time() - tempo, 3)}
+            except Exception as e: return {'erro': f'Erro: {str(e)}', 'tempo': round(time() - tempo, 3)}
+        if nome_modelo.lower() == 'status':
+            try: return {'resposta': UtilVllm.status(), 'modelo': 'vl:status', 'tempo': round(time() - tempo, 3)}
+            except Exception as e: return {'erro': f'Erro: {str(e)}', 'tempo': round(time() - tempo, 3)}
+        return UtilVllmServer.chat_completion_padronizado(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry, tempo_inicio=tempo)
 
-    # Configuração de reasoning
-    args = parametros.copy()
-    if think:
-        # Parse reasoning e verbosity (formato: reasoning:verbosity ou apenas reasoning)
-        _reasoning = think.strip()
-        _verbosity = 'low'
-        
-        if ':' in _reasoning:
-            _reasoning, _verbosity = _reasoning.split(':', 1)
-        
-        # Mapeia reasoning
-        _reasoning = _reasoning.lower()
-        reasoning_map = {
-            'high': 'high', 'alto': 'high', 'h': 'high', 'a': 'high', '+': 'high',
-            'medium': 'medium', 'm': 'medium', 'médio': 'medium', 'medio': 'medium',
-            'minimal': 'minimal', 'mínimo': 'minimal', 'minimo': 'minimal', 'mi': 'minimal', '0': 'minimal', '-': 'minimal', 'x': 'minimal'
-        }
-        _reasoning = reasoning_map.get(_reasoning, 'low')
-        
-        # Mapeia verbosity
-        _verbosity = _verbosity.lower()
-        _verbosity = reasoning_map.get(_verbosity, 'low')
-        
-        # Remove parâmetros incompatíveis com reasoning models
-        if tipo_api == 'openai' or 'gpt-5' in modelo.lower():
-            print(f'\n===============\nModelo reasoning em uso {modelo}, removendo parâmetros inválidos...\n===============\n')
-            args = {k: v for k, v in parametros.items() 
-                   if k not in {'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'}}
-
-        args['reasoning_effort'] = _reasoning
-        if isinstance(max_tokens, int):
-            args['max_completion_tokens'] = max_tokens
-        
-        if not silencioso: print(f'get_resposta: usando reasoning_effort={_reasoning} / verbosity={_verbosity} e max_completion_tokens={args.get("max_completion_tokens")} para o modelo {modelo}')
-    else:
-        if not silencioso: print(f'get_resposta: usando modelo sem reasoning e max_tokens={args.get("max_tokens")} para o modelo {modelo}')
-
-    if as_json:
-        args['response_format'] = {"type": "json_object"}
-
-    # ajustes por api
     if tipo_api == 'together':
-        args.pop('max_completion_tokens',None)
-        assert max_tokens is None or 'max_tokens' in args, 'max_tokens é o parâemtro do Together AI'
-    elif tipo_api == 'vllm':
-        # vLLM geralmente aceita max_tokens e pode não aceitar reasoning_effort
-        args.pop('reasoning_effort', None)
-        args.pop('max_completion_tokens', None)
-        if isinstance(max_tokens, int):
-            args['max_tokens'] = max_tokens
+        if MSG_TOGETHER: raise ImportError(MSG_TOGETHER)
+        return UtilTogether.chat_completion_padronizado(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry, tempo_inicio=tempo)
+        
+    if tipo_api == 'openaia':
+        return UtilOA().prompt(prompt=messages, sg_modelo=nome_modelo, think=think, as_json=as_json, max_tokens=max_tokens)
+
+    # Fallback para OpenAI nativo
+    if MSG_OPENAI: raise ImportError(MSG_OPENAI)
+    return UtilOpenAI.chat_completion_padronizado(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry, tempo_inicio=tempo)
 
 
+class UtilLog:
+    AVISO_LOG_FEITO = False
 
-    try:
-        response = client_gpt.chat.completions.create(**args)
-        if tipo_api == 'together':
-            res_dict = response.dict()
-            conteudo = str(response.choices[0].message.content)
-            usage_data = response.usage.dict()
-        else:
-            res_dict = response.to_dict()
-            conteudo = res_dict['choices'][0]['message']['content']
+    @staticmethod
+    def verificar_aviso():
+        LOG_BRUTO = os.getenv('LOG_BRUTO', '').lower()
+        if LOG_BRUTO and LOG_BRUTO not in ('false', '0') and not UtilLog.AVISO_LOG_FEITO:
+            UtilLog.AVISO_LOG_FEITO = True
+            LOG_BRUTO_ARQUIVO = os.getenv('LOG_BRUTO_ARQUIVO', './log_openai_resposta_bruta.txt')
+            print(f'💡 ATENÇÃO: LOG_BRUTO ativado!\b - Arquivo: {LOG_BRUTO_ARQUIVO} ')
 
-        # Estrutura padronizada de retorno
-        resultado = {}
-        #print(json.dumps(res_dict, ensure_ascii=False, indent=2))
+    @staticmethod
+    def log_bruto(tipo_api: str, modelo: str, messages: list, resposta_bruta: dict, usage_data: dict = None, tempo_str: float = None):
+        LOG_BRUTO = os.getenv('LOG_BRUTO', '').lower()
+        if not LOG_BRUTO or LOG_BRUTO in ('false', '0'):
+            return
+            
+        if LOG_BRUTO not in ('true', '1', 'all') and tipo_api not in LOG_BRUTO:
+            return
 
-        if tipo_api in LOG_BRUTO:
+        LOG_BRUTO_ARQUIVO = os.getenv('LOG_BRUTO_ARQUIVO', './log_openai_resposta_bruta.txt')
+
+        try:
             with LOCK_ARQUIVO_BRUTO:
-                # grava a resposta no arquivo de log bruto
-                with open('log_openai_resposta_bruta.txt', 'a', encoding='utf-8') as f:
+                with open(LOG_BRUTO_ARQUIVO, 'a', encoding='utf-8') as f:
                     f.write('#'*60 + '\n')
-                    f.write(f'Timestamp: {time()}\n')
+                    f.write(f'Timestamp: {tempo_str or time()}\n')
                     f.write(f'Modelo: {modelo}\n')
                     f.write('='*40 + '\n')
-                    # grava o prompt bruto
                     f.write('Prompt enviado:\n')
                     f.write(json.dumps(messages, ensure_ascii=False, indent=2))
                     f.write('\n' + ('-'*40) + '\n')
-                    # grava a resposta bruta
                     f.write('Resposta bruta:\n')
-                    if tipo_api == 'together':
-                        f.write(json.dumps(res_dict, ensure_ascii=False, indent=2))
+                    f.write(json.dumps(resposta_bruta, ensure_ascii=False, indent=2))
+                    if usage_data:
                         f.write('\n' + ('-'*40) + '\n')
                         f.write('Usage:\n')
                         f.write(json.dumps(usage_data, ensure_ascii=False, indent=2))
-                    else:
-                        f.write(json.dumps(res_dict, ensure_ascii=False, indent=2))
                     f.write('\n' + ('-'*80) + '\n')
                     f.write('#'*60 + '\n')
+        except Exception:
+            pass
 
-        # Se raw=True, retorna o dict bruto da API com tempo
+class UtilResponse:
+    @staticmethod
+    def montar_resultado(conteudo: str, usage_data: dict, modelo: str, tempo: float, as_json: bool, resposta_original: dict = None) -> dict:
+        resultado = {}
+        if as_json:
+            try:
+                if isinstance(conteudo, str):
+                    conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
+                    if conteudo_json is None:
+                        resultado['resposta'] = conteudo
+                        resultado['erro'] = 'Erro ao extrair JSON da resposta (conteudo=None).'
+                        if resposta_original:
+                            resultado['erro'] += f' (Dict resposta={resposta_original})'
+                        resultado['json'] = False
+                    else:
+                        resultado['resposta'] = conteudo_json
+                        resultado['json'] = True
+                        # Limpa erro anterior de parser (ex: no servidor OA)
+                        if 'erro' in resultado and 'Erro ao extrair JSON' in str(resultado['erro']):
+                            del resultado['erro']
+                else:
+                    resultado['resposta'] = conteudo
+                    resultado['json'] = True
+            except Exception as e:
+                resultado['resposta'] = conteudo
+                resultado['json'] = False
+                resultado['erro'] = f'Erro local ao extrair JSON da resposta: {str(e)}'
+        else:
+            resultado['resposta'] = conteudo
+            resultado['json'] = False
+
+        # Garante que chaves padrão existam no usage
+        if 'finished_reason' not in usage_data:
+            usage_data['finished_reason'] = 'unknown'
+
+        resultado['usage'] = usage_data
+        resultado['model'] = modelo
+        resultado['tempo'] = round(tempo, 3)
+        return resultado
+
+class UtilOpenAI:
+    @classmethod
+    def chat_completion_padronizado(cls, messages: list, modelo: str, temperature: float = 0.01,
+                                    max_tokens: int = None, as_json: bool = True, raw: bool = False,
+                                    timeout: int = 300, think: str = None, api_key: str = None,
+                                    silencioso: bool = False, max_retry: int = 5, tempo_inicio: float = None):
+        tempo = tempo_inicio or time()
+        api_key = api_key or os.getenv("PESSOAL_OPENAI_API_KEY")
+        if not api_key: return {'erro': 'PESSOAL_OPENAI_API_KEY não encontrada no ambiente', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        client_gpt = OpenAI(api_key=api_key, timeout=timeout)
+        args = {'messages': messages, 'model': modelo, 'temperature': temperature, 'timeout': timeout}
+        if isinstance(max_tokens, int): args['max_tokens'] = max_tokens
+        
+        if think:
+            _reasoning, _verbosity = UtilOpenRouter._mapear_reasoning(think)
+            if 'gpt-5' in modelo.lower():
+                args = {k: v for k, v in args.items() if k not in {'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'}}
+            args['reasoning_effort'] = _reasoning
+            if isinstance(max_tokens, int): args['max_completion_tokens'] = max_tokens
+        if as_json: args['response_format'] = {"type": "json_object"}
+
+        try:
+            response = client_gpt.chat.completions.create(**args)
+        except AuthenticationError as e: return {'erro': f'Erro de autenticação: {str(e)}', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+        except (APIConnectionError, RateLimitError) as e:
+            if max_retry > 0:
+                import time as time_module
+                time_module.sleep(2)
+                return cls.chat_completion_padronizado(messages=messages, modelo=modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry - 1, tempo_inicio=tempo)
+            return {'erro': f'Erro OpenAI (Retry Esgotado): {str(e)}', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+        except Exception as e:
+            return {'erro': f'Erro OpenAI: {type(e).__name__}: {str(e)}', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        res_dict = response.to_dict()
+        UtilLog.log_bruto('openai', modelo, messages, res_dict, tempo_str=tempo)
         if raw:
             res_dict['tempo'] = round(time() - tempo, 3)
             return res_dict
 
-        # Extrai o conteúdo da resposta
-        if as_json:
-            try:
-                conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
-                if conteudo_json is None:
-                   resultado['resposta'] = conteudo
-                   resultado['erro'] = f'Erro ao extrair JSON da resposta (conteudo=None) (Dict resposta={res_dict}).'
-                   resultado['json'] = False
-                else:  
-                   resultado['resposta'] = conteudo_json
-                   resultado['json'] = True
-            except Exception as e:
-                resultado['resposta'] = conteudo
-                resultado['json'] = False
-                resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
-        else:
-            resultado['resposta'] = conteudo
-
-        # Extrai informações de uso
+        conteudo = res_dict['choices'][0]['message']['content'] if res_dict.get('choices') else ''
         usage_data = res_dict.get('usage', {})
-        completion_details = usage_data.get('completion_tokens_details', {}) or {}
-        prompt_details = usage_data.get('prompt_tokens_details', {}) or {}
-
-        #print(json.dumps(res_dict,ensure_ascii=False,indent=2))
-        #print('-'*40)
-        resultado['usage'] = {
+        comp_det = usage_data.get('completion_tokens_details', {}) or {}
+        prompt_det = usage_data.get('prompt_tokens_details', {}) or {}
+        
+        usage = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
             'completion_tokens': usage_data.get('completion_tokens', 0),
             'total_tokens': usage_data.get('total_tokens', 0),
-            'cached_tokens': prompt_details.get('cached_tokens', 0),
-            'reasoning_tokens': completion_details.get('reasoning_tokens', 0),
-            'finished_reason': res_dict['choices'][0].get('finish_reason', 'unknown')
+            'cached_tokens': prompt_det.get('cached_tokens', 0),
+            'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
+            'finished_reason': res_dict['choices'][0].get('finish_reason', 'unknown') if res_dict.get('choices') else 'unknown',
+            'temperature': args.get('temperature')
         }
-        if 'temperature' in args:
-            resultado['usage']['temperature'] = args['temperature']
+        return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
-        # Adiciona modelo usado
-        resultado['model'] = res_dict.get('model', modelo)
+class UtilTogether:
+    @classmethod
+    def chat_completion_padronizado(cls, messages: list, modelo: str, temperature: float = 0.01,
+                                    max_tokens: int = None, as_json: bool = True, raw: bool = False,
+                                    timeout: int = 300, think: str = None, api_key: str = None,
+                                    silencioso: bool = False, max_retry: int = 5, tempo_inicio: float = None):
+        tempo = tempo_inicio or time()
+        api_key = api_key or os.getenv("PESSOAL_TOGETHER_API_KEY")
+        if not api_key: return {'erro': 'PESSOAL_TOGETHER_API_KEY não encontrada no ambiente', 'model': modelo, 'tempo': round(time() - tempo, 3)}
 
-        res = resultado
+        client_gpt = Together(api_key=api_key)
+        args = {'messages': messages, 'model': modelo, 'temperature': temperature, 'timeout': timeout}
+        if isinstance(max_tokens, int): args['max_tokens'] = max_tokens
+        if think:
+            _reasoning, _verbosity = UtilOpenRouter._mapear_reasoning(think)
+            args['reasoning_effort'] = _reasoning
+        if as_json: args['response_format'] = {"type": "json_object"}
 
-    except AuthenticationError as e:
-        print(f'Erro de autenticação: {str(e)}')
-        return {'erro': f'Erro de autenticação: {str(e)}. Verifique se a API key está correta e ativa.', 'model': modelo}
-    
-    except APIConnectionError as e:
-        print(f'Erro de conexão: {str(e)}')
-        if max_retry <= 0:
-            return {'erro': f'Erro de conexão com API após todas as tentativas: {str(e)}', 'model': original_model}
-        print(f'Tentando novamente... (tentativas restantes: {max_retry})')
-        import time as time_module
-        time_module.sleep(2)
-        return get_resposta(prompt=prompt, papel=papel, modelo=original_model, think=think, as_json=as_json,
-                           temperature=temperature, max_tokens=max_tokens, max_ctx=max_ctx,
-                           max_retry=max_retry - 1, timeout=timeout, api_key=api_key, raw=raw)
-    
-    except RateLimitError as r:
-        print(f'Erro de RateLimit: {str(r)}')
-        if max_retry <= 0:
-            return {'erro': 'rate limit alcançado, sem mais tentativas', 'model': original_model}
-        print(f'Tentando novamente... (tentativas restantes: {max_retry})')
-        return get_resposta(prompt=prompt, papel=papel, modelo=original_model, think=think, as_json=as_json,
-                           temperature=temperature, max_tokens=max_tokens, max_ctx=max_ctx,
-                           max_retry=max_retry - 1, timeout=timeout, api_key=api_key, raw=raw, silencioso=silencioso)
-    
-    except Exception as e:
-        print('ERRO inesperado:', traceback.format_exc())
-        return {'erro': f'Erro inesperado: {type(e).__name__}: {str(e)}', 'model': original_model}
+        try:
+            response = client_gpt.chat.completions.create(**args)
+        except Exception as e:
+            if max_retry > 0 and ('connection' in str(e).lower() or 'rate' in str(e).lower()):
+                import time as time_module
+                time_module.sleep(2)
+                return cls.chat_completion_padronizado(messages=messages, modelo=modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry - 1, tempo_inicio=tempo)
+            return {'erro': f'Erro Together: {type(e).__name__}: {str(e)}', 'model': modelo, 'tempo': round(time() - tempo, 3)}
 
-    tempo = time() - tempo
-    res['tempo'] = round(tempo, 3)
-    return res
+        try:
+            res_dict = response.model_dump()
+            usage_data = response.usage.model_dump() if response.usage else {}
+        except AttributeError:
+            res_dict = response.dict()
+            usage_data = response.usage.dict() if response.usage else {}
+
+        UtilLog.log_bruto('together', modelo, messages, res_dict, usage_data=usage_data, tempo_str=tempo)
+        if raw:
+            res_dict['tempo'] = round(time() - tempo, 3)
+            return res_dict
+
+        conteudo = str(response.choices[0].message.content) if response.choices else ''
+        
+        usage = {
+            'prompt_tokens': usage_data.get('prompt_tokens', 0),
+            'completion_tokens': usage_data.get('completion_tokens', 0),
+            'total_tokens': usage_data.get('total_tokens', 0),
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+            'finished_reason': response.choices[0].finish_reason if response.choices else 'unknown',
+            'temperature': args.get('temperature')
+        }
+        return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
+
+class UtilVllmServer:
+    @classmethod
+    def chat_completion_padronizado(cls, messages: list, modelo: str, temperature: float = 0.01,
+                                    max_tokens: int = None, as_json: bool = True, raw: bool = False,
+                                    timeout: int = 300, think: str = None, api_key: str = None,
+                                    silencioso: bool = False, max_retry: int = 5, tempo_inicio: float = None):
+        tempo = tempo_inicio or time()
+        url = os.getenv("VLLM_URL", "http://localhost:8000/v1")
+        api_key = api_key or os.getenv("VLLM_API_KEY", "EMPTY")
+        
+        client_gpt = OpenAI(api_key=api_key, timeout=timeout, base_url=url)
+        args = {'messages': messages, 'model': modelo, 'temperature': temperature, 'timeout': timeout}
+        if isinstance(max_tokens, int): args['max_tokens'] = max_tokens
+        if as_json: args['response_format'] = {"type": "json_object"}
+
+        try:
+            response = client_gpt.chat.completions.create(**args)
+        except Exception as e:
+            if max_retry > 0 and ('connection' in str(e).lower() or 'rate' in str(e).lower()):
+                import time as time_module
+                time_module.sleep(2)
+                return cls.chat_completion_padronizado(messages=messages, modelo=modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry - 1, tempo_inicio=tempo)
+            return {'erro': f'Erro vLLM: {type(e).__name__}: {str(e)}', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        res_dict = response.to_dict()
+        UtilLog.log_bruto('vllm', modelo, messages, res_dict, tempo_str=tempo)
+        if raw:
+            res_dict['tempo'] = round(time() - tempo, 3)
+            return res_dict
+
+        conteudo = res_dict['choices'][0]['message']['content'] if res_dict.get('choices') else ''
+        usage_data = res_dict.get('usage', {})
+        
+        usage = {
+            'prompt_tokens': usage_data.get('prompt_tokens', 0),
+            'completion_tokens': usage_data.get('completion_tokens', 0),
+            'total_tokens': usage_data.get('total_tokens', 0),
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+            'finished_reason': res_dict['choices'][0].get('finish_reason', 'unknown') if res_dict.get('choices') else 'unknown',
+            'temperature': args.get('temperature')
+        }
+        return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
 class UtilJson():
     @classmethod
@@ -685,61 +674,22 @@ class UtilOllama:
             return {'erro': f'Erro Ollama: {type(e).__name__}: {str(e)}',
                     'model': modelo, 'tempo': round(time() - tempo, 3)}
 
-        # Log bruto
-        try:
-            with LOCK_ARQUIVO_BRUTO:
-                with open('log_openai_resposta_bruta.txt', 'a', encoding='utf-8') as f:
-                    f.write('#'*60 + '\n')
-                    f.write(f'Timestamp: {time()}\n')
-                    f.write(f'Modelo: ol:{modelo}\n')
-                    f.write('='*40 + '\n')
-                    f.write('Prompt enviado:\n')
-                    f.write(json.dumps(messages, ensure_ascii=False, indent=2))
-                    f.write('\n' + ('-'*40) + '\n')
-                    f.write('Resposta bruta:\n')
-                    f.write(json.dumps(res_ollama, ensure_ascii=False, indent=2))
-                    f.write('\n' + ('-'*80) + '\n')
-                    f.write('#'*60 + '\n')
-        except Exception:
-            pass
-
-        # Se raw, retorna o dict nativo do Ollama
+        UtilLog.log_bruto('ollama', modelo, messages, res_ollama, tempo_str=tempo)
         if raw:
             res_ollama['tempo'] = round(time() - tempo, 3)
             return res_ollama
 
-        # Padroniza o retorno para o formato de get_resposta
         conteudo = res_ollama.get('message', {}).get('content', '')
-        resultado = {}
-        if as_json:
-            try:
-                conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
-                if conteudo_json is None:
-                    resultado['resposta'] = conteudo
-                    resultado['erro'] = 'Erro ao extrair JSON da resposta Ollama (conteudo=None).'
-                    resultado['json'] = False
-                else:
-                    resultado['resposta'] = conteudo_json
-                    resultado['json'] = True
-            except Exception as e:
-                resultado['resposta'] = conteudo
-                resultado['json'] = False
-                resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
-        else:
-            resultado['resposta'] = conteudo
-
-        resultado['usage'] = {
+        usage = {
             'prompt_tokens': res_ollama.get('prompt_eval_count', 0),
             'completion_tokens': res_ollama.get('eval_count', 0),
             'total_tokens': (res_ollama.get('prompt_eval_count', 0) or 0) + (res_ollama.get('eval_count', 0) or 0),
             'cached_tokens': 0,
             'reasoning_tokens': 0,
-            'finished_reason': res_ollama.get('done_reason', 'stop')
+            'finished_reason': res_ollama.get('done_reason', 'stop'),
+            'temperature': temperature
         }
-        resultado['usage']['temperature'] = temperature
-        resultado['model'] = res_ollama.get('model', modelo)
-        resultado['tempo'] = round(time() - tempo, 3)
-        return resultado
+        return UtilResponse.montar_resultado(conteudo, usage, res_ollama.get('model', modelo), time() - tempo, as_json, res_ollama)
 
 class UtilOpenRouter:
     ''' Utilitário para chamadas ao OpenRouter usando o SDK oficial (openrouter).
@@ -813,6 +763,10 @@ class UtilOpenRouter:
         '''
         tempo = tempo_inicio or time()
 
+        api_key = api_key or os.getenv("PESSOAL_OPENROUTER_API_KEY")
+        if not api_key:
+            return {'erro': 'PESSOAL_OPENROUTER_API_KEY não encontrada no ambiente', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+
         # Carrega configurações extras do ambiente
         openrouter_extra = cls._carregar_extra()
 
@@ -884,75 +838,30 @@ class UtilOpenRouter:
         except Exception:
             res_dict = {}
 
-        # Log bruto
-        if 'openrouter' in LOG_BRUTO:
-            try:
-                with LOCK_ARQUIVO_BRUTO:
-                    with open('log_openai_resposta_bruta.txt', 'a', encoding='utf-8') as f:
-                        f.write('#'*60 + '\n')
-                        f.write(f'Timestamp: {time()}\n')
-                        f.write(f'Modelo: or:{modelo}\n')
-                        f.write('='*40 + '\n')
-                        f.write('Prompt enviado:\n')
-                        f.write(json.dumps(messages, ensure_ascii=False, indent=2))
-                        f.write('\n' + ('-'*40) + '\n')
-                        f.write('Resposta bruta:\n')
-                        f.write(json.dumps(res_dict, ensure_ascii=False, indent=2))
-                        f.write('\n' + ('-'*80) + '\n')
-                        f.write('#'*60 + '\n')
-            except Exception:
-                pass
-
-        # Se raw=True, retorna o dict bruto com tempo
+        UtilLog.log_bruto('openrouter', modelo, messages, res_dict, tempo_str=tempo)
         if raw:
             res_dict['tempo'] = round(time() - tempo, 3)
             return res_dict
 
-        # Extrai conteúdo da resposta
         choices = res_dict.get('choices', [])
         if not choices:
-            return {'erro': 'Resposta do OpenRouter sem choices',
-                    'model': modelo, 'tempo': round(time() - tempo, 3)}
-
+            return {'erro': 'Resposta do OpenRouter sem choices', 'model': modelo, 'tempo': round(time() - tempo, 3)}
+            
         conteudo = choices[0].get('message', {}).get('content', '')
-
-        resultado = {}
-        if as_json:
-            try:
-                conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
-                if conteudo_json is None:
-                    resultado['resposta'] = conteudo
-                    resultado['erro'] = f'Erro ao extrair JSON da resposta OpenRouter (conteudo=None).'
-                    resultado['json'] = False
-                else:
-                    resultado['resposta'] = conteudo_json
-                    resultado['json'] = True
-            except Exception as e:
-                resultado['resposta'] = conteudo
-                resultado['json'] = False
-                resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
-        else:
-            resultado['resposta'] = conteudo
-
-        # Extrai informações de uso
         usage_data = res_dict.get('usage', {}) or {}
-        completion_details = usage_data.get('completion_tokens_details', {}) or {}
-        prompt_details = usage_data.get('prompt_tokens_details', {}) or {}
+        comp_det = usage_data.get('completion_tokens_details', {}) or {}
+        prompt_det = usage_data.get('prompt_tokens_details', {}) or {}
 
-        resultado['usage'] = {
+        usage = {
             'prompt_tokens': usage_data.get('prompt_tokens', 0),
             'completion_tokens': usage_data.get('completion_tokens', 0),
             'total_tokens': usage_data.get('total_tokens', 0),
-            'cached_tokens': prompt_details.get('cached_tokens', 0),
-            'reasoning_tokens': completion_details.get('reasoning_tokens', 0),
-            'finished_reason': choices[0].get('finish_reason', 'unknown')
+            'cached_tokens': prompt_det.get('cached_tokens', 0),
+            'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
+            'finished_reason': choices[0].get('finish_reason', 'unknown'),
+            'temperature': temperature
         }
-        if temperature is not None:
-            resultado['usage']['temperature'] = temperature
-
-        resultado['model'] = res_dict.get('model', modelo)
-        resultado['tempo'] = round(time() - tempo, 3)
-        return resultado
+        return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
 
 class UtilOA:
@@ -999,47 +908,11 @@ class UtilOA:
                 return {'erro': f'Erro UtilOA HTTP {response.status_code}: {response.text}', 'model': sg_modelo, 'tempo': round(time.time() - tempo_inicio, 3)}
             res = response.json()
             
-            # A API retorna um dicionário que já contém 'resposta', 'usage', etc.
             conteudo = res.get('resposta', res.get('response', ''))
-            
-            resultado = res.copy()
-            
-            if as_json:
-                try:
-                    if isinstance(conteudo, str):
-                        conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
-                        if conteudo_json is None:
-                            resultado['resposta'] = conteudo
-                            resultado['erro'] = 'Erro ao extrair JSON da resposta (conteudo=None).'
-                            resultado['json'] = False
-                        else:
-                            resultado['resposta'] = conteudo_json
-                            resultado['json'] = True
-                            # Limpa o erro se foi apenas de parse no servidor
-                            if 'erro' in resultado and 'Erro ao extrair JSON' in str(resultado['erro']):
-                                del resultado['erro']
-                    else:
-                        resultado['resposta'] = conteudo
-                        resultado['json'] = True
-                except Exception as e:
-                    resultado['resposta'] = conteudo
-                    resultado['json'] = False
-                    resultado['erro'] = f'Erro local ao extrair JSON da resposta: {str(e)}'
-            else:
-                resultado['resposta'] = conteudo
-                resultado['json'] = False
-
-            # Garante que as chaves padrão existam
-            if 'usage' not in resultado:
-                resultado['usage'] = {}
-            if 'finished_reason' not in resultado['usage']:
-                resultado['usage']['finished_reason'] = res.get('finish_reason', 'unknown')
-                
-            if 'model' not in resultado:
-                resultado['model'] = res.get('model', sg_modelo)
-            resultado['tempo'] = round(time.time() - tempo_inicio, 3)
-
-            return resultado
+            usage_data = res.get('usage', {})
+            if 'finished_reason' not in usage_data:
+                usage_data['finished_reason'] = res.get('finish_reason', 'unknown')
+            return UtilResponse.montar_resultado(conteudo, usage_data, res.get('model', sg_modelo), time.time() - tempo_inicio, as_json, res)
 
         except Exception as e:
             return {'erro': f'Erro UtilOA: {type(e).__name__}: {str(e)}', 'model': sg_modelo, 'tempo': round(time.time() - tempo_inicio, 3)}
@@ -1174,10 +1047,14 @@ if __name__ == '__main__':
     import sys
     import util  # garante que a pasta src está no sys.path
     from util import UtilEnv
-    UtilEnv.carregar_env('.env', pastas=['../', './'])
+    if not UtilEnv.carregar_env('.env', pastas=['../', './']):
+        print('⚠️ Não foi possível encontrar o arquivo .env para carregar as variáveis de ambiente!')
     # Exemplos de uso:
     # teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')  # OpenRouter
     # teste_resposta(as_json=True, modelo='ol:llama3')                 # Ollama local
     #teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
     teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507')
+
+    #teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it')
+    
     
