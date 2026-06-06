@@ -52,6 +52,10 @@ python-Levenshtein==0.27.3
 cryptography
 python-dotenv
 
+# Apis
+openrouter
+openai
+
 # ⚡ Redução de uso de VRAM
 # 🚨 IMPORTANTE: flash-attn DEVE ser compilado do source contra o PyTorch instalado.
 # ❌ NÃO usar wheels pré-compilados (pip install flash-attn) nem conda install,

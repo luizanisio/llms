@@ -9,6 +9,11 @@ try:
     MSG_TOGETHER = ""
 except ImportError:
     MSG_TOGETHER = "Módulo 'together' não encontrado. Instale com 'pip install together'."
+try:
+    from openrouter import OpenRouter as OpenRouterClient
+    MSG_OPENROUTER = ""
+except ImportError:
+    MSG_OPENROUTER = "Módulo 'openrouter' não encontrado. Instale com 'pip install openrouter'."
 import os
 import json
 import traceback
@@ -84,16 +89,14 @@ def get_resposta(prompt:str, papel:str='',
 
     # Validação da API key
     if modelo.lower().startswith('or:'):
-       if MSG_OPENAI:
-          raise ImportError(MSG_OPENAI)
-       # openrouter.ai  
+       if MSG_OPENROUTER:
+          raise ImportError(MSG_OPENROUTER)
+       # openrouter.ai (SDK oficial)
        tipo_api = 'openrouter'
        modelo = modelo[3:]
-       url = "https://openrouter.ai/api/v1"
        api_key = api_key or os.getenv("PESSOAL_OPENROUTER_API_KEY")
        if not api_key:
           return {'erro': 'PESSOAL_OPENROUTER_API_KEY não encontrada no ambiente', 'model': modelo}
-       client_gpt = OpenAI(api_key=api_key, timeout=timeout, base_url=url) 
     elif modelo.lower().startswith('ol:'):
        # ollama local via UtilOllama (API nativa)
        tipo_api = 'ollama'
@@ -187,7 +190,20 @@ def get_resposta(prompt:str, papel:str='',
             ollama_kwargs['num_ctx'] = max_ctx
         return UtilOllama.chat_completion_padronizado(**ollama_kwargs)
 
-    # ── Demais APIs (OpenAI, OpenRouter, Together): monta args ──
+    # ── OpenRouter: delega para UtilOpenRouter e retorna ──
+    if tipo_api == 'openrouter':
+        if not silencioso: print(f'get_resposta: OpenRouter SDK - modelo {modelo}')
+        return UtilOpenRouter.chat_completion_padronizado(
+            messages=messages, modelo=modelo,
+            temperature=temperature, max_tokens=max_tokens,
+            as_json=as_json, raw=raw, timeout=timeout,
+            think=think, api_key=api_key,
+            silencioso=silencioso,
+            max_retry=max_retry,
+            tempo_inicio=tempo
+        )
+
+    # ── Demais APIs (OpenAI, Together): monta args ──
     parametros = {
         'messages': messages,
         'model': modelo,
@@ -247,6 +263,8 @@ def get_resposta(prompt:str, papel:str='',
         args.pop('max_completion_tokens', None)
         if isinstance(max_tokens, int):
             args['max_tokens'] = max_tokens
+
+
 
     try:
         response = client_gpt.chat.completions.create(**args)
@@ -723,6 +741,220 @@ class UtilOllama:
         resultado['tempo'] = round(time() - tempo, 3)
         return resultado
 
+class UtilOpenRouter:
+    ''' Utilitário para chamadas ao OpenRouter usando o SDK oficial (openrouter).
+        Segue o mesmo padrão de UtilOllama, com chat_completion_padronizado retornando
+        o dict no formato padrão de get_resposta.
+    '''
+
+    @classmethod
+    def _carregar_extra(cls) -> dict:
+        ''' Carrega e valida OPENROUTER_EXTRA do ambiente.
+            Retorna um dict (vazio se não configurado).
+            Levanta ValueError se o JSON for inválido.
+        '''
+        _or_extra_str = os.getenv('OPENROUTER_EXTRA', '').strip()
+        if not _or_extra_str:
+            return {}
+        try:
+            extra = json.loads(_or_extra_str)
+            if not isinstance(extra, dict):
+                raise ValueError(f'OPENROUTER_EXTRA deve ser um objeto JSON (dict), recebeu {type(extra).__name__}')
+            return extra
+        except json.JSONDecodeError as e:
+            raise ValueError(f'OPENROUTER_EXTRA contém JSON inválido: {e}\nConteúdo: {_or_extra_str}')
+
+    @classmethod
+    def _mapear_reasoning(cls, think: str) -> tuple:
+        ''' Mapeia o parâmetro think para (reasoning_effort, verbosity).
+            Retorna (None, None) se think for vazio/None.
+        '''
+        if not think:
+            return None, None
+
+        _reasoning = think.strip()
+        _verbosity = 'low'
+        if ':' in _reasoning:
+            _reasoning, _verbosity = _reasoning.split(':', 1)
+
+        reasoning_map = {
+            'high': 'high', 'alto': 'high', 'h': 'high', 'a': 'high', '+': 'high',
+            'medium': 'medium', 'm': 'medium', 'médio': 'medium', 'medio': 'medium',
+            'minimal': 'minimal', 'mínimo': 'minimal', 'minimo': 'minimal', 'mi': 'minimal', '0': 'minimal', '-': 'minimal', 'x': 'minimal'
+        }
+        _reasoning = reasoning_map.get(_reasoning.lower(), 'low')
+        _verbosity = reasoning_map.get(_verbosity.lower(), 'low')
+        return _reasoning, _verbosity
+
+    @classmethod
+    def chat_completion_padronizado(cls, messages: list, modelo: str,
+                                    temperature: float = 0.01, max_tokens: int = None,
+                                    as_json: bool = True, raw: bool = False,
+                                    timeout: int = 300, think: str = None,
+                                    api_key: str = None,
+                                    silencioso: bool = False,
+                                    max_retry: int = 5,
+                                    tempo_inicio: float = None) -> dict:
+        ''' Chama o OpenRouter via SDK oficial e retorna a resposta no padrão de get_resposta.
+            Parâmetros:
+                messages: lista de mensagens [{"role": "...", "content": "..."}]
+                modelo: nome do modelo (ex: "qwen/qwen3-235b-a22b-2507")
+                temperature: temperatura do modelo
+                max_tokens: número máximo de tokens na resposta
+                as_json: se True, tenta converter a resposta em JSON
+                raw: se True, retorna o dict bruto da API + tempo
+                timeout: timeout da requisição em milissegundos (convertido internamente)
+                think: configuração de reasoning (ex: "high:medium")
+                api_key: chave de API do OpenRouter
+                silencioso: se True, suprime prints de log
+                max_retry: tentativas restantes em caso de erro
+                tempo_inicio: timestamp de início (para cálculo de tempo)
+            Retorna dict no padrão: {resposta, usage, model, tempo} ou {erro, model, tempo}
+        '''
+        tempo = tempo_inicio or time()
+
+        # Carrega configurações extras do ambiente
+        openrouter_extra = cls._carregar_extra()
+
+        # Monta argumentos para client.chat.send
+        args = {
+            'messages': messages,
+            'model': modelo,
+            'temperature': temperature,
+            'timeout_ms': timeout * 1000,
+        }
+
+        if isinstance(max_tokens, int):
+            args['max_tokens'] = max_tokens
+
+        # Configuração de reasoning
+        _reasoning, _verbosity = cls._mapear_reasoning(think)
+        if _reasoning:
+            args['reasoning'] = {'effort': _reasoning}
+            if _verbosity and _verbosity != 'low':
+                args['reasoning']['summary'] = _verbosity
+            if isinstance(max_tokens, int):
+                args['max_completion_tokens'] = max_tokens
+                args.pop('max_tokens', None)
+            if not silencioso:
+                print(f'UtilOpenRouter: reasoning effort={_reasoning}, verbosity={_verbosity}, max_completion_tokens={args.get("max_completion_tokens")}')
+        else:
+            if not silencioso:
+                print(f'UtilOpenRouter: sem reasoning, max_tokens={args.get("max_tokens")}')
+
+        # Formato de resposta JSON
+        if as_json:
+            args['response_format'] = {"type": "json_object"}
+
+        # Injeta configurações extras (ex: provider com quantizations)
+        if openrouter_extra:
+            args.update(openrouter_extra)
+            if not silencioso:
+                print(f'UtilOpenRouter: extras aplicados >> {openrouter_extra}')
+
+        # Chamada ao SDK
+        try:
+            with OpenRouterClient(api_key=api_key) as client:
+                response = client.chat.send(**args)
+
+        except Exception as e:
+            erro_str = str(e).lower()
+            # Retry em rate limit ou erro de conexão
+            if max_retry > 0 and ('rate' in erro_str or 'limit' in erro_str or 'connection' in erro_str or 'timeout' in erro_str):
+                if not silencioso:
+                    print(f'UtilOpenRouter: erro recuperável ({type(e).__name__}), tentando novamente... (restantes: {max_retry})')
+                import time as time_module
+                time_module.sleep(2)
+                return cls.chat_completion_padronizado(
+                    messages=messages, modelo=modelo,
+                    temperature=temperature, max_tokens=max_tokens,
+                    as_json=as_json, raw=raw, timeout=timeout,
+                    think=think, api_key=api_key,
+                    silencioso=silencioso,
+                    max_retry=max_retry - 1,
+                    tempo_inicio=tempo
+                )
+            print(f'UtilOpenRouter ERRO: {traceback.format_exc()}')
+            return {'erro': f'Erro OpenRouter: {type(e).__name__}: {str(e)}',
+                    'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        # Converte resposta Pydantic para dict
+        try:
+            res_dict = response.model_dump()
+        except Exception:
+            res_dict = {}
+
+        # Log bruto
+        if 'openrouter' in LOG_BRUTO:
+            try:
+                with LOCK_ARQUIVO_BRUTO:
+                    with open('log_openai_resposta_bruta.txt', 'a', encoding='utf-8') as f:
+                        f.write('#'*60 + '\n')
+                        f.write(f'Timestamp: {time()}\n')
+                        f.write(f'Modelo: or:{modelo}\n')
+                        f.write('='*40 + '\n')
+                        f.write('Prompt enviado:\n')
+                        f.write(json.dumps(messages, ensure_ascii=False, indent=2))
+                        f.write('\n' + ('-'*40) + '\n')
+                        f.write('Resposta bruta:\n')
+                        f.write(json.dumps(res_dict, ensure_ascii=False, indent=2))
+                        f.write('\n' + ('-'*80) + '\n')
+                        f.write('#'*60 + '\n')
+            except Exception:
+                pass
+
+        # Se raw=True, retorna o dict bruto com tempo
+        if raw:
+            res_dict['tempo'] = round(time() - tempo, 3)
+            return res_dict
+
+        # Extrai conteúdo da resposta
+        choices = res_dict.get('choices', [])
+        if not choices:
+            return {'erro': 'Resposta do OpenRouter sem choices',
+                    'model': modelo, 'tempo': round(time() - tempo, 3)}
+
+        conteudo = choices[0].get('message', {}).get('content', '')
+
+        resultado = {}
+        if as_json:
+            try:
+                conteudo_json = UtilJson.mensagem_to_json(conteudo, padrao=None)
+                if conteudo_json is None:
+                    resultado['resposta'] = conteudo
+                    resultado['erro'] = f'Erro ao extrair JSON da resposta OpenRouter (conteudo=None).'
+                    resultado['json'] = False
+                else:
+                    resultado['resposta'] = conteudo_json
+                    resultado['json'] = True
+            except Exception as e:
+                resultado['resposta'] = conteudo
+                resultado['json'] = False
+                resultado['erro'] = f'Erro ao extrair JSON da resposta: {str(e)}'
+        else:
+            resultado['resposta'] = conteudo
+
+        # Extrai informações de uso
+        usage_data = res_dict.get('usage', {}) or {}
+        completion_details = usage_data.get('completion_tokens_details', {}) or {}
+        prompt_details = usage_data.get('prompt_tokens_details', {}) or {}
+
+        resultado['usage'] = {
+            'prompt_tokens': usage_data.get('prompt_tokens', 0),
+            'completion_tokens': usage_data.get('completion_tokens', 0),
+            'total_tokens': usage_data.get('total_tokens', 0),
+            'cached_tokens': prompt_details.get('cached_tokens', 0),
+            'reasoning_tokens': completion_details.get('reasoning_tokens', 0),
+            'finished_reason': choices[0].get('finish_reason', 'unknown')
+        }
+        if temperature is not None:
+            resultado['usage']['temperature'] = temperature
+
+        resultado['model'] = res_dict.get('model', modelo)
+        resultado['tempo'] = round(time() - tempo, 3)
+        return resultado
+
+
 class UtilOA:
     ''' Utilitário para consultas no serviço OpenAIA (OA)
     '''
@@ -731,13 +963,13 @@ class UtilOA:
         self.oa_banco = 'oracle'
         self.oa_url, self.oa_usuario, self.oa_senha = f'{oa_key}::-::-::'.split('::')[:3]
         
-        oa_controle_str = os.getenv('OA_CONTROLE', '')
+        oa_controle_str = os.getenv('OA_CONTROLE', '').strip()
         self.oa_controle = {}
         if oa_controle_str:
             try:
                 self.oa_controle = json.loads(oa_controle_str)
-            except Exception as e:
-                print(f"Aviso: Falha ao decodificar JSON de OA_CONTROLE: {e}")
+            except json.JSONDecodeError as e:
+                raise ValueError(f'OA_CONTROLE contém JSON inválido: {e}\nConteúdo: {oa_controle_str}')
 
     def prompt(self, prompt:str, sg_modelo:str, think:str = 'm:l', as_json:bool = True, max_tokens:int = None):
         ''' Envia um post para a url do serviço OpenAIA e retorna o resultado no padrão de get_resposta '''
@@ -946,4 +1178,6 @@ if __name__ == '__main__':
     # Exemplos de uso:
     # teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')  # OpenRouter
     # teste_resposta(as_json=True, modelo='ol:llama3')                 # Ollama local
-    teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
+    #teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
+    teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507')
+    
