@@ -1084,6 +1084,15 @@ def validar_modelo_api(caminho: str) -> tuple:
 
     return False, f'Prefixo não reconhecido em "{caminho}". Prefixos válidos: {", ".join(_PREFIXOS_API_REMOTA.keys())}'
 
+def _teste_modelo_think():
+    testes = ['oa:modelo:h:l', 'ol:qwen2.5:7b-instruct:h:l', 'vl:models:', 'tg:modelo',
+              'gpt5-megaplus:mi:low', 'gpt5:m:l', 'gpt-oss:20b:m:l', 'mistral-medium:','qwen3-235b:h:l']    
+    for teste in testes:
+        try:
+            modelo, think = UtilOA.modelo_think(teste,'<nenhum>')
+            print(f'Modelo / Think: {teste} >> {modelo} | {think}')
+        except Exception as e:
+            print(f'Erro ao testar modelo {teste}: {str(e)}')
 
 if __name__ == '__main__':
     import sys
@@ -1095,8 +1104,8 @@ if __name__ == '__main__':
     # teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')  # OpenRouter
     # teste_resposta(as_json=True, modelo='ol:llama3')                 # Ollama local
     #teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
-    teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
+    #teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
 
-    #teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it')
+    teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it:h:h')
     
-    
+    #_teste_modelo_think()
