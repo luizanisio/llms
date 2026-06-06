@@ -1,0 +1,82 @@
+# ==========================================================================
+# Configuração para inferência em lote com vLLM
+# Executar com: python util_vllm_batch.py --config config_batch.yaml
+# ==========================================================================
+
+# chamada: python ../../src/util_vllm_batch.py --config config_batch_openrouter.yaml 
+# visualizar: python visualizar_saida.py ./saida/saida_or_35b.parquet
+# visualizar: python visualizar_saida.py ./saida/saida_or_235b.parquet
+
+# --- Modelo ---
+# caminho: caminho para modelo HuggingFace (local ou hub)
+# lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
+modelo:
+  #caminho: "or:qwen/qwen3.5-35b-a3b"
+  caminho: "or:qwen/qwen3-235b-a22b-2507:poor"
+  #caminho: "/mnt/d/wsl_ollama/hf-models/Qwen2.5-7B-Instruct"
+  lora: ""
+
+# --- Configuração do vLLM ---
+# gpu_memory_utilization: fração da VRAM a usar (0.0 a 1.0). Padrão: 0.90
+# max_model_len: tamanho máximo do contexto em tokens. Ajuste conforme o modelo.
+# tensor_parallel_size: número de GPUs para paralelismo de tensor (1 = single GPU)
+# dtype: tipo de dado ("auto", "float16", "bfloat16"). "auto" detecta automaticamente.
+# enforce_eager: True desabilita CUDA graphs (mais lento, menos memória). Recomendado para 7B.
+# vllm:
+#   gpu_memory_utilization: 0.90
+#   max_model_len: 38912
+#   tensor_parallel_size: 1
+#   dtype: "auto"
+#   #enforce_eager: true
+#   quantization: bitsandbytes
+#   load_format: bitsandbytes
+
+# --- Parâmetros de Geração ---
+# max_tokens: máximo de tokens na resposta gerada
+# temperature: criatividade (0.0 = determinístico, 1.0 = criativo). Para extração use ~0.01.
+# top_k: top-k sampling (2 = quase determinístico)
+# top_p: nucleus sampling
+# batch_size: quantos prompts enviar por vez (controla salvamento parcial). Opcional.
+geracao:
+  max_tokens: 8192
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+  batch_size: 10 # na api, é o número de threads
+  #max_itens: 20 # para limitar a saída no caso de testes
+
+# --- Entrada ---
+# arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
+#   Se parquet: usa campo_chave como ID e campo_texto como conteúdo
+#   Se pasta: cada arquivo .txt é um item (nome sem extensão = chave)
+# campo_chave: nome da coluna com o ID (apenas para parquet). Padrão: "id"
+# campo_texto: nome da coluna com o texto (apenas para parquet). Padrão: "texto"
+# prompt_template: arquivo .txt com template do prompt (opcional).
+#   Se informado, o texto do campo_texto substitui o placeholder variavel_texto.
+#   Se vazio, o texto é usado diretamente como conteúdo do prompt.
+# variavel_texto: placeholder no template a ser substituído pelo texto. Padrão: "<--TEXTO-->"
+# system_prompt: system prompt para modelos instruct (opcional).
+#   Se informado, o chat template do modelo é aplicado automaticamente.
+#   Se vazio, o texto montado é enviado diretamente ao modelo (sem chat template).
+entrada:
+  arquivo: "./dados/integras_experimento_summa_novos.parquet"
+  campo_chave: "seq_documento_acordao"
+  campo_texto: "integra"
+  prompt_template: "./dados/prompt_summa_raw.txt"
+  variavel_texto: "<<--TEXTO-->>"
+  system_prompt: ""
+
+# --- Saída ---
+# arquivo: caminho para arquivo .parquet OU pasta para arquivos .txt/.json
+#   Se termina com .parquet: gera parquet com colunas [chave, resumo, resposta, erro]
+#   Caso contrário: trata como pasta e gera {chave}.txt + {chave}.json por item
+# tipo_saida: tipo da resposta gerada. Valores possíveis:
+#   "str"  — resposta é texto livre (padrão)
+#   "json" — resposta é JSON. O texto gerado será parseado com UtilJson.mensagem_to_json
+#            (extrai e corrige JSON de respostas de LLM). Se não for possível parsear,
+#            a resposta original é mantida e o campo erro é preenchido.
+# Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
+#   Itens com erro ou ausentes são reprocessados automaticamente.
+saida:
+  arquivo: "./saida/saida_or_235b.parquet"
+  tipo_saida: "json"
