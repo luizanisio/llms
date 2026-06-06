@@ -880,7 +880,7 @@ class UtilOA:
             except json.JSONDecodeError as e:
                 raise ValueError(f'OA_CONTROLE contém JSON inválido: {e}\nConteúdo: {oa_controle_str}')
 
-    def prompt(self, prompt:str, sg_modelo:str, think:str = 'm:l', as_json:bool = True, max_tokens:int = None, resumido:bool = True):
+    def prompt(self, prompt:str, sg_modelo:str, think:str = 'm:l', as_json:bool = True, max_tokens:int = None):
         ''' Envia um post para a url do serviço OpenAIA e retorna o resultado no padrão de get_resposta '''
         import time
         import requests
@@ -901,7 +901,7 @@ class UtilOA:
             "sg_modelo": sg_modelo,
             "think": think,
             "resposta_json": as_json,
-            "resumido": resumido
+            "resumido": True
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
