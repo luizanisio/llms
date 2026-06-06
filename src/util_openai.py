@@ -978,9 +978,22 @@ class UtilOA:
             
             conteudo = res.get('resposta', res.get('response', ''))
             usage_data = res.get('usage', {})
-            if 'finished_reason' not in usage_data:
-                usage_data['finished_reason'] = res.get('finish_reason', 'unknown')
-            return UtilResponse.montar_resultado(conteudo, usage_data, res.get('model', sg_modelo), time.time() - tempo_inicio, as_json, res)
+            comp_det = usage_data.get('completion_tokens_details', {}) or {}
+            prompt_det = usage_data.get('prompt_tokens_details', {}) or {}
+            
+            finished_reason = usage_data.get('finished_reason', res.get('finish_reason', 'unknown'))
+            
+            usage = {
+                'prompt_tokens': usage_data.get('prompt_tokens', 0),
+                'completion_tokens': usage_data.get('completion_tokens', 0),
+                'total_tokens': usage_data.get('total_tokens', 0),
+                'cached_tokens': prompt_det.get('cached_tokens', 0),
+                'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
+                'finished_reason': finished_reason,
+                'temperature': payload.get('temperature')
+            }
+
+            return UtilResponse.montar_resultado(conteudo, usage, res.get('model', sg_modelo), time.time() - tempo_inicio, as_json, res)
 
         except Exception as e:
             return {'erro': f'Erro UtilOA: {type(e).__name__}: {str(e)}', 'model': sg_modelo, 'tempo': round(time.time() - tempo_inicio, 3)}
