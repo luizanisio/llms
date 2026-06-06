@@ -58,9 +58,12 @@ def get_resposta(prompt:str, papel:str='',
     UtilLog.verificar_aviso()
     
     tempo = time()
-    original_model = modelo
     if 'modelo_think' in kwargs and kwargs['modelo_think']:
         think = kwargs['modelo_think'] 
+
+    # Aplicar a separação do modelo e think o quanto antes
+    modelo, think = UtilOA.modelo_think(modelo, think)
+    original_model = modelo
 
     max_retry = max(0, min(10, max_retry))
     
@@ -880,19 +883,44 @@ class UtilOA:
             except json.JSONDecodeError as e:
                 raise ValueError(f'OA_CONTROLE contém JSON inválido: {e}\nConteúdo: {oa_controle_str}')
 
+    @classmethod
+    def modelo_think(cls, modelo_think:str, think:str):
+        ''' recebe um modelo e um think e retorna o modelo e o think
+            se o think fizer parte do nome do modelo com :think, utiliza ele
+        '''
+        if not modelo_think or ':' not in modelo_think:
+            return modelo_think, think
+
+        valid_tokens = {
+            'high', 'alto', 'h', 'a', '+',
+            'medium', 'm', 'médio', 'medio',
+            'minimal', 'mínimo', 'minimo', 'mi', '0', '-', 'x',
+            'low', 'baixo', 'l', 'b'
+        }
+        partes = modelo_think.split(':')
+        extracted = []
+        # O modelo pode ter no máximo 2 tokens de think no final (ex: m:l)
+        while len(partes) > 1 and len(extracted) < 2:
+            ultimo = partes[-1].strip().lower()
+            if ultimo in valid_tokens:
+                extracted.insert(0, partes.pop())
+            else:
+                break
+
+        if extracted:
+            _modelo = ':'.join(partes)
+            _think = ':'.join(extracted)
+            return _modelo, _think
+
+        return modelo_think, think
+
     def prompt(self, prompt:str, sg_modelo:str, think:str = 'm:l', as_json:bool = True, max_tokens:int = None):
         ''' Envia um post para a url do serviço OpenAIA e retorna o resultado no padrão de get_resposta '''
         import time
         import requests
         tempo_inicio = time.time()
 
-        # sg_modelo pode vir no formato <nome modelo>:think:verbosity
-        if ':' in sg_modelo:
-            # verbosity já faz parte do think como think=m:l ou think=h:l
-            _modelo, _think = sg_modelo.split(':', 1)
-            if _think:
-                think = _think
-            sg_modelo = _modelo
+        sg_modelo, think = self.modelo_think(sg_modelo, think)
         
         payload = {
             "usuario": self.oa_usuario,
@@ -1067,7 +1095,7 @@ if __name__ == '__main__':
     # teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')  # OpenRouter
     # teste_resposta(as_json=True, modelo='ol:llama3')                 # Ollama local
     #teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
-    teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507')
+    teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
 
     #teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it')
     
