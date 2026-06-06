@@ -885,6 +885,14 @@ class UtilOA:
         import time
         import requests
         tempo_inicio = time.time()
+
+        # sg_modelo pode vir no formato <nome modelo>:think:verbosity
+        if ':' in sg_modelo:
+            # verbosity já faz parte do think como think=m:l ou think=h:l
+            _modelo, _think = sg_modelo.split(':', 1)
+            if _think:
+                think = _think
+            sg_modelo = _modelo
         
         payload = {
             "usuario": self.oa_usuario,
