@@ -31,9 +31,13 @@ for _, row in dados.iterrows():
 def print_json(valor:str):
     """Imprime um valor string formatado como json"""
     try:
+        _valor = valor.strip(' \t\n') if isinstance(valor,str) else valor
         print('JSON ✅', json.dumps(json.loads(valor), indent=4, ensure_ascii=False))
     except Exception as e:
-        print('JSON ❌', valor)
+        if len(valor) > 2000:
+            print('JSON ❌', str(valor)[:2000], f'[..] {len(str(valor))} caracteres')
+        else:
+            print('JSON ❌', valor)
 
 def exibir_registro(titulo_bloco, row):
     if row is None:
@@ -66,7 +70,7 @@ def exibir_registro(titulo_bloco, row):
     if row['erro'] and str(row['erro']).strip() not in ('None', 'nan', ''):
         print('-'*80)
         print("❌ ERRO DA EXTRAÇÃO:")
-        print(str(row['erro'])[:200])
+        print(str(row['erro']).strip(' \t\n')[:200])
         
     print('-'*80)
     print("📊 RESUMO (Tempos/Tokens):")
@@ -107,13 +111,13 @@ for item in dados.itertuples():
         resumo['tokens_saida_min'] = min(usage['completion_tokens'],resumo['tokens_saida_min'])
 
 
-print(f'Total de registros: {resumo['total']}')
-print(f'JSON válidos: {resumo['json_validos']}')
-print(f'JSON inválidos: {resumo['json_invalidos']}')
-print(f'Tokens de entrada: {resumo['tokens_entrada']}')
-print(f'Tokens de saída: {resumo['tokens_saida']}')
-print(f'Tokens de entrada máximo: {resumo['tokens_entrada_max']}')
-print(f'Tokens de saída máximo: {resumo['tokens_saida_max']}')
-print(f'Tokens de entrada mínimo: {resumo['tokens_entrada_min']}')
-print(f'Tokens de saída mínimo: {resumo['tokens_saida_min']}')
-print(f'Métricas: {resumo['metricas']}')
+print(f"Total de registros: {resumo['total']}")
+print(f"JSON válidos: {resumo['json_validos']}")
+print(f"JSON inválidos: {resumo['json_invalidos']}")
+print(f"Tokens de entrada: {resumo['tokens_entrada']}")
+print(f"Tokens de saída: {resumo['tokens_saida']}")
+print(f"Tokens de entrada máximo: {resumo['tokens_entrada_max']}")
+print(f"Tokens de saída máximo: {resumo['tokens_saida_max']}")
+print(f"Tokens de entrada mínimo: {resumo['tokens_entrada_min']}")
+print(f"Tokens de saída mínimo: {resumo['tokens_saida_min']}")
+print(f"Métricas: {resumo['metricas']}")
