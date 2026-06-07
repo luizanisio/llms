@@ -1,6 +1,7 @@
 # ==========================================================================
 # Configuração de Extração de Dados do CKAN
 # Executar com: python ../../src/util_ckan.py --config config_extracao.yaml
+# Visualizar com: python ../../src/util_ckan.py --config config_extracao.yaml --view
 # ==========================================================================
 
 # --- Configuração Geral ---
@@ -19,6 +20,7 @@ saida:
   # Colunas auto-padronizadas pelo script:
   #   dt_publicacao, ano, sg_classe, num_registro, seq_documento_acordao
   colunas_ckan:
+    processo: processo
     ministro: num_ministro
     dt_publicacao: dt_publicacao
     sg_classe: sg_classe
@@ -38,18 +40,19 @@ saida:
 # Esperados 22237 - mas 202 do grupo 1 são decisões e não acórdãos
 extracoes:
   # Grupo 1: Extração dinâmica a partir de um parquet anterior e preservando do merge
-  - tipo: "integras"
+  - xtipo: "integras"
     incluir_texto: true
     filtros:
       arquivo_origem: "./dados/pecas_exportadas_textos.parquet"
-      coluna_anos: "ano"
+      #coluna_anos: "ano"
+      #anos: [2021, 2022, 2023, 2024, 2025, 2026]
       coluna_documentos: "seq_documento_acordao"
       #tipo_decisao: acordao
     colunas_fixas:
       - extracao: "$hoje"
       
   # Grupo 2: Extração manual com injeção de colunas fixas
-  - tipo: "integras"
+  - xtipo: "integras"
     incluir_texto: true
     filtros:
       anos: ["2026"]
@@ -60,3 +63,14 @@ extracoes:
       - fold: 12
       - pasta: './saidas/<<tipo>>_novos'
       - extracao: "$hoje"
+
+  # Grupo 3: Extração de processos específicos
+  - tipo: "integras"
+    incluir_texto: true
+    filtros:
+      # busca pela chave processo (case insensitive) ou numero_registro (12 números string) ou tuplas [registro, data_publicacao] ou [registro, data_publicacao, tipo_decisao]
+      processos: ["REsp 2046214", "AREsp 2831077", ["202403674719", "2025-01-03"], ["REsp 2045705", "20230320", "DECISÃO"]]
+      documentos: [289154352, 289154346]
+    colunas_fixas:
+      - fold: 13
+      - pasta: "./saidas/<<tipo>>_especificos"

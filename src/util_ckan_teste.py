@@ -2,9 +2,35 @@
     Contém diversos cenários de filtros no construtor e suas respectivas
     expectativas de saída após o cruzamento de dados de espelhos e íntegras.
 '''
-
+import os
 import unittest
 from util_ckan import UtilCkan, UtilCkanIntegra
+from threading import Lock
+DOWNLOAD_DIR = None
+lock_download_dir = Lock()
+
+def get_download_dir():
+    import os
+    global DOWNLOAD_DIR
+    if DOWNLOAD_DIR: return DOWNLOAD_DIR
+    with lock_download_dir:
+        if DOWNLOAD_DIR: return DOWNLOAD_DIR
+        if DOWNLOAD_DIR is None:
+            busca = ['../experimentos/summa_experimento/downloads_stj',
+                    '../downloads_stj', '../experimentos/downloads_stj',
+                    './downloads_stj']
+        for b in busca:
+            if os.path.exists(b):
+                DOWNLOAD_DIR = b
+                print(f'DOWNLOAD_DIR: {DOWNLOAD_DIR}')
+                break
+        if DOWNLOAD_DIR is None:
+            DOWNLOAD_DIR = input('Digite o caminho para o diretório de downloads: ')
+            if not DOWNLOAD_DIR:
+               print('Nenhum caminho fornecido para DOWNLOAD_DIR. Saindo...')
+               exit(1)
+            print(f'DOWNLOAD_DIR: {DOWNLOAD_DIR}')
+    return DOWNLOAD_DIR
 
 class TestUtilCkanFiltros(unittest.TestCase):
     """Testes baseados em dicionários de entrada/saída para facilitar a manutenção."""
@@ -18,7 +44,7 @@ class TestUtilCkanFiltros(unittest.TestCase):
                 'nome': 'Filtro completo por tupla de 3 (registro, data, tipo) e seq_documento',
                 'parametros': {
                     'orgaos': ['T2'],
-                    'registros': [('202302829818', '20240822', 'ACÓRDÃO')],
+                    'processos': [('202302829818', '20240822', 'ACÓRDÃO')],
                     'documentos': [266239985],
                 },
                 'esperados': {
@@ -31,7 +57,7 @@ class TestUtilCkanFiltros(unittest.TestCase):
             {
                 'nome': 'Filtro por tupla de 2 (registro, data) - formato com hífen',
                 'parametros': {
-                    'registros': [('202302829818', '2024-08-22')],
+                    'processos': [('202302829818', '2024-08-22')],
                 },
                 'esperados': {
                     'id_mapa': '202302829818.20240822.ACÓRDÃO',
@@ -42,7 +68,7 @@ class TestUtilCkanFiltros(unittest.TestCase):
             {
                 'nome': 'Filtro simplificado apenas pela string do número do registro',
                 'parametros': {
-                    'registros': ['202302829818'],
+                    'processos': ['202302829818'],
                 },
                 'esperados': {
                     'id_mapa': '202302829818.20240822.ACÓRDÃO',
@@ -61,9 +87,9 @@ class TestUtilCkanFiltros(unittest.TestCase):
                 }
             },
             {
-                'nome': 'Filtro por múltiplos registros de datasets distintos com formatos de data variados',
+                'nome': 'Filtro por múltiplos processos de datasets distintos com formatos de data variados',
                 'parametros': {
-                    'registros': [
+                    'processos': [
                         ('202201876389', 1656644400000), 
                         ('202400109342', '2025-11-12')
                     ],
@@ -113,21 +139,48 @@ class TestUtilCkanFiltros(unittest.TestCase):
                     'orgao': 'T2',
                 }
             },
+            {
+                'nome': 'Lógica OR (OU) entre processos e documentos',
+                'parametros': {
+                    'processos': ['202302829818'],
+                    'documentos': [289154346],
+                },
+                'esperados': {
+                    'id_mapa_multiplos': [
+                        '202302829818.20240822.ACÓRDÃO',
+                        '202404351347.20250103.ACÓRDÃO'
+                    ]
+                }
+            },
+            {
+                'nome': 'Filtro de tipo_decisao restritivo deve barrar processos que não dão match',
+                'parametros': {
+                    'processos': ['REsp 2045705'],
+                    'tipos_decisao': 'acordao'
+                },
+                'esperados': {
+                    'vazio': True
+                }
+            },
         ]
         
         for cenario in cenarios:
             with self.subTest(cenario=cenario['nome']):
                 # Ao passar True em atualizar_cache_e_mapas, garantimos que 
                 # a classe utilizará a restrição imediata no mapeamento via json em disco.
-                ckan = UtilCkan(**cenario['parametros'], atualizar_cache_e_mapas=True)
+                ckan = UtilCkan(**cenario['parametros'], download_dir=get_download_dir(), atualizar_cache_e_mapas=True)
                 
                 # Executa o cruzamento limpo
                 resultado = ckan.cruzar_espelhos_integras()
                 
-                # Validamos que pelo menos 1 registro corresponde ao filtro
-                self.assertGreater(len(resultado), 0, f"Falhou no {cenario['nome']}: não retornou resultados.")
-                
                 esperado = cenario['esperados']
+                
+                if esperado.get('vazio'):
+                    self.assertEqual(len(resultado), 0, f"Falhou no {cenario['nome']}: esperava vazio, mas retornou {len(resultado)}.")
+                    continue
+                else:
+                    # Validamos que pelo menos 1 registro corresponde ao filtro
+                    self.assertGreater(len(resultado), 0, f"Falhou no {cenario['nome']}: não retornou resultados.")
 
                 # Tratamento para validação de múltiplos id_mapa simultâneos
                 if 'id_mapa_multiplos' in esperado:
@@ -164,9 +217,20 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
         """Testes parametrizados para UtilCkanIntegra com cenários variados."""
         cenarios = [
             {
+                'nome': 'Cenário igual à configuração yaml (6 registros)',
+                'parametros': {
+                    'processos': ["REsp 2046214", "AREsp 2831077", ["202403674719", "2025-01-03"], ["REsp 2045705", "20230320", "DECISÃO"]],
+                    'documentos': [289154352, 289154346],
+                },
+                'esperados': {
+                    'qtd_esperada': 6,
+                    'multiplos': ['202300025898', '202204045424', '202404279389', '202404413996', '202403674719', '202500067396']
+                }
+            },
+            {
                 'nome': 'Filtro por número de registro (string simples)',
                 'parametros': {
-                    'registros': {'202302829818'},
+                    'processos': {'202302829818'},
                 },
                 'esperados': {
                     'numero_registro': '202302829818',
@@ -185,7 +249,7 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
             {
                 'nome': 'Filtro por tupla completa (registro, data, tipo)',
                 'parametros': {
-                    'registros': {('202302829818', '20240822', 'ACÓRDÃO')},
+                    'processos': {('202302829818', '20240822', 'ACÓRDÃO')},
                 },
                 'esperados': {
                     'id_mapa': '202302829818.20240822.ACÓRDÃO',
@@ -196,7 +260,7 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
             {
                 'nome': 'Filtro por tupla de 2 (registro, data) com hífen',
                 'parametros': {
-                    'registros': {('202302829818', '2024-08-22')},
+                    'processos': {('202302829818', '2024-08-22')},
                 },
                 'esperados': {
                     'id_mapa': '202302829818.20240822.ACÓRDÃO',
@@ -220,17 +284,53 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
                     'data_publicacao': '20240822',
                 }
             },
+            {
+                'nome': 'Filtro combinado OR (processos + documentos) deve retornar ambos',
+                'parametros': {
+                    'processos': ['202302829818'],
+                    'documentos': [289154346],
+                },
+                'esperados': {
+                    'multiplos': ['202302829818', '202404351347'] # num_registros expected
+                }
+            },
+            {
+                'nome': 'Filtro sem atualizar mapas/cache (testa dedução desabilitada)',
+                'parametros': {
+                    'processos': ['202302829818'],
+                },
+                'esperados': {
+                    'numero_registro': '202302829818',
+                },
+                'atualizar_cache': False
+            },
         ]
 
         for cenario in cenarios:
             with self.subTest(cenario=cenario['nome']):
-                integra = UtilCkanIntegra(**cenario['parametros'], atualizar_cache_e_mapas=True)
+                # Test_resp showed that atualizar_cache=False works if maps exist
+                atualizar = cenario.get('atualizar_cache', True)
+                integra = UtilCkanIntegra(**cenario['parametros'], download_dir=get_download_dir(), atualizar_cache_e_mapas=atualizar)
                 itens = integra.consultar_mapa()
 
+                esperado = cenario['esperados']
+                
+                if esperado.get('vazio'):
+                    self.assertEqual(len(itens), 0, f"Falhou no cenário '{cenario['nome']}': esperava vazio.")
+                    continue
+                
                 self.assertGreater(len(itens), 0,
                     f"Falhou no cenário '{cenario['nome']}': não retornou resultados.")
 
                 esperado = cenario['esperados']
+                if 'multiplos' in esperado:
+                    regs_retornados = [i.get('numero_registro') for i in itens]
+                    if 'qtd_esperada' in esperado:
+                        self.assertEqual(len(itens), esperado['qtd_esperada'], f"Falhou no cenário '{cenario['nome']}': esperava {esperado['qtd_esperada']} resultados, obteve {len(itens)}.")
+                    for r_esperado in esperado['multiplos']:
+                        self.assertIn(r_esperado, regs_retornados)
+                    continue
+
                 item = itens[0]
 
                 if 'id_mapa' in esperado:
@@ -251,8 +351,8 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
     def test_obter_integras(self):
         """UtilCkanIntegra.obter_integras() deve retornar textos não vazios."""
         integra = UtilCkanIntegra(
-            registros={('202302829818', '20240822', 'ACÓRDÃO')},
-            atualizar_cache_e_mapas=True,
+            processos={('202302829818', '20240822', 'ACÓRDÃO')},
+            download_dir=get_download_dir(), atualizar_cache_e_mapas=True,
         )
         textos = integra.obter_integras()
         self.assertGreater(len(textos), 0, 'obter_integras() não retornou textos')
@@ -260,21 +360,21 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
             self.assertIsInstance(txt, str)
             self.assertGreater(len(txt), 0, f'Texto vazio para id_mapa={id_mapa}')
 
-    def test_multiplos_registros(self):
-        """UtilCkanIntegra deve retornar resultados para múltiplos registros."""
+    def test_multiplos_processos(self):
+        """UtilCkanIntegra deve retornar resultados para múltiplos processos."""
         integra = UtilCkanIntegra(
-            registros={
+            processos={
                 ('202201876389', 1656644400000),
                 ('202302829818', '2024-08-22'),
             },
-            atualizar_cache_e_mapas=True,
+            download_dir=get_download_dir(), atualizar_cache_e_mapas=True,
         )
         itens = integra.consultar_mapa()
-        self.assertGreater(len(itens), 1, 'Esperava mais de 1 resultado para múltiplos registros')
+        self.assertGreater(len(itens), 1, 'Esperava mais de 1 resultado para múltiplos processos')
 
-        registros_retornados = {i.get('numero_registro') for i in itens}
-        self.assertIn('202201876389', registros_retornados)
-        self.assertIn('202302829818', registros_retornados)
+        processos_retornados = {i.get('numero_registro') for i in itens}
+        self.assertIn('202201876389', processos_retornados)
+        self.assertIn('202302829818', processos_retornados)
 
 
 if __name__ == '__main__':
