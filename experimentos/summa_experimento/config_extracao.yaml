@@ -35,7 +35,7 @@ saida:
     fold: fold
 
 # --- Sequência de Extrações ---
-# Esperados 22269
+# Esperados 22237 - mas 202 do grupo 1 são decisões e não acórdãos
 extracoes:
   # Grupo 1: Extração dinâmica a partir de um parquet anterior e preservando do merge
   - tipo: "integras"
@@ -54,7 +54,7 @@ extracoes:
     filtros:
       anos: ["2026"]
       datas: ["2026-05-25"]
-      classes: ["AREsp", "REsp"]
+      classes: ["AREsp", "REsp", "HC", "RHC"]
       tipo_decisao: acordao
     colunas_fixas:
       - fold: 12
