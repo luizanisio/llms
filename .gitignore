@@ -218,3 +218,4 @@ experimentos/summa_experimento/saida**
 
 *.lnk
 *.lock
+.vscode/settings.json
