@@ -1,0 +1,62 @@
+# ==========================================================================
+# Configuração de Extração de Dados do CKAN
+# Executar com: python ../../src/util_ckan.py --config config_extracao.yaml
+# ==========================================================================
+
+# --- Configuração Geral ---
+config:
+  download_dir: "./downloads_stj"
+  atualizar_cache_e_mapas: true
+
+# --- Saída ---
+saida:
+  arquivo: "./dados/teste_integras_experimento_summa.parquet"
+  
+  # Mapeia colunas diretamente geradas pelo processo do CKAN
+  # Colunas disponíveis padrão CKAN: 
+  #   id_mapa, ministro, orgao_julgador, tipo_decisao, ementa, decisao, integra, 
+  #   data_publicacao, data_publicacao_iso, numero_registro, seq_documento, processo
+  # Colunas auto-padronizadas pelo script:
+  #   dt_publicacao, ano, sg_classe, num_registro, seq_documento_acordao
+  colunas_ckan:
+    ministro: num_ministro
+    dt_publicacao: dt_publicacao
+    sg_classe: sg_classe
+    integra: integra
+    num_registro: num_registro
+    seq_documento_acordao: seq_documento_acordao
+    ano: ano
+    tipo_decisao: tipo_decisao
+  
+  # Preserva colunas (faz merge via left-join) advindas do arquivo_origem configurado nas extrações
+  colunas_origem:
+    sg_ramo_direito: sg_ramo_direito
+    pasta: pasta
+    fold: fold
+
+# --- Sequência de Extrações ---
+# Esperados 22269
+extracoes:
+  # Grupo 1: Extração dinâmica a partir de um parquet anterior e preservando do merge
+  - tipo: "integras"
+    incluir_texto: true
+    filtros:
+      arquivo_origem: "./dados/pecas_exportadas_textos.parquet"
+      coluna_anos: "ano"
+      coluna_documentos: "seq_documento_acordao"
+      tipo_decisao: acordao
+    colunas_fixas:
+      - extracao: "$hoje"
+      
+  # Grupo 2: Extração manual com injeção de colunas fixas
+  - tipo: "integras"
+    incluir_texto: true
+    filtros:
+      anos: ["2026"]
+      datas: ["2026-05-25"]
+      classes: ["AREsp", "REsp"]
+      tipo_decisao: acordao
+    colunas_fixas:
+      - fold: 12
+      - pasta: './saidas/<<tipo>>_novos'
+      - extracao: "$hoje"

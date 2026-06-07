@@ -3,7 +3,8 @@
 # Executar com: python util_vllm_batch.py --config config_batch.yaml
 # ==========================================================================
 
-# chamada: python ../../src/util_vllm_batch.py --config config_batch_openrouter.yaml 
+# chamada: python ../../src/util_vllm_batch.py --config config_batch_235b.yaml
+# visualizar: python ../../src/util_vllm_batch.py --config config_batch_235b.yaml --view
 # visualizar: python visualizar_saida.py ./saida/saida_or_35b.parquet
 # visualizar: python visualizar_saida.py ./saida/saida_or_235b.parquet
 
@@ -42,7 +43,7 @@ geracao:
   temperature: 0.01
   top_k: 2
   top_p: 0.9
-  batch_size: 20 # na api, é o número de threads
+  batch_size: 30 # na api, é o número de threads
   #max_itens: 20 # para limitar a saída no caso de testes
 
 # --- Entrada ---

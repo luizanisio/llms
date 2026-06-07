@@ -5,7 +5,7 @@
 
 # pip: pip install -r ../../src/requirements_mini.txt
 # chamada: python ../../src/util_vllm_batch.py --config config_batch_gpt5.yaml 
-# visualizar: python visualizar_saida.py ./saida/saida_oa_gpt5.parquet
+# visualizar: python ../../src/util_vllm_batch.py --config config_batch_gpt5.yaml --view
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
@@ -43,7 +43,7 @@ geracao:
   top_k: 2
   top_p: 0.9
   batch_size: 20 # na api, é o número de threads
-  max_itens: 20 # para limitar a saída no caso de testes
+  #max_itens: 20 # para limitar a saída no caso de testes
 
 # --- Entrada ---
 # arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
