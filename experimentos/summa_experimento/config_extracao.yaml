@@ -44,7 +44,7 @@ extracoes:
       arquivo_origem: "./dados/pecas_exportadas_textos.parquet"
       coluna_anos: "ano"
       coluna_documentos: "seq_documento_acordao"
-      tipo_decisao: acordao
+      #tipo_decisao: acordao
     colunas_fixas:
       - extracao: "$hoje"
       

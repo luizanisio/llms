@@ -171,7 +171,8 @@ def _extrair_data_pub_integra(valor) -> str:
     # Tenta como epoch-ms
     try:
         ts = int(valor) / 1000
-        return datetime.fromtimestamp(ts).strftime('%Y%m%d')
+        from datetime import timezone
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y%m%d')
     except (ValueError, TypeError, OSError):
         return ''
 
