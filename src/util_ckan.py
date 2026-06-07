@@ -775,7 +775,8 @@ class UtilCkanBase:
         """Normaliza texto longo (ementa, decisão, íntegra): converte \\r em \\n preservando parágrafos."""
         if not v or not isinstance(v, str):
             return v or ''
-        return v.replace('\r\n', '\n').replace('\r', '\n').strip()
+        # substitui <br> por quebra de linha pois alguns documentos estão com <br> no lugar de \n
+        return v.replace('<br>','\n').replace('\r\n', '\n').replace('\r', '\n').strip()
 
     @staticmethod
     def _imprimir_resumo(df, caminho_saida: Path, col_texto: str = 'integra'):
