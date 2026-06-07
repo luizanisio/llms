@@ -5,8 +5,6 @@
 
 # chamada: python ../../src/util_vllm_batch.py --config config_batch_235b.yaml
 # visualizar: python ../../src/util_vllm_batch.py --config config_batch_235b.yaml --view
-# visualizar: python visualizar_saida.py ./saida/saida_or_35b.parquet
-# visualizar: python visualizar_saida.py ./saida/saida_or_235b.parquet
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
