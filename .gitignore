@@ -214,3 +214,7 @@ experimentos/summa_experimento/**.parquet
 experimentos/summa_experimento/dados**
 experimentos/summa_experimento/saida**
 **log_openai_resposta_bruta.txt
+**downloads_stj**
+
+*.lnk
+*.lock
