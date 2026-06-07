@@ -3,6 +3,7 @@
     expectativas de saída após o cruzamento de dados de espelhos e íntegras.
 '''
 import os
+import gc
 import unittest
 from util_ckan import UtilCkan, UtilCkanIntegra
 from threading import Lock
@@ -35,6 +36,13 @@ def get_download_dir():
 class TestUtilCkanFiltros(unittest.TestCase):
     """Testes baseados em dicionários de entrada/saída para facilitar a manutenção."""
     
+    @classmethod
+    def setUpClass(cls):
+        print("Atualizando cache e mapas para os anos dos testes...")
+        ckan = UtilCkan(anos={'2022', '2023', '2024', '2025'}, download_dir=get_download_dir(), atualizar_cache_e_mapas=True)
+        ckan.atualizar_mapas()
+        print("Cache atualizado com sucesso.")
+
     def test_filtros_diversos(self):
         # Lista de dicionários descrevendo os cenários de teste.
         # parâmetros: argumentos passados para inicializar UtilCkan.
@@ -148,7 +156,7 @@ class TestUtilCkanFiltros(unittest.TestCase):
                 'esperados': {
                     'id_mapa_multiplos': [
                         '202302829818.20240822.ACÓRDÃO',
-                        '202404351347.20250103.ACÓRDÃO'
+                        '202404279389.20250103.ACÓRDÃO'
                     ]
                 }
             },
@@ -165,53 +173,66 @@ class TestUtilCkanFiltros(unittest.TestCase):
         ]
         
         for cenario in cenarios:
-            with self.subTest(cenario=cenario['nome']):
-                # Ao passar True em atualizar_cache_e_mapas, garantimos que 
-                # a classe utilizará a restrição imediata no mapeamento via json em disco.
-                ckan = UtilCkan(**cenario['parametros'], download_dir=get_download_dir(), atualizar_cache_e_mapas=True)
-                
-                # Executa o cruzamento limpo
-                resultado = ckan.cruzar_espelhos_integras()
-                
-                esperado = cenario['esperados']
-                
-                if esperado.get('vazio'):
-                    self.assertEqual(len(resultado), 0, f"Falhou no {cenario['nome']}: esperava vazio, mas retornou {len(resultado)}.")
-                    continue
-                else:
-                    # Validamos que pelo menos 1 registro corresponde ao filtro
-                    self.assertGreater(len(resultado), 0, f"Falhou no {cenario['nome']}: não retornou resultados.")
-
-                # Tratamento para validação de múltiplos id_mapa simultâneos
-                if 'id_mapa_multiplos' in esperado:
-                    ids_retornados = [r.get('id_mapa') for r in resultado]
-                    for id_esperado in esperado['id_mapa_multiplos']:
-                        self.assertIn(id_esperado, ids_retornados, f"ID {id_esperado} não retornado na busca de múltiplos itens.")
-                else:    
-                    # Pega a primeira ocorrência do cruzamento para testes de item único
-                    res_dict = resultado[0]
+            ckan = None
+            resultado = None
+            try:
+                with self.subTest(cenario=cenario['nome']):
+                    # A classe utilizará a restrição imediata no mapeamento via json em disco.
+                    ckan = UtilCkan(**cenario['parametros'], download_dir=get_download_dir(), atualizar_cache_e_mapas=False)
                     
-                    # Checagens comuns resultantes
-                    if 'id_mapa' in esperado:
-                        self.assertEqual(res_dict.get('id_mapa'), esperado['id_mapa'])
-                    if 'orgao' in esperado:
-                        self.assertEqual(res_dict.get('orgao'), esperado['orgao'])
-                    if 'numero_registro' in esperado:
-                        self.assertEqual(res_dict.get('numero_registro'), esperado['numero_registro'])
-                    if 'data_publicacao' in esperado:
-                        self.assertEqual(res_dict.get('data_publicacao'), esperado['data_publicacao'])
-                    if 'tem_integra' in esperado:
-                        self.assertEqual(res_dict.get('tem_integra'), esperado['tem_integra'])
+                    # Executa o cruzamento limpo
+                    resultado = ckan.cruzar_espelhos_integras()
+                    
+                    esperado = cenario['esperados']
+                    
+                    if esperado.get('vazio'):
+                        self.assertEqual(len(resultado), 0, f"Falhou no {cenario['nome']}: esperava vazio, mas retornou {len(resultado)}.")
+                        continue
+                    else:
+                        # Validamos que pelo menos 1 registro corresponde ao filtro
+                        self.assertGreater(len(resultado), 0, f"Falhou no {cenario['nome']}: não retornou resultados.")
+    
+                    # Tratamento para validação de múltiplos id_mapa simultâneos
+                    if 'id_mapa_multiplos' in esperado:
+                        ids_retornados = [r.get('id_mapa') for r in resultado]
+                        for id_esperado in esperado['id_mapa_multiplos']:
+                            self.assertIn(id_esperado, ids_retornados, f"ID {id_esperado} não retornado na busca de múltiplos itens.")
+                    else:    
+                        # Pega a primeira ocorrência do cruzamento para testes de item único
+                        res_dict = resultado[0]
                         
-                    # Alguns dados da íntegra em específico estão no mapa secundário
-                    if 'ministro' in esperado:
-                        id_mapa = esperado['id_mapa']
-                        integra_dict = ckan._mapa_integras.get(id_mapa, {})
-                        self.assertEqual(integra_dict.get('ministro'), esperado['ministro'])
+                        # Checagens comuns resultantes
+                        if 'id_mapa' in esperado:
+                            self.assertEqual(res_dict.get('id_mapa'), esperado['id_mapa'])
+                        if 'orgao' in esperado:
+                            self.assertEqual(res_dict.get('orgao'), esperado['orgao'])
+                        if 'numero_registro' in esperado:
+                            self.assertEqual(res_dict.get('numero_registro'), esperado['numero_registro'])
+                        if 'data_publicacao' in esperado:
+                            self.assertEqual(res_dict.get('data_publicacao'), esperado['data_publicacao'])
+                        if 'tem_integra' in esperado:
+                            self.assertEqual(res_dict.get('tem_integra'), esperado['tem_integra'])
+                            
+                        # Alguns dados da íntegra em específico estão no mapa secundário
+                        if 'ministro' in esperado:
+                            id_mapa = esperado['id_mapa']
+                            integra_dict = ckan._mapa_integras.get(id_mapa, {})
+                            self.assertEqual(integra_dict.get('ministro'), esperado['ministro'])
+            finally:
+                del ckan
+                del resultado
+                gc.collect()
 
 
 class TestUtilCkanIntegraFiltros(unittest.TestCase):
     """Testes para UtilCkanIntegra — foco exclusivo no dataset de íntegras."""
+
+    @classmethod
+    def setUpClass(cls):
+        print("Atualizando cache e mapas para os anos dos testes (UtilCkanIntegra)...")
+        integra = UtilCkanIntegra(anos={'2022', '2023', '2024', '2025'}, download_dir=get_download_dir(), atualizar_cache_e_mapas=True)
+        integra.atualizar_mapas()
+        print("Cache atualizado com sucesso.")
 
     def test_filtros_diversos(self):
         """Testes parametrizados para UtilCkanIntegra com cenários variados."""
@@ -291,7 +312,7 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
                     'documentos': [289154346],
                 },
                 'esperados': {
-                    'multiplos': ['202302829818', '202404351347'] # num_registros expected
+                    'multiplos': ['202302829818', '202404279389'] # num_registros expected
                 }
             },
             {
@@ -307,52 +328,59 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
         ]
 
         for cenario in cenarios:
-            with self.subTest(cenario=cenario['nome']):
-                # Test_resp showed that atualizar_cache=False works if maps exist
-                atualizar = cenario.get('atualizar_cache', True)
-                integra = UtilCkanIntegra(**cenario['parametros'], download_dir=get_download_dir(), atualizar_cache_e_mapas=atualizar)
-                itens = integra.consultar_mapa()
-
-                esperado = cenario['esperados']
-                
-                if esperado.get('vazio'):
-                    self.assertEqual(len(itens), 0, f"Falhou no cenário '{cenario['nome']}': esperava vazio.")
-                    continue
-                
-                self.assertGreater(len(itens), 0,
-                    f"Falhou no cenário '{cenario['nome']}': não retornou resultados.")
-
-                esperado = cenario['esperados']
-                if 'multiplos' in esperado:
-                    regs_retornados = [i.get('numero_registro') for i in itens]
-                    if 'qtd_esperada' in esperado:
-                        self.assertEqual(len(itens), esperado['qtd_esperada'], f"Falhou no cenário '{cenario['nome']}': esperava {esperado['qtd_esperada']} resultados, obteve {len(itens)}.")
-                    for r_esperado in esperado['multiplos']:
-                        self.assertIn(r_esperado, regs_retornados)
-                    continue
-
-                item = itens[0]
-
-                if 'id_mapa' in esperado:
-                    self.assertEqual(item.get('id_mapa'), esperado['id_mapa'])
-                if 'numero_registro' in esperado:
-                    self.assertEqual(item.get('numero_registro'), esperado['numero_registro'])
-                if 'seq_documento' in esperado:
-                    self.assertEqual(str(item.get('seq_documento')), esperado['seq_documento'])
-                if 'data_publicacao' in esperado:
-                    self.assertEqual(item.get('data_publicacao'), esperado['data_publicacao'])
-                if 'ministro' in esperado:
-                    self.assertEqual(item.get('ministro'), esperado['ministro'])
-                # Verifica presença de campos obrigatórios
-                for campo in esperado.get('campos_presentes', []):
-                    self.assertIn(campo, item,
-                        f"Campo '{campo}' ausente no resultado do cenário '{cenario['nome']}'")
+            integra = None
+            itens = None
+            try:
+                with self.subTest(cenario=cenario['nome']):
+                    # Test_resp showed that atualizar_cache=False works if maps exist
+                    atualizar = cenario.get('atualizar_cache', False)
+                    integra = UtilCkanIntegra(**cenario['parametros'], download_dir=get_download_dir(), atualizar_cache_e_mapas=atualizar)
+                    itens = integra.consultar_mapa()
+    
+                    esperado = cenario['esperados']
+                    
+                    if esperado.get('vazio'):
+                        self.assertEqual(len(itens), 0, f"Falhou no cenário '{cenario['nome']}': esperava vazio.")
+                        continue
+                    
+                    self.assertGreater(len(itens), 0,
+                        f"Falhou no cenário '{cenario['nome']}': não retornou resultados.")
+    
+                    esperado = cenario['esperados']
+                    if 'multiplos' in esperado:
+                        regs_retornados = [i.get('numero_registro') for i in itens]
+                        if 'qtd_esperada' in esperado:
+                            self.assertEqual(len(itens), esperado['qtd_esperada'], f"Falhou no cenário '{cenario['nome']}': esperava {esperado['qtd_esperada']} resultados, obteve {len(itens)}.")
+                        for r_esperado in esperado['multiplos']:
+                            self.assertIn(r_esperado, regs_retornados)
+                        continue
+    
+                    item = itens[0]
+    
+                    if 'id_mapa' in esperado:
+                        self.assertEqual(item.get('id_mapa'), esperado['id_mapa'])
+                    if 'numero_registro' in esperado:
+                        self.assertEqual(item.get('numero_registro'), esperado['numero_registro'])
+                    if 'seq_documento' in esperado:
+                        self.assertEqual(str(item.get('seq_documento')), esperado['seq_documento'])
+                    if 'data_publicacao' in esperado:
+                        self.assertEqual(item.get('data_publicacao'), esperado['data_publicacao'])
+                    if 'ministro' in esperado:
+                        self.assertEqual(item.get('ministro'), esperado['ministro'])
+                    # Verifica presença de campos obrigatórios
+                    for campo in esperado.get('campos_presentes', []):
+                        self.assertIn(campo, item,
+                            f"Campo '{campo}' ausente no resultado do cenário '{cenario['nome']}'")
+            finally:
+                del integra
+                del itens
+                gc.collect()
 
     def test_obter_integras(self):
         """UtilCkanIntegra.obter_integras() deve retornar textos não vazios."""
         integra = UtilCkanIntegra(
             processos={('202302829818', '20240822', 'ACÓRDÃO')},
-            download_dir=get_download_dir(), atualizar_cache_e_mapas=True,
+            download_dir=get_download_dir(), atualizar_cache_e_mapas=False,
         )
         textos = integra.obter_integras()
         self.assertGreater(len(textos), 0, 'obter_integras() não retornou textos')
@@ -367,7 +395,7 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
                 ('202201876389', 1656644400000),
                 ('202302829818', '2024-08-22'),
             },
-            download_dir=get_download_dir(), atualizar_cache_e_mapas=True,
+            download_dir=get_download_dir(), atualizar_cache_e_mapas=False,
         )
         itens = integra.consultar_mapa()
         self.assertGreater(len(itens), 1, 'Esperava mais de 1 resultado para múltiplos processos')
@@ -379,3 +407,6 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    # testes específicos:
+    # python util_ckan_teste.py TestUtilCkanFiltros.test_filtros_diversos TestUtilCkanIntegraFiltros.test_filtros_diversos

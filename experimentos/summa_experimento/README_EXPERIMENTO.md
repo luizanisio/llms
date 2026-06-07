@@ -9,11 +9,11 @@ Primeiro passo é extrair os textos dos acórdãos do portal de dados abertos do
 A extração de dados via API OpenRouter para a destilação de conhecimento do modelo Qwen3-235B assegura a propriedade intelectual ao pesquisador, permitindo o uso para treinamento de modelos, conforme os Termos de Serviço vigentes. Foram configuradas as diretrizes restritivas de privacidade, incluindo o opt-out de compartilhamento de dados e o uso de rotas de Zero Data Retention, para impedir o aprimoramento de modelos terceiros.
 
 ## Configurações do modelo professor:
-- qwen/qwen3-235b-a22b-2507:poor
+- versão do modelo:qwen/qwen3-235b-a22b-2507:poor
 - provider: {"quantizations": ["fp8"]}
 
 # Aluno: Modelo local com vLLM (CISIA - PUCPR)
-- qwen/Qwen2.5-7B-Instruct
+- versão do modelo:qwen/Qwen2.5-7B-Instruct
 - max_model_len: 38912
 - tensor_parallel_size: 1
 - dtype: "auto"
@@ -22,5 +22,5 @@ A extração de dados via API OpenRouter para a destilação de conhecimento do 
 
 # Referência: GPT5 Reasoning=Médio/ Verbose=Low
 - api Azure
-- versão: gpt-5-2025-08-07
+- versão do modelo: gpt-5-2025-08-07
 
