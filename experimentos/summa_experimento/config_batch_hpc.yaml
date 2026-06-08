@@ -3,6 +3,11 @@
 # Executar com: python util_vllm_batch.py --config config_batch.yaml
 # ==========================================================================
 
+# pip: pip install -r ../../src/requirements_mini.txt
+# chamada: python ../../src/util_vllm_batch.py --config config_batch_hpc.yaml 
+# visualizar: python ../../src/util_vllm_batch.py --config config_batch_hpc.yaml --view
+
+
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
