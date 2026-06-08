@@ -4,6 +4,24 @@ O script `util_ckan.py` foi projetado para facilitar a extração em lote e gere
 
 Este guia rápido explica como utilizar o CLI para as extrações mais comuns e oferece uma visão geral para o uso em código através da classe base.
 
+## 0. Entendendo o Mapeamento e Cruzamento (id_mapa)
+
+Para relacionar as informações do acervo de **Espelhos** (metadados estruturados) com as **Íntegras** (textos completos), o script cria uma chave composta única chamada `id_mapa`.
+
+**Composição do `id_mapa`:**
+O `id_mapa` é gerado no formato `{numeroRegistro}.{dataPublicacao}.{tipoDeDecisao}`, onde a data de publicação é normalizada para o padrão `YYYYMMDD` e o tipo de decisão é padronizado (ex: ACORDAO, DECISAO). Exemplo: `202403674719.20250103.ACORDAO`.
+
+**Como é feito o merge:**
+Quando você realiza uma extração de Espelhos e define `incluir_integras: true`, o script:
+1. Gera os dados do espelho e o `id_mapa` correspondente para cada registro.
+2. Consulta o cache local das Íntegras pelo mesmo `id_mapa`.
+3. Se houver correspondência, o texto integral é adicionado ao dataset final (junto com um campo booleano `tem_integra`).
+
+**Dados Duplicados:**
+Em alguns casos, o CKAN pode fornecer múltiplos registros que acabam gerando o mesmo `id_mapa` (por exemplo, republicações ou decisões corrigidas na mesma data), publicação de mais de uma decisão para o processo no mesmo dia. Quando o script detecta essa colisão durante a indexação, ele **não descarta silenciosamente** a informação. Em vez disso:
+- Ele escolhe o primeiro registro.
+- Registra as ocorrências adicionais como duplicatas.
+- Salva relatórios (`mapa_integras_duplicados.json` ou `mapa_espelhos_duplicados.json`) no diretório de download. Isso permite que você investigue manualmente esse tipo de ocorrência no dataset original do Tribunal.
 ---
 
 ## 1. Como funciona o cache?
@@ -29,7 +47,12 @@ python src/util_ckan.py --config config_extracao.yaml
 
 ### Estrutura do `config_extracao.yaml`
 
-No YAML, você pode definir **blocos de extração**, combinando filtros variados para obter desde de anos completos até listas de processos muito específicos.
+No YAML, você pode definir **blocos de extração**, combinando filtros variados para obter desde de anos completos até listas de processos muito específicos. 
+
+#### Formatos de Saída e Resumo EDA
+
+O campo `saida.arquivo` no arquivo de configuração aceita extensões `.parquet`, `.feather` ou `.csv`. O script detectará automaticamente a extensão e salvará no formato nativo correspondente. 
+Além disso, toda vez que um dataset for exportado, um arquivo Markdown (`.md`) com o mesmo nome será gerado. Este arquivo contém um **resumo exploratório (EDA)** com as contagens das categorias dos campos que podem ser agrupados (como ministros, classes processuais, órgãos e ramos do direito).
 
 #### Exemplo A: Extração Simples de Íntegras
 Extrair as íntegras (textos) de todos os processos da classe "AREsp" e "REsp" nos anos de 2023 e 2024.

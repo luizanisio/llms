@@ -115,6 +115,12 @@ COLUNAS_ESPELHO_PADRAO = [
     'informacoesComplementares', 'acordaosSimilares',
 ]
 
+COLUNAS_RESUMO_EDA = [
+    'ministroRelator', 'ministro', 'siglaClasse', 'sg_classe',
+    'descricaoClasse', 'nomeOrgaoJulgador', 'orgao_julgador',
+    'tipoDeDecisao', 'tipo_decisao', 'sg_ramo_direito', 'orgao'
+]
+
 CKAN_BASE_URL = 'https://dadosabertos.web.stj.jus.br'
 
 
@@ -901,6 +907,105 @@ class UtilCkanBase:
             print(sep)
         print('  ✅  Concluído!')
 
+    @staticmethod
+    def salvar_dataframe(df: pd.DataFrame, caminho_saida: str | Path):
+        """Salva o DataFrame no formato especificado pela extensão do arquivo (.parquet, .feather, .csv)
+        e gera automaticamente um arquivo .md com resumo exploratório (EDA) das colunas configuráveis.
+        """
+        caminho_saida = Path(caminho_saida)
+        caminho_saida.parent.mkdir(parents=True, exist_ok=True)
+        ext = caminho_saida.suffix.lower()
+        
+        if ext == '.parquet':
+            df.to_parquet(caminho_saida, index=False)
+        elif ext == '.feather':
+            df.to_feather(caminho_saida)
+        elif ext == '.csv':
+            df.to_csv(caminho_saida, index=False, encoding='utf-8', sep=';', escapechar='\\')
+        else:
+            print(f"⚠️  Extensão não reconhecida '{ext}'. Salvando como .parquet por padrão.")
+            caminho_saida = caminho_saida.with_suffix('.parquet')
+            df.to_parquet(caminho_saida, index=False)
+            
+        UtilCkanBase.gerar_resumo_eda_md(df, caminho_saida)
+
+    @staticmethod
+    def gerar_resumo_eda_md(df: pd.DataFrame, caminho_saida: Path):
+        """Gera um arquivo Markdown de resumo (EDA) focado em contagens de dados categóricos."""
+        caminho_md = caminho_saida.with_suffix('.md')
+        linhas = [
+            f"# Resumo EDA: {caminho_saida.name}",
+            "",
+            f"**Total de Registros:** {len(df)}",
+            ""
+        ]
+        
+        colunas_presentes = [c for c in COLUNAS_RESUMO_EDA if c in df.columns]
+        if not colunas_presentes:
+            linhas.append("Nenhuma coluna configurada para o resumo (EDA) foi encontrada no dataset.")
+        else:
+            for col in colunas_presentes:
+                linhas.append(f"## {col}")
+                contagem = df[col].fillna('(vazio)').value_counts()
+                total_val = contagem.sum()
+                linhas.append("| Valor | Quantidade | Percentual |")
+                linhas.append("|---|---|---|")
+                for valor, qtd in contagem.items():
+                    pct = (qtd / total_val * 100) if total_val > 0 else 0
+                    linhas.append(f"| {valor} | {qtd} | {pct:.1f}% |")
+                linhas.append("")
+
+        for campo_texto in ['integra', 'ementa']:
+            if campo_texto in df.columns:
+                tamanhos = df[campo_texto].astype(str).str.len()
+                tamanhos = tamanhos[tamanhos > 0]
+                if not tamanhos.empty:
+                    linhas.append(f"## Distribuição de Tamanho: {campo_texto}")
+                    linhas.extend(UtilCkanBase._gerar_histograma_ascii(tamanhos, bins=10))
+                    linhas.append("")
+                
+        caminho_md.write_text("\n".join(linhas), encoding='utf-8')
+        print(f"  📝  Resumo EDA gerado em: {caminho_md}")
+
+    @staticmethod
+    def _gerar_histograma_ascii(serie: pd.Series, bins=10) -> list[str]:
+        """Gera um histograma em texto ASCII para uma série numérica."""
+        if serie.empty or serie.isna().all():
+            return ["(Nenhum dado disponível para histograma)"]
+            
+        import numpy as np
+        counts, edges = np.histogram(serie.dropna(), bins=bins)
+        
+        if len(counts) == 0 or max(counts) == 0:
+            return ["(Nenhum dado disponível para histograma)"]
+            
+        max_count = max(counts)
+        total_count = sum(counts)
+        max_bar_len = 30
+        
+        linhas = [
+            "```text",
+            f"{'Intervalo (tamanho)':<25} | {'Contagem':<10} | {'%':<6} | Distribuição",
+            "-" * 75
+        ]
+        
+        for i in range(bins):
+            start = int(edges[i])
+            end = int(edges[i+1])
+            intervalo = f"[{start:<8} - {end:<8})"
+            
+            count = counts[i]
+            pct = (count / total_count * 100) if total_count > 0 else 0
+            pct_str = f"{pct:.1f}%"
+            
+            bar_len = int((count / max_count) * max_bar_len) if max_count > 0 else 0
+            bar = "█" * bar_len
+            
+            linhas.append(f"{intervalo:<25} | {count:<10} | {pct_str:<6} | {bar}")
+            
+        linhas.append("```")
+        return linhas
+
     @classmethod
     def _obter_trecho_texto(cls, texto: str, inicio=200, fim=100, quebras=None):
         """Retorna o texto inteiro caso seja menor que inicio+fim ou trecho inicial e final com [..] entre eles.
@@ -1385,7 +1490,7 @@ class UtilCkan(UtilCkanBase):
 
         # ── 3. Salvamento e resumo ────────────────────────────────────────────
         if caminho_saida:
-            df.to_parquet(caminho_saida, index=False)
+            self.salvar_dataframe(df, caminho_saida)
             self._imprimir_resumo(df, caminho_saida, col_texto='integra')
         return df
 
@@ -1763,7 +1868,7 @@ class UtilCkanIntegra(UtilCkanBase):
 
         # ── 4. Salvamento e resumo ────────────────────────────────────────────
         if caminho_saida:
-            df.to_parquet(caminho_saida, index=False)
+            self.salvar_dataframe(df, caminho_saida)
             self._imprimir_resumo(df, caminho_saida, col_texto='integra')
         return df
 
@@ -2271,7 +2376,7 @@ def executar_ckan_batch(yaml_path: str):
         os.makedirs(pasta_saida, exist_ok=True)
         
     print(f"💾 Salvando arquivo consolidado: {arquivo_saida}...")
-    df_final.to_parquet(arquivo_saida, index=False)
+    UtilCkanBase.salvar_dataframe(df_final, arquivo_saida)
     
     # Exibe resumo
     UtilCkanBase._imprimir_resumo(df_final, Path(arquivo_saida))
