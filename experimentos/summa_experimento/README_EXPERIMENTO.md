@@ -25,6 +25,7 @@ A extração de dados via API OpenRouter para a destilação de conhecimento do 
 ### Configurações do modelo professor:
 - **Versão do modelo:** `qwen/qwen3-235b-a22b-2507:poor`
 - **Provider:** `{"quantizations": ["fp8"]}`
+- o sufixo :poor ativa no OpenRouter a busca por deployments mais baratos para o mesmo modelo, reduzindo a prioridade do pedido e podendo aumentar o tempo para extração.
 
 **Variáveis de Ambiente:**
 - `PESSOAL_OPENROUTER_API_KEY`
@@ -42,6 +43,7 @@ python ../../src/util_vllm_batch.py --config config_batch_235b.yaml
 - **dtype:** "auto"
 - **quantization:** bitsandbytes
 - **load_format:** bitsandbytes
+- 1xGPU H100
 
 **Variáveis de Ambiente (opcional):**
 - `HF_TOKEN`
