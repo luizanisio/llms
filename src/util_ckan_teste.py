@@ -151,12 +151,12 @@ class TestUtilCkanFiltros(unittest.TestCase):
                 'nome': 'Lógica OR (OU) entre processos e documentos',
                 'parametros': {
                     'processos': ['202302829818'],
-                    'documentos': [289154346],
+                    'documentos': [146044158],
                 },
                 'esperados': {
                     'id_mapa_multiplos': [
                         '202302829818.20240822.ACÓRDÃO',
-                        '202404279389.20250103.ACÓRDÃO'
+                        '201703248142.20220224.ACÓRDÃO'
                     ]
                 }
             },
@@ -241,11 +241,11 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
                 'nome': 'Cenário igual à configuração yaml (6 registros)',
                 'parametros': {
                     'processos': ["REsp 2046214", "AREsp 2831077", ["202403674719", "2025-01-03"], ["REsp 2045705", "20230320", "DECISÃO"]],
-                    'documentos': [289154352, 289154346],
+                    'documentos': [289154352, 146044158],
                 },
                 'esperados': {
                     'qtd_esperada': 6,
-                    'multiplos': ['202300025898', '202204045424', '202404279389', '202404413996', '202403674719', '202500067396']
+                    'multiplos': ['202300025898', '202204045424', '201703248142', '202404413996', '202403674719', '202500067396']
                 }
             },
             {
@@ -309,10 +309,10 @@ class TestUtilCkanIntegraFiltros(unittest.TestCase):
                 'nome': 'Filtro combinado OR (processos + documentos) deve retornar ambos',
                 'parametros': {
                     'processos': ['202302829818'],
-                    'documentos': [289154346],
+                    'documentos': [146044158],
                 },
                 'esperados': {
-                    'multiplos': ['202302829818', '202404279389'] # num_registros expected
+                    'multiplos': ['202302829818', '201703248142'] # num_registros expected
                 }
             },
             {
