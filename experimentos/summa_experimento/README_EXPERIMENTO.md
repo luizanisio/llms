@@ -11,7 +11,7 @@ python ../../src/util_ckan.py --config config_extracao.yaml
 
 **Composição dos dados:**
 - **Grupo 1:** Dados selecionados para o experimento com 22k documentos estratificados com distância do cosseno de no mínimo `0.15` usando o modelo Athos do STJ.
-- **Grupo 2:** Novos documentos posteriores ao treinamento de qualquer um dos modelos utilizados. Data escolhida: `25/05/2026`.
+- **Grupo 2:** Novos documentos posteriores ao treinamento de qualquer um dos modelos utilizados. Conjunto escolhido: acórdãos publicados em `25/05/2026`.
 
 ---
 
