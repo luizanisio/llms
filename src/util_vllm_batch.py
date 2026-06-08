@@ -1305,6 +1305,7 @@ def processar_batch(
             tokens_processados_minuto=tp_min_final,
         )
 
+    return stats
 
 # ---------------------------------------------------------------------------
 # Processamento em Batch via API remota (or:, tg:, vl:, oa:)
