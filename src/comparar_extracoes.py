@@ -231,6 +231,7 @@ def configurar_metricas(config_yaml):
         'modelo_bertscore': conf_comp.get('modelos', {}).get('bertscore', None),
         'bertscore_batch_size': conf_comp.get('modelos', {}).get('bertscore_batch_size', None),
         'sbert_batch_size': conf_comp.get('modelos', {}).get('sbert_batch_size', None),
+        'campos_virtuais': config_yaml.get('campos_virtuais', {})
     }
     
     # Ajuste para teste rápido (desativa BERTScore e SBERT)
@@ -574,7 +575,8 @@ def main():
         mascara_observabilidade=mascara_observabilidade,
         pasta_log_erros=pasta_saida,
         ignorar_erro_extracao=config['execucao'].get('ignorar_erro_extracao', False),
-        ids_filtro=ids_filtro
+        ids_filtro=ids_filtro,
+        campos_virtuais=config.get('campos_virtuais', {})
     )
     
     dados_analise = carga.carregar()

@@ -26,6 +26,7 @@ from statistics import harmonic_mean
 # Importa JsonAnaliseDados para retornar objeto completo
 import util  # garante que a pasta src está no sys.path
 from util_json_dados import JsonAnaliseDados
+from util_json import Json2Texto
 from util import Util, UtilTextos
 
 class CargaDadosComparacao():
@@ -104,7 +105,8 @@ class CargaDadosComparacao():
                  mascara_observabilidade: str = None,
                  pasta_log_erros: str = None,
                  ignorar_erro_extracao: bool = False,
-                 ids_filtro: set = None):
+                 ids_filtro: set = None,
+                 campos_virtuais: dict = None):
         """
         Inicializa a classe de carga de dados com suporte a Regex.
         
@@ -133,6 +135,7 @@ class CargaDadosComparacao():
         self.pasta_log_erros = pasta_log_erros
         self.ignorar_erro_extracao = ignorar_erro_extracao
         self.ids_filtro = ids_filtro
+        self.campos_virtuais = campos_virtuais or {}
         
         # Compilação das Regex
         self.re_extracao = re.compile(mascara_extracao)
@@ -354,6 +357,29 @@ class CargaDadosComparacao():
         
         return resultado
 
+    def _aplicar_campos_virtuais(self, json_data: dict) -> dict:
+        """
+        Gera campos virtuais combinando o conteúdo formatado em texto plano
+        de um conjunto de subcampos definidos em campos_virtuais.
+        """
+        if not self.campos_virtuais or not isinstance(json_data, dict) or 'erro' in json_data:
+            return json_data
+            
+        for campo_virtual, chaves in self.campos_virtuais.items():
+            partes = []
+            for chave in chaves:
+                valor = self._extrair_campo_subnivel(json_data, chave)
+                if valor is not None:
+                    # Utiliza Json2Texto para formatar o valor de forma consistente.
+                    # Cria um dicionário de nível único para que o título do markdown fique sendo a chave.
+                    texto_md = Json2Texto.to_markdown({chave: valor}, heading_start_level=3)
+                    if texto_md and texto_md.strip():
+                        partes.append(texto_md.strip())
+            
+            if partes:
+                json_data[campo_virtual] = "\n\n".join(partes)
+                
+        return json_data
 
     def _listar_arquivos_json(self, pasta: str) -> list:
         """Lista todos os arquivos .json da pasta, retorna lista de IDs (método interno)"""
@@ -601,6 +627,7 @@ class CargaDadosComparacao():
             # 1. Carrega Origem
             path_origem = map_ext_origem[id_peca]
             json_origem = self._carregar_json(path_origem)
+            json_origem = self._aplicar_campos_virtuais(json_origem)
             json_origem_filtrado = self._filtrar_campos(json_origem, self.campos_comparacao)
             json_origem_filtrado = self._filtro_origem(json_origem_filtrado)
             
@@ -622,6 +649,7 @@ class CargaDadosComparacao():
                 
                 if path_dest:
                     json_dest = self._carregar_json(path_dest)
+                    json_dest = self._aplicar_campos_virtuais(json_dest)
                     json_dest_filtrado = self._filtrar_campos(json_dest, self.campos_comparacao)
                 else:
                     json_dest_filtrado = {'erro': 'Inexistente (Não encontrado no mapa)'}

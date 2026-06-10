@@ -1186,9 +1186,18 @@ class JsonAnalise:
         # 2. ANÁLISE GLOBAL
         metricas_global = cls._determinar_metricas_campo('(global)', config)
         
+        # OTIMIZAÇÃO: Remove campos virtuais para a comparação global para evitar repetição
+        campos_virtuais = config.get('campos_virtuais', {})
+        if campos_virtuais:
+            true_json_global = {k: v for k, v in true_json.items() if k not in campos_virtuais}
+            pred_json_global = {k: v for k, v in pred_json.items() if k not in campos_virtuais}
+        else:
+            true_json_global = true_json
+            pred_json_global = pred_json
+            
         for metrica in metricas_global:
             texto_true, texto_pred = cls._converter_pares_para_texto(
-                true_json, pred_json, metrica, config, alinhar=False
+                true_json_global, pred_json_global, metrica, config, alinhar=False
             )
             prefixo = f'(global)_{metrica}'
             
@@ -1208,8 +1217,15 @@ class JsonAnalise:
         # 3. ANÁLISE ESTRUTURAL
         metricas_estrutura = cls._determinar_metricas_campo('(estrutura)', config)
         
+        if campos_virtuais:
+            campos_pred_est = {k: v for k, v in campos_pred.items() if k not in campos_virtuais}
+            campos_true_est = {k: v for k, v in campos_true.items() if k not in campos_virtuais}
+        else:
+            campos_pred_est = campos_pred
+            campos_true_est = campos_true
+            
         for metrica in metricas_estrutura:
-            estrutura = cls._acuracia_estrutural(campos_pred, campos_true)
+            estrutura = cls._acuracia_estrutural(campos_pred_est, campos_true_est)
             
             prefixo = f'(estrutura)_{metrica}'
             resultado[f'{prefixo}_P'] = estrutura['P']

@@ -38,6 +38,9 @@ modelos_comparacao:
     rotulo: "Qwen7b"
     familia: "Qwen-7B"
 
+  - arquivo: "./saida/saida_sabia4.parquet"
+    rotulo: "Sabia-4"
+    familia: "Sabia-4"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
@@ -62,7 +65,8 @@ configuracao_comparacao:
   # carrega a lista de campo_id e filtra o parquet ou os ids das extrações antes de fazer a comparação
   # serve para análises de subconjuntos da base ou testes
   filtro: 
-    arquivo: "./saida/filtro_teste_fold_12.csv"
+    #arquivo: "./saida/filtro_teste_fold_12.csv"
+    arquivo: "./saida/filtro_teste_fold_12_100_teste.csv"
     campo_id: "seq_documento_acordao"    
 
   # Modelos customizados (Opcional)
@@ -98,6 +102,7 @@ configuracao_comparacao:
       - "Temas.Normas"
       - "Temas.Jurisprudencia"
       - "Temas"
+      - "Likert"
 
     rouge_1:
 
@@ -112,6 +117,7 @@ configuracao_comparacao:
       - "Resumo"
       - "DataJulgamento"
       - "Partes"
+      - "Likert"
 
     levenshtein:
       - "Tipo"
@@ -125,6 +131,7 @@ configuracao_comparacao:
       - "Temas"
       - "Partes"
       - "Temas.Explicacao"
+      - "Likert"
 
     sbert_grande:
       - "(global)"
@@ -134,3 +141,18 @@ configuracao_comparacao:
       - "Temas"
       - "Partes"
       - "Temas.Explicacao"
+      - "Likert"
+
+campos_virtuais:
+  Likert:
+    - Materia
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Doutrina
+    - Temas.Conceitos
+    - Resumo
+  MetaDados:
+    - Materia
+    - Partes
+    - "Temas.Normas"
+    - "Temas.Jurisprudencia"

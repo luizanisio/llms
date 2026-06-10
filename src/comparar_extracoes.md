@@ -28,6 +28,13 @@ Todas as manobras e experimentos de comparação prescindem da necessidade de en
 - **`modelos_comparacao`**: (Lista) Suas diversas frentes de modelos prevendo outputs do texto. Cada modelo pode usar `pasta` ou `arquivo` (.parquet). Pode usar `ativo: false` para desabilitar algum.
 - **`execucao.divisao`**: Define as frações destinadas à criação de splits (ex: `{treino: 0.7, teste: 0.2, validacao: 0.1}`). As proporções formam os CSVs em `/divisoes/`.
 - **`configuracao_comparacao.campos`**: A engrenagem primordial. Dicionário declarativo dizendo em quais chaves folha do JSON de predição você irá aplicar `bertscore`, `rouge_1`, `levenshtein`, etc. Existe também `(global)` e `(estrutura)` que sempre rodam implicitamente rastreando chaves e nós primários, de forma que eles criam seu escopo de avaliação macro para você sempre entender "Qual o F1 em relação a se acertaram ou não ao menos trazer a estrutura do campo".
+- **`configuracao_comparacao.nivel_campos`**: (Opcional, padrão: `1`) Define a profundidade da extração dos campos do JSON para a comparação global e estrutural. Com o valor `1`, apenas as chaves da raiz do JSON são processadas. Com valores maiores (ex: `2`, `3`), o avaliador irá adentrar e planificar chaves aninhadas em sub-dicionários até a profundidade especificada.
+  > [!TIP]
+  > **Exemplo Prático na configuração do YAML:**
+  > Imagine o JSON extraído: `{"Materia": "Penal", "Temas": {"Normas": "Art 1", "Explicacao": "X", "Argumentos": "Y"}}`
+  > 
+  > - Com **`nivel_campos: 1`**: O comparador enxerga apenas a raiz (os blocos `Materia` e `Temas` inteiros). Se você configurar as métricas para campos internos como `Temas.Normas` ou `Temas.Explicacao` no seu YAML, **eles serão ignorados (não encontrados)**, pois a ferramenta não desceu um nível para separá-los.
+  > - Com **`nivel_campos: 2`**: O comparador adentra mais um nível e planifica o dicionário, enxergando: `Materia`, `Temas.Normas`, `Temas.Explicacao` e `Temas.Argumentos` separadamente. Assim, você pode definir de forma independente que `Temas.Normas` será avaliado por `rouge_1` (focado em termos exatos) e `Temas.Explicacao` por `bertscore` (focado na semântica).
 - **`configuracao_comparacao.modelos`**: (Opcional) Permite sobrescrever os modelos SBERT e BERTScore padrão por modelos HuggingFace personalizados. Exemplo:
   ```yaml
   modelos:
@@ -44,6 +51,15 @@ Todas as manobras e experimentos de comparação prescindem da necessidade de en
     arquivo: "./filtro_teste.csv"
     campo_id: "seq_documento_acordao"
   ```
+- **`campos_virtuais`**: (Opcional) Dicionário que permite combinar o conteúdo de múltiplas chaves do JSON em um novo campo "virtual", gerado em tempo de execução durante a carga. Ideal para métricas globais (como SBERT) ou de Prompt (LLM-as-a-judge) que precisam avaliar grandes blocos de texto agregados.
+  ```yaml
+  campos_virtuais:
+    Likert:
+      - Materia
+      - Temas.Ponto
+      - Resumo
+  ```
+  **Nota:** Campos virtuais são omitidos dinamicamente nas métricas `(global)` e `(estrutura)` para evitar inflar contagens estruturais ou duplicar textos que já existam nas chaves originais.
 
 ## 📦 Suporte a Entrada via Parquet
 
