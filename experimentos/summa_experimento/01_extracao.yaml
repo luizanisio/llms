@@ -1,7 +1,7 @@
 # ==========================================================================
 # Configuração de Extração de Dados do CKAN
-# Executar com: python ../../src/util_ckan.py --config config_extracao.yaml
-# Visualizar com: python ../../src/util_ckan.py --config config_extracao.yaml --view
+# Executar com: python ../../src/util_ckan.py --config 01_extracao.yaml
+# Visualizar com: python ../../src/util_ckan.py --config 01_extracao.yaml --view
 # ==========================================================================
 
 # --- Configuração Geral ---
