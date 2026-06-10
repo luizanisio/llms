@@ -61,7 +61,6 @@ configuracao_comparacao:
   
   # carrega a lista de campo_id e filtra o parquet ou os ids das extrações antes de fazer a comparação
   # serve para análises de subconjuntos da base ou testes
-  # TODO: implementar filtro 
   filtro: 
     arquivo: "./saida/filtro_teste_fold_12.csv"
     campo_id: "seq_documento_acordao"    

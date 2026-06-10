@@ -48,7 +48,7 @@ saida:
     fold: fold
 
 # --- Sequência de Extrações ---
-# Esperados 22237 - mas 202 do grupo 1 são decisões e não acórdãos
+# Esperados nas duas extrações 22237 - mas 202 do grupo 1 são decisões e não acórdãos
 # - 1089 sem íntegra
 extracoes:
   # Grupo 1: Extração dinâmica a partir de um parquet anterior e preservando do merge
@@ -64,6 +64,7 @@ extracoes:
       - extracao: "$hoje"
       
   # Grupo 2: Extração manual com injeção de colunas fixas
+  # - esperado 468
   - tipo: "integras"
     incluir_texto: true
     filtros:
