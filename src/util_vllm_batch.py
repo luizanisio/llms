@@ -135,6 +135,9 @@ geracao:
 # system_prompt: system prompt para modelos instruct (opcional).
 #   Se informado, o chat template do modelo é aplicado automaticamente.
 #   Se vazio, o texto montado é enviado diretamente ao modelo (sem chat template).
+# filtro: configuração opcional para processar apenas um subconjunto de IDs
+#   arquivo: caminho para arquivo CSV com os IDs a serem processados
+#   campo_id: nome da coluna com os IDs no arquivo CSV
 entrada:
   arquivo: "./entrada.parquet"
   campo_chave: "id"
@@ -142,6 +145,9 @@ entrada:
   prompt_template: ""
   variavel_texto: "<--TEXTO-->"
   system_prompt: ""
+  # filtro:
+  #   arquivo: "./filtro_ids.csv"
+  #   campo_id: "id_documento"
 
 # --- Saída ---
 # arquivo: caminho para arquivo .parquet OU pasta para arquivos .txt/.json
@@ -249,6 +255,14 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
         entrada["prompt_template"] = _resolver_caminho(prompt_tpl, base_dir)
     entrada.setdefault("variavel_texto", "<--TEXTO-->")
     entrada.setdefault("system_prompt", "")
+
+    filtro = entrada.get("filtro", {})
+    if filtro and isinstance(filtro, dict):
+        arquivo_filtro = filtro.get("arquivo", "")
+        if arquivo_filtro:
+            filtro["arquivo"] = _resolver_caminho(arquivo_filtro, base_dir)
+        entrada["filtro"] = filtro
+
     config["entrada"] = entrada
 
     # --- Saída (obrigatório) ---
@@ -349,6 +363,16 @@ def validar_config(config: Dict[str, Any]) -> List[str]:
                     f"Erro ao ler template '{prompt_tpl}': {e}"
                 )
 
+    # --- Filtro ---
+    filtro = cfg_entrada.get("filtro", {})
+    if filtro and isinstance(filtro, dict):
+        arquivo_filtro = filtro.get("arquivo", "")
+        if arquivo_filtro and not os.path.isfile(arquivo_filtro):
+            erros.append(
+                f"Arquivo de filtro não encontrado: '{arquivo_filtro}'\n"
+                f"   Verifique entrada.filtro.arquivo no YAML."
+            )
+
     # --- Parâmetros de geração ---
     cfg_geracao = config["geracao"]
     max_tokens = cfg_geracao.get("max_tokens", 2048)
@@ -396,10 +420,31 @@ def carregar_entrada(config: Dict[str, Any]) -> List[Dict[str, str]]:
     cfg_entrada = config["entrada"]
     arquivo = cfg_entrada["arquivo"]
 
+    # Lê filtro de IDs se configurado
+    ids_filtro = None
+    filtro_config = cfg_entrada.get("filtro", {})
+    if filtro_config and isinstance(filtro_config, dict):
+        arquivo_filtro = filtro_config.get("arquivo")
+        campo_id_filtro = filtro_config.get("campo_id")
+        
+        if arquivo_filtro and campo_id_filtro:
+            if os.path.exists(arquivo_filtro):
+                try:
+                    df_filtro = pd.read_csv(arquivo_filtro)
+                    if campo_id_filtro in df_filtro.columns:
+                        ids_filtro = set(df_filtro[campo_id_filtro].astype(str).str.strip())
+                        print(f"🔍 Filtro carregado: {len(ids_filtro)} IDs de '{arquivo_filtro}' (campo '{campo_id_filtro}')")
+                    else:
+                        print(f"⚠️  Aviso: Coluna '{campo_id_filtro}' não encontrada no arquivo de filtro '{arquivo_filtro}'.")
+                except Exception as e:
+                    print(f"⚠️  Aviso: Erro ao ler arquivo de filtro '{arquivo_filtro}': {e}")
+            else:
+                print(f"⚠️  Aviso: Arquivo de filtro não encontrado: {arquivo_filtro}")
+
     if arquivo.lower().endswith(".parquet"):
-        return _carregar_entrada_parquet(arquivo, cfg_entrada)
+        return _carregar_entrada_parquet(arquivo, cfg_entrada, ids_filtro)
     elif os.path.isdir(arquivo):
-        return _carregar_entrada_pasta(arquivo)
+        return _carregar_entrada_pasta(arquivo, ids_filtro)
     else:
         raise FileNotFoundError(
             f"Entrada não encontrada: '{arquivo}' "
@@ -408,7 +453,7 @@ def carregar_entrada(config: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def _carregar_entrada_parquet(
-    arquivo: str, cfg_entrada: Dict[str, Any]
+    arquivo: str, cfg_entrada: Dict[str, Any], ids_filtro: Optional[set] = None
 ) -> List[Dict[str, str]]:
     """Carrega entrada de arquivo parquet."""
     if not os.path.isfile(arquivo):
@@ -432,6 +477,8 @@ def _carregar_entrada_parquet(
     itens = []
     for _, row in df.iterrows():
         chave = str(row[campo_chave])
+        if ids_filtro is not None and str(chave).strip() not in ids_filtro:
+            continue
         texto = str(row[campo_texto]) if pd.notna(row[campo_texto]) else ""
         if texto.strip():
             itens.append({"chave": chave, "texto": texto})
@@ -439,7 +486,7 @@ def _carregar_entrada_parquet(
     return itens
 
 
-def _carregar_entrada_pasta(pasta: str) -> List[Dict[str, str]]:
+def _carregar_entrada_pasta(pasta: str, ids_filtro: Optional[set] = None) -> List[Dict[str, str]]:
     """Carrega entrada de pasta com arquivos .txt."""
     if not os.path.isdir(pasta):
         raise FileNotFoundError(f"Pasta de entrada não encontrada: '{pasta}'")
@@ -452,6 +499,8 @@ def _carregar_entrada_pasta(pasta: str) -> List[Dict[str, str]]:
         if not os.path.isfile(caminho):
             continue
         chave = os.path.splitext(nome)[0]
+        if ids_filtro is not None and str(chave).strip() not in ids_filtro:
+            continue
         with open(caminho, "r", encoding="utf-8") as f:
             texto = f.read()
         if texto.strip():
