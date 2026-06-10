@@ -23,11 +23,18 @@ from threading import Lock
 LOCK_ARQUIVO_BRUTO = Lock()
 
 '''
- Autor Luiz Anísio 17/10/2025
- Fonte: https://github.com/luizanisio/llms/tree/main/src
- Utilitários para acionar apis generativas da openai, openrouter, together.ai, ollama e vllm
- Realiza tratamento de erros comuns e padroniza retorno json ou texto
- Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento
+  Autor Luiz Anísio 17/10/2025
+  Fonte: https://github.com/luizanisio/llms/tree/main/src
+  Utilitários para acionar apis generativas da openai, openrouter, together.ai, ollama, vllm e maritaca
+  Realiza tratamento de erros comuns e padroniza retorno json ou texto
+  Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento
+  Prefixo dos modelos para cada API:
+  - oa: openai - exemplo oa:openai/gpt-oss-20b
+  - mt: maritaca - exemplo mt:sabia-4
+  - or: openrouter - exemplo or:gemma3-12b
+  - tg: together.ai - exemplo tg:gemma3-12b
+  - vl: vllm - exemplo vl:gemma3-12b
+  - ol: ollama - exemplo ol:gemma3-12b
 
 * Para usar no colab, execute a linha:
 !curl https://raw.githubusercontent.com/luizanisio/llms/refs/heads/main/src/util_openai.py -o ./util_openai.py
@@ -35,6 +42,8 @@ LOCK_ARQUIVO_BRUTO = Lock()
 Adicione a(s) chave(s) de API no ambiente do colab:
 > PESSOAL_OPENAI_API_KEY='sua-chave-aqui'
 > PESSOAL_OPENROUTER_API_KEY='sua-chave-aqui'
+> OPENROUTER_EXTRA='{"provider": {"quantizations": ["fp8"]} }'
+> PESSOAL_MARITACA_API_KEY='sua-chave-aqui'
 Teste:
 > from util_openai import get_resposta, teste_resposta
 > teste_resposta(as_json=True, modelo='or:openai/gpt-oss-20b')
@@ -93,6 +102,9 @@ def get_resposta(prompt:str, papel:str='',
     elif modelo.lower().startswith('tg:'):
         tipo_api = 'together'
         nome_modelo = modelo[3:]
+    elif modelo.lower().startswith('mt:'):
+        tipo_api = 'maritaca'
+        nome_modelo = modelo[3:]
     elif modelo.lower().startswith('oa:'):
         tipo_api = 'openaia'
         nome_modelo = modelo[3:]
@@ -130,6 +142,10 @@ def get_resposta(prompt:str, papel:str='',
     if tipo_api == 'together':
         if MSG_TOGETHER: raise ImportError(MSG_TOGETHER)
         return UtilTogether.chat_completion_padronizado(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry, tempo_inicio=tempo)
+
+    if tipo_api == 'maritaca':
+        if MSG_OPENAI: raise ImportError(MSG_OPENAI)
+        return UtilMaritaca.chat_completion_padronizado(messages=messages, modelo=nome_modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry, tempo_inicio=tempo)
         
     if tipo_api == 'openaia':
         return UtilOA().prompt(prompt=messages, sg_modelo=nome_modelo, think=think, as_json=as_json, max_tokens=max_tokens)
@@ -222,21 +238,35 @@ class UtilResponse:
         resultado['tempo'] = round(tempo, 3)
         return resultado
 
+
+
 class UtilOpenAI:
+    __URL__ = None
+    __ENV_KEY__ = "PESSOAL_OPENAI_API_KEY"
+    __HAS_THINK__ = True
     @classmethod
     def chat_completion_padronizado(cls, messages: list, modelo: str, temperature: float = 0.01,
                                     max_tokens: int = None, as_json: bool = True, raw: bool = False,
                                     timeout: int = 300, think: str = None, api_key: str = None,
                                     silencioso: bool = False, max_retry: int = 5, tempo_inicio: float = None):
+        api_key = api_key or os.getenv(cls.__ENV_KEY__)
+        if not api_key: return {'erro': f'{cls.__ENV_KEY__} não encontrada no ambiente', 'model': modelo, 'tempo': round(time() - tempo, 3)}
         tempo = tempo_inicio or time()
-        api_key = api_key or os.getenv("PESSOAL_OPENAI_API_KEY")
-        if not api_key: return {'erro': 'PESSOAL_OPENAI_API_KEY não encontrada no ambiente', 'model': modelo, 'tempo': round(time() - tempo, 3)}
 
-        client_gpt = OpenAI(api_key=api_key, timeout=timeout)
-        args = {'messages': messages, 'model': modelo, 'temperature': temperature, 'timeout': timeout}
+        if cls.__URL__ is None:
+            client_gpt = OpenAI(api_key=api_key, timeout=timeout)
+        else:
+            client_gpt = OpenAI(api_key=api_key,base_url=cls.__URL__,timeout=timeout)
+                
+        _modelo, _extra_body = cls._get_model_extra_body(modelo) if hasattr(cls,'_get_model_extra_body') else (modelo, None)
+
+        # modelo e extra_body para Maritaca e outras classes derivadas de UtilOpenAI
+        args = {'messages': messages, 'model': _modelo, 'temperature': temperature, 'timeout': timeout}
+        if _extra_body is not None: args['extra_body'] = _extra_body
+
         if isinstance(max_tokens, int): args['max_tokens'] = max_tokens
         
-        if think:
+        if think and cls.__HAS_THINK__:
             _reasoning, _verbosity = UtilOpenRouter._mapear_reasoning(think)
             if 'gpt-5' in modelo.lower():
                 args = {k: v for k, v in args.items() if k not in {'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'}}
@@ -281,6 +311,22 @@ class UtilOpenAI:
             'temperature': temperature
         }
         return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
+
+class UtilMaritaca(UtilOpenAI):
+    __URL__ = 'https://chat.maritaca.ai/api'
+    __ENV_KEY__ = 'PESSOAL_MARITACA_API_KEY'
+    __HAS_THINK__ = False
+    
+    @classmethod
+    def _get_model_extra_body(cls, modelo:str):
+        ''' identifica o modelo e se tem extra_body com flex tear
+        '''
+        if modelo.lower().endswith(':flex') or modelo.lower().endswith(':poor'):
+            extra_body = {"service_tier": "flex"}
+            modelo = modelo[:-5]
+        else:
+            extra_body = None
+        return modelo, extra_body
 
 class UtilTogether:
     @classmethod
@@ -1143,7 +1189,9 @@ if __name__ == '__main__':
     # teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')  # OpenRouter
     # teste_resposta(as_json=True, modelo='ol:llama3')                 # Ollama local
     #teste_resposta(as_json=True, modelo='or:google/gemma-3-27b-it')
-    teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
+    #teste_resposta(as_json=True, modelo='or:qwen/qwen3-235b-a22b-2507:m:l')
+
+    teste_resposta(as_json=True, modelo='mt:sabia-4:flex')
 
     #teste_resposta(as_json=True, modelo='tg:google/gemma-3n-E4B-it:h:h')
     #teste_resposta(as_json=True, modelo='gpt-5-nano')

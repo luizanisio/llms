@@ -69,3 +69,10 @@ python ../../src/util_vllm_batch.py --config config_batch.yaml
 ```bash
 python ../../src/util_vllm_batch.py --config config_batch_gpt5.yaml
 ```
+
+## 4. Comparação Sabiá 4
+- **API:** Maritaca
+- **Versão do modelo:** `sabiá-4`
+- **Treinamento:** até 08/2024
+- Janela 128k
+- Nome: sabia-4 ou sabia-4-2026-01-06
