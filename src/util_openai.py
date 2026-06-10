@@ -1098,6 +1098,7 @@ _PREFIXOS_API_REMOTA = {
     'tg:': 'Together.ai',
     'vl:': 'vLLM Server',
     'oa:': 'OpenAIA',
+    'mt:': 'Maritaca',
 }
 
 def eh_modelo_api_remota(caminho: str) -> bool:
