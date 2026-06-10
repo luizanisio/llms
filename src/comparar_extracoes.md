@@ -23,11 +23,69 @@ python src/comparar_extracoes.py
 ## ⚙️ Configuração (O Arquivo YAML)
 Todas as manobras e experimentos de comparação prescindem da necessidade de entrar no código. Você declara suas intenções dentro do arquivo `.yaml` de configuração, com as seguintes chaves de destaque:
 
-- **`saida`**: (Dicionário) Pasta raiz `.pasta` das avaliações e relatórios a serem gerados, além dos arquivos contendo as subdivisões no futuro de seu treinamento iterativo.
-- **`modelo_base`**: Configurações relativas a pasta local onde você dispôs os txts+jsons perfeitos de gabarito para ser tomado como padrão de colidência das predições, rotulando de "Humano". (Há um gabarito único a ser setado).
-- **`modelos_comparacao`**: (Lista) Suas diversas frentes de modelos prevendo outputs do texto. Incluindo `gpt4`, `qwen_lora`, onde a tool irá varrer `pasta` carregando os JSON previstos de ids respectivos, excluindo do cálculo aqueles chumbados com erro e declarando notas baseadas nisto. Pode usar `ativo: false` para desabilitar algum.
+- **`saida`**: (Dicionário) Pasta raiz `.pasta` das avaliações e relatórios a serem gerados, além dos arquivos contendo as subdivisões no futuro de seu treinamento iterativo. Inclui também `pasta_parquet` (obrigatória quando se usa entrada `.parquet`) para definir a pasta base onde os JSONs extraídos serão armazenados.
+- **`modelo_base`**: Configurações do modelo de referência (Ground Truth). Pode usar `pasta` (diretório com JSONs soltos) ou `arquivo` (caminho para um `.parquet`).
+- **`modelos_comparacao`**: (Lista) Suas diversas frentes de modelos prevendo outputs do texto. Cada modelo pode usar `pasta` ou `arquivo` (.parquet). Pode usar `ativo: false` para desabilitar algum.
 - **`execucao.divisao`**: Define as frações destinadas à criação de splits (ex: `{treino: 0.7, teste: 0.2, validacao: 0.1}`). As proporções formam os CSVs em `/divisoes/`.
 - **`configuracao_comparacao.campos`**: A engrenagem primordial. Dicionário declarativo dizendo em quais chaves folha do JSON de predição você irá aplicar `bertscore`, `rouge_1`, `levenshtein`, etc. Existe também `(global)` e `(estrutura)` que sempre rodam implicitamente rastreando chaves e nós primários, de forma que eles criam seu escopo de avaliação macro para você sempre entender "Qual o F1 em relação a se acertaram ou não ao menos trazer a estrutura do campo".
+- **`configuracao_comparacao.modelos`**: (Opcional) Permite sobrescrever os modelos SBERT e BERTScore padrão por modelos HuggingFace personalizados. Exemplo:
+  ```yaml
+  modelos:
+    sbert:
+      grande: "intfloat/multilingual-e5-base"  # override individual do SBERT grande
+      pequeno: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1" # override com modelo Jurídico do STJ de Portugual
+    bertscore: "microsoft/deberta-xlarge-mnli"  # modelo personalizado para BERTScore
+  ```
+  Se omitido, usa os modelos padrão: SBERT pequeno (`paraphrase-multilingual-MiniLM-L12-v2`), SBERT médio (`paraphrase-multilingual-mpnet-base-v2`), SBERT grande (`intfloat/multilingual-e5-large`), BERTScore (`bert-base-multilingual-cased` via `lang='pt'`).
+- **`configuracao_comparacao.campos_parquet`**: Mapeamento das colunas do arquivo `.parquet` para os dados esperados pelo pipeline (ver seção abaixo).
+- **`configuracao_comparacao.filtro`**: Permite definir um arquivo CSV e a coluna que servirá como filtro para a extração e carga. Apenas os IDs (da coluna especificada) que coincidirem com os dados do parquet/json serão avaliados.
+  ```yaml
+  filtro: 
+    arquivo: "./filtro_teste.csv"
+    campo_id: "seq_documento_acordao"
+  ```
+
+## 📦 Suporte a Entrada via Parquet
+
+### Visão Geral
+O pipeline suporta dois modos de entrada para os modelos (base e comparação):
+
+| Modo | Chave YAML | Descrição |
+|---|---|---|
+| **Diretório** (legado) | `pasta:` | Diretório contendo arquivos `.json`, `.tokens.json`, etc. |
+| **Parquet** (novo) | `arquivo:` | Arquivo `.parquet` consolidado com todas as extrações |
+
+Quando a entrada é um `.parquet`, o pipeline automaticamente extrai os dados para um diretório de JSONs individuais antes de iniciar a comparação. A extração ocorre **uma única vez** e é cacheada — nas execuções seguintes, os dados já extraídos são reutilizados.
+
+### Configuração de `campos_parquet`
+Define o mapeamento entre as colunas do `.parquet` e os dados esperados:
+
+```yaml
+configuracao_comparacao:
+  campos_parquet:
+    id: "chave"             # (obrigatório) coluna com o ID do documento
+    resposta: "resposta"    # (obrigatório) coluna com o JSON da extração → salvo como {id}.json
+    resumo_tokens: "resumo" # (opcional) coluna com JSON de tokens → salvo como {id}.tokens.json
+    avaliacao: ""           # (opcional) coluna com avaliação LLM → salvo como {id}.avaliacao.json
+    erro: "erro"            # (opcional) coluna com mensagem de erro
+```
+
+### Pasta de Extração
+A pasta onde os JSONs são extraídos é composta por:
+```
+<saida.pasta_parquet> / <nome_do_arquivo_parquet_sem_extensão> /
+```
+Exemplo: se `pasta_parquet: "./compara/"` e o arquivo é `saida_qwen7b.parquet`, os JSONs ficam em `./compara/saida_qwen7b/`.
+
+### Mecanismo de Cache
+Ao finalizar a extração, o sistema gera um arquivo `extracao_finalizada.md` na pasta de destino. Este arquivo funciona como um controle de cache:
+- **Se existir:** a extração é pulada e o pipeline prossegue direto para a comparação.
+- **Se removido:** uma nova extração é feita automaticamente na próxima execução.
+- **Para forçar re-extração completa:** remova a pasta de destino inteira ou apenas o `extracao_finalizada.md`.
+
+### Tratamento de Erros
+- Registros com coluna `erro` preenchida no parquet são extraídos normalmente, mas com uma chave `"erro"` adicionada dentro do JSON gerado, permitindo que o fluxo existente os identifique e trate conforme a flag `ignorar_erro_extracao`.
+- Registros com JSON inválido na coluna `resposta` geram um arquivo `{id}.json` com `{"erro": "JSON inválido na resposta: ..."}`, mantendo rastreabilidade completa.
 
 ## 🔄 Replicando Experimentos e Usando em Treino
 - Os **Relatórios Analíticos**, CSVs globais e Gráficos residirão perenemente na infraestrutura em `<saida.pasta>/`.

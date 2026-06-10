@@ -13,7 +13,7 @@ Suporta múltiplas métricas (BERTScore, ROUGE, Levenshtein) configuráveis por 
 Gera planilhas Excel, CSVs de estatísticas e gráficos comparativos.
 
 Uso:
-    python comparar_extracoes.py config_summa.yaml
+    python comparar_extracoes.py --config config_summa.yaml
 """
 
 import os
@@ -223,7 +223,14 @@ def configurar_metricas(config_yaml):
         'campos_sbert': campos.get('sbert') or [],
         'campos_sbert_pequeno': campos.get('sbert_pequeno') or [],
         'campos_sbert_medio': campos.get('sbert_medio') or [],
-        'campos_sbert_grande': campos.get('sbert_grande') or []
+        'campos_sbert_grande': campos.get('sbert_grande') or [],
+        # Configuração de modelos personalizados (opcional)
+        # modelos_sbert: dict com overrides por tamanho. Ex: {'grande': 'intfloat/multilingual-e5-base'}
+        # modelo_bertscore: string com nome do modelo HuggingFace. Ex: 'microsoft/deberta-xlarge-mnli'
+        'modelos_sbert': conf_comp.get('modelos', {}).get('sbert', {}),
+        'modelo_bertscore': conf_comp.get('modelos', {}).get('bertscore', None),
+        'bertscore_batch_size': conf_comp.get('modelos', {}).get('bertscore_batch_size', None),
+        'sbert_batch_size': conf_comp.get('modelos', {}).get('sbert_batch_size', None),
     }
     
     # Ajuste para teste rápido (desativa BERTScore e SBERT)
@@ -349,7 +356,7 @@ def _gerar_grafico_erros(dados_analise, pasta_saida, lang='pt'):
 
 def main():
     parser = argparse.ArgumentParser(description="Comparador de Extrações JSON via YAML")
-    parser.add_argument('config_file', nargs='?', default=None, help="Caminho do arquivo de configuração YAML")
+    parser.add_argument('--config', dest='config_file', default=None, help="Caminho do arquivo de configuração YAML")
     args = parser.parse_args()
 
     # 1. Carregar configuração
@@ -425,15 +432,75 @@ def main():
         print(f"⚠️  Modelos ignorados explicitamente (ativo=false): {', '.join(ignorados)}")
 
     # Prepara listas para CargaDadosComparacao
-    origem_raw = modelo_base['pasta']
-    origem = resolver_caminho(origem_raw, base_dir_yaml)
-    
     rotulo_origem = modelo_base.get('rotulo', 'BASE')
     # Read campo_id from YAML config (defined ahead of time for use later)
     rotulo_id = config.get('configuracao_comparacao', {}).get('nome_campo_id', 'id')
-    
-    pastas_destinos = [resolver_caminho(m['pasta'], base_dir_yaml) for m in modelos_comp]
     rotulos_destinos = [m['rotulo'] for m in modelos_comp]
+    
+    # 3.5 Pré-processamento: Parquet → Pasta de JSONs
+    campos_parquet = config.get('configuracao_comparacao', {}).get('campos_parquet', {})
+    pasta_parquet_raw = config.get('saida', {}).get('pasta_parquet', '')
+    
+    # Valida obrigatoriedade de pasta_parquet quando há entrada .parquet
+    todos_modelos_config = [modelo_base] + modelos_comp
+    tem_parquet = any(m.get('arquivo', '').endswith('.parquet') for m in todos_modelos_config)
+    if tem_parquet and not pasta_parquet_raw:
+        print("❌ 'saida.pasta_parquet' é obrigatório quando se usa arquivos .parquet como entrada.")
+        sys.exit(1)
+        
+    # Lê filtro de IDs se configurado
+    ids_filtro = None
+    config_filtro = config.get('configuracao_comparacao', {}).get('filtro', {})
+    if config_filtro and isinstance(config_filtro, dict):
+        arquivo_filtro = config_filtro.get('arquivo')
+        campo_id_filtro = config_filtro.get('campo_id')
+        
+        if arquivo_filtro and campo_id_filtro:
+            arquivo_filtro_abs = resolver_caminho(arquivo_filtro, base_dir_yaml)
+            if os.path.exists(arquivo_filtro_abs):
+                import pandas as pd
+                try:
+                    df_filtro = pd.read_csv(arquivo_filtro_abs)
+                    if campo_id_filtro in df_filtro.columns:
+                        ids_filtro = set(df_filtro[campo_id_filtro].astype(str).str.strip())
+                        print(f"🔍 Filtro carregado: {len(ids_filtro)} IDs de '{arquivo_filtro}' (campo '{campo_id_filtro}')")
+                    else:
+                        print(f"⚠️  Aviso: Coluna '{campo_id_filtro}' não encontrada no arquivo de filtro '{arquivo_filtro}'.")
+                except Exception as e:
+                    print(f"⚠️  Aviso: Erro ao ler arquivo de filtro '{arquivo_filtro}': {e}")
+            else:
+                print(f"⚠️  Aviso: Arquivo de filtro não encontrado: {arquivo_filtro_abs}")
+    
+    def _resolver_entrada_modelo(modelo_config):
+        """
+        Resolve a entrada de um modelo: se for .parquet, extrai para pasta.
+        Retorna o caminho da PASTA com os JSONs (seja direta ou extraída do parquet).
+        """
+        arquivo = modelo_config.get('arquivo', '')
+        pasta = modelo_config.get('pasta', '')
+        
+        if arquivo and arquivo.endswith('.parquet'):
+            from comparar_extracoes_util import ExtracaoParquet, resolver_pasta_parquet
+            arquivo_abs = resolver_caminho(arquivo, base_dir_yaml)
+            pasta_parquet_abs = resolver_caminho(pasta_parquet_raw, base_dir_yaml)
+            pasta_destino = resolver_pasta_parquet(arquivo_abs, pasta_parquet_abs)
+            
+            extrator = ExtracaoParquet(arquivo_abs, pasta_destino, campos_parquet, ids_filtro=ids_filtro)
+            erros = extrator.validar_colunas()
+            if erros:
+                print(f"❌ Erro ao validar parquet '{arquivo}':")
+                for e in erros:
+                    print(f"   - {e}")
+                sys.exit(1)
+            return extrator.extrair()
+        elif pasta:
+            return resolver_caminho(pasta, base_dir_yaml)
+        else:
+            print(f"❌ Modelo '{modelo_config.get('rotulo', '?')}' deve ter 'arquivo' (.parquet) ou 'pasta' definido.")
+            sys.exit(1)
+    
+    origem = _resolver_entrada_modelo(modelo_base)
+    pastas_destinos = [_resolver_entrada_modelo(m) for m in modelos_comp]
     
     # Validações básicas
     if not os.path.isdir(origem):
@@ -454,6 +521,15 @@ def main():
     print(f"   Destinos: {len(pastas_destinos)} pastas")
     print(f"   Campos: {campos_comparacao}")
     print(f"   Saída: {pasta_saida}")
+    
+    # Log de modelos personalizados (se configurados)
+    modelos_sbert = config_comparacao.get('modelos_sbert', {})
+    modelo_bertscore = config_comparacao.get('modelo_bertscore', None)
+    if modelos_sbert:
+        for tamanho, nome_modelo in modelos_sbert.items():
+            print(f"   🔧 SBERT [{tamanho}]: {nome_modelo} (personalizado)")
+    if modelo_bertscore:
+        print(f"   🔧 BERTScore: {modelo_bertscore} (personalizado)")
     
     # 5. Carga de Dados
     # Imports tardios para evitar problemas de circularidade ou init desnecessário
@@ -497,7 +573,8 @@ def main():
         mascara_avaliacao=mascara_avaliacao,
         mascara_observabilidade=mascara_observabilidade,
         pasta_log_erros=pasta_saida,
-        ignorar_erro_extracao=config['execucao'].get('ignorar_erro_extracao', False)
+        ignorar_erro_extracao=config['execucao'].get('ignorar_erro_extracao', False),
+        ids_filtro=ids_filtro
     )
     
     dados_analise = carga.carregar()

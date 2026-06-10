@@ -16,6 +16,8 @@ from util_sbert import BERTScoreLike, SBERTCache, sbert_score
 
 # Detecta flag "mock" nos argumentos
 
+MODELO_OVERRIDE = 'stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1'
+
 MODELO = "pequeno"
 MOCK_TEST = False
 _args_to_remove = []
@@ -282,6 +284,31 @@ class TestBERTScoreLikeGetInstance(unittest.TestCase):
         self.assertIsNot(inst_pequeno, inst_medio, 
                          "Modelos diferentes devem ter instâncias diferentes")
         print(f"[Modelos Diferentes] OK - pequeno: {id(inst_pequeno)}, medio: {id(inst_medio)}")
+    
+    def test_get_instance_with_override(self):
+        """Verifica que o override de modelo cria uma instância isolada baseada no modelo HuggingFace fornecido."""
+        print("\n[Override] Testando se modelos_override funciona corretamente...")
+        
+        # inst_padrao não deve ser a mesma que inst_override mesmo pedindo o mesmo alias
+        inst_padrao = BERTScoreLike.get_instance(MODELO)
+        inst_override = BERTScoreLike.get_instance(
+            MODELO, 
+            modelos_override={MODELO: MODELO_OVERRIDE}
+        )
+        
+        self.assertIsNot(inst_padrao, inst_override, 
+                         "Override deve gerar instância diferente se o nome do modelo for diferente")
+        self.assertEqual(inst_override.nome_modelo, MODELO_OVERRIDE,
+                         "A instância deve carregar o nome do modelo substituído")
+        
+        # Teste solicitando com o override novamente deve retornar a mesma instância (singleton)
+        inst_override2 = BERTScoreLike.get_instance(
+            MODELO, 
+            modelos_override={MODELO: MODELO_OVERRIDE}
+        )
+        self.assertIs(inst_override, inst_override2,
+                      "Override deve respeitar o padrão singleton para o mesmo nome de modelo HF")
+        print(f"[Override] OK - override carregado e singleton respeitado.")
     
     def test_get_instance_thread_safety(self):
         """
@@ -666,6 +693,23 @@ class TestSBERTCache(unittest.TestCase):
             sbert_score("não lista", ["b"])
         with self.assertRaises(ValueError):
             sbert_score(["a"], ["b", "c"])
+
+    def test_sbert_score_mini_batches(self):
+        """Testa o processamento em mini-batches com muitos textos pequenos."""
+        old_env = os.environ.get('SBERT_CACHE_PATH')
+        os.environ['SBERT_CACHE_PATH'] = self._tmpdir
+        try:
+            preds = ["Frase de teste para mini-batch."] * 550
+            trues = ["Referência de teste para mini-batch."] * 550
+
+            P, R, F1 = sbert_score(preds, trues, modelo=MODELO, decimais=3, verbose=True, usar_cache=False)
+            self.assertEqual(len(P), 550)
+            self.assertGreater(F1[0], 0.0)
+        finally:
+            if old_env is None:
+                os.environ.pop('SBERT_CACHE_PATH', None)
+            else:
+                os.environ['SBERT_CACHE_PATH'] = old_env
 
 
 if __name__ == '__main__':

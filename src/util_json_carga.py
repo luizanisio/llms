@@ -103,7 +103,8 @@ class CargaDadosComparacao():
                  mascara_avaliacao: str = None,
                  mascara_observabilidade: str = None,
                  pasta_log_erros: str = None,
-                 ignorar_erro_extracao: bool = False):
+                 ignorar_erro_extracao: bool = False,
+                 ids_filtro: set = None):
         """
         Inicializa a classe de carga de dados com suporte a Regex.
         
@@ -131,6 +132,7 @@ class CargaDadosComparacao():
         self.campos_comparacao = campos_comparacao
         self.pasta_log_erros = pasta_log_erros
         self.ignorar_erro_extracao = ignorar_erro_extracao
+        self.ids_filtro = ids_filtro
         
         # Compilação das Regex
         self.re_extracao = re.compile(mascara_extracao)
@@ -530,6 +532,8 @@ class CargaDadosComparacao():
         map_obs_origem = self._mapear_pasta(self.pasta_origem, self.re_observabilidade)
         
         ids_origem = set(map_ext_origem.keys())
+        if self.ids_filtro is not None:
+            ids_origem = ids_origem.intersection(self.ids_filtro)
         
         # 2. Mapeamento dos Destinos
         maps_destinos = [] # Lista de dicts: [{'ext': {}, 'tok': {}, ...}, ...]

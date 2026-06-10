@@ -210,7 +210,8 @@ def sbert_score(preds: List[str], trues: List[str],
                 decimais: int = 3,
                 usar_cache: bool = True,
                 atualizar_cache: bool = True,
-                verbose: bool = False) -> Tuple[List[float], List[float], List[float]]:
+                verbose: bool = False,
+                modelos_override: Dict[str, str] = None) -> Tuple[List[float], List[float], List[float]]:
     """
     Calcula SBERT (bertscore_like) com cache automático em disco baseado em MD5.
 
@@ -225,6 +226,10 @@ def sbert_score(preds: List[str], trues: List[str],
         usar_cache: Se True, lê do cache em disco
         atualizar_cache: Se True, salva novos resultados no cache
         verbose: Se True, exibe progresso
+        modelos_override: Dict opcional para sobrescrever modelos padrão.
+                          Ex: {'grande': 'intfloat/multilingual-e5-base'}
+                          Se o modelo solicitado tiver um override, usa o nome do
+                          modelo HuggingFace especificado.
 
     Returns:
         Tupla (P, R, F1) com listas de floats
@@ -242,7 +247,7 @@ def sbert_score(preds: List[str], trues: List[str],
         if verbose and len(preds) > 0:
             n_cache = len(preds) - len(missed_idx)
             print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds)} pares | Calcular: {len(missed_idx)}")
-        sbert = BERTScoreLike.get_instance(modelo)
+        sbert = BERTScoreLike.get_instance(modelo, modelos_override=modelos_override)
         new_P = []
         new_R = []
         new_F1 = []
@@ -316,7 +321,7 @@ class BERTScoreLike:
     _lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls, modelo: str = "medio") -> "BERTScoreLike":
+    def get_instance(cls, modelo: str = "medio", modelos_override: Dict[str, str] = None) -> "BERTScoreLike":
         """
         Obtém uma instância singleton do modelo SBERT (thread-safe).
         
@@ -325,6 +330,8 @@ class BERTScoreLike:
         
         Args:
             modelo: Nome do modelo ou alias ("pequeno", "medio", "grande").
+            modelos_override: Dict opcional para sobrescrever modelos padrão.
+                              Ex: {'grande': 'intfloat/multilingual-e5-base'}
         
         Returns:
             Instância compartilhada de BERTScoreLike para o modelo especificado.
@@ -333,8 +340,15 @@ class BERTScoreLike:
             # Em múltiplas threads, todas usarão a mesma instância:
             sbert = BERTScoreLike.get_instance("pequeno")
             resultado = sbert.comparar_textos(texto1, texto2)
+            
+            # Com modelo personalizado:
+            sbert = BERTScoreLike.get_instance("grande", modelos_override={'grande': 'intfloat/multilingual-e5-base'})
         """
+        # Resolve o nome real do modelo (com override se aplicável)
         modelo_key = modelo.lower()
+        if modelos_override and modelo_key in modelos_override:
+            # Se há override, usa o nome completo do HuggingFace como chave
+            modelo_key = modelos_override[modelo_key]
         
         # Double-checked locking para performance
         if modelo_key not in cls._instances:

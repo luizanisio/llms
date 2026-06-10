@@ -83,6 +83,7 @@ from copy import deepcopy
 from datetime import datetime
 import threading
 import time
+import gc
 import pandas as pd
 import util  # garante que a pasta src está no sys.path
 from util import Util
@@ -891,7 +892,8 @@ class JsonAnalise:
         if metrica == 'bertscore':
             importar('bert_score')
             # BERTScore com cache MD5 automático - retorna floats arredondados com decimais=3
-            P, R, F1 = bscore([texto_pred], [texto_true], decimais=3)
+            modelo_bertscore = config.get('modelo_bertscore', None)
+            P, R, F1 = bscore([texto_pred], [texto_true], decimais=3, model_type=modelo_bertscore)
             return {
                 'P': P[0],
                 'R': R[0],
@@ -958,6 +960,7 @@ class JsonAnalise:
             # sbert ou sbert_pequeno → modelo pequeno (paraphrase-multilingual-MiniLM-L12-v2)
             # sbert_medio → modelo médio (paraphrase-multilingual-mpnet-base-v2)
             # sbert_grande → modelo grande (intfloat/multilingual-e5-large)
+            # Modelos podem ser sobrescritos via config['modelos_sbert']
             
             # Mapeia nome da métrica para tamanho do modelo
             mapeamento_modelo = {
@@ -967,10 +970,12 @@ class JsonAnalise:
                 'sbert_grande': 'grande'
             }
             tamanho_modelo = mapeamento_modelo.get(metrica, 'pequeno')
+            modelos_sbert = config.get('modelos_sbert', None) or None
             
             # Usa sbert_score() com cache em disco (padrão idêntico ao bscore)
             from util_sbert import sbert_score
-            P, R, F1 = sbert_score([texto_pred], [texto_true], modelo=tamanho_modelo, decimais=4, verbose=True)
+            P, R, F1 = sbert_score([texto_pred], [texto_true], modelo=tamanho_modelo, decimais=4, verbose=True,
+                                   modelos_override=modelos_sbert)
             
             return {
                 'P': P[0],
@@ -982,7 +987,7 @@ class JsonAnalise:
             raise ValueError(f"Métrica '{metrica}' não suportada")
 
     @classmethod
-    def _calcular_bertscore_batch(cls, pares: List[Tuple[str, str, str]]) -> Dict[str, dict]:
+    def _calcular_bertscore_batch(cls, pares: List[Tuple[str, str, str]], model_type: str = None) -> Dict[str, dict]:
         """
         Calcula BERTScore para múltiplos pares em uma única chamada (batch).
         
@@ -998,6 +1003,8 @@ class JsonAnalise:
                    - prefixo: identificador único do par (ex: '(global)_bertscore')
                    - texto_pred: texto predito
                    - texto_true: texto verdadeiro/esperado
+            model_type: Nome do modelo HuggingFace personalizado (opcional).
+                        Se especificado, usa este modelo em vez do padrão.
         
         Returns:
             dict mapeando prefixo -> {'P': float, 'R': float, 'F1': float}
@@ -1022,7 +1029,8 @@ class JsonAnalise:
         
         # Chamada única ao BERTScore com todos os pares
         # O cache MD5 automático evita recálculos
-        P_list, R_list, F1_list = bscore(preds, trues, decimais=3)
+        # Propaga modelo personalizado se configurado
+        P_list, R_list, F1_list = bscore(preds, trues, decimais=3, model_type=model_type)
         
         # Mapeia resultados de volta aos prefixos
         resultados = {}
@@ -2004,21 +2012,26 @@ class JsonAnaliseDataFrame():
 
     def _precalcular_bertscore_global(self):
         """
-        PRÉ-CALCULA TODOS OS BERTScores EM UM ÚNICO BATCH.
+        PRÉ-CALCULA TODOS OS BERTScores EM MINI-BATCHES.
         
         OTIMIZAÇÃO CRÍTICA: Em vez de cada linha calcular seus pares BERTScore
         individualmente (causando overhead de IPC e subutilização de GPU),
         esta função:
         
         1. Coleta todos os pares (pred, true) de todas as linhas
-        2. Faz UMA única chamada bscore() com todos os pares
-        3. O cache interno do BERTScore armazena automaticamente os resultados
+        2. Divide em mini-batches de tamanho configurável (bertscore_batch_size)
+        3. Processa cada mini-batch com bscore() e libera memória entre eles
+        4. O cache interno do BERTScore armazena automaticamente os resultados
         
-        Reduz drasticamente o tempo de processamento quando há muitos documentos.
+        O tamanho do mini-batch pode ser configurado via:
+        - YAML: configuracao_comparacao.modelos.bertscore_batch_size (padrão: 256)
+        - Variável de ambiente: BERTSCORE_BATCH_SIZE (padrão: 256)
+        
+        Reduz drasticamente o consumo de memória quando há muitos documentos.
         O cache do BERTScore (baseado em MD5) garante que chamadas subsequentes
         sejam instantâneas.
         """
-        from util_bertscore import bscore
+        from util_bertscore import bscore, BERTSCORE_BATCH_SIZE
         
         # Verifica se BERTScore está configurado
         config = self.config or {}
@@ -2027,7 +2040,10 @@ class JsonAnaliseDataFrame():
         if not campos_bertscore:
             return  # Nada a fazer
         
-        print("\n🚀 Pré-calculando BERTScore em batch único para todos os documentos...")
+        # Tamanho do mini-batch: YAML > env > padrão (256)
+        mini_batch_size = config.get('bertscore_batch_size', None) or BERTSCORE_BATCH_SIZE
+        
+        print(f"\n🚀 Pré-calculando BERTScore em mini-batches de {mini_batch_size} para todos os documentos...")
         
         # Coleta todos os pares que precisam de BERTScore
         todos_pares = []  # Lista de (idx_linha, prefixo, pred, true)
@@ -2071,17 +2087,35 @@ class JsonAnaliseDataFrame():
             print("   ⚠️  Nenhum par BERTScore encontrado")
             return
         
-        print(f"   📊 Total de pares coletados: {len(todos_pares)}")
+        total_pares = len(todos_pares)
+        num_batches = (total_pares + mini_batch_size - 1) // mini_batch_size
+        print(f"   📊 Total de pares coletados: {total_pares}")
+        print(f"   📦 Processando em {num_batches} mini-batch(es) de até {mini_batch_size} pares...")
         
-        # Extrai listas para batch
-        preds = [p[3] for p in todos_pares]
-        trues = [p[4] for p in todos_pares]
+        # Propaga modelo personalizado se configurado
+        modelo_bertscore = config.get('modelo_bertscore', None)
+        total_processados = 0
         
-        # ÚNICA CHAMADA AO BERTScore com TODOS os pares
-        print(f"   ⚡ Processando {len(preds)} pares em batch único...")
-        P_list, R_list, F1_list = bscore(preds, trues, decimais=3, verbose=True)
+        for batch_idx in range(0, total_pares, mini_batch_size):
+            batch_pares = todos_pares[batch_idx:batch_idx + mini_batch_size]
+            batch_num = (batch_idx // mini_batch_size) + 1
+            
+            preds = [p[3] for p in batch_pares]
+            trues = [p[4] for p in batch_pares]
+            
+            verbose_batch = (batch_num == 1)  # Verbose apenas no primeiro batch
+            print(f"   ⚡ Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...")
+            
+            bscore(preds, trues, decimais=3, verbose=verbose_batch,
+                   model_type=modelo_bertscore, mini_batch_size=mini_batch_size)
+            
+            total_processados += len(preds)
+            
+            # Libera memória entre batches
+            del preds, trues, batch_pares
+            gc.collect()
         
-        print(f"   ✅ BERTScore pré-calculado: {len(P_list)} pares processados e armazenados no cache interno")
+        print(f"   ✅ BERTScore pré-calculado: {total_processados} pares processados e armazenados no cache interno")
 
     def _precalcular_sbert_global(self):
         """
@@ -2154,16 +2188,42 @@ class JsonAnaliseDataFrame():
                             pares_por_modelo[modelo_sbert].append((texto_pred, texto_true))
         
         import time as _time
+        import os
+        
+        # Tamanho do mini-batch: YAML > env > padrão (256)
+        default_batch_size = int(os.getenv('SBERT_BATCH_SIZE', '256'))
+        mini_batch_size = config.get('sbert_batch_size', None) or default_batch_size
+        
         for modelo_sbert, pares in pares_por_modelo.items():
             if not pares:
                 continue
-            preds = [p[0] for p in pares]
-            trues = [p[1] for p in pares]
-            print(f"   ⚡ SBERT [{modelo_sbert}]: {len(preds)} pares para processar...")
+                
+            total_pares = len(pares)
+            num_batches = (total_pares + mini_batch_size - 1) // mini_batch_size
+            
+            print(f"   ⚡ SBERT [{modelo_sbert}]: {total_pares} pares para processar em {num_batches} mini-batch(es) de até {mini_batch_size}...")
             t0 = _time.time()
-            sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=True)
+            modelos_sbert_override = config.get('modelos_sbert', None) or None
+            
+            for batch_idx in range(0, total_pares, mini_batch_size):
+                batch_pares = pares[batch_idx:batch_idx + mini_batch_size]
+                batch_num = (batch_idx // mini_batch_size) + 1
+                
+                preds = [p[0] for p in batch_pares]
+                trues = [p[1] for p in batch_pares]
+                
+                verbose_batch = (batch_num == 1)
+                if num_batches > 1:
+                    print(f"      📦 Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...")
+                
+                sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=verbose_batch,
+                            modelos_override=modelos_sbert_override)
+                
+                del preds, trues, batch_pares
+                gc.collect()
+                
             dt = _time.time() - t0
-            print(f"   ✅ SBERT [{modelo_sbert}]: concluído em {dt:.1f}s ({len(preds)} pares)")
+            print(f"   ✅ SBERT [{modelo_sbert}]: concluído em {dt:.1f}s ({total_pares} pares)")
         
         total = sum(len(p) for p in pares_por_modelo.values())
         if total:

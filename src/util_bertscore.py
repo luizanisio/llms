@@ -82,12 +82,31 @@ if hasattr(torch, '__version__') and torch.__version__ >= '2.0':
     # Para PyTorch 2.0+, desabilita meta device
     os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
-# Cache global do modelo BERTScorer para reutilização
-_bert_scorer_cache = None
+# Cache global do modelo BERTScorer para reutilização (por cache_key)
+_bert_scorer_cache = {}
 _bert_scorer_lock = None
+
+# Cache para configurações de modelos (max_tokens e tokenizers)
+_model_max_tokens_cache = {}
+_model_tokenizer_cache = {}
 
 # Leitura das variáveis de ambiente
 BERTSCORE_DEVICE = os.getenv('BERTSCORE_DEVICE', 'auto').strip()
+
+# Fração de overlap para janela deslizante em textos longos (0.0 a 0.9)
+# Pode ser configurado via variável de ambiente BERTSCORE_OVERLAP
+BERTSCORE_OVERLAP = float(os.getenv('BERTSCORE_OVERLAP', '0.5'))
+
+# Percentual máximo do limite de posição do modelo a ser usado antes de dividir em janelas
+# Ex: 0.95 significa que textos com mais de 95% dos tokens do modelo serão divididos em janelas
+# Isso deixa uma margem de segurança para tokens especiais ([CLS], [SEP], etc.)
+BERTSCORE_MAX_POSITION_PERCENTAGE = float(os.getenv('BERTSCORE_MAX_POSITION_PERCENTAGE', '0.95'))
+
+# Tamanho do mini-batch para processamento de pares pelo scorer.
+# Controla quantos pares são enviados ao scorer.score() por vez.
+# Valores menores reduzem o consumo de memória, mas aumentam o tempo total.
+# Pode ser configurado via variável de ambiente ou via YAML (configuracao_comparacao.modelos.bertscore_batch_size)
+BERTSCORE_BATCH_SIZE = int(os.getenv('BERTSCORE_BATCH_SIZE', '1024'))
 
 # Lógica 'auto' para o device
 if BERTSCORE_DEVICE.lower() == 'auto':
@@ -109,7 +128,301 @@ else:
     # Se não for auto/gpu, mantém o que veio (ex: cpu, cuda:0) ou fallback para cpu
     BERTSCORE_DEVICE = BERTSCORE_DEVICE or 'cpu'
 
-def _get_bert_scorer(lang='pt', device=None):
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Funções auxiliares para janela deslizante em textos longos
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_max_tokens(model_type=None, lang='pt'):
+    """
+    Obtém o número máximo de tokens suportado pelo modelo BERT.
+    
+    Lê max_position_embeddings do config do modelo e subtrai 2
+    (para tokens especiais [CLS] e [SEP]).
+    
+    Resultado é cacheado para evitar leituras repetidas.
+    
+    Args:
+        model_type: Nome do modelo HuggingFace (ex: 'stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1')
+        lang: Idioma, usado para inferir o modelo padrão quando model_type é None
+    
+    Returns:
+        int: Número máximo de tokens efetivo (já descontando [CLS] e [SEP])
+    """
+    cache_key = model_type or lang
+    if cache_key in _model_max_tokens_cache:
+        return _model_max_tokens_cache[cache_key]
+    
+    if model_type:
+        import transformers
+        try:
+            config_hf = transformers.AutoConfig.from_pretrained(model_type)
+            max_pos = getattr(config_hf, 'max_position_embeddings', 512)
+        except Exception:
+            max_pos = 512  # Fallback conservador
+    else:
+        # Modelos padrão do bert_score para maioria dos idiomas: 512
+        max_pos = 512
+    
+    max_tokens = int(max_pos * BERTSCORE_MAX_POSITION_PERCENTAGE)
+    _model_max_tokens_cache[cache_key] = max_tokens
+    return max_tokens
+
+
+def _get_tokenizer(model_type=None, lang='pt'):
+    """
+    Obtém o tokenizer do modelo BERT para tokenização prévia.
+    
+    Resultado é cacheado para reutilização.
+    
+    Args:
+        model_type: Nome do modelo HuggingFace
+        lang: Idioma (padrão: 'pt')
+    
+    Returns:
+        Tokenizer do modelo
+    """
+    cache_key = model_type or lang
+    if cache_key in _model_tokenizer_cache:
+        return _model_tokenizer_cache[cache_key]
+    
+    import transformers
+    
+    if model_type:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(model_type)
+    else:
+        # Modelo padrão usado pelo bert_score para 'pt'
+        tokenizer = transformers.AutoTokenizer.from_pretrained('bert-base-multilingual-cased')
+    
+    _model_tokenizer_cache[cache_key] = tokenizer
+    return tokenizer
+
+
+def _criar_janelas_tokens(token_ids, max_tokens, overlap_frac):
+    """
+    Divide uma lista de IDs de tokens em janelas sobrepostas.
+    
+    Args:
+        token_ids: Lista de IDs de tokens (sem tokens especiais)
+        max_tokens: Tamanho máximo de cada janela
+        overlap_frac: Fração de sobreposição entre janelas (0.0 a 0.9)
+    
+    Returns:
+        Lista de listas de token IDs (cada uma é uma janela)
+    """
+    if len(token_ids) <= max_tokens:
+        return [token_ids]
+    
+    step = int(max_tokens * (1 - overlap_frac))
+    step = max(1, step)  # Garante progresso mínimo
+    
+    janelas = []
+    for start in range(0, len(token_ids), step):
+        end = start + max_tokens
+        janela = token_ids[start:end]
+        if len(janela) > 0:
+            janelas.append(janela)
+        if end >= len(token_ids):
+            break  # Última janela já cobre o final
+    
+    return janelas
+
+
+def _liberar_memoria_gpu(device_str=None):
+    """Libera memória da GPU e coleta garbage."""
+    gc.collect()
+    if device_str and device_str.startswith('cuda'):
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
+def _calcular_scores_com_janelas(preds, trues, scorer, model_type=None, lang='pt',
+                                  overlap_frac=None, verbose=False, batch_size=32,
+                                  mini_batch_size=None):
+    """
+    Calcula BERTScore para listas de preds/trues, aplicando janela deslizante
+    automaticamente para textos que excedem o limite do modelo.
+    
+    Textos curtos são processados em mini-batches (eficiente e seguro para memória).
+    Textos longos são divididos em janelas sobrepostas e processados em mini-batches.
+    O score final de textos longos é a média ponderada pelo número de tokens de cada janela.
+    
+    Args:
+        preds: Lista de textos preditos
+        trues: Lista de textos verdadeiros
+        scorer: BERTScorer já carregado
+        model_type: Nome do modelo (para detectar max_tokens)
+        lang: Idioma (padrão: 'pt')
+        overlap_frac: Fração de overlap (None = usa BERTSCORE_OVERLAP)
+        verbose: Se True, exibe informações sobre janelamento
+        batch_size: Tamanho do batch interno para scorer.score()
+        mini_batch_size: Quantos pares processar por vez (None = usa BERTSCORE_BATCH_SIZE).
+                         Controla o consumo de memória: valores menores = menos memória.
+    
+    Returns:
+        Tupla (mP, mR, mF1) — listas de floats na mesma ordem dos inputs
+    """
+    if overlap_frac is None:
+        overlap_frac = BERTSCORE_OVERLAP
+    
+    if mini_batch_size is None:
+        mini_batch_size = BERTSCORE_BATCH_SIZE
+    
+    max_tokens = _get_max_tokens(model_type=model_type, lang=lang)
+    tokenizer = _get_tokenizer(model_type=model_type, lang=lang)
+    
+    # Detecta device do scorer para limpeza de memória
+    _device_str = getattr(scorer, 'device', None)
+    if _device_str is not None:
+        _device_str = str(_device_str)
+    elif BERTSCORE_DEVICE:
+        _device_str = BERTSCORE_DEVICE
+    
+    n = len(preds)
+    
+    # ── Identifica quais pares precisam de janelamento ──
+    # Tokeniza em mini-batches para não acumular todos os tokens na memória
+    indices_curtos = []
+    indices_longos = []  # (idx, tok_pred, tok_true)
+    
+    for i in range(n):
+        tok_pred = tokenizer.encode(preds[i], add_special_tokens=False)
+        tok_true = tokenizer.encode(trues[i], add_special_tokens=False)
+        if len(tok_pred) > max_tokens or len(tok_true) > max_tokens:
+            indices_longos.append((i, tok_pred, tok_true))
+        else:
+            indices_curtos.append(i)
+    
+    # Inicializa resultados
+    mP = [0.0] * n
+    mR = [0.0] * n
+    mF1 = [0.0] * n
+    
+    # ── Processa pares curtos em mini-batches ──
+    if indices_curtos:
+        total_curtos = len(indices_curtos)
+        num_mini_batches = (total_curtos + mini_batch_size - 1) // mini_batch_size
+        
+        if verbose and num_mini_batches > 1:
+            print(f"📦 [BERTScore] Processando {total_curtos} pares curtos em {num_mini_batches} mini-batch(es) de {mini_batch_size}")
+        
+        for mb_start in range(0, total_curtos, mini_batch_size):
+            mb_indices = indices_curtos[mb_start:mb_start + mini_batch_size]
+            preds_mb = [preds[i] for i in mb_indices]
+            trues_mb = [trues[i] for i in mb_indices]
+            
+            P_t, R_t, F1_t = scorer.score(
+                preds_mb, trues_mb,
+                verbose=False, batch_size=batch_size
+            )
+            
+            for idx_local, idx_original in enumerate(mb_indices):
+                mP[idx_original] = float(P_t[idx_local])
+                mR[idx_original] = float(R_t[idx_local])
+                mF1[idx_original] = float(F1_t[idx_local])
+            
+            # Libera memória entre mini-batches
+            del P_t, R_t, F1_t, preds_mb, trues_mb
+            if num_mini_batches > 1:
+                _liberar_memoria_gpu(_device_str)
+    
+    # ── Processa pares longos com janela deslizante em mini-batches ──
+    if indices_longos:
+        if verbose:
+            print(f"📐 [BERTScore] {len(indices_longos)} par(es) com texto longo — "
+                  f"usando janela deslizante (max_tokens={max_tokens}, overlap={overlap_frac:.0%})")
+        
+        # Processa pares longos em mini-batches para controlar memória
+        # Cada par longo gera múltiplas janelas, então acumulamos janelas até
+        # atingir mini_batch_size e depois processamos
+        janelas_preds_acum = []
+        janelas_trues_acum = []
+        mapa_janelas_acum = []  # [(idx_original, inicio_batch, fim_batch, pesos)]
+        total_janelas_processadas = 0
+        
+        def _processar_janelas_acumuladas():
+            """Processa janelas acumuladas e distribui resultados."""
+            nonlocal total_janelas_processadas
+            if not janelas_preds_acum:
+                return
+            
+            P_t, R_t, F1_t = scorer.score(
+                janelas_preds_acum, janelas_trues_acum,
+                verbose=False, batch_size=batch_size
+            )
+            
+            for idx_original, inicio, fim, pesos in mapa_janelas_acum:
+                p_vals = [float(P_t[k]) for k in range(inicio, fim)]
+                r_vals = [float(R_t[k]) for k in range(inicio, fim)]
+                f1_vals = [float(F1_t[k]) for k in range(inicio, fim)]
+                
+                soma_pesos = sum(pesos)
+                if soma_pesos > 0:
+                    mP[idx_original] = sum(p * w for p, w in zip(p_vals, pesos)) / soma_pesos
+                    mR[idx_original] = sum(r * w for r, w in zip(r_vals, pesos)) / soma_pesos
+                    mF1[idx_original] = sum(f * w for f, w in zip(f1_vals, pesos)) / soma_pesos
+                else:
+                    mP[idx_original] = sum(p_vals) / len(p_vals)
+                    mR[idx_original] = sum(r_vals) / len(r_vals)
+                    mF1[idx_original] = sum(f1_vals) / len(f1_vals)
+            
+            total_janelas_processadas += len(janelas_preds_acum)
+            
+            # Libera memória
+            del P_t, R_t, F1_t
+            _liberar_memoria_gpu(_device_str)
+        
+        for idx_original, tok_pred, tok_true in indices_longos:
+            janelas_pred = _criar_janelas_tokens(tok_pred, max_tokens, overlap_frac)
+            janelas_true = _criar_janelas_tokens(tok_true, max_tokens, overlap_frac)
+            
+            # Alinha: pad com última janela do texto mais curto
+            max_janelas = max(len(janelas_pred), len(janelas_true))
+            while len(janelas_pred) < max_janelas:
+                janelas_pred.append(janelas_pred[-1])
+            while len(janelas_true) < max_janelas:
+                janelas_true.append(janelas_true[-1])
+            
+            # Decodifica janelas de volta para texto
+            textos_pred = [tokenizer.decode(j, skip_special_tokens=True) for j in janelas_pred]
+            textos_true = [tokenizer.decode(j, skip_special_tokens=True) for j in janelas_true]
+            
+            pesos = [len(janelas_pred[k]) + len(janelas_true[k]) for k in range(max_janelas)]
+            
+            # Libera tokens originais (já decodificados)
+            del janelas_pred, janelas_true, tok_pred, tok_true
+            
+            inicio = len(janelas_preds_acum)
+            janelas_preds_acum.extend(textos_pred)
+            janelas_trues_acum.extend(textos_true)
+            fim = len(janelas_preds_acum)
+            
+            mapa_janelas_acum.append((idx_original, inicio, fim, pesos))
+            
+            # Se acumulou janelas suficientes, processa o mini-batch
+            if len(janelas_preds_acum) >= mini_batch_size:
+                if verbose:
+                    print(f"   📦 Processando mini-batch de {len(janelas_preds_acum)} janelas (longos)...")
+                _processar_janelas_acumuladas()
+                janelas_preds_acum = []
+                janelas_trues_acum = []
+                mapa_janelas_acum = []
+        
+        # Processa janelas restantes
+        if janelas_preds_acum:
+            if verbose and total_janelas_processadas > 0:
+                print(f"   📦 Processando mini-batch final de {len(janelas_preds_acum)} janelas (longos)...")
+            _processar_janelas_acumuladas()
+        
+        if verbose and total_janelas_processadas > 0:
+            print(f"   ✅ Total de janelas processadas: {total_janelas_processadas}")
+    
+    return mP, mR, mF1
+
+
+def _get_bert_scorer(lang='pt', device=None, model_type=None):
     """
     Obtém ou cria uma instância de BERTScorer com carregamento correto do modelo.
     
@@ -121,6 +434,8 @@ def _get_bert_scorer(lang='pt', device=None):
     Args:
         lang: Idioma do modelo (padrão: 'pt')
         device: Device para executar o modelo (None = usa BERTSCORE_DEVICE)
+        model_type: Nome do modelo HuggingFace (ex: 'microsoft/deberta-xlarge-mnli').
+                    Se especificado, sobrescreve a seleção por `lang`.
     
     Returns:
         BERTScorer configurado e pronto para uso
@@ -133,39 +448,70 @@ def _get_bert_scorer(lang='pt', device=None):
         _bert_scorer_lock = threading.Lock()
     
     _device = device if device is not None else BERTSCORE_DEVICE
-    cache_key = f"{lang}_{_device}"
+    cache_key = f"{model_type or lang}_{_device}"
     
     with _bert_scorer_lock:
         # Verifica se já existe no cache
-        if _bert_scorer_cache is not None and hasattr(_bert_scorer_cache, '_lang'):
-            if _bert_scorer_cache._lang == lang and str(_bert_scorer_cache.device) == str(_device):
-                return _bert_scorer_cache
+        if cache_key in _bert_scorer_cache:
+            return _bert_scorer_cache[cache_key]
         
         # Cria novo scorer
         try:
             # SOLUÇÃO: Usa BERTScorer que carrega o modelo corretamente
-            scorer = BERTScorer(
-                lang=lang,
-                device=_device,
-                rescale_with_baseline=False,
-                batch_size=32
-            )
+            # Se model_type foi especificado, usa-o em vez de lang
+            if model_type:
+                print(f"🔧 [BERTScore] Carregando modelo personalizado: {model_type}")
+                
+                # Modelos customizados precisam ter 'num_layers' explícito se não 
+                # estiverem na lista interna do bert_score
+                import transformers
+                try:
+                    config_hf = transformers.AutoConfig.from_pretrained(model_type)
+                    num_layers = getattr(config_hf, 'num_hidden_layers', None)
+                except Exception as e:
+                    print(f"⚠️ [BERTScore] Erro ao obter config de {model_type}: {e}")
+                    num_layers = None
+                    
+                scorer = BERTScorer(
+                    model_type=model_type,
+                    num_layers=num_layers,
+                    device=_device,
+                    rescale_with_baseline=False,
+                    batch_size=32
+                )
+            else:
+                scorer = BERTScorer(
+                    lang=lang,
+                    device=_device,
+                    rescale_with_baseline=False,
+                    batch_size=32
+                )
             # Armazena metadados para verificação
-            scorer._lang = lang
-            _bert_scorer_cache = scorer
+            scorer._cache_key = cache_key
+            _bert_scorer_cache[cache_key] = scorer
             return scorer
         except Exception as e:
             # Fallback para CPU em caso de erro
             if _device != 'cpu':
                 print(f"⚠️ Erro ao carregar BERTScorer em {_device}, tentando CPU: {str(e)[:100]}")
-                scorer = BERTScorer(
-                    lang=lang,
-                    device='cpu',
-                    rescale_with_baseline=False,
-                    batch_size=32
-                )
-                scorer._lang = lang
-                _bert_scorer_cache = scorer
+                cache_key_cpu = f"{model_type or lang}_cpu"
+                if model_type:
+                    scorer = BERTScorer(
+                        model_type=model_type,
+                        num_layers=num_layers, # Usa o mesmo num_layers extraído acima
+                        device='cpu',
+                        rescale_with_baseline=False,
+                        batch_size=32
+                    )
+                else:
+                    scorer = BERTScorer(
+                        lang=lang,
+                        device='cpu',
+                        rescale_with_baseline=False,
+                        batch_size=32
+                    )
+                scorer._cache_key = cache_key_cpu
+                _bert_scorer_cache[cache_key_cpu] = scorer
                 return scorer
             raise
 
@@ -181,7 +527,8 @@ class BERTScoreCache:
         cache = BERTScoreCache()
         P, R, F1 = cache.processar(['pred1', 'pred2'], ['true1', 'true2'])
     """
-    def __init__(self, cache_dir: str = None, usar_cache: bool = True, atualizar_cache: bool = True):
+    def __init__(self, cache_dir: str = None, usar_cache: bool = True, atualizar_cache: bool = True,
+                 model_type: str = None):
         """
         Inicializa o gerenciador de cache.
         
@@ -190,6 +537,8 @@ class BERTScoreCache:
                        Se None, usa BERTSCORE_CACHE_PATH ou padrão local.
             usar_cache: Se False, não lê do cache (sempre recalcula).
             atualizar_cache: Se False, não salva novos resultados no cache.
+            model_type: Nome do modelo HuggingFace personalizado. Se especificado,
+                        cria subpasta no cache para segregar resultados por modelo.
         
         Exemplos de uso:
             - usar_cache=True, atualizar_cache=True: Lê e salva (padrão)
@@ -202,6 +551,12 @@ class BERTScoreCache:
         
         if not cache_dir:
             cache_dir = os.path.join(PASTA_LOCAL, 'bs_cache')
+        
+        # Segregar cache por modelo personalizado (evita colisão entre modelos)
+        if model_type:
+            # Usa nome seguro para diretório (troca / por _)
+            model_dir = model_type.replace('/', '_').replace('\\', '_')
+            cache_dir = os.path.join(cache_dir, model_dir)
             
         self.cache_dir = cache_dir
         self.usar_cache = usar_cache
@@ -445,7 +800,9 @@ def bscore(preds: List[str], trues: List[str],
            device: str = None,
            usar_cache: bool = True,
            atualizar_cache: bool = True,
-           apenas_cache: bool = False) -> Tuple[List[float], List[float], List[float]]:
+           mini_batch_size: int = None,
+           apenas_cache: bool = False,
+           model_type: str = None) -> Tuple[List[float], List[float], List[float]]:
     """
     Calcula BERTScore com cache automático baseado em MD5.
     
@@ -459,6 +816,11 @@ def bscore(preds: List[str], trues: List[str],
         usar_cache: Se False, não lê do cache (padrão: True)
         atualizar_cache: Se False, não salva resultados no cache (padrão: True)
         apenas_cache: Se True, retorna um erro para os casos que não existe cache (padrão: False)
+        model_type: Nome do modelo HuggingFace personalizado (ex: 'microsoft/deberta-xlarge-mnli').
+                    Se especificado, sobrescreve a seleção por `lang`. O cache é segregado
+                    automaticamente por modelo para evitar colisão.
+        mini_batch_size: Quantos pares processar por vez no scorer (None = usa BERTSCORE_BATCH_SIZE).
+                         Valores menores reduzem consumo de memória. Padrão via env: BERTSCORE_BATCH_SIZE=1024.
     
     Returns:
         Tupla (P, R, F1) com listas de floats para Precision, Recall e F1-score
@@ -477,8 +839,8 @@ def bscore(preds: List[str], trues: List[str],
         # Forçar recálculo mas atualizar cache
         >>> P, R, F1 = bscore(preds, trues, usar_cache=False, atualizar_cache=True)
         
-        # Usar cache mas não salvar novos cálculos
-        >>> P, R, F1 = bscore(preds, trues, usar_cache=True, atualizar_cache=False)
+        # Usar modelo personalizado
+        >>> P, R, F1 = bscore(preds, trues, model_type='microsoft/deberta-xlarge-mnli')
     """
     # Validação básica
     if not isinstance(preds, (list, tuple)) or not isinstance(trues, (list, tuple)):
@@ -494,7 +856,7 @@ def bscore(preds: List[str], trues: List[str],
     # -------------------------------------------------------------------------
     # FASE 1: USO DO CACHE
     # -------------------------------------------------------------------------
-    cache = BERTScoreCache(usar_cache=usar_cache, atualizar_cache=atualizar_cache)
+    cache = BERTScoreCache(usar_cache=usar_cache, atualizar_cache=atualizar_cache, model_type=model_type)
     final_P, final_R, final_F1, missed_indices, missed_preds, missed_trues, missed_meta = cache.get_batch(preds, trues)
 
     # -------------------------------------------------------------------------
@@ -519,20 +881,21 @@ def bscore(preds: List[str], trues: List[str],
             # SOLUÇÃO: Usa BERTScorer pré-carregado ao invés de score() direto
             # Isso evita o erro "Cannot copy out of meta tensor" que ocorre quando
             # o modelo é carregado com lazy loading (meta tensors)
-            scorer = _get_bert_scorer(lang=lang, device=_device)
+            scorer = _get_bert_scorer(lang=lang, device=_device, model_type=model_type)
             
-            # Calcula scores usando o scorer configurado
-            P_tensor, R_tensor, F1_tensor = scorer.score(
-                missed_preds,
-                missed_trues,
+            # Calcula scores com suporte a janela deslizante para textos longos
+            # Textos curtos são processados normalmente em batch.
+            # Textos longos (> max_position_embeddings do modelo) são divididos
+            # em janelas sobrepostas e o score final é a média ponderada.
+            mP, mR, mF1 = _calcular_scores_com_janelas(
+                missed_preds, missed_trues,
+                scorer=scorer,
+                model_type=model_type,
+                lang=lang,
                 verbose=verbose,
-                batch_size=32  # Processa em lotes de 32 para economizar memória
+                batch_size=32,
+                mini_batch_size=mini_batch_size
             )
-            
-            # Converte tensors para listas de floats
-            mP = [float(p) for p in P_tensor]
-            mR = [float(r) for r in R_tensor]
-            mF1 = [float(f) for f in F1_tensor]
             
             # Libera memória da GPU após processamento
             if _device.startswith('cuda'):
