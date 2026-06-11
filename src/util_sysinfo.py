@@ -582,7 +582,7 @@ class MemoryLogger:
         self.log_file = log_file
         import os
         os.makedirs(os.path.dirname(os.path.abspath(self.log_file)), exist_ok=True)
-        with open(self.log_file, 'a', encoding='utf-8') as f:
+        with open(self.log_file, 'w', encoding='utf-8') as f:
             f.write("=== LOG DE MEMÓRIA ===\n")
             
     def log(self, etapa):
