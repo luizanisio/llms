@@ -146,7 +146,6 @@ class JsonAnaliseRelatorio:
         campos_rouge2 = config.get('campos_rouge2', [])
         campos_levenshtein = config.get('campos_levenshtein', [])
         
-        nivel_campos = config.get('nivel_campos', 1)
         padronizar = config.get('padronizar_simbolos', True)
         stemmer = config.get('rouge_stemmer', True)
         
@@ -158,10 +157,9 @@ class JsonAnaliseRelatorio:
         
         conteudo = f"""## ⚙️ Configuração da Análise
 
-### Parâmetros Gerais
-- **Nível de campos:** {nivel_campos} (1=raiz, 2=raiz+aninhado)
-- **Padronização de símbolos:** {'Sim' if padronizar else 'Não'}
-- **ROUGE Stemmer:** {'Sim' if stemmer else 'Não'}
+### Configurações Ativas
+- **Padronizar Símbolos:** {padronizar}
+- **Stemmer ROUGE:** {stemmer}
 
 ### Métricas Utilizadas
 

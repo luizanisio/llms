@@ -211,7 +211,6 @@ def configurar_metricas(config_yaml):
     
     # Estrutura base
     config_final = {
-        'nivel_campos': conf_comp.get('nivel_campos', 1),
         'padronizar_simbolos': conf_comp.get('padronizar_simbolos', True),
         'rouge_stemmer': conf_comp.get('rouge_stemmer', True),
         'campos_bertscore': campos.get('bertscore') or [],

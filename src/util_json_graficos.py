@@ -1010,7 +1010,7 @@ class JsonAnaliseGraficos:
     
 
     def gerar_graficos_tokens(self, arquivo_excel: str = None, pasta_saida: str = None,
-                              paleta: str = 'Cividis') -> List[str]:
+                              paleta: str = 'Cividis', df_tokens: pd.DataFrame = None) -> List[str]:
         """
         Gera gráficos de barras/boxplot para consumo de tokens por modelo.
         
@@ -1027,6 +1027,7 @@ class JsonAnaliseGraficos:
             arquivo_excel: caminho do arquivo Excel (se None, usa DataFrame em memória)
             pasta_saida: pasta para salvar gráficos (se None, usa pasta_analises)
             paleta: paleta de cores para os gráficos (padrão: Cividis)
+            df_tokens: DataFrame de tokens a ser usado se arquivo_excel for None.
         
         Returns:
             Lista com caminhos dos arquivos gerados
@@ -1049,8 +1050,6 @@ class JsonAnaliseGraficos:
             except Exception as e:
                 print(f"⚠️  Aviso: Não foi possível carregar aba 'Resumo_Tokens': {e}")
                 return []
-        else:
-            df_tokens = self._criar_dataframe_tokens()
         
         if df_tokens is None or df_tokens.empty:
             print("⚠️  Aviso: Nenhum dado de tokens disponível para gráficos")
@@ -1150,7 +1149,7 @@ class JsonAnaliseGraficos:
     
 
     def gerar_graficos_avaliacao_llm(self, arquivo_excel: str = None, pasta_saida: str = None,
-                                      paleta: str = 'Cividis') -> List[str]:
+                                      paleta: str = 'Cividis', df_global: pd.DataFrame = None, df_campos: pd.DataFrame = None) -> List[str]:
         """
         Gera gráficos boxplot para métricas de avaliação LLM por modelo.
         
@@ -1162,6 +1161,8 @@ class JsonAnaliseGraficos:
             arquivo_excel: caminho do arquivo Excel (se None, usa DataFrame em memória)
             pasta_saida: pasta para salvar gráficos (se None, usa pasta_analises)
             paleta: paleta de cores para os gráficos (padrão: Cividis)
+            df_global: DataFrame global de LLM
+            df_campos: DataFrame de campos de LLM
         
         Returns:
             Lista com caminhos dos arquivos gerados
@@ -1192,8 +1193,6 @@ class JsonAnaliseGraficos:
             except Exception as e:
                 # Normal não ter esta aba se não houver métricas por campo
                 df_campos = None
-        else:
-            df_global, df_campos = self._criar_dataframe_avaliacao_llm()
         
         if df_global is None and df_campos is None:
             print("⚠️  Aviso: Nenhum dado de avaliação LLM disponível para gráficos")

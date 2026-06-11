@@ -405,7 +405,8 @@ class JsonAnalise:
         
         Exemplo completo:
         {
-            'nivel_campos': 2,
+            'campos_levenshtein': [],
+            'campos_sbert': [],
             'campos_bertscore': ['(global)', 'resumo'],
             'campos_rouge': ['fatos'],
             'campos_rouge2': ['texto_longo'],  # (global) será adicionado aqui automaticamente
@@ -599,12 +600,6 @@ class JsonAnalise:
            return config
         config = {} if config is None else deepcopy(config)
         
-        # Nível de campos (padrão: 1)
-        nivel_campos = config.get('nivel_campos', 1)
-        if not isinstance(nivel_campos, int) or nivel_campos < 1:
-            raise ValueError(f"nivel_campos deve ser int >= 1, recebido: {nivel_campos}")
-        config['nivel_campos'] = nivel_campos
-        
         # Padronização do texto
         config['padronizar_simbolos'] = config.get('padronizar_simbolos', True) if isinstance(config.get('padronizar_simbolos'), bool) else True
         
@@ -641,52 +636,40 @@ class JsonAnalise:
         return config
 
     @classmethod
-    def _extrair_campos_por_nivel(cls, dados: dict, nivel: int) -> dict:
+    def _extrair_todos_campos(cls, dados: dict) -> dict:
         """
-        Extrai campos de um JSON até o nível especificado.
+        Extrai todos os campos de um JSON de forma recursiva até o último nível.
+        Mantém tanto as chaves folha quanto as chaves intermediárias completas.
         
         Args:
             dados: dicionário a ser analisado
-            nivel: profundidade de extração (1 = raiz, 2 = raiz + 1 nível, etc)
         
         Returns:
-            dict {nome_campo: valor} onde:
-                - nivel 1: {'campo': valor}
-                - nivel 2: {'campo': valor, 'campo.subcampo': valor}
+            dict {nome_campo: valor} 
         
         Exemplo:
             dados = {'a': 1, 'b': {'c': 2, 'd': 3}}
-            nivel 1 -> {'a': 1, 'b': {'c': 2, 'd': 3}}
-            nivel 2 -> {'a': 1, 'b.c': 2, 'b.d': 3}
+            Retorna -> {'a': 1, 'b': {'c': 2, 'd': 3}, 'b.c': 2, 'b.d': 3}
         """
         if not isinstance(dados, dict):
             return {}
         
         campos = {}
         
-        def _extrair(obj: Any, prefixo: str, nivel_atual: int):
-            if nivel_atual > nivel:
-                return
-            
+        def _extrair(obj: Any, prefixo: str):
             if isinstance(obj, dict):
+                # Adiciona o próprio objeto no prefixo (exceto na raiz onde prefixo == '')
+                if prefixo:
+                    campos[prefixo] = obj
+                
                 for chave, valor in obj.items():
                     campo_completo = f"{prefixo}.{chave}" if prefixo else chave
-                    
-                    if nivel_atual == nivel:
-                        # Chegou no nível desejado, adiciona o valor como está
-                        campos[campo_completo] = valor
-                    else:
-                        # Continua descendo se for dict ou lista
-                        if isinstance(valor, dict):
-                            _extrair(valor, campo_completo, nivel_atual + 1)
-                        else:
-                            # Valor escalar ou lista: adiciona aqui
-                            campos[campo_completo] = valor
+                    _extrair(valor, campo_completo)
             else:
-                # Não é dict, adiciona como está
+                # Valor escalar ou lista
                 campos[prefixo] = obj
         
-        _extrair(dados, '', 1)
+        _extrair(dados, '')
         return campos
 
     @classmethod
@@ -1144,7 +1127,7 @@ class JsonAnalise:
         de pares já calculados praticamente instantâneas.
         
         Arquitetura multi-métrica:
-        1. Extração de campos por nível (config['nivel_campos'])
+        1. Extração de todos os campos (folhas e blocos pai) de forma recursiva
         2. Análise global - pode usar múltiplas métricas se (global) estiver nas listas
         3. Análise estrutural - pode usar múltiplas métricas se (estrutura) estiver nas listas
         4. Análise por campo - cada campo pode ter múltiplas métricas
@@ -1165,7 +1148,6 @@ class JsonAnalise:
                 - resumo_rouge_F1: 0.88
         """
         config = cls._ajustar_config(config)
-        nivel_campos = config['nivel_campos']
         
         # ═════════════════════════════════════════════════════════════════════════
         # DETECÇÃO PRECOCE DE ERRO: Se pred ou true são dicts de erro, retorna vazio
@@ -1180,8 +1162,8 @@ class JsonAnalise:
             resultado['id_origem'] = id_origem
         
         # 1. EXTRAÇÃO DE CAMPOS
-        campos_pred = cls._extrair_campos_por_nivel(pred_json, nivel_campos)
-        campos_true = cls._extrair_campos_por_nivel(true_json, nivel_campos)
+        campos_pred = cls._extrair_todos_campos(pred_json)
+        campos_true = cls._extrair_todos_campos(true_json)
         
         # 2. ANÁLISE GLOBAL
         metricas_global = cls._determinar_metricas_campo('(global)', config)
@@ -2083,8 +2065,8 @@ class JsonAnaliseDataFrame():
                     todos_pares.append((idx, modelo, '(global)_bertscore', texto_pred, texto_true))
                 
                 # Coleta pares para campos individuais
-                campos_pred = JsonAnalise._extrair_campos_por_nivel(pred_json, config.get('nivel_campos', 1))
-                campos_true = JsonAnalise._extrair_campos_por_nivel(true_json, config.get('nivel_campos', 1))
+                campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
+                campos_true = JsonAnalise._extrair_todos_campos(true_json)
                 
                 campos_comparacao = config.get('campos_comparacao', [])
                 for campo in campos_comparacao:
@@ -2189,8 +2171,8 @@ class JsonAnaliseDataFrame():
                         pares_por_modelo[modelo_sbert].append((texto_pred, texto_true))
                     
                     # Campos individuais
-                    campos_pred = JsonAnalise._extrair_campos_por_nivel(pred_json, config.get('nivel_campos', 1))
-                    campos_true = JsonAnalise._extrair_campos_por_nivel(true_json, config.get('nivel_campos', 1))
+                    campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
+                    campos_true = JsonAnalise._extrair_todos_campos(true_json)
                     
                     for campo in campos:
                         if campo.startswith('('):
@@ -3174,7 +3156,8 @@ class JsonAnaliseDataFrame():
     def gerar_graficos_tokens(self, arquivo_excel: str = None, pasta_saida: str = None,
                               paleta: str = 'Cividis') -> list:
         """Delega para JsonAnaliseGraficos."""
-        return self._graficos.gerar_graficos_tokens(arquivo_excel, pasta_saida, paleta)
+        df_tokens = self._criar_dataframe_tokens() if not arquivo_excel else None
+        return self._graficos.gerar_graficos_tokens(arquivo_excel, pasta_saida, paleta, df_tokens)
 
     def _adicionar_aba_avaliacao_llm_excel(self, excel, congelar_paineis: bool = True):
         """
@@ -3392,7 +3375,8 @@ class JsonAnaliseDataFrame():
     def gerar_graficos_avaliacao_llm(self, arquivo_excel: str = None, pasta_saida: str = None,
                                       paleta: str = 'Cividis') -> list:
         """Delega para JsonAnaliseGraficos."""
-        return self._graficos.gerar_graficos_avaliacao_llm(arquivo_excel, pasta_saida, paleta)
+        df_global, df_campos = self._criar_dataframe_avaliacao_llm() if not arquivo_excel else (None, None)
+        return self._graficos.gerar_graficos_avaliacao_llm(arquivo_excel, pasta_saida, paleta, df_global, df_campos)
     
     def gerar_graficos_observabilidade(self, arquivo_excel: str = None, pasta_saida: str = None,
                                        paleta: str = 'Cividis') -> list:

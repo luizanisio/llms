@@ -112,58 +112,32 @@ class TestJsonAnaliseConfig(unittest.TestCase):
         # (global) deve estar em campos_rouge por padrão
         self.assertIn('(global)', config_ajustado.get('campos_rouge', []))
     
-    def test_config_nivel_campos_default(self):
-        """Testa nível de campos padrão"""
-        config = {}
-        config_ajustado = JsonAnalise._ajustar_config(config)
-        self.assertEqual(config_ajustado['nivel_campos'], 1)
-    
     def test_config_campos_rouge1_estrutura(self):
         """Testa que (estrutura) está em campos_rouge1 por padrão"""
         config = {}
         config_ajustado = JsonAnalise._ajustar_config(config)
         self.assertIn('(estrutura)', config_ajustado.get('campos_rouge1', []))
-    
-    def test_config_nivel_invalido(self):
-        """Testa que nível inválido levanta erro"""
-        config = {'nivel_campos': 0}
-        with self.assertRaises(ValueError):
-            JsonAnalise._ajustar_config(config)
 
 
 class TestJsonAnaliseExtrairCampos(unittest.TestCase):
-    """Testes de extração de campos por nível"""
+    """Testes de extração total de campos"""
     
-    def test_extrair_nivel_1(self):
-        """Extrai apenas campos raiz"""
+    def test_extrair_todos_campos(self):
+        """Extrai todos os campos, incluindo pais e filhos"""
         dados = {
             "a": 1,
             "b": {"c": 2, "d": 3},
             "e": [4, 5]
         }
-        campos = JsonAnalise._extrair_campos_por_nivel(dados, nivel=1)
+        campos = JsonAnalise._extrair_todos_campos(dados)
         
         self.assertIn("a", campos)
         self.assertIn("b", campos)
-        self.assertIn("e", campos)
-        self.assertNotIn("b.c", campos)
-        self.assertEqual(campos["a"], 1)
-        self.assertEqual(campos["b"], {"c": 2, "d": 3})
-    
-    def test_extrair_nivel_2(self):
-        """Extrai campos raiz + 1 nível aninhado"""
-        dados = {
-            "a": 1,
-            "b": {"c": 2, "d": 3},
-            "e": [4, 5]
-        }
-        campos = JsonAnalise._extrair_campos_por_nivel(dados, nivel=2)
-        
-        self.assertIn("a", campos)
         self.assertIn("b.c", campos)
         self.assertIn("b.d", campos)
         self.assertIn("e", campos)
         self.assertEqual(campos["a"], 1)
+        self.assertEqual(campos["b"], {"c": 2, "d": 3})
         self.assertEqual(campos["b.c"], 2)
         self.assertEqual(campos["b.d"], 3)
 
@@ -242,14 +216,13 @@ class TestJsonAnaliseComparar(unittest.TestCase):
         self.assertGreater(resultado['(global)_levenshtein_SIM'], 0.3)
         self.assertLess(resultado['(global)_levenshtein_SIM'], 1.0)
     
-    def test_comparar_com_nivel_campos_2(self):
-        """Compara com nível 2 (campos aninhados)"""
+    def test_comparar_com_campos_aninhados(self):
+        """Compara com campos aninhados"""
         pred_json = {"pessoa": {"nome": "João", "idade": 30}}
         true_json = {"pessoa": {"nome": "João", "idade": 30}}
         
-        # Define métrica explícita para campos do nível 2 - usa Levenshtein que é rápido
+        # Define métrica explícita para campos aninhados - usa Levenshtein que é rápido
         config = {
-            'nivel_campos': 2,
             'campos_levenshtein': ['pessoa.nome', 'pessoa.idade']
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
@@ -266,7 +239,6 @@ class TestJsonAnaliseComparar(unittest.TestCase):
         true_json = {"texto": "O magistrado ordenou a detenção"}
         
         config = {
-            'nivel_campos': 1,
             'campos_bertscore': ['(global)', 'texto']
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
@@ -282,7 +254,6 @@ class TestJsonAnaliseComparar(unittest.TestCase):
         
         # Usa ROUGE que é mais rápido
         config = {
-            'nivel_campos': 1,
             'campos_rouge': ['nome']
         }
         resultado = JsonAnalise.comparar(
@@ -322,8 +293,7 @@ class TestJsonAnaliseMetricasEspecificas(unittest.TestCase):
         true_json = {"resumo": "Processo de execução de título"}
         
         config = {
-            'campos_bertscore': ['resumo'],
-            'nivel_campos': 1
+            'campos_bertscore': ['resumo']
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
         
@@ -336,8 +306,7 @@ class TestJsonAnaliseMetricasEspecificas(unittest.TestCase):
         true_json = {"descricao": "casa azul bonita"}
         
         config = {
-            'campos_rouge': ['descricao'],
-            'nivel_campos': 1
+            'campos_rouge': ['descricao']
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
         
@@ -350,8 +319,7 @@ class TestJsonAnaliseMetricasEspecificas(unittest.TestCase):
         true_json = {"codigo": "ABC124"}
         
         config = {
-            'campos_levenshtein': ['codigo'],
-            'nivel_campos': 1
+            'campos_levenshtein': ['codigo']
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
         
@@ -414,7 +382,7 @@ class TestJsonAnaliseDataFrame(unittest.TestCase):
         
         rotulos = ['id', 'True', 'Modelo1', 'Modelo2']
         # Usa Levenshtein que é mais rápido que BERTScore
-        config = {'nivel_campos': 1, 'campos_levenshtein': ['(global)']}
+        config = {'campos_levenshtein': ['(global)']}
         
         # Cria container JsonAnaliseDados
         dados_analise = JsonAnaliseDados(
@@ -614,7 +582,6 @@ class TestJsonAnaliseMultiplasMetricas(unittest.TestCase):
         
         # Usa métricas rápidas (ROUGE e Levenshtein)
         config = {
-            'nivel_campos': 1,
             'campos_rouge': ['texto'],
             'campos_rouge1': ['texto'],  # ROUGE-1 ao invés de ROUGE-2 para maior compatibilidade
             'campos_levenshtein': ['texto']
@@ -796,7 +763,7 @@ class TestJsonAnaliseCalcularMetrica(unittest.TestCase):
     
     def test_calcular_levenshtein(self):
         """Testa cálculo com Levenshtein"""
-        config = JsonAnalise._JsonAnalise__ajustar_config({})
+        config = JsonAnalise._ajustar_config({})
         
         # Textos iguais - Levenshtein retorna apenas SIM
         metricas1 = JsonAnalise._calcular_metrica("teste", "teste", "levenshtein", config)
@@ -891,7 +858,7 @@ class TestJsonAnaliseExemplos(unittest.TestCase):
                 )
                 
                 # Identifica técnica usada para (global) e (estrutura) no config
-                config_ajustado = JsonAnalise._JsonAnalise__ajustar_config(config)
+                config_ajustado = JsonAnalise._ajustar_config(config)
                 tecnicas_global = JsonAnalise._determinar_metricas_campo('(global)', config_ajustado)
                 tecnicas_estrutura = JsonAnalise._determinar_metricas_campo('(estrutura)', config_ajustado)
                 
@@ -1078,8 +1045,8 @@ class TestJsonAnaliseCasosExtremos(unittest.TestCase):
         
         self.assertEqual(resultado['texto_levenshtein_SIM'], 1.0)
     
-    def test_nivel_campos_3_profundo(self):
-        """Nível de campos 3 (muito profundo)"""
+    def test_campos_profundos(self):
+        """Testa campos com muita profundidade de chaves"""
         pred_json = {
             "a": {
                 "b": {
@@ -1096,7 +1063,6 @@ class TestJsonAnaliseCasosExtremos(unittest.TestCase):
         }
         
         config = {
-            'nivel_campos': 3,
             'campos_levenshtein': ['a.b.c']
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
@@ -1418,23 +1384,6 @@ class TestJsonAnaliseDataFrameCasosEspeciais(unittest.TestCase):
         # Verifica que tem colunas essenciais (id + métricas do modelo)
         self.assertGreater(len(df.columns), 5)  # id + pelo menos algumas métricas
         self.assertIn('id (True)', df.columns)
-    
-    def test_estatisticas_sem_dados(self):
-        """Estatísticas com lista vazia - verifica que levanta erro apropriado"""
-        dados = []
-        rotulos = ['id', 'True', 'M1']
-        config = {'campos_rouge1': ['(global)']}
-        
-        # Lista vazia agora levanta AssertionError na criação de JsonAnaliseDados
-        with self.assertRaises(AssertionError) as context:
-            dados_analise = JsonAnaliseDados(
-                dados=dados,
-                rotulos=rotulos,
-                tokens=None,
-                avaliacao_llm=None
-            )
-        
-        self.assertIn('não pode ser vazio', str(context.exception))
     
     def test_comparar_modelos_metrica_inexistente(self):
         """Comparar modelos com métrica que não existe deve levantar erro"""

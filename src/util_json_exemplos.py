@@ -241,8 +241,7 @@ class JsonAnaliseExemplos:
         }
         
         config = {
-            'campos_levenshtein': ['(global)'],
-            'nivel_campos': 2  # Extrai até 2 níveis
+            'campos_levenshtein': ['(global)']
         }
         
         esperado = {

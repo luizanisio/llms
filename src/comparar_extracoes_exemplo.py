@@ -58,7 +58,6 @@ modelos_comparacao:
 
 # ---- Configuração de Métricas e Campos ----
 configuracao_comparacao:
-  nivel_campos: 1                                # Nível de profundidade dos campos a comparar
   padronizar_simbolos: true                      # Normaliza símbolos antes de comparar
   rouge_stemmer: true                            # Usa stemmer no cálculo ROUGE
 
@@ -150,7 +149,6 @@ modelos_comparacao:
     familia: "Modelo-B"
 
 configuracao_comparacao:
-  nivel_campos: 1
   padronizar_simbolos: true
   rouge_stemmer: true
 

@@ -1,5 +1,5 @@
 # Configuração para comparação de extrações - Experimento Summa 
-# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_base.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_q235.yaml
 
 # Configuração Global de Saída
 saida:
@@ -38,6 +38,10 @@ modelos_comparacao:
     rotulo: "GPT5"
     familia: "GPT-5"
 
+  - arquivo: "./saida/saida_sabia4.parquet"
+    rotulo: "Sabia-4"
+    familia: "Sabia-4"
+    
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   nivel_campos: 1
@@ -60,10 +64,10 @@ configuracao_comparacao:
   
   # carrega a lista de campo_id e filtra o parquet ou os ids das extrações antes de fazer a comparação
   # serve para análises de subconjuntos da base ou testes
-  # TODO: implementar filtro 
   filtro: 
-    arquivo: "./saida/filtro_teste_fold_12.csv"
-    campo_id: "seq_documento_acordao"    
+    #arquivo: "./saida/filtro_teste_fold_12.csv"
+    arquivo: "./saida/filtro_teste_fold_12_100_teste.csv"
+    campo_id: "seq_documento_acordao"     
 
   # Modelos customizados (Opcional)
   # (Opcional) Sobrescrita de modelos HF para SBERT e BERTScore
@@ -134,3 +138,17 @@ configuracao_comparacao:
       - "Temas"
       - "Partes"
       - "Temas.Explicacao"
+
+campos_virtuais:
+  Likert:
+    - Materia
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Doutrina
+    - Temas.Conceitos
+    - Resumo
+  MetaDados:
+    - Materia
+    - Partes
+    - "Temas.Normas"
+    - "Temas.Jurisprudencia"

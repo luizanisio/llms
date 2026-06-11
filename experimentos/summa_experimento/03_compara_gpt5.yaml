@@ -44,7 +44,6 @@ modelos_comparacao:
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
-  nivel_campos: 1
   padronizar_simbolos: true
   rouge_stemmer: true
   
