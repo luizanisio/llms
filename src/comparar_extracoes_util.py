@@ -124,8 +124,14 @@ class ExtracaoParquet:
         return erros
 
     def ja_extraido(self) -> bool:
-        """Verifica se a extração já foi feita (cache via arquivo de controle)."""
-        return os.path.isfile(os.path.join(self.pasta_destino, ARQUIVO_CONTROLE))
+        """Verifica se a extração já foi feita (cache via arquivo de controle) e está atualizada."""
+        caminho_controle = os.path.join(self.pasta_destino, ARQUIVO_CONTROLE)
+        if not os.path.isfile(caminho_controle):
+            return False
+            
+        if os.path.isfile(self.arquivo_parquet):
+            return os.path.getmtime(caminho_controle) >= os.path.getmtime(self.arquivo_parquet)
+        return True
 
     def extrair(self, forcar: bool = False) -> str:
         """
@@ -142,12 +148,19 @@ class ExtracaoParquet:
         """
         # Verifica cache
         if not forcar and self.ja_extraido():
-            print(f"✅ Extração já realizada (cache). Pasta: {self.pasta_destino}")
+            print(f"✅ Extração já realizada e atualizada (cache). Pasta: {self.pasta_destino}")
             print(f"   Para re-extrair, remova o arquivo '{ARQUIVO_CONTROLE}' da pasta.")
             return self.pasta_destino
+            
+        caminho_controle = os.path.join(self.pasta_destino, ARQUIVO_CONTROLE)
+        desatualizado = os.path.isfile(caminho_controle)
 
+        if desatualizado:
+            print(f"🔄 Arquivo parquet foi modificado após a última extração. Atualizando JSONs...")
+            # Remove o controle temporariamente para que em caso de interrupção não fique sujo
+            os.remove(caminho_controle)
         # Verifica integridade: pasta existe mas sem arquivo de controle (extração parcial/interrompida)
-        if os.path.isdir(self.pasta_destino) and os.listdir(self.pasta_destino):
+        elif os.path.isdir(self.pasta_destino) and os.listdir(self.pasta_destino):
             print(f"\n⚠️  A pasta de destino já existe mas não possui arquivo de controle '{ARQUIVO_CONTROLE}'.")
             print(f"   Pasta: {self.pasta_destino}")
             print(f"   Isso indica uma extração anterior incompleta ou interrompida.")
