@@ -817,7 +817,7 @@ def main():
 
     if 'tem_memory_logger' in locals() and tem_memory_logger: 
         MemoryLogger.set_nome_etapa("FIM DA EXECUÇÃO")
-        MemoryLogger.finalizar(gerar_grafico=True)
+        MemoryLogger.finalizar()
         
     print("\n✅ Processo finalizado com sucesso.")
 
