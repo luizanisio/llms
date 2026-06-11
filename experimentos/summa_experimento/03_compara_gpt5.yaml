@@ -63,12 +63,12 @@ configuracao_comparacao:
   
   # carrega a lista de campo_id e filtra o parquet ou os ids das extrações antes de fazer a comparação
   # serve para análises de subconjuntos da base ou testes
-  filtro: 
-    #arquivo: "./saida/filtro_teste_fold_12.csv"
-    arquivo: "./saida/filtro_teste_fold_12_100_teste.csv"
-    campo_id: "seq_documento_acordao"    
+  # filtro: 
+  #   #arquivo: "./saida/filtro_teste_fold_12.csv"
+  #   arquivo: "./saida/filtro_teste_fold_12_100_teste.csv"
+  #   campo_id: "seq_documento_acordao"    
 
-  # Modelos customizados (Opcional)
+# Modelos customizados (Opcional)
   # (Opcional) Sobrescrita de modelos HF para SBERT e BERTScore
   modelos:
     sbert:
@@ -87,7 +87,7 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-    # Mapeamento de campos para métricas
+  # Mapeamento de campos para métricas
   campos:
     bertscore:
       - "(global)"
