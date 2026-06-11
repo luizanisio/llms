@@ -182,6 +182,117 @@ class ExtracaoParquet:
         # Carrega DataFrame
         df = self._carregar_df()
 
+
+    df = self._carregar_df()
+    total = len(df)
+
+    # Cria pasta de destino
+    os.makedirs(self.pasta_destino, exist_ok=True)
+
+    print(f"\n📦 Extraindo parquet para JSONs...")
+    print(f"   Fonte: {self.arquivo_parquet}")
+    print(f"   Destino: {self.pasta_destino}")
+    print(f"   Total de registros: {total}")
+
+    # Contadores para o relatório
+    stats = {
+        'total': total,
+        'filtrados': 0,
+        'extraidos_json': 0,
+        'extraidos_tokens': 0,
+        'extraidos_avaliacao': 0,
+        'com_erro': 0,
+        'json_invalido': 0,
+    }
+
+    for _, row in tqdm(df.iterrows(), total=total, desc="Extraindo"):
+        id_doc = str(row[self._col_id]).strip()
+        if not id_doc:
+            continue
+
+        if self.ids_filtro is not None and id_doc not in self.ids_filtro:
+            stats['filtrados'] += 1
+            continue
+
+        # --- Coluna de erro ---
+        erro_msg = ''
+        if self._col_erro and self._col_erro in row.index:
+            erro_msg = str(row[self._col_erro]).strip() if pd.notna(row[self._col_erro]) else ''
+
+        # --- Extração da resposta (JSON principal) ---
+        resposta_raw = row[self._col_resposta] if pd.notna(row[self._col_resposta]) else ''
+        resposta_raw = str(resposta_raw).strip() if resposta_raw else ''
+
+        json_resposta = None
+        if resposta_raw:
+            try:
+                json_resposta = json.loads(resposta_raw)
+            except (json.JSONDecodeError, ValueError):
+                # Opção A: gerar JSON com chave "erro" para rastreabilidade
+                json_resposta = {'erro': f'JSON inválido na resposta: {resposta_raw[:200]}...'}
+                stats['json_invalido'] += 1
+
+        if json_resposta is None:
+            json_resposta = {'erro': 'Resposta vazia'}
+
+        # Se há erro no parquet, adiciona a chave "erro" no JSON (se ainda não tem)
+        if erro_msg and 'erro' not in json_resposta:
+            json_resposta['erro'] = erro_msg
+            stats['com_erro'] += 1
+        elif erro_msg:
+            stats['com_erro'] += 1
+
+        # Salva {id}.json
+        caminho_json = os.path.join(self.pasta_destino, f'{id_doc}.json')
+        with open(caminho_json, 'w', encoding='utf-8') as f:
+            json.dump(json_resposta, f, ensure_ascii=False, indent=2)
+        stats['extraidos_json'] += 1
+
+        # --- Extração dos tokens ---
+        if self._col_tokens and self._col_tokens in row.index:
+            tokens_raw = row[self._col_tokens] if pd.notna(row[self._col_tokens]) else ''
+            tokens_raw = str(tokens_raw).strip() if tokens_raw else ''
+            if tokens_raw:
+                try:
+                    json_tokens = json.loads(tokens_raw)
+                    caminho_tokens = os.path.join(self.pasta_destino, f'{id_doc}.tokens.json')
+                    with open(caminho_tokens, 'w', encoding='utf-8') as f:
+                        json.dump(json_tokens, f, ensure_ascii=False, indent=2)
+                    stats['extraidos_tokens'] += 1
+                except (json.JSONDecodeError, ValueError):
+                    pass  # Tokens inválidos não são críticos
+
+        # --- Extração da avaliação ---
+        if self._col_avaliacao and self._col_avaliacao in row.index:
+            aval_raw = row[self._col_avaliacao] if pd.notna(row[self._col_avaliacao]) else ''
+            aval_raw = str(aval_raw).strip() if aval_raw else ''
+            if aval_raw:
+                try:
+                    json_aval = json.loads(aval_raw)
+                    caminho_aval = os.path.join(self.pasta_destino, f'{id_doc}.avaliacao.json')
+                    with open(caminho_aval, 'w', encoding='utf-8') as f:
+                        json.dump(json_aval, f, ensure_ascii=False, indent=2)
+                    stats['extraidos_avaliacao'] += 1
+                except (json.JSONDecodeError, ValueError):
+                    pass  # Avaliação inválida não é crítica
+
+    # Gera arquivo de controle
+    self._gerar_arquivo_controle(stats)
+
+    # Resumo
+    print(f"\n📋 Extração concluída:")
+    print(f"   ✅ Arquivos JSON gerados: {stats['extraidos_json']}")
+    if stats['extraidos_tokens'] > 0:
+        print(f"   📊 Arquivos de tokens gerados: {stats['extraidos_tokens']}")
+    if stats['extraidos_avaliacao'] > 0:
+        print(f"   ⚖️  Arquivos de avaliação gerados: {stats['extraidos_avaliacao']}")
+    if stats['com_erro'] > 0:
+        print(f"   ⚠️  Registros com erro (extraídos com flag): {stats['com_erro']}")
+    if stats['json_invalido'] > 0:
+        print(f"   ❌ Registros com JSON inválido na resposta: {stats['json_invalido']}")
+
+    return self.pasta_destino
+
     def _limpar_pasta(self):
         """Remove todos os arquivos e subpastas do diretório de destino para garantir consistência."""
         import sys
@@ -227,115 +338,6 @@ class ExtracaoParquet:
 
         print(f"   🗑️  Pasta limpa: {self.pasta_destino}")
 
-        df = self._carregar_df()
-        total = len(df)
-
-        # Cria pasta de destino
-        os.makedirs(self.pasta_destino, exist_ok=True)
-
-        print(f"\n📦 Extraindo parquet para JSONs...")
-        print(f"   Fonte: {self.arquivo_parquet}")
-        print(f"   Destino: {self.pasta_destino}")
-        print(f"   Total de registros: {total}")
-
-        # Contadores para o relatório
-        stats = {
-            'total': total,
-            'filtrados': 0,
-            'extraidos_json': 0,
-            'extraidos_tokens': 0,
-            'extraidos_avaliacao': 0,
-            'com_erro': 0,
-            'json_invalido': 0,
-        }
-
-        for _, row in tqdm(df.iterrows(), total=total, desc="Extraindo"):
-            id_doc = str(row[self._col_id]).strip()
-            if not id_doc:
-                continue
-
-            if self.ids_filtro is not None and id_doc not in self.ids_filtro:
-                stats['filtrados'] += 1
-                continue
-
-            # --- Coluna de erro ---
-            erro_msg = ''
-            if self._col_erro and self._col_erro in row.index:
-                erro_msg = str(row[self._col_erro]).strip() if pd.notna(row[self._col_erro]) else ''
-
-            # --- Extração da resposta (JSON principal) ---
-            resposta_raw = row[self._col_resposta] if pd.notna(row[self._col_resposta]) else ''
-            resposta_raw = str(resposta_raw).strip() if resposta_raw else ''
-
-            json_resposta = None
-            if resposta_raw:
-                try:
-                    json_resposta = json.loads(resposta_raw)
-                except (json.JSONDecodeError, ValueError):
-                    # Opção A: gerar JSON com chave "erro" para rastreabilidade
-                    json_resposta = {'erro': f'JSON inválido na resposta: {resposta_raw[:200]}...'}
-                    stats['json_invalido'] += 1
-
-            if json_resposta is None:
-                json_resposta = {'erro': 'Resposta vazia'}
-
-            # Se há erro no parquet, adiciona a chave "erro" no JSON (se ainda não tem)
-            if erro_msg and 'erro' not in json_resposta:
-                json_resposta['erro'] = erro_msg
-                stats['com_erro'] += 1
-            elif erro_msg:
-                stats['com_erro'] += 1
-
-            # Salva {id}.json
-            caminho_json = os.path.join(self.pasta_destino, f'{id_doc}.json')
-            with open(caminho_json, 'w', encoding='utf-8') as f:
-                json.dump(json_resposta, f, ensure_ascii=False, indent=2)
-            stats['extraidos_json'] += 1
-
-            # --- Extração dos tokens ---
-            if self._col_tokens and self._col_tokens in row.index:
-                tokens_raw = row[self._col_tokens] if pd.notna(row[self._col_tokens]) else ''
-                tokens_raw = str(tokens_raw).strip() if tokens_raw else ''
-                if tokens_raw:
-                    try:
-                        json_tokens = json.loads(tokens_raw)
-                        caminho_tokens = os.path.join(self.pasta_destino, f'{id_doc}.tokens.json')
-                        with open(caminho_tokens, 'w', encoding='utf-8') as f:
-                            json.dump(json_tokens, f, ensure_ascii=False, indent=2)
-                        stats['extraidos_tokens'] += 1
-                    except (json.JSONDecodeError, ValueError):
-                        pass  # Tokens inválidos não são críticos
-
-            # --- Extração da avaliação ---
-            if self._col_avaliacao and self._col_avaliacao in row.index:
-                aval_raw = row[self._col_avaliacao] if pd.notna(row[self._col_avaliacao]) else ''
-                aval_raw = str(aval_raw).strip() if aval_raw else ''
-                if aval_raw:
-                    try:
-                        json_aval = json.loads(aval_raw)
-                        caminho_aval = os.path.join(self.pasta_destino, f'{id_doc}.avaliacao.json')
-                        with open(caminho_aval, 'w', encoding='utf-8') as f:
-                            json.dump(json_aval, f, ensure_ascii=False, indent=2)
-                        stats['extraidos_avaliacao'] += 1
-                    except (json.JSONDecodeError, ValueError):
-                        pass  # Avaliação inválida não é crítica
-
-        # Gera arquivo de controle
-        self._gerar_arquivo_controle(stats)
-
-        # Resumo
-        print(f"\n📋 Extração concluída:")
-        print(f"   ✅ Arquivos JSON gerados: {stats['extraidos_json']}")
-        if stats['extraidos_tokens'] > 0:
-            print(f"   📊 Arquivos de tokens gerados: {stats['extraidos_tokens']}")
-        if stats['extraidos_avaliacao'] > 0:
-            print(f"   ⚖️  Arquivos de avaliação gerados: {stats['extraidos_avaliacao']}")
-        if stats['com_erro'] > 0:
-            print(f"   ⚠️  Registros com erro (extraídos com flag): {stats['com_erro']}")
-        if stats['json_invalido'] > 0:
-            print(f"   ❌ Registros com JSON inválido na resposta: {stats['json_invalido']}")
-
-        return self.pasta_destino
 
     def _gerar_arquivo_controle(self, stats: dict):
         """
