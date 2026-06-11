@@ -1,5 +1,5 @@
 # Configuração para comparação de extrações - Experimento Summa 
-# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_q235.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_q235_full.yaml
 
 # Configuração Global de Saída
 saida:
@@ -11,7 +11,7 @@ saida:
 
 # Configurações de Execução
 execucao:
-  max_workers: 10
+  max_workers: 20
   teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
   gerar_graficos: true 
   llm_as_a_judge: false
