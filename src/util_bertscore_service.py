@@ -55,20 +55,13 @@ from util import UtilEnv
 if UtilEnv.carregar_env('.env', pastas=['../','./']):
    pass
    
-_locais_ = [f'{_}_bertmodels/' for _ in ['./','../'] if os.path.isdir(f'{_}_bertmodels/')]
-PASTA_LOCAL = _locais_[0] if len(_locais_)>0 else './_bertmodels/'
+PASTA_LOCAL = UtilEnv.get_hf_home()
 VERBOSE_BATCH_SIZE = 5
 
 try:
     BERTSCORE_TIMEOUT = int(os.getenv('BERTSCORE_TIMEOUT', '600'))
 except ValueError:
     BERTSCORE_TIMEOUT = 600
-
-# Configura cache local se PASTA_LOCAL estiver definida
-if PASTA_LOCAL:
-    os.makedirs(PASTA_LOCAL, exist_ok=True)
-    # os.environ['TRANSFORMERS_CACHE'] = PASTA_LOCAL # deprecated - removido
-    os.environ['HF_HOME'] = PASTA_LOCAL # atual
 
 # ============================================================================
 # CONFIGURAÇÃO GLOBAL DE WORKERS E DEVICE

@@ -26,9 +26,11 @@ except ImportError:
 # CACHE SBERT EM DISCO (padrão idêntico ao BERTScoreCache)
 # ═══════════════════════════════════════════════════════════════════════════
 
-_locais_sbert = [f'{_}_bertmodels/' for _ in ['./', '../'] if os.path.isdir(f'{_}_bertmodels/')]
-PASTA_LOCAL_SBERT = _locais_sbert[0] if _locais_sbert else './_bertmodels/'
-TEMPO_PROGRESSO =30  # segundos entre prints de progresso (para processamento lento)
+import util
+from util import UtilEnv
+
+PASTA_LOCAL_SBERT = UtilEnv.get_hf_home()
+TEMPO_PROGRESSO = 30  # segundos entre prints de progresso (para processamento lento)
 
 class SBERTCache:
     """
@@ -50,7 +52,8 @@ class SBERTCache:
         if cache_dir is None:
             cache_dir = os.environ.get('SBERT_CACHE_PATH')
         if not cache_dir:
-            cache_dir = os.path.join(PASTA_LOCAL_SBERT, 'sbert_cache')
+            from util import UtilEnv
+            cache_dir = UtilEnv.get_hf_home(subpasta='sbert_cache')
         # Subdiretório por modelo
         self.cache_dir = os.path.join(cache_dir, modelo)
         self.modelo = modelo

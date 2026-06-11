@@ -63,13 +63,7 @@ from util import UtilEnv
 if UtilEnv.carregar_env('.env', pastas=['../','./']):
    pass
    
-_locais_ = [f'{_}_bertmodels/' for _ in ['./','../'] if os.path.isdir(f'{_}_bertmodels/')]
-PASTA_LOCAL = _locais_[0] if len(_locais_)>0 else './_bertmodels/'
-
-# Configura cache local se PASTA_LOCAL estiver definida
-if PASTA_LOCAL:
-    os.makedirs(PASTA_LOCAL, exist_ok=True)
-    os.environ['HF_HOME'] = PASTA_LOCAL
+PASTA_LOCAL = UtilEnv.get_hf_home()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX: Desabilita meta tensors no Transformers para evitar erro "Cannot copy out of meta tensor"
@@ -550,7 +544,8 @@ class BERTScoreCache:
             cache_dir = os.environ.get('BERTSCORE_CACHE_PATH')
         
         if not cache_dir:
-            cache_dir = os.path.join(PASTA_LOCAL, 'bs_cache')
+            from util import UtilEnv
+            cache_dir = UtilEnv.get_hf_home(subpasta='bs_cache')
         
         # Segregar cache por modelo personalizado (evita colisão entre modelos)
         if model_type:

@@ -724,6 +724,35 @@ class UtilEnv():
         return False
     
     @classmethod
+    def get_hf_home(cls, subpasta: str = None) -> str:
+        """
+        Retorna o diretório base para cache de modelos (HF_HOME).
+        Se a variável de ambiente HF_HOME não estiver definida, adota o padrão do HuggingFace
+        ou uma pasta local garantindo a criação segura do diretório.
+        Pode receber um argumento 'subpasta' para retornar um subdiretório já criado.
+        """
+        pasta_base = os.environ.get('HF_HOME')
+        if not pasta_base:
+            pasta_base = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface')
+            os.environ['HF_HOME'] = pasta_base
+            
+        pasta_final = os.path.join(pasta_base, subpasta) if subpasta else pasta_base
+
+        try:
+            os.makedirs(pasta_final, exist_ok=True)
+        except PermissionError:
+            pasta_base_fallback = os.path.join(os.path.expanduser('~'), '.cache', 'llms', '_bertmodels')
+            # Atualiza HF_HOME apenas se estávamos usando o padrão
+            if not os.environ.get('HF_HOME') or os.environ.get('HF_HOME') == pasta_base:
+                os.environ['HF_HOME'] = pasta_base_fallback
+            
+            pasta_final = os.path.join(pasta_base_fallback, subpasta) if subpasta else pasta_base_fallback
+            os.makedirs(pasta_final, exist_ok=True)
+            print(f"⚠️ Sem permissão para criar cache em {pasta_base}. Usando fallback seguro: {pasta_final}")
+            
+        return pasta_final
+
+    @classmethod
     def get_int(cls, chave_env, default=0) -> int:
         try:
             valor = os.getenv(chave_env)
