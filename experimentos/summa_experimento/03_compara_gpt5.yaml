@@ -87,7 +87,7 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Mapeamento de campos para métricas
+    # Mapeamento de campos para métricas
   campos:
     bertscore:
       - "(global)"
@@ -102,6 +102,7 @@ configuracao_comparacao:
       - "Temas.Jurisprudencia"
       - "Temas"
       - "Likert"
+      - "MetaDados"
 
     rouge_1:
 
@@ -117,6 +118,7 @@ configuracao_comparacao:
       - "DataJulgamento"
       - "Partes"
       - "Likert"
+      - "MetaDados"
 
     levenshtein:
       - "Tipo"
@@ -131,6 +133,7 @@ configuracao_comparacao:
       - "Partes"
       - "Temas.Explicacao"
       - "Likert"
+      - "MetaDados"
 
     sbert_grande:
       - "(global)"
@@ -141,6 +144,7 @@ configuracao_comparacao:
       - "Partes"
       - "Temas.Explicacao"
       - "Likert"
+      - "MetaDados"
 
 campos_virtuais:
   Likert:

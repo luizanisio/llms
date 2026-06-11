@@ -1,0 +1,113 @@
+saida:
+  pasta: ./compara/analises_comparacao_summa_q235_mini_10
+  pasta_parquet: ./compara/
+  arquivo_base: comparacao_summa
+  regerar_planilha_base: true
+  linguagem_graficos: en
+execucao:
+  max_workers: 10
+  teste_rapido: false
+  gerar_graficos: true
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: true
+  divisao:
+    treino: 0.7
+    validacao: 0.1
+    teste: 0.2
+modelo_base:
+  arquivo: ./saida/saida_or_235b.parquet
+  rotulo: Qwen235b
+  familia: Qwen-235B
+modelos_comparacao:
+- arquivo: ./saida/saida_qwen7b.parquet
+  rotulo: Qwen7b
+  familia: Qwen-7B
+- arquivo: ./saida/saida_oa_gpt5.parquet
+  rotulo: GPT5
+  familia: GPT-5
+- arquivo: ./saida/saida_sabia4.parquet
+  rotulo: Sabia-4
+  familia: Sabia-4
+configuracao_comparacao:
+  nivel_campos: 1
+  padronizar_simbolos: true
+  rouge_stemmer: true
+  nome_campo_id: id
+  rotulo_campo_id: ID
+  campos_parquet:
+    id: chave
+    resposta: resposta
+    resumo_tokens: resumo
+    avaliacao: ''
+    erro: erro
+  filtro:
+    arquivo: ./saida/filtro_teste_fold_12_10_teste.csv
+    campo_id: seq_documento_acordao
+  modelos:
+    sbert:
+      medio: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
+    bertscore: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+  mascaras:
+    extracao: ^(.+)\.json$
+    tokens: .tokens.json
+    avaliacao: .avaliacao.json
+    observabilidade: .obs.json
+  campos:
+    bertscore:
+    - (global)
+    - Materia
+    - Resumo
+    - Dispositivo
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Decisao
+    - Temas.Explicacao
+    - Temas.Normas
+    - Temas.Jurisprudencia
+    - Temas
+    rouge_1: null
+    rouge_2:
+    - Partes
+    - Partes.Tipo
+    - Partes.Nome
+    rouge_l:
+    - (global)
+    - Materia
+    - Resumo
+    - DataJulgamento
+    - Partes
+    levenshtein:
+    - Tipo
+    - DataJulgamento
+    sbert_medio:
+    - (global)
+    - Dispositivo
+    - Materia
+    - Resumo
+    - Temas
+    - Partes
+    - Temas.Explicacao
+    sbert_grande:
+    - (global)
+    - Dispositivo
+    - Materia
+    - Resumo
+    - Temas
+    - Partes
+    - Temas.Explicacao
+campos_virtuais:
+  Likert:
+  - Materia
+  - Temas.Ponto
+  - Temas.Argumentos
+  - Temas.Doutrina
+  - Temas.Conceitos
+  - Resumo
+  MetaDados:
+  - Materia
+  - Partes
+  - Temas.Normas
+  - Temas.Jurisprudencia
