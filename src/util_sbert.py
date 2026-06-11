@@ -234,6 +234,12 @@ def sbert_score(preds: List[str], trues: List[str],
     Returns:
         Tupla (P, R, F1) com listas de floats
     """
+    try:
+        from util_sysinfo import MemoryLogger
+        MemoryLogger.set_nome_etapa(f"Análise - Calculando SBERT ({modelo})")
+    except ImportError:
+        pass
+
     if not isinstance(preds, (list, tuple)) or not isinstance(trues, (list, tuple)):
         raise TypeError("preds e trues devem ser listas ou tuplas de strings")
     if len(preds) != len(trues):

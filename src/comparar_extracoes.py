@@ -451,14 +451,15 @@ def main():
     if ignorados:
         print(f"⚠️  Modelos ignorados explicitamente (ativo=false): {', '.join(ignorados)}")
 
-    # Instancia Logger de Memória
-    arquivo_log_memoria = os.path.join(pasta_saida, 'uso_memoria.log')
+    # Configura Logger de Memória
+    arquivo_log_memoria = os.path.join(pasta_saida, 'uso_memoria.csv')
     try:
         from util_sysinfo import MemoryLogger
-        mem_logger = MemoryLogger(arquivo_log_memoria)
-        mem_logger.log("INICIO - Configuração Carregada")
+        MemoryLogger.set_log_file(arquivo_log_memoria, tempo_atualizacao=30)
+        MemoryLogger.set_nome_etapa("INICIO - Configuração Carregada")
+        tem_memory_logger = True
     except ImportError:
-        mem_logger = None
+        tem_memory_logger = False
 
     # Prepara listas para CargaDadosComparacao
     rotulo_origem = modelo_base.get('rotulo', 'BASE')
@@ -607,9 +608,9 @@ def main():
         campos_virtuais=config.get('campos_virtuais', {})
     )
     
-    if mem_logger: mem_logger.log("ANTES DE CARREGAR DADOS JSON")
+    if tem_memory_logger: MemoryLogger.set_nome_etapa("ANTES DE CARREGAR DADOS JSON")
     dados_analise = carga.carregar()
-    if mem_logger: mem_logger.log("DEPOIS DE CARREGAR DADOS JSON")
+    if tem_memory_logger: MemoryLogger.set_nome_etapa("DEPOIS DE CARREGAR DADOS JSON")
     print(dados_analise.resumo())
     
     if not dados_analise.dados:
@@ -684,16 +685,16 @@ def main():
             
         # Gera o DataFrame e Exporta
         print("📊 Exportando CSVs e Excel...")
-        if mem_logger: mem_logger.log("ANTES DA GERAÇÃO DO DATAFRAME")
+        if tem_memory_logger: MemoryLogger.set_nome_etapa("ANTES DA GERAÇÃO DO DATAFRAME")
         analisador.to_df() # Gera intenamente
-        if mem_logger: mem_logger.log("DEPOIS DA GERAÇÃO DO DATAFRAME")
+        if tem_memory_logger: MemoryLogger.set_nome_etapa("DEPOIS DA GERAÇÃO DO DATAFRAME")
         
         # Exporta CSV para a pasta raiz (usa caminho absoluto para sair da pasta_analises/jsons)
         arquivo_csv = os.path.join(pasta_saida, f'{nome_arquivo_base}.csv')
         analisador.exportar_csv(arquivo_csv)
         
         # Exporta Excel para a pasta raiz (usa caminho absoluto)
-        if mem_logger: mem_logger.log("ANTES DE EXPORTAR EXCEL")
+        if tem_memory_logger: MemoryLogger.set_nome_etapa("ANTES DE EXPORTAR EXCEL")
         analisador.exportar_excel(
             arquivo_excel, 
             incluir_estatisticas=True, 
@@ -701,7 +702,7 @@ def main():
             congelar_paineis=True,
             gerar_graficos=False # Gráficos gerados no passo seguinte se solicitado
         )
-        if mem_logger: mem_logger.log("DEPOIS DE EXPORTAR EXCEL")
+        if tem_memory_logger: MemoryLogger.set_nome_etapa("DEPOIS DE EXPORTAR EXCEL")
         print(f"✅ Análise Base salva em: {arquivo_excel}")
 
     # 7. Pós-Processamento (Gráficos, LLM Judge, Stats)
@@ -803,8 +804,9 @@ def main():
                     print(f"\n🏆 Melhor Modelo em '{metrica_escolhida}':")
                     print(f"   {vencedor['modelo']} (Média: {vencedor['mean']:.4f})")
 
-    if 'mem_logger' in locals() and mem_logger: 
-        mem_logger.log("FIM DA EXECUÇÃO")
+    if 'tem_memory_logger' in locals() and tem_memory_logger: 
+        MemoryLogger.set_nome_etapa("FIM DA EXECUÇÃO")
+        MemoryLogger.finalizar(gerar_grafico=True)
         
     print("\n✅ Processo finalizado com sucesso.")
 

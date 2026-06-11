@@ -207,6 +207,12 @@ def bscore(preds: List[str] = None, trues: List[str] = None,
     """
     global _BERTSCORE_WORKERS_CONFIG, _BERTSCORE_MAX_WORKERS_CONFIG
 
+    try:
+        from util_sysinfo import MemoryLogger
+        MemoryLogger.set_nome_etapa("Análise - Calculando BERTScore")
+    except ImportError:
+        pass
+
     # Chamada sem parâmetros: inicializa serviço explicitamente e retorna None
     if preds is None or trues is None:
         if _BERTSCORE_WORKERS_CONFIG is not None:

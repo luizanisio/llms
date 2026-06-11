@@ -2231,6 +2231,11 @@ class JsonAnaliseDataFrame():
         """Executa comparações e retorna DataFrame com métricas"""
         import pandas as pd
         import gc
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Análise - Gerando DataFrame Principal")
+        except ImportError:
+            pass
         
         if self._resultados is not None:
             return self._resultados
@@ -2651,10 +2656,14 @@ class JsonAnaliseDataFrame():
             incluir_estatisticas: se True, cria aba adicional com estatísticas
             usar_formatacao_avancada: se True, usa UtilPandasExcel com mapas de calor
             gerar_graficos: se True, gera gráficos boxplot automaticamente
-        
         Returns:
             caminho completo do arquivo gerado
         '''
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Análise - Exportando para Excel")
+        except ImportError:
+            pass
         import pandas as pd
         
         if arquivo is None:
@@ -3152,6 +3161,11 @@ class JsonAnaliseDataFrame():
     def gerar_graficos_de_excel(cls, arquivo_excel: str, pasta_saida: str = None, 
                                 paleta: str = 'Cividis', limpar_graficos_antigos: bool = True) -> list:
         """Delega para JsonAnaliseGraficos."""
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Análise - Renderizando Gráficos")
+        except ImportError:
+            pass
         return JsonAnaliseGraficos.gerar_graficos_de_excel(
             arquivo_excel, pasta_saida, paleta, limpar_graficos_antigos)
     
@@ -3275,13 +3289,18 @@ class JsonAnaliseDataFrame():
             arquivo_excel: caminho do arquivo Excel existente para atualizar
             gerar_graficos: se True, gera gráficos boxplot de avaliação LLM
             pasta_saida: pasta para salvar gráficos (se None, usa diretório do Excel)
-        
+            
         Returns:
             caminho do arquivo Excel atualizado
         
         Raises:
             FileNotFoundError: se o arquivo Excel não existir
         """
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Análise - Executando LLM Judge")
+        except ImportError:
+            pass
         import tempfile
         from openpyxl import load_workbook
         

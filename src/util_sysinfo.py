@@ -436,7 +436,7 @@ def generate_latex_snippet():
         print(f"  - {pkg}: {ver}")
     
     print("\n" + "-" * 70)
-    print(">>> TEXTO PARA QUALIFICAÇÃO (LaTeX) <<<")
+    print(">>> TEXTO (LaTeX) <<<")
     print("-" * 70 + "\n")
     
     # Gera parágrafo introdutório e tabela LaTeX
@@ -577,38 +577,291 @@ Os experimentos foram conduzidos em um ambiente computacional de alto desempenho
 if __name__ == "__main__":
     generate_latex_snippet()
 
+import csv
+import datetime
+import threading
+import os
+
 class MemoryLogger:
-    def __init__(self, log_file):
-        self.log_file = log_file
-        import os
-        os.makedirs(os.path.dirname(os.path.abspath(self.log_file)), exist_ok=True)
-        with open(self.log_file, 'w', encoding='utf-8') as f:
-            f.write("=== LOG DE MEMÓRIA ===\n")
+    """
+    Monitor de recursos do sistema em background.
+    Implementado usando métodos de classe (Singleton-like) para facilitar 
+    o uso global no projeto sem necessidade de passar a instância.
+    """
+    _LOG_FILE = None
+    _ETAPA = 'Iniciada'
+    _START = None
+    _TEMPO_ATUALIZACAO = None
+    
+    _thread = None
+    _stop_event = threading.Event()
+    _lock = threading.Lock()
+
+    @classmethod
+    def _write_sysinfo_log(cls, log_file):
+        """Grava as informações do sistema em um arquivo de log paralelo."""
+        try:
+            import io
+            import sys
+            import os
             
-    def log(self, etapa):
+            base_name, _ = os.path.splitext(log_file)
+            sysinfo_file = f"{base_name}(sysinfo).log"
+            
+            #if os.path.exists(sysinfo_file):
+            #    return
+                
+            old_stdout = sys.stdout
+            captured_output = io.StringIO()
+            sys.stdout = captured_output
+            try:
+                generate_latex_snippet()
+                output = captured_output.getvalue()
+            finally:
+                sys.stdout = old_stdout
+                
+            with open(sysinfo_file, 'w', encoding='utf-8') as f:
+                f.write(output)
+        except Exception as e:
+            print(f"Erro ao gravar sysinfo log: {e}")
+
+    @classmethod
+    def set_log_file(cls, log_file, tempo_atualizacao=30):
+        """
+        Configura o arquivo de log e inicia a thread de monitoramento automático.
+        
+        Args:
+            log_file (str): Caminho para o arquivo CSV de saída.
+            tempo_atualizacao (int, optional): Intervalo em segundos entre cada
+                                               coleta automática. O padrão é 30s.
+                                               Se None ou zero, não inicia a thread.
+        """
+        cls._TEMPO_ATUALIZACAO = tempo_atualizacao
+        cls._LOG_FILE = log_file
+        
+        os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+        
+        # Cria ou verifica o CSV e insere o cabeçalho se necessário
+        write_header = not os.path.exists(log_file) or os.path.getsize(log_file) == 0
+        
+        if write_header:
+            with open(log_file, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    'timestamp', 'tempo_decorrido_s', 'tipo_registro', 'etapa',
+                    'mem_processo_mb', 'mem_sis_disp_mb', 'mem_sis_total_mb',
+                    'cpu_uso_pct', 'gpu_mem_alocada_mb'
+                ])
+        
+        cls._START = datetime.datetime.now()
+        
+        # Inicia gravação assíncrona do relatório do sistema no arquivo anexo
+        threading.Thread(target=cls._write_sysinfo_log, args=(log_file,), daemon=True).start()
+        
+        # Para a thread existente, se houver
+        if cls._thread and cls._thread.is_alive():
+            cls._stop_event.set()
+            cls._thread.join()
+        
+        cls._stop_event.clear()
+        
+        if tempo_atualizacao and tempo_atualizacao > 0:
+            cls._thread = threading.Thread(target=cls._run_logger, daemon=True)
+            cls._thread.start()
+
+    @classmethod
+    def _get_gpu_mem(cls):
+        """Coleta uso de memória da GPU usando nvidia-smi de forma rápida."""
+        try:
+            from subprocess import check_output
+            output = check_output(['nvidia-smi', '--query-gpu=memory.used', '--format=csv,noheader,nounits'], encoding='utf-8')
+            if output:
+                # Soma a memória alocada caso tenha múltiplas GPUs
+                lines = output.strip().split('\n')
+                total_mb = sum(int(x.strip()) for x in lines if x.strip().isdigit())
+                return float(total_mb)
+        except Exception:
+            pass
+        return 0.0
+
+    @classmethod
+    def _get_cpu_pct(cls):
+        """Obtém o uso de CPU percentual."""
+        try:
+            import psutil
+            return psutil.cpu_percent(interval=None)
+        except ImportError:
+            # Caso psutil não esteja instalado, não coleta CPU
+            return 0.0
+
+    @classmethod
+    def _coletar_metricas(cls):
+        """Lê métricas de CPU, Memória e GPU sem gravar no log."""
         try:
             import resource
-            import datetime
             # Memória máxima do processo (em KB no Linux)
             process_mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
             process_mem_mb = process_mem_kb / 1024.0
+        except Exception:
+            process_mem_mb = 0.0
             
-            # Memória do sistema usando /proc/meminfo
-            meminfo = {}
+        # Memória do sistema usando /proc/meminfo
+        meminfo = {}
+        try:
             with open('/proc/meminfo', 'r') as f:
                 for line in f:
                     parts = line.split()
                     if len(parts) >= 2:
                         meminfo[parts[0].strip(':')] = int(parts[1])
+        except Exception:
+            pass
+        
+        total_mb = meminfo.get('MemTotal', 0) / 1024.0
+        avail_mb = meminfo.get('MemAvailable', 0) / 1024.0
+        
+        cpu_pct = cls._get_cpu_pct()
+        gpu_mb = cls._get_gpu_mem()
+        
+        return process_mem_mb, avail_mb, total_mb, cpu_pct, gpu_mb
+
+    @classmethod
+    def _run_logger(cls):
+        """Thread que executa o log periodicamente."""
+        while not cls._stop_event.is_set():
+            if cls._stop_event.wait(cls._TEMPO_ATUALIZACAO):
+                break
+            cls.log(tipo_registro="Auto")
+
+    @classmethod
+    def log(cls, etapa=None, tipo_registro="Manual"):
+        """
+        Registra pontualmente as métricas atuais no CSV de log.
+        
+        Args:
+            etapa (str, optional): Nome da etapa atual (sobrescreve a última).
+            tipo_registro (str): Origem do log (Auto ou Manual).
+        """
+        # Sempre atualiza a etapa para consultas futuras, mesmo sem log configurado
+        if etapa:
+            cls._ETAPA = etapa
+        else:
+            etapa = cls._ETAPA
             
-            total_mb = meminfo.get('MemTotal', 0) / 1024.0
-            avail_mb = meminfo.get('MemAvailable', 0) / 1024.0
+        if cls._LOG_FILE is None:
+            return
             
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_line = f"[{ts}] [{etapa}] Proc: {process_mem_mb:.2f} MB | Sist. Disp: {avail_mb:.2f} MB / Total: {total_mb:.2f} MB\n"
-            
-            with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(log_line)
-            print(f"🧠 [MEM] {etapa} - Processo: {process_mem_mb:.1f}MB | Disp: {avail_mb:.1f}MB")
+        try:
+            with cls._lock:
+                proc_mb, avail_mb, total_mb, cpu_pct, gpu_mb = cls._coletar_metricas()
+                
+                ts = datetime.datetime.now()
+                ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
+                
+                elapsed_s = 0.0
+                if cls._START:
+                    elapsed_s = (ts - cls._START).total_seconds()
+                
+                with open(cls._LOG_FILE, 'a', encoding='utf-8', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        ts_str, f"{elapsed_s:.1f}", tipo_registro, etapa,
+                        f"{proc_mb:.2f}", f"{avail_mb:.2f}", f"{total_mb:.2f}",
+                        f"{cpu_pct:.1f}", f"{gpu_mb:.1f}"
+                    ])
+                    
         except Exception as e:
-            print(f"⚠️ Erro ao registrar memória: {e}")
+            print(f"⚠️ Erro ao registrar memória no CSV: {e}")
+
+    @classmethod
+    def set_nome_etapa(cls, etapa, registrar_log=True):
+        """Atualiza a etapa atual e opcionalmente dispara um registro de log manual."""
+        if registrar_log:
+            cls.log(etapa, tipo_registro="Manual")
+        else:
+            cls._ETAPA = etapa
+    
+    @classmethod
+    def get_elapsed_time(cls):
+        """Retorna o tempo decorrido (timedelta) desde a configuração do log."""
+        if cls._START is None:
+            return datetime.timedelta(seconds=0)
+        return datetime.datetime.now() - cls._START
+
+    @classmethod
+    def finalizar(cls, gerar_grafico=True):
+        """
+        Encerra a thread de monitoramento e gera o gráfico (opcional).
+        
+        Args:
+            gerar_grafico (bool): Se True, gera um gráfico de linha das métricas
+                                  coletadas na mesma pasta do arquivo de log.
+        """
+        # Para a thread
+        if cls._thread and cls._thread.is_alive():
+            cls._stop_event.set()
+            cls._thread.join()
+            cls._thread = None
+        
+        # Garante o último registro antes de finalizar
+        cls.log(tipo_registro="Manual (Finalização)")
+            
+        if gerar_grafico and cls._LOG_FILE and os.path.exists(cls._LOG_FILE):
+            cls._gerar_grafico_uso()
+            
+    @classmethod
+    def _gerar_grafico_uso(cls):
+        """Lê o CSV e gera o gráfico de linha de uso de recursos via Pandas e Matplotlib."""
+        try:
+            import pandas as pd
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+        except ImportError:
+            print("⚠️ Bibliotecas 'pandas', 'matplotlib' ou 'seaborn' não instaladas. O gráfico não será gerado.")
+            return
+
+        try:
+            df = pd.read_csv(cls._LOG_FILE)
+            if df.empty:
+                print("⚠️ Arquivo de log vazio. Gráfico não gerado.")
+                return
+
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+
+            sns.set_theme(style="darkgrid")
+            fig, ax1 = plt.subplots(figsize=(12, 6))
+
+            # Memória no eixo Y principal
+            color_proc = 'tab:blue'
+            ax1.set_xlabel('Tempo')
+            ax1.set_ylabel('Memória (MB)')
+            ax1.plot(df.index, df['mem_processo_mb'], color=color_proc, label='Memória Processo (MB)')
+            
+            if 'gpu_mem_alocada_mb' in df and df['gpu_mem_alocada_mb'].sum() > 0:
+                ax1.plot(df.index, df['gpu_mem_alocada_mb'], color='tab:purple', label='Memória GPU (MB)')
+                
+            ax1.tick_params(axis='y')
+            ax1.legend(loc='upper left')
+
+            # CPU no eixo Y secundário
+            ax2 = ax1.twinx()  
+            color_cpu = 'tab:red'
+            ax2.set_ylabel('CPU (%)', color=color_cpu)  
+            ax2.plot(df.index, df['cpu_uso_pct'], color=color_cpu, label='Uso CPU (%)', alpha=0.6)
+            ax2.tick_params(axis='y', labelcolor=color_cpu)
+            ax2.legend(loc='upper right')
+
+            plt.title('Uso de Recursos Durante a Execução')
+            fig.tight_layout()  
+            
+            # Salva no mesmo diretório do log com sufixo _grafico.png
+            base_dir = os.path.dirname(cls._LOG_FILE)
+            filename = os.path.splitext(os.path.basename(cls._LOG_FILE))[0]
+            grafico_file = os.path.join(base_dir, f"{filename}_grafico.png")
+            
+            plt.savefig(grafico_file, dpi=150)
+            plt.close()
+            
+            print(f"📈 Gráfico de recursos gerado com sucesso: {grafico_file}")
+        except Exception as e:
+            print(f"⚠️ Erro ao gerar gráfico de recursos: {e}")

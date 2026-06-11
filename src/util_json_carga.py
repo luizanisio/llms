@@ -550,6 +550,12 @@ class CargaDadosComparacao():
 
     def carregar(self):
         """Carrega dados usando mapeamento via Regex."""
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Carga JSON - Mapeando arquivos")
+        except ImportError:
+            pass
+            
         # 1. Mapeamento da Origem
         print(f"📂 Mapeando origem: {self.pasta_origem}")
         map_ext_origem = self._mapear_pasta(self.pasta_origem, self.re_extracao)
@@ -623,6 +629,12 @@ class CargaDadosComparacao():
 
         # Loop Principal
         print(f"\n🔄 Carregando e filtrando dados...")
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Carga JSON - Lendo e processando arquivos")
+        except ImportError:
+            pass
+            
         for id_peca in tqdm(sorted(ids_origem), desc="Processando"):
             # 1. Carrega Origem
             path_origem = map_ext_origem[id_peca]
@@ -687,6 +699,11 @@ class CargaDadosComparacao():
             self.dados.append(linha)
 
         # Finalização (Consolidação de listas)
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Carga JSON - Consolidando métricas")
+        except ImportError:
+            pass
         self._consolidar_listas(tokens_dict, avaliacoes_dict, obs_dict, campos_dict)
         
         # Salva log de erros se necessário
