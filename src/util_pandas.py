@@ -72,23 +72,45 @@ class UtilPandasExcel:
         if (nome_arquivo.lower()[-5:] != '.xlsx') and (nome_arquivo.lower()[-4:] != '.xls'):
             nome_arquivo = f'{nome_arquivo}.xlsx'
         self.nome_arquivo = nome_arquivo
-        self.writer = pd.ExcelWriter(self.nome_arquivo, engine='xlsxwriter')
+        self.writer = pd.ExcelWriter(self.nome_arquivo, engine='xlsxwriter', engine_kwargs={'options': {'constant_memory': True}})
         self.columns_auto_width = columns_auto_width
         self.header_formatting = header_formatting
         self.WB_HEADER_FORMAT = self.writer.book.add_format(self.FORMAT_HEADER)
         self.WB_DEFAULT_FORMAT = self.writer.book.add_format(self.FORMAT_DEFAULT)
         self.WB_HIGHLIGHT_FORMAT = self.writer.book.add_format(self.FORMAT_HIGHLIGHT)
 
-    def write_df(self,df,sheet_name : str, auto_width_colums_list = True, columns_titles = None):
-        df.to_excel(self.writer, sheet_name=f'{sheet_name}', index = False)
-        if not (columns_titles is None):
-            worksheet = self.writer.sheets[f'{sheet_name}']
-            for n, value in enumerate(columns_titles):
-                worksheet.write(0, n, value)
-        # formata os tamanhos das colunas
-        self.__auto_width_colums__(df = df, sheet_name = sheet_name,columns_list = auto_width_colums_list, columns_titles=columns_titles)
-        # formata o cabeçalho
-        self.__format_header__(df = df, sheet_name=sheet_name)
+    def get_or_create_sheet(self, sheet_name: str):
+        if f'{sheet_name}' not in self.writer.sheets:
+            worksheet = self.writer.book.add_worksheet(f'{sheet_name}')
+            self.writer.sheets[f'{sheet_name}'] = worksheet
+        return self.writer.sheets[f'{sheet_name}']
+
+    def write_df(self, df, sheet_name: str, auto_width_colums_list=True, columns_titles=None):
+        # Se títulos personalizados foram fornecidos, renomeamos as colunas do df antes de exportar
+        if columns_titles is not None and len(columns_titles) == len(df.columns):
+            df = df.copy()
+            df.columns = columns_titles
+            
+        # Garante que a planilha existe
+        worksheet = self.get_or_create_sheet(sheet_name)
+
+        # Ajusta automaticamente a largura das colunas (ANTES de escrever os dados)
+        if type(auto_width_colums_list) is bool and auto_width_colums_list:
+            self.__auto_width_colums__(df=df, sheet_name=sheet_name, columns_list=auto_width_colums_list, columns_titles=columns_titles)
+
+        # Escreve a linha de cabeçalho
+        for col_idx, col_name in enumerate(df.columns):
+            worksheet.write(0, col_idx, str(col_name), self.WB_HEADER_FORMAT)
+            
+        # Escreve o dataframe linha por linha sequencialmente
+        # (O df.to_excel do pandas é incompatível com o modo constant_memory do xlsxwriter 
+        # para múltiplas colunas ou quando formatações ocorrem depois)
+        for row_idx, row in enumerate(df.itertuples(index=False, name=None), start=1):
+            for col_idx, val in enumerate(row):
+                if pd.isna(val):
+                    worksheet.write(row_idx, col_idx, '')
+                else:
+                    worksheet.write(row_idx, col_idx, val)
 
     def write_dfs(self,dataframes: dict,auto_width_colums_list = True):
         for n,d in dataframes.items():
@@ -96,7 +118,7 @@ class UtilPandasExcel:
 
     # recebe o endereço da célula e o valor
     def write_cell(self, sheet_name : str, cell:str, value, is_header = False):
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         fm = self.WB_HEADER_FORMAT if is_header else None 
         #worksheet.write(0, colx, value, self.WB_HEADER_FORMAT)        
         worksheet.write(f'{cell}', value, fm)
@@ -107,7 +129,7 @@ class UtilPandasExcel:
     # upd.write_cells(sheet_name='Resumo de Entidades', col=5,line=0, values = ['TIPO', 'INICIO','FIM','PAI','MEDIA'], is_header= True)
     # upd.write_cells(sheet_name='Resumo de Entidades', col=5,line=2, values = ['TIPO', 'INICIO','FIM','PAI','MEDIA'], is_header= False)
     def write_cells(self, sheet_name : str, col:int, line:int, values = [], is_header = False):
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         fm = self.WB_HEADER_FORMAT if is_header else None 
         #worksheet.write(0, colx, value, self.WB_HEADER_FORMAT)        
         for n, value in enumerate(values):
@@ -117,7 +139,7 @@ class UtilPandasExcel:
     # exmeplos:
     # upd.write_cells(sheet_name='Resumo de Entidades', col=5,line=4, values = [{'INICIO':1,'FIM':2},{'INICIO':3,'FIM':4}], is_header= False, col_order=['INICIO','FIM'])
     def write_table(self, sheet_name : str, col:int, line:int, values = [], is_header = False, col_order = None, columns_titles = None):
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         fm = self.WB_HEADER_FORMAT if is_header else None 
         _col_order = list(col_order) if not col_order is None else None
         _col_title = _col_order if columns_titles is None else list(columns_titles)
@@ -148,7 +170,7 @@ class UtilPandasExcel:
         if (columns_list == False ):
             return
         # inspirado em https://stackoverflow.com/questions/17326973/is-there-a-way-to-auto-adjust-excel-column-widths-with-pandas-excelwriter
-        worksheet = self.writer.sheets[sheet_name]  # pull worksheet object
+        worksheet = self.get_or_create_sheet(sheet_name)
         for idx, col in enumerate(df):  # loop through all columns
             try:
                 series = df[col]
@@ -185,7 +207,7 @@ class UtilPandasExcel:
             return
         # inspirado em https://stackoverflow.com/questions/39919548/xlsxwriter-trouble-formatting-pandas-dataframe-cells-using-xlsxwriter
         # Write the header manually
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         for colx, value in enumerate(df.columns.values):
             worksheet.write(0, colx, value, self.WB_HEADER_FORMAT)        
         #worksheet.set(0,0,cell_format =self.WB_HEADER_FORMAT)
@@ -217,7 +239,7 @@ class UtilPandasExcel:
             excel.conditional_color('Tokens', 'C2:C10', min_value=1, max_value=0)
         """
         # inspirado em https://xlsxwriter.readthedocs.io/working_with_conditional_formats.html
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         #fm = FORMAT_CONDITIONAL_3_COLOR = {'type': '3_color_scale', min_value, mid_value, max_value}
         if min_value > max_value:
             # escala invertida: cores também invertidas (verde para menor, vermelho para maior)
@@ -351,7 +373,7 @@ class UtilPandasExcel:
             min_value, mid_value, max_value: escala de valores
             min_color, mid_color, max_color: cores correspondentes (hex)
         """
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         
         # Calcula a cor
         bg_color = self._calculate_color(value, min_value, mid_value, max_value,
@@ -374,7 +396,7 @@ class UtilPandasExcel:
 
     def highlight_bgcolor(self, sheet_name, cells,  min_value = 0, max_value = 1):
         # inspirado em https://xlsxwriter.readthedocs.io/working_with_conditional_formats.html
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         worksheet.conditional_format(f'{cells}', {'type': 'cell', 'criteria': 'between','minimum':  min_value,'maximum':  max_value, 'format':   self.WB_HIGHLIGHT_FORMAT})
 
     # cria um range para a posição das colunas informadas
@@ -384,7 +406,7 @@ class UtilPandasExcel:
         return f'{xl_col_to_name(first_col)}{_fr}:{xl_col_to_name(last_col)}{_lr}'
 
     def congelar_painel(self, sheet_name, first_row = 1, first_col = 0):
-        worksheet = self.writer.sheets[f'{sheet_name}']
+        worksheet = self.get_or_create_sheet(sheet_name)
         worksheet.freeze_panes(first_row, first_col)
 
     RE_URL = re.compile(r'https?://')

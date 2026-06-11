@@ -2779,8 +2779,6 @@ class JsonAnaliseDataFrame():
                 rename_map[col] = novo_nome
             df_tecnica.rename(columns=rename_map, inplace=True)
             
-            # Exporta aba
-            excel.write_df(df_tecnica, nome_aba, auto_width_colums_list=True)
             if congelar_paineis:
                 excel.congelar_painel(nome_aba, 1, 1)  # Congela primeira linha e coluna
             
@@ -2789,22 +2787,23 @@ class JsonAnaliseDataFrame():
                                if col != col_id and any(col.endswith(f'_{m}') for m in ['P', 'R', 'F1', 'SIM'])]
             
             if len(colunas_metricas) > 0 and len(df_tecnica) > 0:
+                from xlsxwriter.utility import xl_col_to_name
                 for col_name in colunas_metricas:
                     col_idx = df_tecnica.columns.get_loc(col_name)
-                    
-                    for row_idx in range(len(df_tecnica)):
-                        valor = df_tecnica.iloc[row_idx, col_idx]
-                        if valor is not None and not (isinstance(valor, float) and np.isnan(valor)) and isinstance(valor, (int, float)):
-                            # Todas as métricas usam escala 0-1 (verde = melhor)
-                            excel.write_cell_with_color(nome_aba, row_idx + 1, col_idx, valor,
-                                                       min_value=0.0, mid_value=0.5, max_value=1.0)
+                    col_letter = xl_col_to_name(col_idx)
+                    # Todas as métricas usam escala 0-1 (verde = melhor)
+                    excel.conditional_color(nome_aba, f'{col_letter}2:{col_letter}{len(df_tecnica) + 1}',
+                                           min_value=0.0, mid_value=0.5, max_value=1.0)
+                                           
+            # Exporta aba (DEPOIS das formatações em constant_memory)
+            excel.write_df(df_tecnica, nome_aba, auto_width_colums_list=True)
         
         # ═══════════════════════════════════════════════════════════════════════
         # ABA DE ESTATÍSTICAS
         # ═══════════════════════════════════════════════════════════════════════
         if incluir_estatisticas:
             stats = self.estatisticas_globais()
-            excel.write_df(stats, 'Estatísticas', auto_width_colums_list=True)
+            
             if congelar_paineis:
                 excel.congelar_painel('Estatísticas', 1, 1)
             
@@ -2812,23 +2811,22 @@ class JsonAnaliseDataFrame():
             colunas_stats_metricas = [col for col in ['mean', 'median', 'std'] if col in stats.columns]
             
             if len(colunas_stats_metricas) > 0 and len(stats) > 0:
+                from xlsxwriter.utility import xl_col_to_name
                 for col_name in colunas_stats_metricas:
                     col_idx = stats.columns.get_loc(col_name)
-                    for idx, row in stats.iterrows():
-                        valor = row[col_name]
-                        
-                        if valor is not None and not (isinstance(valor, float) and np.isnan(valor)) and isinstance(valor, (int, float)):
-                            row_num = idx + 1
-                            
-                            if col_name == 'std':
-                                # Std: menor é melhor (vermelho = alta variação)
-                                _min, _mid, _max = 2.0, 0.5, 0.0
-                            else:
-                                # mean/median: maior é melhor (verde = alto)
-                                _min, _mid, _max = 0.0, 0.5, 1.0
-                            
-                            excel.write_cell_with_color('Estatísticas', row_num, col_idx, valor,
-                                                           min_value=_min, mid_value=_mid, max_value=_max)
+                    col_letter = xl_col_to_name(col_idx)
+                    
+                    if col_name == 'std':
+                        # Std: menor é melhor (vermelho = alta variação)
+                        _min, _mid, _max = 2.0, 0.5, 0.0
+                    else:
+                        # mean/median: maior é melhor (verde = alto)
+                        _min, _mid, _max = 0.0, 0.5, 1.0
+                    
+                    excel.conditional_color('Estatísticas', f'{col_letter}2:{col_letter}{len(stats) + 1}',
+                                           min_value=_min, mid_value=_mid, max_value=_max)
+                                           
+            excel.write_df(stats, 'Estatísticas', auto_width_colums_list=True)
             
             # Exporta comparação F1
             # Tenta encontrar uma métrica F1 global disponível
@@ -2842,39 +2840,27 @@ class JsonAnaliseDataFrame():
                     metrica_f1 = metricas_f1_global[0]
                     comp_f1 = self.comparar_modelos(metrica_f1)
                     
-                    # CORREÇÃO: NÃO usar to_excel() - escrever manualmente para aplicar cores
-                    worksheet = excel.writer.book.add_worksheet('Comparação_F1')
-                    excel.writer.sheets['Comparação_F1'] = worksheet
-                    
-                    # Escreve cabeçalhos
-                    for col_idx, col_name in enumerate(comp_f1.columns):
-                        worksheet.write(0, col_idx, col_name, excel.WB_HEADER_FORMAT)
-                    
                     if congelar_paineis:
                         excel.congelar_painel('Comparação_F1', 1, 1)
 
-                    # Aplica cores em todas as colunas numéricas (exceto ID) - célula por célula
+                    # Aplica cores em todas as colunas numéricas (exceto ID)
                     try:
                         df_numericas = comp_f1.select_dtypes(include=[np.number])
                         colunas_numericas = df_numericas.columns.tolist()
                         
                         if len(colunas_numericas) > 0 and len(comp_f1) > 0:
-                            # Escreve dados linha por linha aplicando cores
-                            for row_idx in range(len(comp_f1)):
-                                for col_idx, col_name in enumerate(comp_f1.columns):
-                                    valor = comp_f1.iloc[row_idx, col_idx]
-                                    
-                                    # Se é coluna numérica, aplica cor
-                                    if col_name in colunas_numericas and valor is not None and not (isinstance(valor, float) and np.isnan(valor)):
-                                        _min, _mid, _max = 0.0, 0.5, 1.0
-                                        excel.write_cell_with_color('Comparação_F1', row_idx + 1, col_idx, valor,
-                                                                       min_value=_min, mid_value=_mid, max_value=_max)
-                                    else:
-                                        # Escreve valor sem cor
-                                        worksheet.write(row_idx + 1, col_idx, valor, excel.WB_DEFAULT_FORMAT)
+                            from xlsxwriter.utility import xl_col_to_name
+                            for col_name in colunas_numericas:
+                                col_idx = comp_f1.columns.get_loc(col_name)
+                                col_letter = xl_col_to_name(col_idx)
+                                _min, _mid, _max = 0.0, 0.5, 1.0
+                                excel.conditional_color('Comparação_F1', f'{col_letter}2:{col_letter}{len(comp_f1) + 1}',
+                                                       min_value=_min, mid_value=_mid, max_value=_max)
                             
                     except Exception as e_colors:
                         print(f"⚠️  Aviso: Erro ao aplicar cores na aba 'Comparação_F1': {e_colors}")
+                        
+                    excel.write_df(comp_f1, 'Comparação_F1', auto_width_colums_list=True)
                 else:
                     print(f"⚠️  Aviso: Nenhuma métrica F1 global encontrada para criar aba 'Comparação_F1'")
             except ValueError as e:
@@ -2892,9 +2878,6 @@ class JsonAnaliseDataFrame():
         if self.tokens is not None and len(self.tokens) > 0:
             df_tokens = self._criar_dataframe_tokens()
             if df_tokens is not None:
-                # Escreve DataFrame normalmente
-                excel.write_df(df_tokens, 'Resumo_Tokens', auto_width_colums_list=True)
-                
                 if congelar_paineis:
                     excel.congelar_painel('Resumo_Tokens', 1, 1)
                 
@@ -2933,6 +2916,9 @@ class JsonAnaliseDataFrame():
                                               max_value=col_min)  # valor baixo = verde (melhor)
                 
                 print(f"   ✅ Formatação condicional aplicada em Resumo_Tokens")
+                
+                # Escreve DataFrame (DEPOIS de aplicar formatos)
+                excel.write_df(df_tokens, 'Resumo_Tokens', auto_width_colums_list=True)
         
         # ═══════════════════════════════════════════════════════════════════════
         # ABAS DE AVALIAÇÃO LLM (Global e Campos)
@@ -2944,9 +2930,6 @@ class JsonAnaliseDataFrame():
         # ═══════════════════════════════════════════════════════════════════════
         df_observabilidade = self._criar_dataframe_observabilidade()
         if df_observabilidade is not None:
-            # Escreve DataFrame normalmente
-            excel.write_df(df_observabilidade, 'Observabilidade', auto_width_colums_list=True)
-            
             if congelar_paineis:
                 excel.congelar_painel('Observabilidade', 1, 1)
             
@@ -3016,29 +2999,48 @@ class JsonAnaliseDataFrame():
                                               max_value=col_max)
             
             print(f"   ✅ Formatação condicional aplicada em Observabilidade")
+            
+            # Escreve DataFrame (DEPOIS de aplicar formatos)
+            excel.write_df(df_observabilidade, 'Observabilidade', auto_width_colums_list=True)
         
         # ═══════════════════════════════════════════════════════════════════════
         # ABA DE CONFIGURAÇÃO (para regenerar gráficos posteriormente)
         # ═══════════════════════════════════════════════════════════════════════
-        config_data = {
-            'parametro': ['nome_campo_id', 'rotulo_campo_id', 'rotulo_origem', 'rotulos_modelos', 'linguagem_graficos'],
-            'valor': [
-                self.dados_analise.config.nome_campo_id,
-                self.dados_analise.config.rotulo_campo_id,
-                self.dados_analise.config.rotulo_origem,
-                ','.join([self.dados_analise.rotulo_true] + self.dados_analise.rotulos_modelos) if hasattr(self.dados_analise, 'rotulos_modelos') else '',
-                self._lang
-            ],
-            'descricao': [
-                'Nome interno do campo ID (usado em DataFrames)',
-                'Rótulo de exibição do campo ID',
-                'Rótulo do modelo de referência/ground truth',
-                'Ordem original dos modelos a serem comparados',
-                'Idioma dos gráficos: pt (Português) ou en (English)'
-            ]
-        }
-        df_config = pd.DataFrame(config_data)
-        excel.write_df(df_config, 'Config', auto_width_colums_list=True)
+        config_data = [
+            {
+                'parametro': 'nome_campo_id',
+                'valor': self.dados_analise.config.nome_campo_id,
+                'descricao': 'Nome interno do campo ID (usado em DataFrames)'
+            },
+            {
+                'parametro': 'rotulo_campo_id',
+                'valor': self.dados_analise.config.rotulo_campo_id,
+                'descricao': 'Rótulo de exibição do campo ID'
+            },
+            {
+                'parametro': 'rotulo_origem',
+                'valor': self.dados_analise.config.rotulo_origem,
+                'descricao': 'Rótulo do modelo de referência/ground truth'
+            },
+            {
+                'parametro': 'rotulos_modelos',
+                'valor': ','.join([self.dados_analise.rotulo_true] + self.dados_analise.rotulos_modelos) if hasattr(self.dados_analise, 'rotulos_modelos') else '',
+                'descricao': 'Ordem original dos modelos a serem comparados'
+            },
+            {
+                'parametro': 'linguagem_graficos',
+                'valor': self._lang,
+                'descricao': 'Idioma dos gráficos: pt (Português) ou en (English)'
+            }
+        ]
+        
+        # Como não usaremos pd.DataFrame().to_excel para aba Config,
+        # precisamos criar a aba manualmente antes de chamar write_table.
+        if 'Config' not in excel.writer.sheets:
+            worksheet = excel.writer.book.add_worksheet('Config')
+            excel.writer.sheets['Config'] = worksheet
+            
+        excel.write_table('Config', col=0, line=0, values=config_data, is_header=True)
         if congelar_paineis:
             excel.congelar_painel('Config', 1, 0)
         
@@ -3184,8 +3186,6 @@ class JsonAnaliseDataFrame():
         # ═════════════════════════════════════════════════════════════════════
         
         if df_global is not None:
-            excel.write_df(df_global, 'Avaliação LLM', auto_width_colums_list=True)
-            
             if congelar_paineis:
                 excel.congelar_painel('Avaliação LLM', 1, 1)
             
@@ -3217,6 +3217,8 @@ class JsonAnaliseDataFrame():
                 
                 print(f"   ✅ Formatação condicional aplicada em Avaliação LLM (global)")
             
+            excel.write_df(df_global, 'Avaliação LLM', auto_width_colums_list=True)
+            
             tem_global = True
         
         # ═════════════════════════════════════════════════════════════════════
@@ -3224,8 +3226,6 @@ class JsonAnaliseDataFrame():
         # ═════════════════════════════════════════════════════════════════════
         
         if df_campos is not None:
-            excel.write_df(df_campos, 'Avaliação LLM Campos', auto_width_colums_list=True)
-            
             if congelar_paineis:
                 excel.congelar_painel('Avaliação LLM Campos', 1, 1)
             
@@ -3256,6 +3256,8 @@ class JsonAnaliseDataFrame():
                     )
                 
                 print(f"   ✅ Formatação condicional aplicada em Avaliação LLM Campos")
+            
+            excel.write_df(df_campos, 'Avaliação LLM Campos', auto_width_colums_list=True)
             
             tem_campos = True
         

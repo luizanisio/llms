@@ -22,6 +22,8 @@ import matplotlib
 matplotlib.use('Agg')  # Backend não-interativo: evita erros X11 em ambiente headless/SSH
 import matplotlib.pyplot as plt
 import seaborn as sns
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, message='.*palette list has more values.*')
 from enum import Enum
 #import locale
 #locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')

@@ -576,3 +576,39 @@ Os experimentos foram conduzidos em um ambiente computacional de alto desempenho
 
 if __name__ == "__main__":
     generate_latex_snippet()
+
+class MemoryLogger:
+    def __init__(self, log_file):
+        self.log_file = log_file
+        import os
+        os.makedirs(os.path.dirname(os.path.abspath(self.log_file)), exist_ok=True)
+        with open(self.log_file, 'a', encoding='utf-8') as f:
+            f.write("=== LOG DE MEMÓRIA ===\n")
+            
+    def log(self, etapa):
+        try:
+            import resource
+            import datetime
+            # Memória máxima do processo (em KB no Linux)
+            process_mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            process_mem_mb = process_mem_kb / 1024.0
+            
+            # Memória do sistema usando /proc/meminfo
+            meminfo = {}
+            with open('/proc/meminfo', 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        meminfo[parts[0].strip(':')] = int(parts[1])
+            
+            total_mb = meminfo.get('MemTotal', 0) / 1024.0
+            avail_mb = meminfo.get('MemAvailable', 0) / 1024.0
+            
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_line = f"[{ts}] [{etapa}] Proc: {process_mem_mb:.2f} MB | Sist. Disp: {avail_mb:.2f} MB / Total: {total_mb:.2f} MB\n"
+            
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(log_line)
+            print(f"🧠 [MEM] {etapa} - Processo: {process_mem_mb:.1f}MB | Disp: {avail_mb:.1f}MB")
+        except Exception as e:
+            print(f"⚠️ Erro ao registrar memória: {e}")

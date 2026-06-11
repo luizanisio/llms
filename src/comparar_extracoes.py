@@ -18,6 +18,21 @@ Uso:
 
 import os
 import sys
+
+class LoggerDuplo:
+    """Redireciona a saída padrão (stdout) para o console e para um arquivo de log simultaneamente."""
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, "w", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 import argparse
 import yaml
 import regex as re
@@ -420,6 +435,11 @@ def main():
     if not os.path.exists(pasta_saida):
         os.makedirs(pasta_saida)
         
+    # Configura Logger Duplo para console e arquivo
+    arquivo_log_execucao = os.path.join(pasta_saida, 'execucao.log')
+    sys.stdout = LoggerDuplo(arquivo_log_execucao)
+    print(f"📄 Log de execução iniciado em: {arquivo_log_execucao}")
+        
     modelo_base = config['modelo_base']
     modelos_comp_all = config['modelos_comparacao']
     
@@ -430,6 +450,15 @@ def main():
     ignorados = [m['rotulo'] for m in modelos_comp_all if not m.get('ativo', True)]
     if ignorados:
         print(f"⚠️  Modelos ignorados explicitamente (ativo=false): {', '.join(ignorados)}")
+
+    # Instancia Logger de Memória
+    arquivo_log_memoria = os.path.join(pasta_saida, 'uso_memoria.log')
+    try:
+        from util_sysinfo import MemoryLogger
+        mem_logger = MemoryLogger(arquivo_log_memoria)
+        mem_logger.log("INICIO - Configuração Carregada")
+    except ImportError:
+        mem_logger = None
 
     # Prepara listas para CargaDadosComparacao
     rotulo_origem = modelo_base.get('rotulo', 'BASE')
@@ -578,7 +607,9 @@ def main():
         campos_virtuais=config.get('campos_virtuais', {})
     )
     
+    if mem_logger: mem_logger.log("ANTES DE CARREGAR DADOS JSON")
     dados_analise = carga.carregar()
+    if mem_logger: mem_logger.log("DEPOIS DE CARREGAR DADOS JSON")
     print(dados_analise.resumo())
     
     if not dados_analise.dados:
@@ -652,15 +683,17 @@ def main():
             analisador.relatorio.set_config(config_comparacao, campos_comparacao)
             
         # Gera o DataFrame e Exporta
-        # Gera o DataFrame e Exporta
         print("📊 Exportando CSVs e Excel...")
+        if mem_logger: mem_logger.log("ANTES DA GERAÇÃO DO DATAFRAME")
         analisador.to_df() # Gera intenamente
+        if mem_logger: mem_logger.log("DEPOIS DA GERAÇÃO DO DATAFRAME")
         
         # Exporta CSV para a pasta raiz (usa caminho absoluto para sair da pasta_analises/jsons)
         arquivo_csv = os.path.join(pasta_saida, f'{nome_arquivo_base}.csv')
         analisador.exportar_csv(arquivo_csv)
         
         # Exporta Excel para a pasta raiz (usa caminho absoluto)
+        if mem_logger: mem_logger.log("ANTES DE EXPORTAR EXCEL")
         analisador.exportar_excel(
             arquivo_excel, 
             incluir_estatisticas=True, 
@@ -668,6 +701,7 @@ def main():
             congelar_paineis=True,
             gerar_graficos=False # Gráficos gerados no passo seguinte se solicitado
         )
+        if mem_logger: mem_logger.log("DEPOIS DE EXPORTAR EXCEL")
         print(f"✅ Análise Base salva em: {arquivo_excel}")
 
     # 7. Pós-Processamento (Gráficos, LLM Judge, Stats)
@@ -769,6 +803,9 @@ def main():
                     print(f"\n🏆 Melhor Modelo em '{metrica_escolhida}':")
                     print(f"   {vencedor['modelo']} (Média: {vencedor['mean']:.4f})")
 
+    if 'mem_logger' in locals() and mem_logger: 
+        mem_logger.log("FIM DA EXECUÇÃO")
+        
     print("\n✅ Processo finalizado com sucesso.")
 
 if __name__ == '__main__':
