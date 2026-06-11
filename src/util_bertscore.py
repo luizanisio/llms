@@ -449,6 +449,18 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
         if cache_key in _bert_scorer_cache:
             return _bert_scorer_cache[cache_key]
         
+        # Função auxiliar para evitar OverflowError no Rust backend de Tokenizers fast
+        def _fix_tokenizer_max_length(s):
+            if hasattr(s, '_tokenizer') and hasattr(s._tokenizer, 'model_max_length'):
+                if s._tokenizer.model_max_length > 1_000_000:
+                    safe_max = 512
+                    try:
+                        if hasattr(s, '_model') and hasattr(s._model, 'config'):
+                            safe_max = getattr(s._model.config, 'max_position_embeddings', 512)
+                    except Exception:
+                        pass
+                    s._tokenizer.model_max_length = safe_max
+
         # Cria novo scorer
         try:
             # SOLUÇÃO: Usa BERTScorer que carrega o modelo corretamente
@@ -480,6 +492,9 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
                     rescale_with_baseline=False,
                     batch_size=32
                 )
+            
+            _fix_tokenizer_max_length(scorer)
+            
             # Armazena metadados para verificação
             scorer._cache_key = cache_key
             _bert_scorer_cache[cache_key] = scorer
@@ -504,6 +519,9 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
                         rescale_with_baseline=False,
                         batch_size=32
                     )
+                
+                _fix_tokenizer_max_length(scorer)
+                
                 scorer._cache_key = cache_key_cpu
                 _bert_scorer_cache[cache_key_cpu] = scorer
                 return scorer
