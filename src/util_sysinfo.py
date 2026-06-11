@@ -894,6 +894,20 @@ class MemoryLogger:
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             df.set_index('timestamp', inplace=True)
 
+            # Suaviza e reduz a quantidade de pontos se houver muitos dados
+            if len(df) > 50:
+                window_size = max(3, len(df) // 100)
+                cols_to_smooth = ['mem_processo_mb', 'cpu_uso_pct']
+                if 'gpu_mem_alocada_mb' in df: cols_to_smooth.append('gpu_mem_alocada_mb')
+                if 'gpu_uso_pct' in df: cols_to_smooth.append('gpu_uso_pct')
+                
+                df[cols_to_smooth] = df[cols_to_smooth].rolling(window=window_size, min_periods=1).mean()
+                
+                # Omite pontos mantendo no máximo ~500 pontos no gráfico
+                step = max(1, len(df) // 500)
+                if step > 1:
+                    df = df.iloc[::step]
+
             sns.set_theme(style="darkgrid")
             fig, ax1 = plt.subplots(figsize=(12, 6))
 
