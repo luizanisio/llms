@@ -591,11 +591,16 @@ class MemoryLogger:
     _LOG_FILE = None
     _ETAPA = 'Iniciada'
     _START = None
+    _ETAPA_START = None
     _TEMPO_ATUALIZACAO = None
+    _GERAR_GRAFICO = True
     
     _thread = None
     _stop_event = threading.Event()
     _lock = threading.Lock()
+
+    def __init__(self, log_file:str, gerar_grafico:bool=True, tempo_atualizacao:int=30, tempo_grafico:int=60*5):
+        MemoryLogger.set_log_file(log_file=log_file, tempo_atualizacao=tempo_atualizacao, gerar_grafico=gerar_grafico, tempo_grafico=tempo_grafico)
 
     @classmethod
     def _write_sysinfo_log(cls, log_file):
@@ -626,7 +631,7 @@ class MemoryLogger:
             print(f"Erro ao gravar sysinfo log: {e}")
 
     @classmethod
-    def set_log_file(cls, log_file, tempo_atualizacao=30):
+    def set_log_file(cls, log_file, tempo_atualizacao=30, gerar_grafico:bool=True, tempo_grafico:int=60*5):
         """
         Configura o arquivo de log e inicia a thread de monitoramento automático.
         
@@ -637,23 +642,24 @@ class MemoryLogger:
                                                Se None ou zero, não inicia a thread.
         """
         cls._TEMPO_ATUALIZACAO = tempo_atualizacao
+        cls._GERAR_GRAFICO = gerar_grafico
+        cls._TEMPO_GRAFICO = tempo_grafico
         cls._LOG_FILE = log_file
         
         os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
         
-        # Cria ou verifica o CSV e insere o cabeçalho se necessário
-        write_header = not os.path.exists(log_file) or os.path.getsize(log_file) == 0
+        # Reescreve o arquivo com o cabeçalho (zera o arquivo)
+        with open(log_file, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'timestamp', 'tempo_decorrido_s', 'tempo_etapa_s', 'tipo_registro', 'etapa',
+                'mem_processo_mb', 'mem_sis_disp_mb', 'mem_sis_total_mb',
+                'cpu_uso_pct', 'gpu_mem_alocada_mb'
+            ])
         
-        if write_header:
-            with open(log_file, 'w', encoding='utf-8', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    'timestamp', 'tempo_decorrido_s', 'tipo_registro', 'etapa',
-                    'mem_processo_mb', 'mem_sis_disp_mb', 'mem_sis_total_mb',
-                    'cpu_uso_pct', 'gpu_mem_alocada_mb'
-                ])
-        
+        cls._ETAPA = 'Iniciada'
         cls._START = datetime.datetime.now()
+        cls._ETAPA_START = cls._START
         
         # Inicia gravação assíncrona do relatório do sistema no arquivo anexo
         threading.Thread(target=cls._write_sysinfo_log, args=(log_file,), daemon=True).start()
@@ -727,10 +733,20 @@ class MemoryLogger:
     @classmethod
     def _run_logger(cls):
         """Thread que executa o log periodicamente."""
+        import time
+        last_graph_time = time.time()
+        
         while not cls._stop_event.is_set():
             if cls._stop_event.wait(cls._TEMPO_ATUALIZACAO):
                 break
             cls.log(tipo_registro="Auto")
+            
+            # Gera o gráfico periodicamente se configurado
+            if cls._GERAR_GRAFICO and getattr(cls, '_TEMPO_GRAFICO', None) and cls._TEMPO_GRAFICO > 0:
+                current_time = time.time()
+                if current_time - last_graph_time >= cls._TEMPO_GRAFICO:
+                    cls._gerar_grafico_uso(silencioso=True)
+                    last_graph_time = current_time
 
     @classmethod
     def log(cls, etapa=None, tipo_registro="Manual"):
@@ -741,13 +757,14 @@ class MemoryLogger:
             etapa (str, optional): Nome da etapa atual (sobrescreve a última).
             tipo_registro (str): Origem do log (Auto ou Manual).
         """
-        # Sempre atualiza a etapa para consultas futuras, mesmo sem log configurado
-        if etapa:
-            cls._ETAPA = etapa
-        else:
-            etapa = cls._ETAPA
+        etapa_nova = etapa if etapa else cls._ETAPA
+        etapa_mudou = (etapa_nova != cls._ETAPA)
             
         if cls._LOG_FILE is None:
+            # Apenas atualiza estado na ausência de log
+            if etapa_mudou:
+                cls._ETAPA = etapa_nova
+                cls._ETAPA_START = datetime.datetime.now()
             return
             
         try:
@@ -761,10 +778,36 @@ class MemoryLogger:
                 if cls._START:
                     elapsed_s = (ts - cls._START).total_seconds()
                 
+                # Trata a transição de etapa
+                if etapa_mudou:
+                    etapa_anterior = cls._ETAPA
+                    elapsed_etapa_anterior = 0.0
+                    if getattr(cls, '_ETAPA_START', None):
+                        elapsed_etapa_anterior = (ts - cls._ETAPA_START).total_seconds()
+                        
+                        # Grava o fechamento da etapa anterior
+                        with open(cls._LOG_FILE, 'a', encoding='utf-8', newline='') as f:
+                            writer = csv.writer(f)
+                            writer.writerow([
+                                ts_str, f"{elapsed_s:.1f}", f"{elapsed_etapa_anterior:.1f}", 
+                                "Finalização Etapa", etapa_anterior,
+                                f"{proc_mb:.2f}", f"{avail_mb:.2f}", f"{total_mb:.2f}",
+                                f"{cpu_pct:.1f}", f"{gpu_mb:.1f}"
+                            ])
+                            
+                    cls._ETAPA = etapa_nova
+                    cls._ETAPA_START = ts
+                
+                # Calcula o tempo da etapa atual
+                elapsed_etapa_atual = 0.0
+                if getattr(cls, '_ETAPA_START', None):
+                    elapsed_etapa_atual = (ts - cls._ETAPA_START).total_seconds()
+                
                 with open(cls._LOG_FILE, 'a', encoding='utf-8', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([
-                        ts_str, f"{elapsed_s:.1f}", tipo_registro, etapa,
+                        ts_str, f"{elapsed_s:.1f}", f"{elapsed_etapa_atual:.1f}", 
+                        tipo_registro, cls._ETAPA,
                         f"{proc_mb:.2f}", f"{avail_mb:.2f}", f"{total_mb:.2f}",
                         f"{cpu_pct:.1f}", f"{gpu_mb:.1f}"
                     ])
@@ -778,7 +821,9 @@ class MemoryLogger:
         if registrar_log:
             cls.log(etapa, tipo_registro="Manual")
         else:
-            cls._ETAPA = etapa
+            if cls._ETAPA != etapa:
+                cls._ETAPA = etapa
+                cls._ETAPA_START = datetime.datetime.now()
     
     @classmethod
     def get_elapsed_time(cls):
@@ -788,7 +833,7 @@ class MemoryLogger:
         return datetime.datetime.now() - cls._START
 
     @classmethod
-    def finalizar(cls, gerar_grafico=True):
+    def finalizar(cls):
         """
         Encerra a thread de monitoramento e gera o gráfico (opcional).
         
@@ -805,24 +850,28 @@ class MemoryLogger:
         # Garante o último registro antes de finalizar
         cls.log(tipo_registro="Manual (Finalização)")
             
-        if gerar_grafico and cls._LOG_FILE and os.path.exists(cls._LOG_FILE):
+        if cls._GERAR_GRAFICO and cls._LOG_FILE and os.path.exists(cls._LOG_FILE):
             cls._gerar_grafico_uso()
             
     @classmethod
-    def _gerar_grafico_uso(cls):
+    def _gerar_grafico_uso(cls, silencioso=False):
         """Lê o CSV e gera o gráfico de linha de uso de recursos via Pandas e Matplotlib."""
         try:
             import pandas as pd
+            import matplotlib
+            matplotlib.use('Agg')  # Força backend não-interativo (thread-safe)
             import matplotlib.pyplot as plt
             import seaborn as sns
         except ImportError:
-            print("⚠️ Bibliotecas 'pandas', 'matplotlib' ou 'seaborn' não instaladas. O gráfico não será gerado.")
+            if not silencioso:
+                print("⚠️ Bibliotecas 'pandas', 'matplotlib' ou 'seaborn' não instaladas. O gráfico não será gerado.")
             return
 
         try:
             df = pd.read_csv(cls._LOG_FILE)
             if df.empty:
-                print("⚠️ Arquivo de log vazio. Gráfico não gerado.")
+                if not silencioso:
+                    print("⚠️ Arquivo de log vazio. Gráfico não gerado.")
                 return
 
             df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -860,8 +909,10 @@ class MemoryLogger:
             grafico_file = os.path.join(base_dir, f"{filename}_grafico.png")
             
             plt.savefig(grafico_file, dpi=150)
-            plt.close()
+            plt.close(fig)
             
-            print(f"📈 Gráfico de recursos gerado com sucesso: {grafico_file}")
+            if not silencioso:
+                print(f"📈 Gráfico de recursos gerado com sucesso: {grafico_file}")
         except Exception as e:
-            print(f"⚠️ Erro ao gerar gráfico de recursos: {e}")
+            if not silencioso:
+                print(f"⚠️ Erro ao gerar gráfico de recursos: {e}")
