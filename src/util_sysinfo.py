@@ -654,7 +654,7 @@ class MemoryLogger:
             writer.writerow([
                 'timestamp', 'tempo_decorrido_s', 'tempo_etapa_s', 'tipo_registro', 'etapa',
                 'mem_processo_mb', 'mem_sis_disp_mb', 'mem_sis_total_mb',
-                'cpu_uso_pct', 'gpu_mem_alocada_mb'
+                'cpu_uso_pct', 'gpu_uso_pct', 'gpu_mem_alocada_mb'
             ])
         
         cls._ETAPA = 'Iniciada'
@@ -686,6 +686,22 @@ class MemoryLogger:
                 lines = output.strip().split('\n')
                 total_mb = sum(int(x.strip()) for x in lines if x.strip().isdigit())
                 return float(total_mb)
+        except Exception:
+            pass
+        return 0.0
+
+    @classmethod
+    def _get_gpu_pct(cls):
+        """Coleta o uso de processamento da GPU (%)."""
+        try:
+            from subprocess import check_output
+            output = check_output(['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'], encoding='utf-8')
+            if output:
+                # Caso tenha múltiplas GPUs, calcula a média de uso
+                lines = output.strip().split('\n')
+                vals = [float(x.strip()) for x in lines if x.strip().isdigit()]
+                if vals:
+                    return sum(vals) / len(vals)
         except Exception:
             pass
         return 0.0
@@ -726,9 +742,10 @@ class MemoryLogger:
         avail_mb = meminfo.get('MemAvailable', 0) / 1024.0
         
         cpu_pct = cls._get_cpu_pct()
+        gpu_pct = cls._get_gpu_pct()
         gpu_mb = cls._get_gpu_mem()
         
-        return process_mem_mb, avail_mb, total_mb, cpu_pct, gpu_mb
+        return process_mem_mb, avail_mb, total_mb, cpu_pct, gpu_pct, gpu_mb
 
     @classmethod
     def _run_logger(cls):
@@ -769,7 +786,7 @@ class MemoryLogger:
             
         try:
             with cls._lock:
-                proc_mb, avail_mb, total_mb, cpu_pct, gpu_mb = cls._coletar_metricas()
+                proc_mb, avail_mb, total_mb, cpu_pct, gpu_pct, gpu_mb = cls._coletar_metricas()
                 
                 ts = datetime.datetime.now()
                 ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
@@ -792,7 +809,7 @@ class MemoryLogger:
                                 ts_str, f"{elapsed_s:.1f}", f"{elapsed_etapa_anterior:.1f}", 
                                 "Finalização Etapa", etapa_anterior,
                                 f"{proc_mb:.2f}", f"{avail_mb:.2f}", f"{total_mb:.2f}",
-                                f"{cpu_pct:.1f}", f"{gpu_mb:.1f}"
+                                f"{cpu_pct:.1f}", f"{gpu_pct:.1f}", f"{gpu_mb:.1f}"
                             ])
                             
                     cls._ETAPA = etapa_nova
@@ -809,7 +826,7 @@ class MemoryLogger:
                         ts_str, f"{elapsed_s:.1f}", f"{elapsed_etapa_atual:.1f}", 
                         tipo_registro, cls._ETAPA,
                         f"{proc_mb:.2f}", f"{avail_mb:.2f}", f"{total_mb:.2f}",
-                        f"{cpu_pct:.1f}", f"{gpu_mb:.1f}"
+                        f"{cpu_pct:.1f}", f"{gpu_pct:.1f}", f"{gpu_mb:.1f}"
                     ])
                     
         except Exception as e:
@@ -892,12 +909,16 @@ class MemoryLogger:
             ax1.tick_params(axis='y')
             ax1.legend(loc='upper left')
 
-            # CPU no eixo Y secundário
+            # CPU e GPU no eixo Y secundário (Processamento)
             ax2 = ax1.twinx()  
             color_cpu = 'tab:red'
-            ax2.set_ylabel('CPU (%)', color=color_cpu)  
+            ax2.set_ylabel('Processamento (%)')  
             ax2.plot(df.index, df['cpu_uso_pct'], color=color_cpu, label='Uso CPU (%)', alpha=0.6)
-            ax2.tick_params(axis='y', labelcolor=color_cpu)
+            
+            if 'gpu_uso_pct' in df and df['gpu_uso_pct'].sum() > 0:
+                ax2.plot(df.index, df['gpu_uso_pct'], color='tab:orange', label='Uso GPU (%)', alpha=0.6)
+                
+            ax2.tick_params(axis='y')
             ax2.legend(loc='upper right')
 
             plt.title('Uso de Recursos Durante a Execução')
