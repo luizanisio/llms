@@ -594,48 +594,51 @@ class CargaDadosComparacao():
         
         erros_count = {'inexistente': 0, 'erro_extracao': 0, 'sucesso': 0, 'filtrado': 0}
 
-        # Helper interno atualizado para usar maps passados
-        def _processar_auxiliares(id_peca, rotulo, map_tok, map_av, map_obs, json_dados_para_campos=None):
-            # Tokens
-            if id_peca in map_tok:
-                dados_tok = self._ler_resumo_tokens(map_tok[id_peca], rotulo)
-                if dados_tok:
-                    if id_peca not in tokens_dict: tokens_dict[id_peca] = {}
-                    tokens_dict[id_peca].update(dados_tok)
-            else:
-                dados_tok = None # Necessário para fallback de tempo na obs
+        import concurrent.futures
 
-            # Avaliação
-            if id_peca in map_av:
-                dados_av = self._ler_avaliacao_llm(map_av[id_peca], rotulo)
-                if dados_av:
-                    if id_peca not in avaliacoes_dict: avaliacoes_dict[id_peca] = {}
-                    avaliacoes_dict[id_peca].update(dados_av)
-            
-            # Observabilidade (usa token/tempo como fallback)
-            path_obs = map_obs.get(id_peca)
-            # Mesmo que não tenha arquivo obs, tenta pegar tempo do resumo
-            dados_obs = self._ler_observabilidade(path_obs, rotulo, dados_tok)
-            if dados_obs:
-                if id_peca not in obs_dict: obs_dict[id_peca] = {}
-                obs_dict[id_peca].update(dados_obs)
-            
-            # Métricas de Campos (QTD/BYTES) - apenas se json de dados foi carregado
-            if json_dados_para_campos:
-                dados_campos = self._get_metricas_campos(json_dados_para_campos, rotulo)
-                if dados_campos:
-                    if id_peca not in campos_dict: campos_dict[id_peca] = {}
-                    campos_dict[id_peca].update(dados_campos)
+        def _processar_id(id_peca):
+            resultado = {
+                'id_peca': id_peca,
+                'erros': {'inexistente': 0, 'erro_extracao': 0, 'sucesso': 0, 'filtrado': 0},
+                'linha': None,
+                'linha_completa': None,
+                'tokens': None,
+                'avaliacoes': None,
+                'obs': None,
+                'campos': None
+            }
 
-        # Loop Principal
-        print(f"\n🔄 Carregando e filtrando dados...")
-        try:
-            from util_sysinfo import MemoryLogger
-            MemoryLogger.set_nome_etapa("Carga JSON - Lendo e processando arquivos")
-        except ImportError:
-            pass
-            
-        for id_peca in tqdm(sorted(ids_origem), desc="Processando"):
+            def _processar_auxiliares_local(rotulo, map_tok, map_av, map_obs, json_dados_para_campos=None):
+                # Tokens
+                if id_peca in map_tok:
+                    dados_tok = self._ler_resumo_tokens(map_tok[id_peca], rotulo)
+                    if dados_tok:
+                        if resultado['tokens'] is None: resultado['tokens'] = {}
+                        resultado['tokens'].update(dados_tok)
+                else:
+                    dados_tok = None
+
+                # Avaliação
+                if id_peca in map_av:
+                    dados_av = self._ler_avaliacao_llm(map_av[id_peca], rotulo)
+                    if dados_av:
+                        if resultado['avaliacoes'] is None: resultado['avaliacoes'] = {}
+                        resultado['avaliacoes'].update(dados_av)
+                
+                # Observabilidade
+                path_obs = map_obs.get(id_peca)
+                dados_obs = self._ler_observabilidade(path_obs, rotulo, dados_tok)
+                if dados_obs:
+                    if resultado['obs'] is None: resultado['obs'] = {}
+                    resultado['obs'].update(dados_obs)
+                
+                # Métricas de Campos
+                if json_dados_para_campos:
+                    dados_campos = self._get_metricas_campos(json_dados_para_campos, rotulo)
+                    if dados_campos:
+                        if resultado['campos'] is None: resultado['campos'] = {}
+                        resultado['campos'].update(dados_campos)
+
             # 1. Carrega Origem
             path_origem = map_ext_origem[id_peca]
             json_origem = self._carregar_json(path_origem)
@@ -644,18 +647,17 @@ class CargaDadosComparacao():
             json_origem_filtrado = self._filtro_origem(json_origem_filtrado)
             
             if json_origem_filtrado is None:
-                erros_count['filtrado'] += 1
-                continue
+                resultado['erros']['filtrado'] += 1
+                return resultado
                 
             # Processa auxiliares origem
-            _processar_auxiliares(id_peca, self.rotulos[1], map_tokens_origem, map_av_origem, map_obs_origem, json_origem_filtrado)
+            _processar_auxiliares_local(self.rotulos[1], map_tokens_origem, map_av_origem, map_obs_origem, json_origem_filtrado)
 
             # 2. Carrega Destinos
             jsons_destinos = []
             tem_erro = 'erro' in json_origem_filtrado
             
             for i, map_dest in enumerate(maps_destinos):
-                # Tenta achar arquivo de extração do destino
                 path_dest = map_dest['ext'].get(id_peca)
                 json_dest_filtrado = {}
                 
@@ -669,17 +671,16 @@ class CargaDadosComparacao():
                 jsons_destinos.append(json_dest_filtrado)
                 if 'erro' in json_dest_filtrado: tem_erro = True
                 
-                # Processa auxiliares destino
-                _processar_auxiliares(id_peca, self.rotulos[2+i], map_dest['tok'], map_dest['av'], map_dest['obs'])
+                _processar_auxiliares_local(self.rotulos[2+i], map_dest['tok'], map_dest['av'], map_dest['obs'])
 
             # Contabiliza
             if tem_erro:
                 if any('Inexistente' in j.get('erro', '') for j in [json_origem_filtrado] + jsons_destinos):
-                     erros_count['inexistente'] += 1
+                     resultado['erros']['inexistente'] += 1
                 else:
-                     erros_count['erro_extracao'] += 1
+                     resultado['erros']['erro_extracao'] += 1
             else:
-                erros_count['sucesso'] += 1
+                resultado['erros']['sucesso'] += 1
 
             # Monta linha de dados
             linha = {
@@ -689,14 +690,50 @@ class CargaDadosComparacao():
             for i, jd in enumerate(jsons_destinos):
                 linha[self.rotulos[2+i]] = jd
             
-            # mesnmo ignorando erros, guarda um conjunto com todos os dados para o gráfico de status ficar completo
-            self.dados_completos.append(linha)
+            resultado['linha_completa'] = linha
             
-            # Se ignorar_erro_extracao=True, ignora documentos com erro
-            if self.ignorar_erro_extracao and tem_erro:
-                continue
+            if not (self.ignorar_erro_extracao and tem_erro):
+                resultado['linha'] = linha
                 
-            self.dados.append(linha)
+            return resultado
+
+        # Loop Principal com Threads
+        print(f"\n🔄 Carregando e filtrando dados...")
+        try:
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Carga JSON - Lendo e processando arquivos")
+        except ImportError:
+            pass
+            
+        max_workers = min(32, (os.cpu_count() or 1) * 4)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submete tarefas e processa conforme completam, usando tqdm para barra de progresso
+            futuros = {executor.submit(_processar_id, id_peca): id_peca for id_peca in sorted(ids_origem)}
+            
+            # Ordenar resultados ao final para manter consistência da lista
+            resultados = []
+            for futuro in tqdm(concurrent.futures.as_completed(futuros), total=len(ids_origem), desc="Processando"):
+                resultados.append(futuro.result())
+                
+        # Garante a ordem original baseada no id_peca
+        resultados.sort(key=lambda x: x['id_peca'])
+        
+        for res in resultados:
+            # Agrega erros
+            for k in erros_count:
+                erros_count[k] += res['erros'][k]
+                
+            id_peca = res['id_peca']
+            if res['tokens']: tokens_dict[id_peca] = res['tokens']
+            if res['avaliacoes']: avaliacoes_dict[id_peca] = res['avaliacoes']
+            if res['obs']: obs_dict[id_peca] = res['obs']
+            if res['campos']: campos_dict[id_peca] = res['campos']
+            
+            if res['linha_completa']:
+                self.dados_completos.append(res['linha_completa'])
+            if res['linha']:
+                self.dados.append(res['linha'])
 
         # Finalização (Consolidação de listas)
         try:

@@ -471,6 +471,8 @@ def main():
     campos_parquet = config.get('configuracao_comparacao', {}).get('campos_parquet', {})
     pasta_parquet_raw = config.get('saida', {}).get('pasta_parquet', '')
     
+    houve_reextracao = False
+    
     # Valida obrigatoriedade de pasta_parquet quando há entrada .parquet
     todos_modelos_config = [modelo_base] + modelos_comp
     tem_parquet = any(m.get('arquivo', '').endswith('.parquet') for m in todos_modelos_config)
@@ -506,6 +508,7 @@ def main():
         Resolve a entrada de um modelo: se for .parquet, extrai para pasta.
         Retorna o caminho da PASTA com os JSONs (seja direta ou extraída do parquet).
         """
+        nonlocal houve_reextracao
         arquivo = modelo_config.get('arquivo', '')
         pasta = modelo_config.get('pasta', '')
         
@@ -522,6 +525,10 @@ def main():
                 for e in erros:
                     print(f"   - {e}")
                 sys.exit(1)
+                
+            if not extrator.ja_extraido():
+                houve_reextracao = True
+                
             return extrator.extrair()
         elif pasta:
             return resolver_caminho(pasta, base_dir_yaml)
@@ -623,6 +630,10 @@ def main():
     
     # Checa reuso
     regerar = config['saida'].get('regerar_planilha_base', True)
+    if houve_reextracao:
+        regerar = True
+        print("\n⚠️  Parquet foi atualizado. Forçando 'regerar_planilha_base=True' para garantir consistência dos dados.")
+        
     analisador_instanciado = False
     
     # Define flags de execução

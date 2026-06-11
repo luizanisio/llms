@@ -159,6 +159,8 @@ class ExtracaoParquet:
             print(f"🔄 Arquivo parquet foi modificado após a última extração. Atualizando JSONs...")
             # Remove o controle temporariamente para que em caso de interrupção não fique sujo
             os.remove(caminho_controle)
+            print(f"   🗑️  Limpando pasta anterior para evitar arquivos órfãos (garantindo consistência)...")
+            self._limpar_pasta()
         # Verifica integridade: pasta existe mas sem arquivo de controle (extração parcial/interrompida)
         elif os.path.isdir(self.pasta_destino) and os.listdir(self.pasta_destino):
             print(f"\n⚠️  A pasta de destino já existe mas não possui arquivo de controle '{ARQUIVO_CONTROLE}'.")
@@ -168,48 +170,7 @@ class ExtracaoParquet:
             resposta = input(f"\n   Deseja remover os arquivos existentes e re-extrair? (s/N): ").strip().lower()
             if resposta in ('s', 'sim', 'y', 'yes'):
                 print(f"   🗑️  Limpando pasta incompleta...")
-                import sys
-                from concurrent.futures import ThreadPoolExecutor
-                
-                arquivos_remover = []
-                pastas_remover = []
-                for root, dirs, files in os.walk(self.pasta_destino, topdown=False):
-                    for name in files:
-                        arquivos_remover.append(os.path.join(root, name))
-                    for name in dirs:
-                        pastas_remover.append(os.path.join(root, name))
-                pastas_remover.append(self.pasta_destino)
-                
-                def deletar_arquivo(caminho):
-                    try:
-                        if os.path.isfile(caminho) or os.path.islink(caminho):
-                            os.remove(caminho)
-                    except FileNotFoundError:
-                        pass
-                    except OSError as e:
-                        return e
-                    return None
-                
-                if arquivos_remover:
-                    with ThreadPoolExecutor(max_workers=10) as executor:
-                        for result in tqdm(executor.map(deletar_arquivo, arquivos_remover), 
-                                           total=len(arquivos_remover), desc="Removendo Arquivos", leave=False):
-                            if isinstance(result, Exception):
-                                print('-=' * 35)
-                                print(f"\n❌ Houve um erro na exclusão de um arquivo: {result}")
-                                sys.exit(1)
-                                
-                if pastas_remover:
-                    for d in tqdm(pastas_remover, desc="Removendo Pastas", leave=False):
-                        try:
-                            if os.path.exists(d):
-                                os.rmdir(d)
-                        except OSError as e:
-                            print('-=' * 35)
-                            print(f"\n❌ Houve um erro na exclusão da pasta {d} erro: {e}")
-                            sys.exit(1)
-
-                print(f"   🗑️  Pasta limpa: {self.pasta_destino}")
+                self._limpar_pasta()
             else:
                 print('-=' * 35)
                 print(f"\n❌ Extração cancelada. Resolva a inconsistência manualmente:")
@@ -219,6 +180,53 @@ class ExtracaoParquet:
                 exit(1)
 
         # Carrega DataFrame
+        df = self._carregar_df()
+
+    def _limpar_pasta(self):
+        """Remove todos os arquivos e subpastas do diretório de destino para garantir consistência."""
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        
+        arquivos_remover = []
+        pastas_remover = []
+        for root, dirs, files in os.walk(self.pasta_destino, topdown=False):
+            for name in files:
+                arquivos_remover.append(os.path.join(root, name))
+            for name in dirs:
+                pastas_remover.append(os.path.join(root, name))
+        pastas_remover.append(self.pasta_destino)
+        
+        def deletar_arquivo(caminho):
+            try:
+                if os.path.isfile(caminho) or os.path.islink(caminho):
+                    os.remove(caminho)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                return e
+            return None
+        
+        if arquivos_remover:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                for result in tqdm(executor.map(deletar_arquivo, arquivos_remover), 
+                                   total=len(arquivos_remover), desc="Removendo Arquivos", leave=False):
+                    if isinstance(result, Exception):
+                        print('-=' * 35)
+                        print(f"\n❌ Houve um erro na exclusão de um arquivo: {result}")
+                        sys.exit(1)
+                        
+        if pastas_remover:
+            for d in tqdm(pastas_remover, desc="Removendo Pastas", leave=False):
+                try:
+                    if os.path.exists(d):
+                        os.rmdir(d)
+                except OSError as e:
+                    print('-=' * 35)
+                    print(f"\n❌ Houve um erro na exclusão da pasta {d} erro: {e}")
+                    sys.exit(1)
+
+        print(f"   🗑️  Pasta limpa: {self.pasta_destino}")
+
         df = self._carregar_df()
         total = len(df)
 
