@@ -449,17 +449,29 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
         if cache_key in _bert_scorer_cache:
             return _bert_scorer_cache[cache_key]
         
-        # Função auxiliar para evitar OverflowError no Rust backend de Tokenizers fast
+        # Função auxiliar para evitar OverflowError no Rust backend de Tokenizers fast e outros erros
         def _fix_tokenizer_max_length(s):
-            if hasattr(s, '_tokenizer') and hasattr(s._tokenizer, 'model_max_length'):
-                if s._tokenizer.model_max_length > 1_000_000:
-                    safe_max = 512
-                    try:
-                        if hasattr(s, '_model') and hasattr(s._model, 'config'):
-                            safe_max = getattr(s._model.config, 'max_position_embeddings', 512)
-                    except Exception:
-                        pass
-                    s._tokenizer.model_max_length = safe_max
+            if hasattr(s, '_tokenizer'):
+                # FIX: Previne erro "AttributeError: BertTokenizer has no attribute build_inputs_with_special_tokens"
+                # O bert_score tenta acessar esse método para processar strings vazias, mas versões
+                # recentes do transformers o removeram de alguns tokenizers.
+                try:
+                    _ = getattr(s._tokenizer, 'build_inputs_with_special_tokens')
+                except AttributeError:
+                    import types
+                    s._tokenizer.build_inputs_with_special_tokens = types.MethodType(
+                        lambda self, t0, t1=None: self.encode("", add_special_tokens=True), s._tokenizer
+                    )
+                
+                if hasattr(s._tokenizer, 'model_max_length'):
+                    if s._tokenizer.model_max_length > 1_000_000:
+                        safe_max = 512
+                        try:
+                            if hasattr(s, '_model') and hasattr(s._model, 'config'):
+                                safe_max = getattr(s._model.config, 'max_position_embeddings', 512)
+                        except Exception:
+                            pass
+                        s._tokenizer.model_max_length = safe_max
 
         # Cria novo scorer
         try:
