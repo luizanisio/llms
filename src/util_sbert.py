@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 try:
-    from sentence_transformers import SentenceTransformer, util
+    from sentence_transformers import SentenceTransformer, util as sbert_util
 except ImportError:
     raise ImportError('Módulo sentence_transformers não instalado. Instale com: pip install sentence-transformers')
 
@@ -511,7 +511,7 @@ class BERTScoreLike:
         cand_emb = self._encode_texts(cand_units)
         ref_emb = self._encode_texts(ref_units)
 
-        sim_t = util.cos_sim(cand_emb, ref_emb)  # torch tensor
+        sim_t = sbert_util.cos_sim(cand_emb, ref_emb)  # torch tensor
         sim = sim_t.detach().cpu().numpy()
 
         # melhores matches
