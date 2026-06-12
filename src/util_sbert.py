@@ -727,6 +727,8 @@ if __name__ == "__main__":
         modelo = sys.argv[1]
     else:
         modelo = "medio"
+    if modelo=='stjiris':
+        modelo = 'stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1'
     m = BERTScoreLike(modelo=modelo)
 
     # Texto: BERTScore-like com SBERT
