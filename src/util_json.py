@@ -956,9 +956,11 @@ class JsonAnalise:
             modelos_sbert = config.get('modelos_sbert', None) or None
             
             # Usa sbert_score() com cache em disco (padrão idêntico ao bscore)
-            from util_sbert import sbert_score
-            P, R, F1 = sbert_score([texto_pred], [texto_true], modelo=tamanho_modelo, decimais=4, verbose=True,
-                                   modelos_override=modelos_sbert)
+            from util_sbert import sbert_score, BERTScoreLike
+            if modelos_sbert:
+                BERTScoreLike.configurar_modelos(modelos_sbert)
+                
+            P, R, F1 = sbert_score([texto_pred], [texto_true], modelo=tamanho_modelo, decimais=4, verbose=True)
             
             return {
                 'P': P[0],
@@ -2202,6 +2204,9 @@ class JsonAnaliseDataFrame():
             print(f"   ⚡ SBERT [{modelo_sbert}]: {total_pares} pares para processar em {num_batches} mini-batch(es) de até {mini_batch_size}...")
             t0 = _time.time()
             modelos_sbert_override = config.get('modelos_sbert', None) or None
+            if modelos_sbert_override:
+                from util_sbert import BERTScoreLike
+                BERTScoreLike.configurar_modelos(modelos_sbert_override)
             
             for batch_idx in range(0, total_pares, mini_batch_size):
                 batch_pares = pares[batch_idx:batch_idx + mini_batch_size]
@@ -2214,8 +2219,7 @@ class JsonAnaliseDataFrame():
                 if num_batches > 1:
                     print(f"      📦 Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...")
                 
-                sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=verbose_batch,
-                            modelos_override=modelos_sbert_override)
+                sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=verbose_batch)
                 
                 del preds, trues, batch_pares
                 gc.collect()

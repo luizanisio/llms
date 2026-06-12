@@ -286,15 +286,15 @@ class TestBERTScoreLikeGetInstance(unittest.TestCase):
         print(f"[Modelos Diferentes] OK - pequeno: {id(inst_pequeno)}, medio: {id(inst_medio)}")
     
     def test_get_instance_with_override(self):
-        """Verifica que o override de modelo cria uma instância isolada baseada no modelo HuggingFace fornecido."""
-        print("\n[Override] Testando se modelos_override funciona corretamente...")
+        """Verifica que o override de modelo atualiza a configuração global e cria uma instância isolada."""
+        print("\n[Override] Testando se configurar_modelos funciona corretamente...")
         
         # inst_padrao não deve ser a mesma que inst_override mesmo pedindo o mesmo alias
         inst_padrao = BERTScoreLike.get_instance(MODELO)
-        inst_override = BERTScoreLike.get_instance(
-            MODELO, 
-            modelos_override={MODELO: MODELO_OVERRIDE}
-        )
+        
+        # Configura o override globalmente
+        BERTScoreLike.configurar_modelos({MODELO: MODELO_OVERRIDE})
+        inst_override = BERTScoreLike.get_instance(MODELO)
         
         self.assertIsNot(inst_padrao, inst_override, 
                          "Override deve gerar instância diferente se o nome do modelo for diferente")
@@ -302,10 +302,7 @@ class TestBERTScoreLikeGetInstance(unittest.TestCase):
                          "A instância deve carregar o nome do modelo substituído")
         
         # Teste solicitando com o override novamente deve retornar a mesma instância (singleton)
-        inst_override2 = BERTScoreLike.get_instance(
-            MODELO, 
-            modelos_override={MODELO: MODELO_OVERRIDE}
-        )
+        inst_override2 = BERTScoreLike.get_instance(MODELO)
         self.assertIs(inst_override, inst_override2,
                       "Override deve respeitar o padrão singleton para o mesmo nome de modelo HF")
         print(f"[Override] OK - override carregado e singleton respeitado.")

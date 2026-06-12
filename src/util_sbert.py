@@ -54,12 +54,46 @@ class SBERTCache:
         if not cache_dir:
             from util import UtilEnv
             cache_dir = UtilEnv.get_hf_home(subpasta='sbert_cache')
+            
+        real_name = modelo
+        if 'BERTScoreLike' in globals():
+            real_name = globals()['BERTScoreLike'].resolve_model_name(modelo)
+            
+        modelo_hash = hashlib.md5(real_name.encode('utf-8')).hexdigest()[:8]
+        folder_name = f"{modelo}_{modelo_hash}"
+        
         # Subdiretório por modelo
-        self.cache_dir = os.path.join(cache_dir, modelo)
-        self.modelo = modelo
+        self.cache_dir = os.path.join(cache_dir, folder_name)
+        self.modelo = folder_name
         self.usar_cache = usar_cache
         self.atualizar_cache = atualizar_cache
         self._ensure_dir()
+        self._update_hash_map(cache_dir, folder_name, real_name)
+
+    def _update_hash_map(self, base_cache_dir: str, folder_name: str, real_name: str):
+        if not self.usar_cache and not self.atualizar_cache:
+            return
+        try:
+            os.makedirs(base_cache_dir, exist_ok=True)
+            map_file = os.path.join(base_cache_dir, 'models_map.json')
+            
+            mapping = {}
+            if os.path.exists(map_file):
+                try:
+                    with open(map_file, 'r', encoding='utf-8') as f:
+                        mapping = json.load(f)
+                except Exception:
+                    pass
+            
+            if mapping.get(folder_name) != real_name:
+                mapping[folder_name] = real_name
+                import tempfile
+                fd, tmp_path = tempfile.mkstemp(dir=base_cache_dir, prefix='map_', suffix='.json')
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(mapping, f, indent=4, ensure_ascii=False)
+                os.replace(tmp_path, map_file)
+        except Exception:
+            pass
 
     def _ensure_dir(self):
         if not self.usar_cache and not self.atualizar_cache:
@@ -213,8 +247,7 @@ def sbert_score(preds: List[str], trues: List[str],
                 decimais: int = 3,
                 usar_cache: bool = True,
                 atualizar_cache: bool = True,
-                verbose: bool = False,
-                modelos_override: Dict[str, str] = None) -> Tuple[List[float], List[float], List[float]]:
+                verbose: bool = False) -> Tuple[List[float], List[float], List[float]]:
     """
     Calcula SBERT (bertscore_like) com cache automático em disco baseado em MD5.
 
@@ -229,11 +262,7 @@ def sbert_score(preds: List[str], trues: List[str],
         usar_cache: Se True, lê do cache em disco
         atualizar_cache: Se True, salva novos resultados no cache
         verbose: Se True, exibe progresso
-        modelos_override: Dict opcional para sobrescrever modelos padrão.
-                          Ex: {'grande': 'intfloat/multilingual-e5-base'}
-                          Se o modelo solicitado tiver um override, usa o nome do
-                          modelo HuggingFace especificado.
-
+        
     Returns:
         Tupla (P, R, F1) com listas de floats
     """
@@ -256,7 +285,7 @@ def sbert_score(preds: List[str], trues: List[str],
         if verbose and len(preds) > 0:
             n_cache = len(preds) - len(missed_idx)
             print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds)} pares | Calcular: {len(missed_idx)}")
-        sbert = BERTScoreLike.get_instance(modelo, modelos_override=modelos_override)
+        sbert = BERTScoreLike.get_instance(modelo)
         new_P = []
         new_R = []
         new_F1 = []
@@ -330,34 +359,22 @@ class BERTScoreLike:
     _lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls, modelo: str = "medio", modelos_override: Dict[str, str] = None) -> "BERTScoreLike":
+    def configurar_modelos(cls, novos_modelos: Dict[str, str]):
+        """
+        Atualiza o dicionário global de modelos SBERT.
+        Ex: BERTScoreLike.configurar_modelos({'grande': 'novo/modelo'})
+        """
+        if novos_modelos:
+            for k, v in novos_modelos.items():
+                cls.MODELOS[k.lower()] = v
+
+    @classmethod
+    def get_instance(cls, modelo: str = "medio") -> "BERTScoreLike":
         """
         Obtém uma instância singleton do modelo SBERT (thread-safe).
-        
-        Este método garante que cada modelo seja carregado apenas uma vez,
-        mesmo em ambiente multi-threaded. Ideal para processamento paralelo.
-        
-        Args:
-            modelo: Nome do modelo ou alias ("pequeno", "medio", "grande").
-            modelos_override: Dict opcional para sobrescrever modelos padrão.
-                              Ex: {'grande': 'intfloat/multilingual-e5-base'}
-        
-        Returns:
-            Instância compartilhada de BERTScoreLike para o modelo especificado.
-        
-        Example:
-            # Em múltiplas threads, todas usarão a mesma instância:
-            sbert = BERTScoreLike.get_instance("pequeno")
-            resultado = sbert.comparar_textos(texto1, texto2)
-            
-            # Com modelo personalizado:
-            sbert = BERTScoreLike.get_instance("grande", modelos_override={'grande': 'intfloat/multilingual-e5-base'})
         """
-        # Resolve o nome real do modelo (com override se aplicável)
-        modelo_key = modelo.lower()
-        if modelos_override and modelo_key in modelos_override:
-            # Se há override, usa o nome completo do HuggingFace como chave
-            modelo_key = modelos_override[modelo_key]
+        # Resolve o nome real do modelo para usar como chave de cache
+        modelo_key = cls.resolve_model_name(modelo)
         
         # Double-checked locking para performance
         if modelo_key not in cls._instances:
@@ -367,6 +384,12 @@ class BERTScoreLike:
                     cls._instances[modelo_key] = cls(modelo=modelo_key)
         
         return cls._instances[modelo_key]
+
+    @classmethod
+    def resolve_model_name(cls, modelo: str) -> str:
+        """Resolve o nome real do modelo baseado no alias configurado no dicionário."""
+        modelo_key = modelo.lower()
+        return cls.MODELOS.get(modelo_key, modelo_key)
     
     @classmethod
     def clear_instances(cls):
