@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=qwen7b-predicao
+#SBATCH --job-name=qwen7b-predicao-lote
 
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
@@ -55,6 +55,15 @@ echo "==============================="
 
 
 #python baixar-qwen7b.py
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+
+# Mais rodadas para repescagem do que deu erro
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+
 python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
 
 echo "=== Job finalizado: $(date) ==="
