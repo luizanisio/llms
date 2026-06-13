@@ -1,9 +1,9 @@
 # Configuração para comparação de extrações - Experimento Summa 
-# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_gpt5.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_q235_sabia.yaml
 
 # Configuração Global de Saída
 saida:
-  pasta: "./compara/analises_comparacao_summa_gpt5 (f12)"
+  pasta: "./compara/analises_comparacao_summa_q235 (f12 sabia)"
   pasta_parquet: "./compara/"
   arquivo_base: "comparacao_summa"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
@@ -24,19 +24,19 @@ execucao:
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  arquivo: "./saida/saida_oa_gpt5.parquet"
-  rotulo: "GPT5"
-  familia: "GPT-5"
+  arquivo: "./saida/saida_or_235b.parquet"
+  rotulo: "Qwen235b"
+  familia: "Qwen-235B"
 
 # Modelos Comparados
 modelos_comparacao:
-  - arquivo: "./saida/saida_or_235b.parquet"
-    rotulo: "Qwen235b"
-    familia: "Qwen-235B"
-
   - arquivo: "./saida/saida_qwen7b.parquet"
     rotulo: "Qwen7b"
     familia: "Qwen-7B"
+
+  - arquivo: "./saida/saida_oa_gpt5.parquet"
+    rotulo: "GPT5"
+    familia: "GPT-5"
 
   - arquivo: "./saida/saida_sabia4.parquet"
     rotulo: "Sabia-4"
@@ -66,17 +66,17 @@ configuracao_comparacao:
   # filtro: 
   #   #arquivo: "./saida/filtro_teste_fold_12.csv"
   #   arquivo: "./saida/filtro_teste_fold_12_100_teste.csv"
-  #   campo_id: "seq_documento_acordao"    
+  #   campo_id: "seq_documento_acordao"     
 
-# Modelos customizados (Opcional)
+  # Modelos customizados (Opcional)
   # (Opcional) Sobrescrita de modelos HF para SBERT e BERTScore
   modelos:
     sbert:
       medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
     bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"    # Ex: BERTScore personalizado modelo STJ de Portugual      
     # Tamanhos de mini-batch para otimização de memória no pré-cálculo (Padrão: 256)
-    bertscore_batch_size: 1024
-    sbert_batch_size: 1024
+    bertscore_batch_size: 256
+    sbert_batch_size: 256
 
   # Máscaras de arquivos (Regex ou Sufixo)
   # Se começar com '^', é tratado como Regex.

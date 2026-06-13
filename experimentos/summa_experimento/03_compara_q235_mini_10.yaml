@@ -44,12 +44,16 @@ configuracao_comparacao:
   filtro:
     arquivo: ./saida/filtro_teste_fold_12_10_teste.csv
     campo_id: seq_documento_acordao
+
   modelos:
     sbert:
       medio: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
+      medio_alias: STJIris
     bertscore: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
+    bertscore_alias: STJIris
     bertscore_batch_size: 1024
     sbert_batch_size: 1024
+
   mascaras:
     extracao: ^(.+)\.json$
     tokens: .tokens.json
