@@ -818,6 +818,31 @@ class BERTScoreCache:
         return arquivos_removidos
 
 
+def liberar_modelos_bert_scorer():
+    """
+    Remove da memória todos os modelos BERTScore carregados e limpa a VRAM.
+    Isso NÃO apaga o cache em disco (arquivos JSON), apenas descarrega os tensores da GPU/CPU.
+    """
+    global _bert_scorer_cache, _bert_scorer_lock
+    
+    if _bert_scorer_lock is None:
+        import threading
+        _bert_scorer_lock = threading.Lock()
+        
+    with _bert_scorer_lock:
+        if _bert_scorer_cache:
+            _bert_scorer_cache.clear()
+            
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def bscore(preds: List[str], trues: List[str], 
            decimais: int = 3,
            verbose: bool = False,

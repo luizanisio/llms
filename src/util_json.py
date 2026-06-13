@@ -2226,6 +2226,16 @@ class JsonAnaliseDataFrame():
                 
             dt = _time.time() - t0
             print(f"   ✅ SBERT [{modelo_sbert}]: concluído em {dt:.1f}s ({total_pares} pares)")
+            
+            # Limpa o cache do modelo SBERT recém-processado da VRAM antes de carregar o próximo
+            try:
+                from util_sbert import BERTScoreLike
+                BERTScoreLike.clear_instances()
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
         
         total = sum(len(p) for p in pares_por_modelo.values())
         if total:
@@ -2260,10 +2270,28 @@ class JsonAnaliseDataFrame():
         # ═════════════════════════════════════════════════════════════════════════
         self._precalcular_bertscore_global()
         
+        # Descarrega modelos BERTScore da memória GPU/CPU
+        try:
+            from util_bertscore import liberar_modelos_bert_scorer
+            liberar_modelos_bert_scorer()
+        except ImportError:
+            pass
+        
         # ═════════════════════════════════════════════════════════════════════════
         # OTIMIZAÇÃO: PRÉ-CALCULA TODOS OS SBERT COM CACHE EM DISCO
         # ═════════════════════════════════════════════════════════════════════════
         self._precalcular_sbert_global()
+        
+        # Descarrega modelos SBERT da memória GPU/CPU (caso algum tenha restado)
+        try:
+            from util_sbert import BERTScoreLike
+            BERTScoreLike.clear_instances()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
         
         # ═════════════════════════════════════════════════════════════════════════
         # PROCESSAMENTO EM CHUNKS (sempre, independente do volume)
