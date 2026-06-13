@@ -33,6 +33,14 @@ class LoggerDuplo:
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+
+    def isatty(self):
+        """Retorna se o terminal subjacente é interativo (necessário para tqdm/transformers)."""
+        return hasattr(self.terminal, 'isatty') and self.terminal.isatty()
+
+    def fileno(self):
+        """Retorna o file descriptor do terminal subjacente (necessário para algumas bibliotecas)."""
+        return self.terminal.fileno()
 import argparse
 import yaml
 import regex as re

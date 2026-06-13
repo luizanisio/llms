@@ -1,3 +1,5 @@
+# python ../../src/comparar_extracoes.py --config 03_compara_q235_mini_10.yaml
+
 saida:
   pasta: ./compara/analises_comparacao_summa_q235_mini_10
   pasta_parquet: ./compara/
