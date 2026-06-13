@@ -2096,18 +2096,51 @@ class JsonAnaliseDataFrame():
         modelo_bertscore = config.get('modelo_bertscore', None)
         total_processados = 0
         
+        import time as _time
+        # Utiliza Média Móvel Exponencial (EMA) para estimar o tempo por batch.
+        _ema_tempo_batch = None
+        
         for batch_idx in range(0, total_pares, mini_batch_size):
+            _t_inicio_batch = _time.time()
             batch_pares = todos_pares[batch_idx:batch_idx + mini_batch_size]
             batch_num = (batch_idx // mini_batch_size) + 1
             
             preds = [p[3] for p in batch_pares]
             trues = [p[4] for p in batch_pares]
             
+            if _ema_tempo_batch is None:
+                _eta_str = ""
+            else:
+                _batches_restantes = num_batches - (batch_num - 1)
+                _segundos_restantes = _ema_tempo_batch * _batches_restantes
+                if _segundos_restantes >= 3600:
+                    _h = int(_segundos_restantes // 3600)
+                    _m = int((_segundos_restantes % 3600) // 60)
+                    _eta_str = f" ⏱️ ETA: {_h}h{_m:02d}min"
+                elif _segundos_restantes >= 60:
+                    _m = int(_segundos_restantes // 60)
+                    _s = int(_segundos_restantes % 60)
+                    _eta_str = f" ⏱️ ETA: {_m}min{_s:02d}s"
+                else:
+                    _eta_str = f" ⏱️ ETA: {int(_segundos_restantes)}s"
+            
             verbose_batch = (batch_num == 1)  # Verbose apenas no primeiro batch
-            print(f"   ⚡ Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...")
+            print(f"   ⚡ Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...{_eta_str}")
             
             bscore(preds, trues, decimais=3, verbose=verbose_batch,
                    model_type=modelo_bertscore, mini_batch_size=mini_batch_size)
+            
+            _tempo_batch_atual = _time.time() - _t_inicio_batch
+            if _ema_tempo_batch is None:
+                _ema_tempo_batch = _tempo_batch_atual
+            else:
+                # Se o tempo variar abruptamente (ex: transição de batches instantâneos via cache
+                # para batches demorados via GPU), calibra o ETA imediatamente para o novo tempo real
+                if _tempo_batch_atual > _ema_tempo_batch * 5 or _tempo_batch_atual < _ema_tempo_batch / 5:
+                    _ema_tempo_batch = _tempo_batch_atual
+                else:
+                    # Caso contrário, aplica a suavização da média móvel
+                    _ema_tempo_batch = 0.7 * _ema_tempo_batch + 0.3 * _tempo_batch_atual
             
             total_processados += len(preds)
             
@@ -2208,18 +2241,49 @@ class JsonAnaliseDataFrame():
                 from util_sbert import BERTScoreLike
                 BERTScoreLike.configurar_modelos(modelos_sbert_override)
             
+            # Reinicia o cálculo do ETA para cada novo modelo SBERT processado
+            _ema_tempo_batch = None
+            
             for batch_idx in range(0, total_pares, mini_batch_size):
+                _t_inicio_batch = _time.time()
                 batch_pares = pares[batch_idx:batch_idx + mini_batch_size]
                 batch_num = (batch_idx // mini_batch_size) + 1
                 
                 preds = [p[0] for p in batch_pares]
                 trues = [p[1] for p in batch_pares]
                 
+                if _ema_tempo_batch is None:
+                    _eta_str = ""
+                else:
+                    _batches_restantes = num_batches - (batch_num - 1)
+                    _segundos_restantes = _ema_tempo_batch * _batches_restantes
+                    if _segundos_restantes >= 3600:
+                        _h = int(_segundos_restantes // 3600)
+                        _m = int((_segundos_restantes % 3600) // 60)
+                        _eta_str = f" ⏱️ ETA: {_h}h{_m:02d}min"
+                    elif _segundos_restantes >= 60:
+                        _m = int(_segundos_restantes // 60)
+                        _s = int(_segundos_restantes % 60)
+                        _eta_str = f" ⏱️ ETA: {_m}min{_s:02d}s"
+                    else:
+                        _eta_str = f" ⏱️ ETA: {int(_segundos_restantes)}s"
+                
                 verbose_batch = (batch_num == 1)
                 if num_batches > 1:
-                    print(f"      📦 Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...")
+                    print(f"      📦 Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...{_eta_str}")
                 
                 sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=verbose_batch)
+                
+                _tempo_batch_atual = _time.time() - _t_inicio_batch
+                if _ema_tempo_batch is None:
+                    _ema_tempo_batch = _tempo_batch_atual
+                else:
+                    # Calibração rápida em caso de grande variação de tempo (cache vs gpu)
+                    if _tempo_batch_atual > _ema_tempo_batch * 5 or _tempo_batch_atual < _ema_tempo_batch / 5:
+                        _ema_tempo_batch = _tempo_batch_atual
+                    else:
+                        # Média móvel exponencial padrão para estabilizar o ETA
+                        _ema_tempo_batch = 0.7 * _ema_tempo_batch + 0.3 * _tempo_batch_atual
                 
                 del preds, trues, batch_pares
                 gc.collect()
