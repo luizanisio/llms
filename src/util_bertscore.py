@@ -80,6 +80,11 @@ if hasattr(torch, '__version__') and torch.__version__ >= '2.0':
 _bert_scorer_cache = {}
 _bert_scorer_lock = None
 
+# Patch global para o erro do bert_score com transformers >= 4.40
+import transformers
+if hasattr(transformers, 'BertTokenizer') and not hasattr(transformers.BertTokenizer, 'build_inputs_with_special_tokens'):
+    transformers.BertTokenizer.build_inputs_with_special_tokens = lambda self, t0, t1=None: [self.cls_token_id, self.sep_token_id]
+
 # Cache para configurações de modelos (max_tokens e tokenizers)
 _model_max_tokens_cache = {}
 _model_tokenizer_cache = {}
@@ -452,17 +457,6 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
         # Função auxiliar para evitar OverflowError no Rust backend de Tokenizers fast e outros erros
         def _fix_tokenizer_max_length(s):
             if hasattr(s, '_tokenizer'):
-                # FIX: Previne erro "AttributeError: BertTokenizer has no attribute build_inputs_with_special_tokens"
-                # O bert_score tenta acessar esse método para processar strings vazias, mas versões
-                # recentes do transformers o removeram de alguns tokenizers.
-                try:
-                    _ = getattr(s._tokenizer, 'build_inputs_with_special_tokens')
-                except AttributeError:
-                    import types
-                    s._tokenizer.build_inputs_with_special_tokens = types.MethodType(
-                        lambda self, t0, t1=None: self.encode("", add_special_tokens=True), s._tokenizer
-                    )
-                
                 if hasattr(s._tokenizer, 'model_max_length'):
                     if s._tokenizer.model_max_length > 1_000_000:
                         safe_max = 512
