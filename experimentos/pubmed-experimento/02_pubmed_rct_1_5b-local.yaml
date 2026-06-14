@@ -1,13 +1,13 @@
 # ==========================================================================
 # Configuração para inferência em lote com vLLM
-# Executar com: python ../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
+# Executar com: python ../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b-local.yaml
 # ==========================================================================
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
-  caminho: "/students/luiz.abatitucci/models/models/Qwen2.5-1.5B-Instruct"
+  caminho: "./models/Qwen2.5-1.5B-Instruct"
   lora: ""
 
 # --- Configuração do vLLM ---
@@ -44,10 +44,10 @@ geracao:
 # variavel_texto: placeholder no template a ser substituído pelo texto. Padrão: "<--TEXTO-->"
 # system_prompt: system prompt para modelos instruct (opcional).
 entrada:
-  arquivo: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/dados/pubmed-rct-20k.parquet"
+  arquivo: "./dados/pubmed-rct-20k.parquet"
   campo_chave: "pmid"
   campo_texto: "article"
-  prompt_template: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/dados/prompt_pubmed_rct.txt"
+  prompt_template: "./dados/prompt_pubmed_rct.txt"
   variavel_texto: "<<--TEXTO-->>"
   system_prompt: "You are an expert biomedical data extractor."
 
@@ -56,5 +56,5 @@ entrada:
 # tipo_saida: tipo da resposta gerada. Valores possíveis: "str" ou "json"
 # Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
 saida:
-  arquivo: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/saida_pubmed_1_5b.parquet"
+  arquivo: "./saidas/saida_pubmed_1_5b.parquet"
   tipo_saida: "json"
