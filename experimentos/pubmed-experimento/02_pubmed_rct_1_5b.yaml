@@ -1,13 +1,13 @@
 # ==========================================================================
 # Configuração para inferência em lote com vLLM
-# Executar com: python ../../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
+# Executar com: python ../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
 # ==========================================================================
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
-  caminho: "Qwen/Qwen2.5-1.5B-Instruct"
+  caminho: "./models/Qwen2.5-1.5B-Instruct"
   lora: ""
 
 # --- Configuração do vLLM ---
@@ -44,7 +44,7 @@ geracao:
 # variavel_texto: placeholder no template a ser substituído pelo texto. Padrão: "<--TEXTO-->"
 # system_prompt: system prompt para modelos instruct (opcional).
 entrada:
-  arquivo: "./dados/pubmed-rct-20k-mini.parquet"
+  arquivo: "./dados/pubmed-rct-20k.parquet"
   campo_chave: "pmid"
   campo_texto: "article"
   prompt_template: "./dados/prompt_pubmed_rct.txt"

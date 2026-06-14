@@ -55,15 +55,15 @@ echo "==============================="
 
 
 #python baixar-qwen1.5b.py
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/PubMed_20k_RCT/02_pubmed_rct_1_5b.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
 
 # Mais rodadas para repescagem do que deu erro
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/PubMed_20k_RCT/02_pubmed_rct_1_5b.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/PubMed_20k_RCT/02_pubmed_rct_1_5b.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/PubMed_20k_RCT/02_pubmed_rct_1_5b.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/PubMed_20k_RCT/02_pubmed_rct_1_5b.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
 
 echo "=== Job finalizado: $(date) ==="
