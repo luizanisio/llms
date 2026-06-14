@@ -59,6 +59,7 @@ from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_m
 # Constantes
 # ---------------------------------------------------------------------------
 
+MAX_PROMPTS_LOG = 5
 _COLUNAS_SAIDA_PARQUET = ["chave", "resumo", "resposta", "erro"]
 
 _YAML_EXEMPLO = """\
@@ -969,14 +970,28 @@ class BatchLog:
 
     def __init__(self, config: Dict[str, Any]):
         arquivo_saida = config["saida"]["arquivo"]
-        if _saida_eh_parquet(config):
+        eh_parquet = _saida_eh_parquet(config)
+        if eh_parquet:
             pasta = os.path.dirname(os.path.abspath(arquivo_saida))
             prefixo = os.path.splitext(os.path.basename(arquivo_saida))[0] + "_"
             self._log_path = os.path.join(pasta, f"{prefixo}processamento.log")
+            self._prompt_log_path = os.path.join(pasta, f"{prefixo}prompts.log")
         else:
             pasta = os.path.abspath(arquivo_saida)
             os.makedirs(pasta, exist_ok=True)
             self._log_path = os.path.join(pasta, "processamento.log")
+            self._prompt_log_path = os.path.join(pasta, "prompts.log")
+
+        self._prompts_registrados = 0
+
+        # Limpa arquivo de log de prompts se a saída ainda não existe (nova execução)
+        existe_saida = os.path.isfile(arquivo_saida) if eh_parquet else os.path.isdir(arquivo_saida)
+        if not existe_saida:
+            if os.path.isfile(self._prompt_log_path):
+                try:
+                    os.remove(self._prompt_log_path)
+                except Exception:
+                    pass
 
     # -- helpers --
     @staticmethod
@@ -991,6 +1006,27 @@ class BatchLog:
             f.write(texto)
 
     # -- blocos --
+    def registrar_prompt(self, chave: str, prompt: str) -> None:
+        """Registra exemplos de prompts gerados, até um limite de 5 por execução."""
+        if self._prompts_registrados >= MAX_PROMPTS_LOG:
+            return
+        
+        self._prompts_registrados += 1
+        pasta = os.path.dirname(self._prompt_log_path)
+        if pasta:
+            os.makedirs(pasta, exist_ok=True)
+            
+        bloco = (
+            "=================================================================\n"
+            f"Data/Hora: {self._agora()}\n"
+            f"Chave: {chave}\n"
+            f"Ordem nesta execução: {self._prompts_registrados}/5\n"
+            "=================================================================\n"
+            f"{prompt}\n\n"
+        )
+        with open(self._prompt_log_path, "a", encoding="utf-8") as f:
+            f.write(bloco)
+
     def registrar_inicio(
         self, itens_novos: int, itens_erro: int, itens_concluidos: int
     ) -> None:
@@ -1122,6 +1158,8 @@ def processar_batch(
             conteudo = montar_prompt(item["texto"], config)
             prompt_final = formatar_prompt_final(conteudo, config, tokenizer)
             prompts.append(prompt_final)
+            if batch_log:
+                batch_log.registrar_prompt(item["chave"], prompt_final)
 
         # Info do batch
         eta = _formatar_eta(inicio_total, batch_start, total)
@@ -1533,6 +1571,20 @@ def processar_batch_api(
         batch_corrigidos = 0
         batch_ok = 0
         batch_erros = 0
+
+        # Loga os prompts antes de enviar para as threads
+        if batch_log and getattr(batch_log, "_prompts_registrados", 0) < 5:
+            system_prompt = config["entrada"].get("system_prompt", "")
+            for item in batch_itens:
+                if batch_log._prompts_registrados >= 5:
+                    break
+                conteudo = montar_prompt(item["texto"], config)
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": conteudo})
+                prompt_str = json.dumps(messages, ensure_ascii=False, indent=2)
+                batch_log.registrar_prompt(item["chave"], prompt_str)
 
         # Executa chamadas em paralelo usando ThreadPoolExecutor
         resultados_batch = [None] * len(batch_itens)
