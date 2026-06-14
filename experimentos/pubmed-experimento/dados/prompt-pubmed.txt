@@ -1,0 +1,21 @@
+Extract the structured information from the biomedical article below in tag <ARTICLE></ARTICLE>.
+
+Return a valid JSON object matching the following schema exactly:
+{
+  "title": "string — extracted from the header",
+  "publication": "string — format YYYY-MM or YYYY",
+  "journal": "string — journal name",
+  "keywords": [list of strings],
+  "background": "string — background section concatenated",
+  "objective": "string — objective section concatenated",
+  "methods": "string — methods section concatenated",
+  "results": "string — results section concatenated",
+  "conclusions": "string — conclusions section concatenated"
+}
+
+If any section or information is not present, return an empty string for text fields or an empty list for list fields. Do not hallucinate information.
+Make sure to extract the contents exactly as they appear in the original text, concatenating sentences logically without altering their original meaning.
+
+<ARTICLE>
+<<--TEXTO-->>
+</ARTICLE>

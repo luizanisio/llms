@@ -1,0 +1,60 @@
+# ==========================================================================
+# Configuração para inferência em lote com vLLM
+# Executar com: python ../../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
+# ==========================================================================
+
+# --- Modelo ---
+# caminho: caminho para modelo HuggingFace (local ou hub)
+# lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
+modelo:
+  caminho: "Qwen/Qwen2.5-1.5B-Instruct"
+  lora: ""
+
+# --- Configuração do vLLM ---
+# gpu_memory_utilization: fração da VRAM a usar (0.0 a 1.0). Padrão: 0.90
+# max_model_len: tamanho máximo do contexto em tokens. Ajuste conforme o modelo.
+# tensor_parallel_size: número de GPUs para paralelismo de tensor (1 = single GPU)
+# dtype: tipo de dado ("auto", "float16", "bfloat16"). "auto" detecta automaticamente.
+# enforce_eager: True desabilita CUDA graphs (mais lento, menos memória). Recomendado para 7B.
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 16384
+  tensor_parallel_size: 1
+  dtype: "auto"
+  enforce_eager: true
+
+# --- Parâmetros de Geração ---
+# max_tokens: máximo de tokens na resposta gerada
+# temperature: criatividade (0.0 = determinístico, 1.0 = criativo). Para extração use ~0.01.
+# top_k: top-k sampling (2 = quase determinístico)
+# top_p: nucleus sampling
+# batch_size: quantos prompts enviar por vez (controla salvamento parcial). Opcional.
+geracao:
+  max_tokens: 4096
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+  batch_size: 30
+
+# --- Entrada ---
+# arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
+# campo_chave: nome da coluna com o ID (apenas para parquet). Padrão: "id"
+# campo_texto: nome da coluna com o texto (apenas para parquet). Padrão: "texto"
+# prompt_template: arquivo .txt com template do prompt (opcional).
+# variavel_texto: placeholder no template a ser substituído pelo texto. Padrão: "<--TEXTO-->"
+# system_prompt: system prompt para modelos instruct (opcional).
+entrada:
+  arquivo: "./dados/pubmed-rct-20k-mini.parquet"
+  campo_chave: "pmid"
+  campo_texto: "article"
+  prompt_template: "./dados/prompt_pubmed_rct.txt"
+  variavel_texto: "<<--TEXTO-->>"
+  system_prompt: "You are an expert biomedical data extractor."
+
+# --- Saída ---
+# arquivo: caminho para arquivo .parquet OU pasta para arquivos .txt/.json
+# tipo_saida: tipo da resposta gerada. Valores possíveis: "str" ou "json"
+# Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
+saida:
+  arquivo: "./saidas/saida_pubmed_1_5b.parquet"
+  tipo_saida: "json"
