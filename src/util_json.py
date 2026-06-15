@@ -2137,12 +2137,6 @@ class JsonAnaliseDataFrame():
                 campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
                 campos_true = JsonAnalise._extrair_todos_campos(true_json)
                 
-                # Aplicamos os campos virtuais aqui para garantir que eles sejam pré-calculados 
-                # (ex: o campo virtual "Sentencas"), evitando recálculo sequencial e cache miss depois.
-                if campos_virtuais:
-                    campos_pred = JsonAnalise.aplicar_campos_virtuais(campos_pred, campos_virtuais)
-                    campos_true = JsonAnalise.aplicar_campos_virtuais(campos_true, campos_virtuais)
-                
                 campos_comparacao = config.get('campos_comparacao', [])
                 for campo in campos_comparacao:
                     if campo in campos_bertscore:
@@ -2291,12 +2285,6 @@ class JsonAnaliseDataFrame():
                     # Campos individuais
                     campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
                     campos_true = JsonAnalise._extrair_todos_campos(true_json)
-                    
-                    # Aplicamos os campos virtuais aqui para garantir que eles sejam pré-calculados 
-                    # (ex: o campo virtual "Sentencas"), evitando recálculo sequencial e cache miss depois.
-                    if campos_virtuais:
-                        campos_pred = JsonAnalise.aplicar_campos_virtuais(campos_pred, campos_virtuais)
-                        campos_true = JsonAnalise.aplicar_campos_virtuais(campos_true, campos_virtuais)
                     
                     for campo in campos:
                         if campo.startswith('('):
