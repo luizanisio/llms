@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=compara_full_q235
+#SBATCH --job-name=compara_full_pubmed
 
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
