@@ -3,6 +3,8 @@
 Experimento de validação de portabilidade do framework de Curriculum Learning com
 escalonamento de capacidade (CL+PT), focado na extração de informações de textos.
 
+Diferente do SUMMA, o prompt desse experimento é mais simples, com menos detalhes do que o modelo deve fazer e como deve fazer, então espera-se que as saídas do modelos sem fine tuning sejam mais distantes do esperado.
+
 ---
 
 ## Fontes dos dados

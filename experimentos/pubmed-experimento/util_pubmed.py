@@ -368,6 +368,34 @@ if __name__=='__main__':
         print(f'Criando dataset parquet a partir de {pasta_dataset} e saída para {arquivo}')
         criar_parquet_experimento(pasta_dataset, arquivo)
         
+    arquivo_professor = './saidas/saida_pubmed_prof.parquet'
+    # TODO: criar um dataset um dataset similar ao dataset ./saidas/saida_pubmed_1_5b.parquet para ser usado como referência nas comparações
+    # usar o dataset criado em arquivo para criar o dataset 
+    if not os.path.isfile(arquivo_professor):
+        print(f'Criando dataset parquet a partir de {pasta_dataset} e saída para {arquivo_professor}')
+        df_temp = pd.read_parquet(arquivo)
+        
+        def dict_to_json(d):
+            def conversor_numpy(obj):
+                if hasattr(obj, "tolist"):
+                    return obj.tolist()
+                raise TypeError
+            if isinstance(d, dict):
+                return json.dumps(d, ensure_ascii=False, default=conversor_numpy)
+            elif hasattr(d, "tolist"):
+                return json.dumps(d.tolist(), ensure_ascii=False, default=conversor_numpy)
+            return str(d)
+
+        df_prof = pd.DataFrame({
+            'chave': df_temp['pmid'].astype(str),
+            'resumo': '{}',
+            'resposta': df_temp['response'].apply(dict_to_json),
+            'erro': ''
+        })
+        
+        os.makedirs(os.path.dirname(arquivo_professor), exist_ok=True)
+        df_prof.to_parquet(arquivo_professor, index=False)
+
     arquivo_mini = arquivo.replace('.parquet', '-mini.parquet')
     if not os.path.isfile(arquivo_mini):
         print(f'Criando dataset parquet mini a partir de {pasta_dataset} e saída para {arquivo_mini}')
