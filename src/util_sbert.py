@@ -278,13 +278,46 @@ def sbert_score(preds: List[str], trues: List[str],
         raise ValueError(f"preds ({len(preds)}) e trues ({len(trues)}) devem ter o mesmo tamanho")
 
     cache = SBERTCache(modelo=modelo, usar_cache=usar_cache, atualizar_cache=atualizar_cache)
-    final_P, final_R, final_F1, missed_idx, missed_preds, missed_trues, missed_meta = cache.get_batch(preds, trues)
+
+    # -------------------------------------------------------------------------
+    # TRATAMENTO DE PARES COM STRINGS VAZIAS
+    # -------------------------------------------------------------------------
+    # Sentenças vazias iguais = match perfeito (1.0).
+    # Se apenas uma é vazia = mismatch (0.0).
+    def _is_text_empty(t):
+        return not t or (isinstance(t, str) and t.strip() == "")
+
+    preds_filtrados = []
+    trues_filtrados = []
+    resultados_vazios = {}  # idx -> (P, R, F1)
+    mapa_filtrado_para_original = []
+
+    for i in range(len(preds)):
+        p_vazio = _is_text_empty(preds[i])
+        t_vazio = _is_text_empty(trues[i])
+        if p_vazio and t_vazio:
+            resultados_vazios[i] = (1.0, 1.0, 1.0)
+        elif p_vazio or t_vazio:
+            resultados_vazios[i] = (0.0, 0.0, 0.0)
+        else:
+            preds_filtrados.append(preds[i])
+            trues_filtrados.append(trues[i])
+            mapa_filtrado_para_original.append(i)
+
+    # Se todos os pares são vazios, retorna direto
+    if not preds_filtrados:
+        final_P = [round(resultados_vazios[i][0], decimais) for i in range(len(preds))]
+        final_R = [round(resultados_vazios[i][1], decimais) for i in range(len(preds))]
+        final_F1 = [round(resultados_vazios[i][2], decimais) for i in range(len(preds))]
+        return final_P, final_R, final_F1
+
+    final_P_filt, final_R_filt, final_F1_filt, missed_idx, missed_preds, missed_trues, missed_meta = cache.get_batch(preds_filtrados, trues_filtrados)
 
     if missed_preds:
         # verbose - quantidade a calcular
-        if verbose and len(preds) > 0:
-            n_cache = len(preds) - len(missed_idx)
-            print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds)} pares | Calcular: {len(missed_idx)}")
+        if verbose and len(preds_filtrados) > 0:
+            n_cache = len(preds_filtrados) - len(missed_idx)
+            print(f"   [SBERTCache:{modelo}] Cache: {n_cache}/{len(preds_filtrados)} pares | Calcular: {len(missed_idx)}")
         sbert = BERTScoreLike.get_instance(modelo)
         new_P = []
         new_R = []
@@ -318,16 +351,33 @@ def sbert_score(preds: List[str], trues: List[str],
         # Salva no cache
         cache.save_batch(missed_meta, new_P, new_R, new_F1)
 
-        # Preenche resultados finais
+        # Preenche resultados filtrados
         for j, idx in enumerate(missed_idx):
-            final_P[idx] = new_P[j]
-            final_R[idx] = new_R[j]
-            final_F1[idx] = new_F1[j]
+            final_P_filt[idx] = new_P[j]
+            final_R_filt[idx] = new_R[j]
+            final_F1_filt[idx] = new_F1[j]
 
-    # Arredonda resultados vindos do cache
-    final_P = [round(v, decimais) if v is not None else 0.0 for v in final_P]
-    final_R = [round(v, decimais) if v is not None else 0.0 for v in final_R]
-    final_F1 = [round(v, decimais) if v is not None else 0.0 for v in final_F1]
+    # Reconstrói arrays completos mesclando resultados filtrados com pares vazios
+    final_P = [0.0] * len(preds)
+    final_R = [0.0] * len(preds)
+    final_F1 = [0.0] * len(preds)
+
+    # Preenche pares vazios pré-computados
+    for idx, (p, r, f1) in resultados_vazios.items():
+        final_P[idx] = p
+        final_R[idx] = r
+        final_F1[idx] = f1
+
+    # Preenche pares calculados (mapeando de volta para índices originais)
+    for j, idx_original in enumerate(mapa_filtrado_para_original):
+        final_P[idx_original] = final_P_filt[j] if final_P_filt[j] is not None else 0.0
+        final_R[idx_original] = final_R_filt[j] if final_R_filt[j] is not None else 0.0
+        final_F1[idx_original] = final_F1_filt[j] if final_F1_filt[j] is not None else 0.0
+
+    # Arredonda resultados finais
+    final_P = [round(v, decimais) for v in final_P]
+    final_R = [round(v, decimais) for v in final_R]
+    final_F1 = [round(v, decimais) for v in final_F1]
 
     return final_P, final_R, final_F1
 
@@ -500,7 +550,7 @@ class BERTScoreLike:
         a = self._norm_text(a)
         b = self._norm_text(b)
         if not a and not b:
-            return 0.0
+            return 1.0
         emb = self.model.encode([a, b], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
         return float(np.dot(emb[0], emb[1]))
 
@@ -523,7 +573,7 @@ class BERTScoreLike:
           - "alinhamento": inclui melhor match por unidade (índice e score)
         """
         if not cand_units and not ref_units:
-            return {"P": 0.0, "R": 0.0, "F1": 0.0, "detalhes": {}}
+            return {"P": 1.0, "R": 1.0, "F1": 1.0, "detalhes": {}}
         if not cand_units or not ref_units:
             return {"P": 0.0, "R": 0.0, "F1": 0.0, "detalhes": {
                 "n_cand_units": len(cand_units),

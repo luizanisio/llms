@@ -97,3 +97,48 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 ## Important
 
 - The `.env_template` file in this directory is a **template only** and contains no real credentials and need to be copied to `.env` and filled with the actual credentials.
+
+# Como as métricas de comparação avaliam os campos
+
+## Definição de "efetivamente vazio"
+
+Um valor de campo é considerado **efetivamente vazio** quando é:
+- `None` (valor nulo)
+- `""` (string vazia exata)
+- `[]` (lista vazia)
+- `{}` (dicionário vazio)
+
+> **Nota:** Strings com espaços (`"   "`), pontuação residual (`"."`) ou estruturas aninhadas com todos os valores nulos (`{"a": null}`) **não** são consideradas vazias — o cálculo normal das métricas resolve esses casos.
+
+## Chave ausente = valor nulo
+
+Se a referência (professor) tem uma chave com valor nulo e o aluno não possui essa chave, ambos são tratados como equivalentes — o resultado é **1.0** (match perfeito).
+
+## Regras de comparação para campos vazios
+
+| Cenário | Resultado | Motivo |
+|---|---|---|
+| Ambos efetivamente vazios | **1.0** (P, R, F1 ou SIM) | Concordância: ambos indicam ausência de informação |
+| Apenas um efetivamente vazio | **0.0** (P, R, F1 ou SIM) | Discordância: um extraiu, outro não |
+| Nenhum vazio | Cálculo normal da métrica | Comparação padrão entre valores |
+
+## Aplicação uniforme
+
+Essas regras se aplicam **uniformemente** a todas as métricas:
+- BERTScore
+- Sentence-BERT (SBERT) — todos os tamanhos (pequeno, médio, grande)
+- ROUGE-L, ROUGE-1, ROUGE-2
+- Levenshtein
+
+## Camadas de proteção
+
+A verificação é feita em **duas camadas**:
+
+1. **Camada de comparação de campos** (`JsonAnalise.comparar()`): verifica os valores JSON originais antes da conversão para texto. Se ambos são efetivamente vazios, retorna 1.0 diretamente sem invocar a métrica.
+
+2. **Camada de métricas individuais** (`bscore()`, `sbert_score()`, ROUGE, Levenshtein): proteção defensiva sobre strings já convertidas. Se ambas as strings são vazias após `strip()`, retorna 1.0.
+
+## Diferença entre campo vazio e documento com erro
+
+- **Campo vazio**: o documento foi extraído com sucesso, mas o campo tem valor nulo/vazio. Segue as regras acima.
+- **Documento com erro**: a extração falhou (dict com chave `'erro'`). É tratado pela flag `ignorar_erro_extracao` no YAML — se `true`, o documento é excluído da comparação; se `false`, recebe métricas zeradas.

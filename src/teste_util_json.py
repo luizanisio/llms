@@ -1258,8 +1258,8 @@ class TestJsonAnaliseConfiguracoesEspeciais(unittest.TestCase):
         }
         resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
         
-        # Campo inexistente gera valor 0.0
-        self.assertEqual(resultado['campo_inexistente_rouge1_F1'], 0.0)
+        # Campo inexistente em ambos gera valor 1.0 (ambos são tratados como None/vazios)
+        self.assertEqual(resultado['campo_inexistente_rouge1_F1'], 1.0)
     
     def test_todas_metricas_mesmo_campo(self):
         """Campo com todas as métricas disponíveis"""
@@ -2517,6 +2517,218 @@ class TestJsonAnaliseNomeCampoID(unittest.TestCase):
             self.assertEqual(row_nome_campo_id.iloc[0]['valor'], 'custom_id')
 
 
+class TestCamposVazios(unittest.TestCase):
+    """Testes para verificar comportamento correto com campos vazios/nulos.
+    
+    Regras:
+    - Ambos efetivamente vazios (None, "", [], {}) = 1.0 (match perfeito)
+    - Apenas um efetivamente vazio = 0.0 (mismatch)
+    - Chave ausente equivale a None
+    """
+
+    def test_is_effectively_empty(self):
+        """Testa a função utilitária _is_effectively_empty"""
+        self.assertTrue(JsonAnalise._is_effectively_empty(None))
+        self.assertTrue(JsonAnalise._is_effectively_empty(""))
+        self.assertTrue(JsonAnalise._is_effectively_empty([]))
+        self.assertTrue(JsonAnalise._is_effectively_empty({}))
+        # Não vazios
+        self.assertFalse(JsonAnalise._is_effectively_empty(" "))
+        self.assertFalse(JsonAnalise._is_effectively_empty("."))
+        self.assertFalse(JsonAnalise._is_effectively_empty("texto"))
+        self.assertFalse(JsonAnalise._is_effectively_empty([1]))
+        self.assertFalse(JsonAnalise._is_effectively_empty({"a": None}))
+        self.assertFalse(JsonAnalise._is_effectively_empty(0))
+
+    def test_is_text_empty(self):
+        """Testa a função utilitária _is_text_empty"""
+        self.assertTrue(JsonAnalise._is_text_empty(""))
+        self.assertTrue(JsonAnalise._is_text_empty("   "))
+        self.assertTrue(JsonAnalise._is_text_empty(None))
+        self.assertFalse(JsonAnalise._is_text_empty("texto"))
+        self.assertFalse(JsonAnalise._is_text_empty("."))
+
+    def test_ambos_none_rouge(self):
+        """Ambos None → espera 1.0 (ROUGE)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": None}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+        self.assertEqual(resultado['campo_rouge_P'], 1.0)
+        self.assertEqual(resultado['campo_rouge_R'], 1.0)
+
+    def test_ambos_string_vazia_rouge(self):
+        """Ambos "" → espera 1.0 (ROUGE)"""
+        pred_json = {"campo": ""}
+        true_json = {"campo": ""}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_ambos_lista_vazia_rouge(self):
+        """Ambos [] → espera 1.0 (ROUGE)"""
+        pred_json = {"campo": []}
+        true_json = {"campo": []}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_ambos_dict_vazio_rouge(self):
+        """Ambos {} → espera 1.0 (ROUGE)"""
+        pred_json = {"campo": {}}
+        true_json = {"campo": {}}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_none_vs_string_vazia_rouge(self):
+        """None vs "" → espera 1.0 (ambos efetivamente vazios)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": ""}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_none_vs_lista_vazia_rouge(self):
+        """None vs [] → espera 1.0 (ambos efetivamente vazios)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": []}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_none_vs_dict_vazio_rouge(self):
+        """None vs {} → espera 1.0 (ambos efetivamente vazios)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": {}}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_chave_ausente_vs_none_rouge(self):
+        """Chave ausente vs None → espera 1.0 (campo ausente = None)"""
+        pred_json = {}  # campo ausente
+        true_json = {"campo": None}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_chave_ausente_vs_string_vazia_rouge(self):
+        """Chave ausente vs "" → espera 1.0"""
+        pred_json = {}  # campo ausente
+        true_json = {"campo": ""}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+
+    def test_um_vazio_outro_com_texto_rouge(self):
+        """None vs "texto" → espera 0.0 (mismatch)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": "algum texto"}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 0.0)
+
+    def test_string_vazia_vs_texto_rouge(self):
+        """"" vs "texto" → espera 0.0 (mismatch)"""
+        pred_json = {"campo": ""}
+        true_json = {"campo": "algum texto"}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 0.0)
+
+    def test_chave_ausente_vs_texto_rouge(self):
+        """Chave ausente vs "texto" → espera 0.0 (mismatch)"""
+        pred_json = {}  # campo ausente
+        true_json = {"campo": "algum texto"}
+        config = {'campos_rouge': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 0.0)
+
+    def test_ambos_none_levenshtein(self):
+        """Ambos None → espera 1.0 (Levenshtein)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": None}
+        config = {'campos_levenshtein': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_levenshtein_SIM'], 1.0)
+
+    def test_ambos_string_vazia_levenshtein(self):
+        """Ambos "" → espera 1.0 (Levenshtein)"""
+        pred_json = {"campo": ""}
+        true_json = {"campo": ""}
+        config = {'campos_levenshtein': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_levenshtein_SIM'], 1.0)
+
+    def test_um_vazio_outro_com_texto_levenshtein(self):
+        """None vs "texto" → espera 0.0 (Levenshtein)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": "algum texto"}
+        config = {'campos_levenshtein': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_levenshtein_SIM'], 0.0)
+
+    def test_ambos_none_rouge1(self):
+        """Ambos None → espera 1.0 (ROUGE-1)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": None}
+        config = {'campos_rouge1': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge1_F1'], 1.0)
+
+    def test_ambos_none_rouge2(self):
+        """Ambos None → espera 1.0 (ROUGE-2)"""
+        pred_json = {"campo": None}
+        true_json = {"campo": None}
+        config = {'campos_rouge2': ['campo']}
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge2_F1'], 1.0)
+
+    def test_ambos_none_multiplas_metricas(self):
+        """Ambos None → espera 1.0 em TODAS as métricas simultaneamente"""
+        pred_json = {"campo": None}
+        true_json = {"campo": None}
+        config = {
+            'campos_rouge': ['campo'],
+            'campos_rouge1': ['campo'],
+            'campos_rouge2': ['campo'],
+            'campos_levenshtein': ['campo'],
+        }
+        resultado = JsonAnalise.comparar(pred_json, true_json, config=config)
+        self.assertEqual(resultado['campo_rouge_F1'], 1.0)
+        self.assertEqual(resultado['campo_rouge1_F1'], 1.0)
+        self.assertEqual(resultado['campo_rouge2_F1'], 1.0)
+        self.assertEqual(resultado['campo_levenshtein_SIM'], 1.0)
+
+    def test_calcular_metrica_rouge_ambos_vazios(self):
+        """Proteção defensiva: _calcular_metrica com ROUGE e strings vazias"""
+        config = JsonAnalise._ajustar_config({})
+        resultado = JsonAnalise._calcular_metrica("", "", "rouge", config)
+        self.assertEqual(resultado['F1'], 1.0)
+        self.assertEqual(resultado['P'], 1.0)
+        self.assertEqual(resultado['R'], 1.0)
+
+    def test_calcular_metrica_levenshtein_ambos_vazios(self):
+        """Proteção defensiva: _calcular_metrica com Levenshtein e strings vazias"""
+        config = JsonAnalise._ajustar_config({})
+        resultado = JsonAnalise._calcular_metrica("", "", "levenshtein", config)
+        self.assertEqual(resultado['SIM'], 1.0)
+
+    def test_calcular_metrica_rouge_um_vazio(self):
+        """Proteção defensiva: _calcular_metrica com ROUGE e apenas um vazio"""
+        config = JsonAnalise._ajustar_config({})
+        resultado = JsonAnalise._calcular_metrica("", "algum texto", "rouge", config)
+        self.assertEqual(resultado['F1'], 0.0)
+
+    def test_calcular_metrica_levenshtein_um_vazio(self):
+        """Proteção defensiva: _calcular_metrica com Levenshtein e apenas um vazio"""
+        config = JsonAnalise._ajustar_config({})
+        resultado = JsonAnalise._calcular_metrica("", "algum texto", "levenshtein", config)
+        self.assertEqual(resultado['SIM'], 0.0)
+
+
 def run_tests(verbosity=2):
     """Executa todos os testes"""
     loader = unittest.TestLoader()
@@ -2552,6 +2764,9 @@ def run_tests(verbosity=2):
     
     # Testes de nome_campo_id configurável (bugs corrigidos)
     suite.addTests(loader.loadTestsFromTestCase(TestJsonAnaliseNomeCampoID))
+    
+    # Testes de campos vazios/nulos
+    suite.addTests(loader.loadTestsFromTestCase(TestCamposVazios))
     
     # Executa
     runner = unittest.TextTestRunner(verbosity=verbosity)

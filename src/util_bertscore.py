@@ -898,10 +898,52 @@ def bscore(preds: List[str], trues: List[str],
         usar_cache = True
     
     # -------------------------------------------------------------------------
-    # FASE 1: USO DO CACHE
+    # TRATAMENTO DE PARES COM STRINGS VAZIAS
+    # -------------------------------------------------------------------------
+    # Sentenças vazias iguais = match perfeito (1.0).
+    # Se apenas uma é vazia = mismatch (0.0).
+    # Remove pares tratados antes de enviar ao scorer/cache.
+    def _is_text_empty(t):
+        return not t or (isinstance(t, str) and t.strip() == "")
+    
+    indices_originais = list(range(len(preds)))
+    preds_filtrados = []
+    trues_filtrados = []
+    resultados_vazios = {}  # idx -> (P, R, F1)
+    
+    for i in range(len(preds)):
+        p_vazio = _is_text_empty(preds[i])
+        t_vazio = _is_text_empty(trues[i])
+        if p_vazio and t_vazio:
+            resultados_vazios[i] = (1.0, 1.0, 1.0)
+        elif p_vazio or t_vazio:
+            resultados_vazios[i] = (0.0, 0.0, 0.0)
+        else:
+            preds_filtrados.append(preds[i])
+            trues_filtrados.append(trues[i])
+    
+    # Se todos os pares são vazios, retorna direto
+    if not preds_filtrados:
+        final_P = [resultados_vazios[i][0] for i in range(len(preds))]
+        final_R = [resultados_vazios[i][1] for i in range(len(preds))]
+        final_F1 = [resultados_vazios[i][2] for i in range(len(preds))]
+        if isinstance(decimais, int) and decimais > 0:
+            final_P = [round(x, decimais) for x in final_P]
+            final_R = [round(x, decimais) for x in final_R]
+            final_F1 = [round(x, decimais) for x in final_F1]
+        return final_P, final_R, final_F1
+    
+    # Remapeia índices para o subset filtrado
+    mapa_filtrado_para_original = []
+    for i in range(len(preds)):
+        if i not in resultados_vazios:
+            mapa_filtrado_para_original.append(i)
+    
+    # -------------------------------------------------------------------------
+    # FASE 1: USO DO CACHE (apenas pares não-vazios)
     # -------------------------------------------------------------------------
     cache = BERTScoreCache(usar_cache=usar_cache, atualizar_cache=atualizar_cache, model_type=model_type)
-    final_P, final_R, final_F1, missed_indices, missed_preds, missed_trues, missed_meta = cache.get_batch(preds, trues)
+    final_P_filt, final_R_filt, final_F1_filt, missed_indices, missed_preds, missed_trues, missed_meta = cache.get_batch(preds_filtrados, trues_filtrados)
 
     # -------------------------------------------------------------------------
     # FASE 2: PROCESSAMENTO DOS ITENS NÃO ENCONTRADOS NO CACHE
@@ -949,18 +991,35 @@ def bscore(preds: List[str], trues: List[str],
         except Exception as e:
             raise RuntimeError(f"Erro ao calcular BERTScore: {e}") from e
 
-        # Distribui resultados na lista final
+        # Distribui resultados na lista filtrada
         for idx_missed, original_idx in enumerate(missed_indices):
-            final_P[original_idx] = mP[idx_missed]
-            final_R[original_idx] = mR[idx_missed]
-            final_F1[original_idx] = mF1[idx_missed]
+            final_P_filt[original_idx] = mP[idx_missed]
+            final_R_filt[original_idx] = mR[idx_missed]
+            final_F1_filt[original_idx] = mF1[idx_missed]
             
         # Salva no cache
         cache.save_batch(missed_meta, mP, mR, mF1, verbose=verbose)
 
     # -------------------------------------------------------------------------
-    # FASE 3: ARREDONDAMENTO
+    # FASE 3: RECONSTRUÇÃO E ARREDONDAMENTO
     # -------------------------------------------------------------------------
+    # Reconstrói arrays completos mesclando resultados filtrados com pares vazios
+    final_P = [0.0] * len(preds)
+    final_R = [0.0] * len(preds)
+    final_F1 = [0.0] * len(preds)
+    
+    # Preenche pares vazios pré-computados
+    for idx, (p, r, f1) in resultados_vazios.items():
+        final_P[idx] = p
+        final_R[idx] = r
+        final_F1[idx] = f1
+    
+    # Preenche pares calculados (mapeando de volta para índices originais)
+    for j, idx_original in enumerate(mapa_filtrado_para_original):
+        final_P[idx_original] = final_P_filt[j]
+        final_R[idx_original] = final_R_filt[j]
+        final_F1[idx_original] = final_F1_filt[j]
+    
     if isinstance(decimais, int) and decimais > 0:
         decimais = max(1, decimais)
         final_P = [round(x, decimais) for x in final_P]
@@ -981,6 +1040,7 @@ PARES_TESTE = [
     ("Hoje está ensolarado", "O tempo está bom", 0.778, 0.762, 0.794),
     ("Ele comprou um carro novo", "Ele adquiriu um veículo recente", 0.875, 0.879, 0.872),
     ("A casa é azul", "São 4 horas da tarde", 0.721, 0.729, 0.712),  # Par com baixa similaridade semântica
+    ("", "", 1.0, 1.0, 1.0),  # Par de strings vazias
 ]
 
 

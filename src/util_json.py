@@ -419,6 +419,37 @@ class JsonAnalise:
     RE_UNE_ENTER = re.compile(r"\n+")
     METRICAS_VALIDAS = {'bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein', 'sbert', 'sbert_pequeno', 'sbert_medio', 'sbert_grande'}
 
+    @staticmethod
+    def _is_effectively_empty(valor: Any) -> bool:
+        """Verifica se um valor JSON é efetivamente vazio.
+        
+        Vazio = None, "" (string vazia exata), [] (lista vazia), {} (dict vazio).
+        Strings com espaços, pontuação ou estruturas aninhadas com valores nulos
+        NÃO são consideradas vazias — o cálculo normal das métricas resolve esses casos.
+        
+        Usado para garantir que campos igualmente vazios em ambos os lados da
+        comparação retornem score 1.0 (match perfeito) em vez de 0.0.
+        """
+        if valor is None:
+            return True
+        if isinstance(valor, str) and valor == "":
+            return True
+        if isinstance(valor, list) and len(valor) == 0:
+            return True
+        if isinstance(valor, dict) and len(valor) == 0:
+            return True
+        return False
+
+    @staticmethod
+    def _is_text_empty(texto: str) -> bool:
+        """Verifica se um texto (já convertido de valor JSON) é efetivamente vazio.
+        
+        Proteção defensiva na camada de métricas individuais.
+        Usado após a conversão de valor JSON para texto.
+        """
+        return not texto or texto.strip() == ""
+
+
     @classmethod
     def padronizar_simbolos(cls, texto: Union[str, dict]) -> str:
         """ Padroniza alguns símbolos para comparação mais precisa """
@@ -873,6 +904,13 @@ class JsonAnalise:
                 - SIM: similaridade (0-1) - usado apenas por Levenshtein
         """
         if metrica == 'bertscore':
+            # Proteção defensiva: ambos vazios = match perfeito
+            if cls._is_text_empty(texto_pred) and cls._is_text_empty(texto_true):
+                return {'P': 1.0, 'R': 1.0, 'F1': 1.0}
+            # Apenas um vazio = mismatch
+            if cls._is_text_empty(texto_pred) or cls._is_text_empty(texto_true):
+                return {'P': 0.0, 'R': 0.0, 'F1': 0.0}
+            
             importar('bert_score')
             # BERTScore com cache MD5 automático - retorna floats arredondados com decimais=3
             modelo_bertscore = config.get('modelo_bertscore', None)
@@ -884,6 +922,13 @@ class JsonAnalise:
             }
         
         elif metrica in ('rouge', 'rouge1', 'rouge2'):
+            # Proteção defensiva: ambos vazios = match perfeito
+            if cls._is_text_empty(texto_pred) and cls._is_text_empty(texto_true):
+                return {'P': 1.0, 'R': 1.0, 'F1': 1.0}
+            # Apenas um vazio = mismatch
+            if cls._is_text_empty(texto_pred) or cls._is_text_empty(texto_true):
+                return {'P': 0.0, 'R': 0.0, 'F1': 0.0}
+            
             importar('rouge_score')
             # Mapeia para tipo ROUGE
             tipo_rouge = {'rouge': 'rougeL', 'rouge1': 'rouge1', 'rouge2': 'rouge2'}[metrica]
@@ -905,21 +950,9 @@ class JsonAnalise:
         elif metrica == 'levenshtein':
             importar('Levenshtein')
             
-            # ═════════════════════════════════════════════════════════════════════════
-            # TRATAMENTO ESPECIAL PARA STRINGS VAZIAS OU MUITO CURTAS
-            # ═════════════════════════════════════════════════════════════════════════
-            # Strings vazias, contendo apenas espaços, ou apenas pontuação mínima (como ".")
-            # devem ser tratadas como campos ausentes para comparação de Levenshtein
-            def is_effectively_empty(texto: str) -> bool:
-                """Verifica se o texto é efetivamente vazio após limpeza."""
-                if not texto:
-                    return True
-                # Remove espaços e pontos - se sobrar nada, é efetivamente vazio
-                limpo = texto.strip().replace('.', '').replace(',', '').replace(';', '').replace(':', '')
-                return len(limpo) == 0
-            
-            texto_true_empty = is_effectively_empty(texto_true)
-            texto_pred_empty = is_effectively_empty(texto_pred)
+            # Proteção defensiva usando definição centralizada de vazio
+            texto_true_empty = cls._is_text_empty(texto_true)
+            texto_pred_empty = cls._is_text_empty(texto_pred)
             
             # Se ambos estão vazios, são idênticos
             if texto_true_empty and texto_pred_empty:
@@ -937,6 +970,13 @@ class JsonAnalise:
             }
         
         elif metrica.startswith('sbert'):
+            # Proteção defensiva: ambos vazios = match perfeito
+            if cls._is_text_empty(texto_pred) and cls._is_text_empty(texto_true):
+                return {'P': 1.0, 'R': 1.0, 'F1': 1.0}
+            # Apenas um vazio = mismatch
+            if cls._is_text_empty(texto_pred) or cls._is_text_empty(texto_true):
+                return {'P': 0.0, 'R': 0.0, 'F1': 0.0}
+            
             # ═════════════════════════════════════════════════════════════════════════
             # MÉTRICAS SBERT (Sentence-BERT) - Similaridade semântica com SBERT
             # ═════════════════════════════════════════════════════════════════════════
@@ -1245,8 +1285,25 @@ class JsonAnalise:
             for metrica in metricas_campo:
                 prefixo = f'{campo}_{metrica}'
                 
-                # Campo ausente: métricas zeradas
-                if valor_pred is None or valor_true is None:
+                # Verifica se os valores são efetivamente vazios
+                pred_empty = cls._is_effectively_empty(valor_pred)
+                true_empty = cls._is_effectively_empty(valor_true)
+                
+                # Ambos efetivamente vazios = match perfeito (1.0)
+                if pred_empty and true_empty:
+                    if metrica == 'levenshtein':
+                        resultado[f'{prefixo}_SIM'] = 1.0
+                    else:
+                        resultado[f'{prefixo}_P'] = 1.0
+                        resultado[f'{prefixo}_R'] = 1.0
+                        resultado[f'{prefixo}_F1'] = 1.0
+                    
+                    if retornar_valores:
+                        resultado[f'{prefixo}_VL'] = {'pred': '', 'true': ''}
+                    continue
+                
+                # Apenas um efetivamente vazio = mismatch (0.0)
+                if pred_empty or true_empty:
                     if metrica == 'levenshtein':
                         resultado[f'{prefixo}_SIM'] = 0.0
                     else:
@@ -1256,8 +1313,8 @@ class JsonAnalise:
                     
                     if retornar_valores:
                         resultado[f'{prefixo}_VL'] = {
-                            'pred': None if valor_pred is None else cls._converter_para_texto(valor_pred, metrica, config),
-                            'true': None if valor_true is None else cls._converter_para_texto(valor_true, metrica, config)
+                            'pred': None if pred_empty else cls._converter_para_texto(valor_pred, metrica, config),
+                            'true': None if true_empty else cls._converter_para_texto(valor_true, metrica, config)
                         }
                     continue
                 
@@ -2058,10 +2115,20 @@ class JsonAnaliseDataFrame():
                 if not isinstance(true_json, dict):
                     continue
                 
+                # Removemos os campos virtuais da métrica (global) para evitar textos duplicados
+                # e garantir o cache hit (já que a função de avaliação também os remove).
+                campos_virtuais = config.get('campos_virtuais', {})
+                if campos_virtuais:
+                    true_json_global = {k: v for k, v in true_json.items() if k not in campos_virtuais}
+                    pred_json_global = {k: v for k, v in pred_json.items() if k not in campos_virtuais}
+                else:
+                    true_json_global = true_json
+                    pred_json_global = pred_json
+                
                 # Coleta pares para análise global
                 if '(global)' in campos_bertscore:
                     texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
-                        true_json, pred_json, 'bertscore', config, alinhar=False
+                        true_json_global, pred_json_global, 'bertscore', config, alinhar=False
                     )
                     prefixo = f'{idx}_{modelo}_(global)_bertscore'
                     todos_pares.append((idx, modelo, '(global)_bertscore', texto_pred, texto_true))
@@ -2069,6 +2136,12 @@ class JsonAnaliseDataFrame():
                 # Coleta pares para campos individuais
                 campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
                 campos_true = JsonAnalise._extrair_todos_campos(true_json)
+                
+                # Aplicamos os campos virtuais aqui para garantir que eles sejam pré-calculados 
+                # (ex: o campo virtual "Sentencas"), evitando recálculo sequencial e cache miss depois.
+                if campos_virtuais:
+                    campos_pred = JsonAnalise.aplicar_campos_virtuais(campos_pred, campos_virtuais)
+                    campos_true = JsonAnalise.aplicar_campos_virtuais(campos_true, campos_virtuais)
                 
                 campos_comparacao = config.get('campos_comparacao', [])
                 for campo in campos_comparacao:
@@ -2197,17 +2270,33 @@ class JsonAnaliseDataFrame():
                 if not isinstance(true_json, dict):
                     continue
                 
+                # Removemos os campos virtuais da métrica (global) para evitar textos duplicados
+                # e garantir o cache hit (já que a função de avaliação também os remove).
+                campos_virtuais = config.get('campos_virtuais', {})
+                if campos_virtuais:
+                    true_json_global = {k: v for k, v in true_json.items() if k not in campos_virtuais}
+                    pred_json_global = {k: v for k, v in pred_json.items() if k not in campos_virtuais}
+                else:
+                    true_json_global = true_json
+                    pred_json_global = pred_json
+                
                 for modelo_sbert, campos in campos_por_modelo.items():
                     # Global
                     if '(global)' in campos:
                         texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
-                            true_json, pred_json, f'sbert_{modelo_sbert}', config, alinhar=False
+                            true_json_global, pred_json_global, f'sbert_{modelo_sbert}', config, alinhar=False
                         )
                         pares_por_modelo[modelo_sbert].append((texto_pred, texto_true))
                     
                     # Campos individuais
                     campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
                     campos_true = JsonAnalise._extrair_todos_campos(true_json)
+                    
+                    # Aplicamos os campos virtuais aqui para garantir que eles sejam pré-calculados 
+                    # (ex: o campo virtual "Sentencas"), evitando recálculo sequencial e cache miss depois.
+                    if campos_virtuais:
+                        campos_pred = JsonAnalise.aplicar_campos_virtuais(campos_pred, campos_virtuais)
+                        campos_true = JsonAnalise.aplicar_campos_virtuais(campos_true, campos_virtuais)
                     
                     for campo in campos:
                         if campo.startswith('('):
