@@ -9,14 +9,14 @@
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
 #   shared — GPU compartilhada via MPS, limite de 4 h, VRAM não reservada (testes)
-#XXX #SBATCH --partition=gpu
-#SBATCH --partition=shared
+#SBATCH --partition=gpu
+#XXX #SBATCH --partition=shared
 
 # Recurso de GPU:
 #   gpu:1  — 1 GPU exclusiva (partição gpu)
 #   mps:50 — 50 % de compute compartilhado (partição shared — NÃO usar aqui)
-#XXX #SBATCH --gres=gpu:1
-#SBATCH --gres=mps:14
+#SBATCH --gres=gpu:1
+#XXX #SBATCH --gres=mps:14
 
 # CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
 #SBATCH --cpus-per-task=40
