@@ -61,59 +61,83 @@ configuracao_comparacao:
     tokens: .tokens.json
     avaliacao: .avaliacao.json
     observabilidade: .obs.json
+
+# Mapeamento de campos para métricas
   campos:
     bertscore:
-    - (global)
-    - Materia
-    - Resumo
-    - Dispositivo
-    - Temas.Ponto
-    - Temas.Argumentos
-    - Temas.Decisao
-    - Temas.Explicacao
-    - Temas.Normas
-    - Temas.Jurisprudencia
-    - Temas
-    rouge_1: null
+      - "(global)"
+      - "Materia"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    rouge_1:
+
     rouge_2:
-    - Partes
-    - Partes.Tipo
-    - Partes.Nome
+      - "Partes"
+      - "Partes.Tipo"
+      - "Partes.Nome"
+
     rouge_l:
-    - (global)
-    - Materia
-    - Resumo
-    - DataJulgamento
-    - Partes
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
     levenshtein:
-    - Tipo
-    - DataJulgamento
+      - "Tipo"
+      - "DataJulgamento"
+
     sbert_medio:
-    - (global)
-    - Dispositivo
-    - Materia
-    - Resumo
-    - Temas
-    - Partes
-    - Temas.Explicacao
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
     sbert_grande:
-    - (global)
-    - Dispositivo
-    - Materia
-    - Resumo
-    - Temas
-    - Partes
-    - Temas.Explicacao
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
 campos_virtuais:
   Likert:
-  - Materia
-  - Temas.Ponto
-  - Temas.Argumentos
-  - Temas.Doutrina
-  - Temas.Conceitos
-  - Resumo
+    - Materia
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Doutrina
+    - Temas.Conceitos
+    - Resumo
   MetaDados:
-  - Materia
-  - Partes
-  - Temas.Normas
-  - Temas.Jurisprudencia
+    - Materia
+    - Partes
+    - "Temas.Normas"
+    - "Temas.Jurisprudencia"

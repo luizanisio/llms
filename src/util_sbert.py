@@ -210,6 +210,83 @@ class SBERTCache:
             except Exception:
                 pass
 
+    def carregar_tudo_em_memoria(self, verbose: bool = True, chaves_necessarias: set = None) -> dict:
+        """
+        Carrega todo o cache JSON deste modelo SBERT do disco para a memória.
+        Se chaves_necessarias for fornecido, não fará listdir, carregando apenas
+        os arquivos solicitados.
+        """
+        cache_mem = {}
+        if not os.path.exists(self.cache_dir):
+            return cache_mem
+            
+        if chaves_necessarias is not None:
+            arquivos = [f"{c}.json" for c in chaves_necessarias]
+        else:
+            arquivos = [f for f in os.listdir(self.cache_dir) if f.endswith('.json')]
+            
+        erros = 0
+        
+        for arquivo in arquivos:
+            filepath = os.path.join(self.cache_dir, arquivo)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                chave = arquivo[:-5]  # remove '.json'
+                cache_mem[chave] = data
+            except Exception:
+                erros += 1
+        
+        if verbose:
+            print(f"   📦 [SBERTCache:{self.modelo}] {len(cache_mem)} entradas carregadas em memória"
+                  f"{f' ({erros} erros)' if erros else ''}")
+        
+        return cache_mem
+
+    @staticmethod
+    def lookup_em_memoria(text1: str, text2: str, cache_mem: dict) -> tuple:
+        """
+        Busca resultado SBERT no cache em memória (sem I/O de disco).
+        
+        Método estático para evitar instanciação da classe (que faz I/O) no hot path.
+        Replica a lógica de _get_key_info usando o dict em memória.
+        
+        Returns:
+            (P, R, F1) se encontrado, ou None se cache miss
+        """
+        # Calcula hashes MD5 (mesma lógica de _get_key_info)
+        b1 = str(text1).encode('utf-8')
+        b2 = str(text2).encode('utf-8')
+        h1 = hashlib.md5(b1).hexdigest()
+        h2 = hashlib.md5(b2).hexdigest()
+        
+        swapped = False
+        if h1 > h2:
+            swapped = True
+            h_first, h_second = h2, h1
+            bytes_first, bytes_second = len(b2), len(b1)
+        else:
+            h_first, h_second = h1, h2
+            bytes_first, bytes_second = len(b1), len(b2)
+        
+        chave = f"{h_first}-{h_second}"
+        data = cache_mem.get(chave)
+        
+        if data is None:
+            return None
+        
+        if data.get('bytes1') != bytes_first or data.get('bytes2') != bytes_second:
+            return None
+        
+        p_val = data['P']
+        r_val = data['R']
+        f1_val = data['F1']
+        
+        if swapped:
+            p_val, r_val = r_val, p_val
+        
+        return (p_val, r_val, f1_val)
+
     def limpar_cache(self, tempo_minutos: int = None, verbose: bool = True) -> int:
         if not os.path.exists(self.cache_dir):
             if verbose:

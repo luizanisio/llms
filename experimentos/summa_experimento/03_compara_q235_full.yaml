@@ -14,7 +14,7 @@ saida:
 
 # Configurações de Execução
 execucao:
-  max_workers: 20
+  max_workers: 40
   teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
   gerar_graficos: true 
   llm_as_a_judge: false

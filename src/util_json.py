@@ -387,6 +387,27 @@ class JsonAnalise:
         - '(global)' - se não estiver em nenhuma lista, é adicionado automaticamente em campos_bertscore
         - '(estrutura)' - se não estiver em nenhuma lista, é adicionado automaticamente em campos_rouge1
         
+        Exemplo completo:
+        {
+            'campos_levenshtein': [],
+            'campos_bertscore': ['(global)', 'resumo'],
+            'campos_rouge': ['fatos'],
+            'campos_rouge2': ['texto_longo'],  # (global) será adicionado aqui automaticamente
+            'campos_sbert_pequeno': ['(global)'],
+            'campos_sbert_medio': [],
+            'campos_sbert_grande': [],
+            # sbert sozinho usa o pequeno
+            'campos_sbert': [], 
+            'modelos_sbert': {
+                'pequeno': 'intfloat/multilingual-e5-small',
+                'medio': 'intfloat/multilingual-e5-base',
+                'grande': 'intfloat/multilingual-e5-large'
+            },
+            'modelo_bertscore': 'neuralmind/bert-base-portuguese-cased',
+            'bertscore_batch_size': 256,
+            'sbert_batch_size': 256
+        }
+        
         PARÂMETROS DE ESTRUTURA:
         - nivel_campos: int (padrão 1) - profundidade de extração de campos
         - padronizar_simbolos: bool (padrão True) - normalização de texto
@@ -405,8 +426,6 @@ class JsonAnalise:
         
         Exemplo completo:
         {
-            'campos_levenshtein': [],
-            'campos_sbert': [],
             'campos_bertscore': ['(global)', 'resumo'],
             'campos_rouge': ['fatos'],
             'campos_rouge2': ['texto_longo'],  # (global) será adicionado aqui automaticamente
@@ -418,6 +437,24 @@ class JsonAnalise:
     RE_UNE_ESPACO = re.compile(r"\s+")
     RE_UNE_ENTER = re.compile(r"\n+")
     METRICAS_VALIDAS = {'bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein', 'sbert', 'sbert_pequeno', 'sbert_medio', 'sbert_grande'}
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # CACHES EM MEMÓRIA (class-level) — populados por JsonAnaliseDataFrame.to_df()
+    # ═════════════════════════════════════════════════════════════════════════
+    # Cache de resultados BERTScore carregado do disco após pré-cálculo.
+    # Evita ~400k operações de I/O individual por par durante chunk processing.
+    _cache_bertscore_mem = None  # dict ou None
+    # Cache de resultados SBERT por modelo, carregado do disco após pré-cálculo.
+    # Evita ~1M de operações de I/O individual por par durante chunk processing.
+    _cache_sbert_mem = {}  # {modelo_key: dict}
+    # Cache de instâncias RougeScorer por (tipo_rouge, use_stemmer).
+    # Evita re-instanciar o scorer ~530k vezes (uma por chamada de _calcular_metrica).
+    _rouge_scorer_cache = {}
+    
+    # Otimização Crítica 3: Chaves (hashes MD5) necessárias para carregar o cache
+    # Popula durante o pré-cálculo para evitar os.listdir no diretório completo do modelo
+    _chaves_necessarias_bertscore = set()
+    _chaves_necessarias_sbert = {}
 
     @staticmethod
     def _is_effectively_empty(valor: Any) -> bool:
@@ -911,8 +948,23 @@ class JsonAnalise:
             if cls._is_text_empty(texto_pred) or cls._is_text_empty(texto_true):
                 return {'P': 0.0, 'R': 0.0, 'F1': 0.0}
             
+            # ─── OTIMIZAÇÃO: Lookup em cache de memória (sem I/O de disco) ───
+            # Se o cache em memória foi populado pelo to_df() após pré-cálculo,
+            # busca resultado direto no dict — evita abrir/ler/parsear JSON individual.
+            if cls._cache_bertscore_mem is not None:
+                from util_bertscore import BERTScoreCache
+                modelo_bertscore = config.get('modelo_bertscore', None)
+                _cache_inst = BERTScoreCache(model_type=modelo_bertscore)
+                resultado_mem = _cache_inst.lookup_em_memoria(texto_pred, texto_true, cls._cache_bertscore_mem)
+                if resultado_mem is not None:
+                    return {
+                        'P': round(resultado_mem[0], 3),
+                        'R': round(resultado_mem[1], 3),
+                        'F1': round(resultado_mem[2], 3)
+                    }
+            
+            # Fallback: cache em disco (I/O individual) — apenas para cache misses
             importar('bert_score')
-            # BERTScore com cache MD5 automático - retorna floats arredondados com decimais=3
             modelo_bertscore = config.get('modelo_bertscore', None)
             P, R, F1 = bscore([texto_pred], [texto_true], decimais=3, model_type=modelo_bertscore)
             return {
@@ -930,14 +982,21 @@ class JsonAnalise:
                 return {'P': 0.0, 'R': 0.0, 'F1': 0.0}
             
             importar('rouge_score')
-            # Mapeia para tipo ROUGE
             tipo_rouge = {'rouge': 'rougeL', 'rouge1': 'rouge1', 'rouge2': 'rouge2'}[metrica]
+            use_stemmer = config.get('rouge_stemmer', True)
             
-            scorer = rouge_scorer.RougeScorer(
-                [tipo_rouge],
-                use_stemmer=config.get('rouge_stemmer', True),
-                split_summaries=True
-            )
+            # ─── OTIMIZAÇÃO: Reutiliza instância de RougeScorer ───
+            # Em vez de criar ~530k instâncias, reutiliza uma por (tipo, stemmer).
+            cache_key_rouge = (tipo_rouge, use_stemmer)
+            scorer = cls._rouge_scorer_cache.get(cache_key_rouge)
+            if scorer is None:
+                scorer = rouge_scorer.RougeScorer(
+                    [tipo_rouge],
+                    use_stemmer=use_stemmer,
+                    split_summaries=True
+                )
+                cls._rouge_scorer_cache[cache_key_rouge] = scorer
+            
             scores = scorer.score(texto_true, texto_pred)
             score_obj = scores[tipo_rouge]
             
@@ -977,14 +1036,6 @@ class JsonAnalise:
             if cls._is_text_empty(texto_pred) or cls._is_text_empty(texto_true):
                 return {'P': 0.0, 'R': 0.0, 'F1': 0.0}
             
-            # ═════════════════════════════════════════════════════════════════════════
-            # MÉTRICAS SBERT (Sentence-BERT) - Similaridade semântica com SBERT
-            # ═════════════════════════════════════════════════════════════════════════
-            # sbert ou sbert_pequeno → modelo pequeno (paraphrase-multilingual-MiniLM-L12-v2)
-            # sbert_medio → modelo médio (paraphrase-multilingual-mpnet-base-v2)
-            # sbert_grande → modelo grande (intfloat/multilingual-e5-large)
-            # Modelos podem ser sobrescritos via config['modelos_sbert']
-            
             # Mapeia nome da métrica para tamanho do modelo
             mapeamento_modelo = {
                 'sbert': 'pequeno',
@@ -993,9 +1044,23 @@ class JsonAnalise:
                 'sbert_grande': 'grande'
             }
             tamanho_modelo = mapeamento_modelo.get(metrica, 'pequeno')
-            modelos_sbert = config.get('modelos_sbert', None) or None
             
-            # Usa sbert_score() com cache em disco (padrão idêntico ao bscore)
+            # ─── OTIMIZAÇÃO: Lookup em cache de memória SBERT (sem I/O) ───
+            # Busca no cache em memória antes de recorrer ao disco.
+            cache_sbert_modelo = cls._cache_sbert_mem.get(tamanho_modelo)
+            if cache_sbert_modelo is not None:
+                from util_sbert import SBERTCache
+                _cache_inst = SBERTCache(modelo=tamanho_modelo)
+                resultado_mem = _cache_inst.lookup_em_memoria(texto_pred, texto_true, cache_sbert_modelo)
+                if resultado_mem is not None:
+                    return {
+                        'P': round(resultado_mem[0], 4),
+                        'R': round(resultado_mem[1], 4),
+                        'F1': round(resultado_mem[2], 4)
+                    }
+            
+            # Fallback: cache em disco (I/O individual) — apenas para cache misses
+            modelos_sbert = config.get('modelos_sbert', None) or None
             from util_sbert import sbert_score, BERTScoreLike
             if modelos_sbert:
                 BERTScoreLike.configurar_modelos(modelos_sbert)
@@ -2194,6 +2259,16 @@ class JsonAnaliseDataFrame():
             verbose_batch = (batch_num == 1)  # Verbose apenas no primeiro batch
             print(f"   ⚡ Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...{_eta_str}")
             
+            # Coleta as chaves necessárias
+            from util_bertscore import BERTScoreCache
+            cache_obj = BERTScoreCache(model_type=modelo_bertscore)
+            for pred, true in zip(preds, trues):
+                info = cache_obj._get_key_info(pred, true)
+                # Extrai apenas o nome do arquivo sem .json para usar como chave
+                import os
+                cache_key = os.path.basename(info['filepath'])[:-5]
+                JsonAnalise._chaves_necessarias_bertscore.add(cache_key)
+            
             bscore(preds, trues, decimais=3, verbose=verbose_batch,
                    model_type=modelo_bertscore, mini_batch_size=mini_batch_size)
             
@@ -2349,6 +2424,17 @@ class JsonAnaliseDataFrame():
                 if num_batches > 1:
                     print(f"      📦 Mini-batch {batch_num}/{num_batches}: {len(preds)} pares...{_eta_str}")
                 
+                # Coleta as chaves necessárias
+                from util_sbert import SBERTCache
+                cache_obj = SBERTCache(modelo=modelo_sbert)
+                if modelo_sbert not in JsonAnalise._chaves_necessarias_sbert:
+                    JsonAnalise._chaves_necessarias_sbert[modelo_sbert] = set()
+                for pred, true in zip(preds, trues):
+                    info = cache_obj._get_key_info(pred, true)
+                    import os
+                    cache_key = os.path.basename(info['filepath'])[:-5]
+                    JsonAnalise._chaves_necessarias_sbert[modelo_sbert].add(cache_key)
+                
                 sbert_score(preds, trues, modelo=modelo_sbert, decimais=3, verbose=verbose_batch)
                 
                 _tempo_batch_atual = _time.time() - _t_inicio_batch
@@ -2381,6 +2467,66 @@ class JsonAnaliseDataFrame():
         total = sum(len(p) for p in pares_por_modelo.values())
         if total:
             print(f"   ✅ SBERT pré-cálculo finalizado: {total} pares totais")
+
+    def _carregar_caches_em_memoria(self):
+        """
+        Carrega todos os caches BERTScore e SBERT do disco para memória.
+        
+        OTIMIZAÇÃO CRÍTICA: Após o pré-cálculo, todos os resultados existem como
+        arquivos JSON individuais em disco. Carregar tudo em memória de uma vez
+        elimina ~1.4M de operações de I/O aleatório (open+read+parse) durante
+        o processamento de chunks, substituindo por lookups O(1) em dict.
+        
+        Os dicts são armazenados como class-level vars em JsonAnalise para serem
+        acessíveis pelo @classmethod _calcular_metrica().
+        """
+        import time as _time
+        _t0 = _time.time()
+        config = self.config or {}
+        
+        print("\n📦 Carregando caches em memória para otimizar chunk processing...")
+        
+        # ── BERTScore ──
+        campos_bertscore = config.get('campos_bertscore', [])
+        if campos_bertscore:
+            from util_bertscore import BERTScoreCache
+            modelo_bertscore = config.get('modelo_bertscore', None)
+            cache_bs = BERTScoreCache(model_type=modelo_bertscore)
+            JsonAnalise._cache_bertscore_mem = cache_bs.carregar_tudo_em_memoria(
+                verbose=True, 
+                chaves_necessarias=JsonAnalise._chaves_necessarias_bertscore
+            )
+        
+        # ── SBERT (um cache por modelo) ──
+        sbert_config_keys = {
+            'campos_sbert': 'pequeno',
+            'campos_sbert_pequeno': 'pequeno',
+            'campos_sbert_medio': 'medio',
+            'campos_sbert_grande': 'grande',
+        }
+        
+        modelos_carregados = set()
+        for cfg_key, modelo_nome in sbert_config_keys.items():
+            campos = config.get(cfg_key, [])
+            if campos and modelo_nome not in modelos_carregados:
+                modelos_carregados.add(modelo_nome)
+                # Garante que os modelos customizados estejam configurados antes
+                modelos_sbert = config.get('modelos_sbert', None)
+                if modelos_sbert:
+                    from util_sbert import BERTScoreLike
+                    BERTScoreLike.configurar_modelos(modelos_sbert)
+                from util_sbert import SBERTCache
+                cache_sbert = SBERTCache(modelo=modelo_nome)
+                chaves_sbert = JsonAnalise._chaves_necessarias_sbert.get(modelo_nome, set())
+                JsonAnalise._cache_sbert_mem[modelo_nome] = cache_sbert.carregar_tudo_em_memoria(
+                    verbose=True,
+                    chaves_necessarias=chaves_sbert
+                )
+        
+        _dt = _time.time() - _t0
+        total_entradas = (len(JsonAnalise._cache_bertscore_mem) if JsonAnalise._cache_bertscore_mem else 0)
+        total_entradas += sum(len(v) for v in JsonAnalise._cache_sbert_mem.values())
+        print(f"   ✅ {total_entradas} entradas carregadas em memória em {_dt:.1f}s")
 
     def to_df(self):
         """Executa comparações e retorna DataFrame com métricas"""
@@ -2433,6 +2579,13 @@ class JsonAnaliseDataFrame():
         except ImportError:
             pass
 
+        # ═════════════════════════════════════════════════════════════════════════
+        # OTIMIZAÇÃO: CARREGA CACHES EM MEMÓRIA PARA EVITAR I/O NOS CHUNKS
+        # ═════════════════════════════════════════════════════════════════════════
+        # Após o pré-cálculo, todos os resultados BERTScore/SBERT estão em disco.
+        # Carregar tudo em memória de uma vez (~140MB) elimina ~1.4M de operações
+        # de I/O aleatório (open+read+parse por par) durante o chunk processing.
+        self._carregar_caches_em_memoria()
         
         # ═════════════════════════════════════════════════════════════════════════
         # PROCESSAMENTO EM CHUNKS (sempre, independente do volume)
@@ -2497,6 +2650,12 @@ class JsonAnaliseDataFrame():
             _tempo_total_str = f"{_tempo_total:.1f}s"
         print(f"   ✅ {len(_linhas_df)} documentos processados em {_tempo_total_str}")
         
+        # ── Libera caches em memória após conclusão do chunk processing ──
+        JsonAnalise._cache_bertscore_mem = None
+        JsonAnalise._cache_sbert_mem = {}
+        JsonAnalise._rouge_scorer_cache = {}
+        gc.collect()
+        
         self._resultados = pd.DataFrame(_linhas_df)
         # Libera memória final
         del _linhas_df
@@ -2527,7 +2686,12 @@ class JsonAnaliseDataFrame():
         return _resultados
     
     def _salvar_analises_lote(self, resultados: list):
-        """Salva análises individuais em lote (mais eficiente que uma por vez)"""
+        """
+        Salva análises individuais em lote com I/O otimizado.
+        
+        OTIMIZAÇÃO: Pré-serializa todos os JSONs e escreve com buffer grande,
+        reduzindo overhead de syscalls comparado a open/write/close individual.
+        """
         os.makedirs(self.pasta_analises, exist_ok=True)
         rotulo_id = self.rotulos[0]
         
@@ -2535,8 +2699,10 @@ class JsonAnaliseDataFrame():
             id_origem = res.get(rotulo_id)
             arquivo = os.path.join(self.pasta_analises, f'analise_{id_origem}.json')
             try:
-                with open(arquivo, 'w', encoding='utf-8') as f:
-                    json.dump(res, f, indent=2, ensure_ascii=False)
+                # Pré-serializa para string e escreve com buffer grande (64KB)
+                conteudo = json.dumps(res, indent=2, ensure_ascii=False)
+                with open(arquivo, 'w', encoding='utf-8', buffering=65536) as f:
+                    f.write(conteudo)
             except Exception:
                 pass  # Silenciosamente ignora erros de I/O
     

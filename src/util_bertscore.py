@@ -740,6 +740,99 @@ class BERTScoreCache:
                 if verbose:
                     print(f"⚠️ [BERTScoreCache] Falha ao salvar {filepath}: {e}")
     
+    def carregar_tudo_em_memoria(self, verbose: bool = True, chaves_necessarias: set = None) -> dict:
+        """
+        Carrega TODOS os arquivos de cache do disco para um dicionário em memória.
+        
+        OTIMIZAÇÃO CRÍTICA: Após o pré-cálculo em batch, todos os resultados já existem
+        em disco como arquivos JSON individuais. Em vez de fazer ~400k operações de I/O 
+        aleatório (open+read+parse por par) durante o processamento de chunks, este método
+        carrega tudo de uma vez em um dict para lookup O(1) em memória.
+        Se chaves_necessarias for fornecido, evita listar o diretório que pode ser muito grande.
+        
+        Returns:
+            dict mapeando filename_sem_extensão -> {'P': float, 'R': float, 'F1': float, 'bytes1': int, 'bytes2': int}
+        """
+        cache_mem = {}
+        if not os.path.exists(self.cache_dir):
+            return cache_mem
+        
+        if chaves_necessarias is not None:
+            arquivos = [f"{c}.json" for c in chaves_necessarias]
+        else:
+            arquivos = [f for f in os.listdir(self.cache_dir) if f.endswith('.json')]
+            
+        erros = 0
+        
+        for arquivo in arquivos:
+            filepath = os.path.join(self.cache_dir, arquivo)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # Chave = nome do arquivo sem extensão (ex: "hash1-hash2")
+                chave = arquivo[:-5]  # remove '.json'
+                cache_mem[chave] = data
+            except Exception:
+                erros += 1
+        
+        if verbose:
+            print(f"   📦 [BERTScoreCache] {len(cache_mem)} entradas carregadas em memória"
+                  f"{f' ({erros} erros)' if erros else ''}")
+        
+        return cache_mem
+
+    @staticmethod
+    def lookup_em_memoria(text1: str, text2: str, cache_mem: dict) -> tuple:
+        """
+        Busca resultado no cache em memória (sem I/O de disco).
+        
+        Método estático para evitar instanciação da classe (que faz I/O) no hot path.
+        Replica a lógica de _get_key_info + leitura, usando o dict em memória.
+        
+        Args:
+            text1: primeiro texto (pred)
+            text2: segundo texto (true)
+            cache_mem: dicionário retornado por carregar_tudo_em_memoria()
+            
+        Returns:
+            (P, R, F1) se encontrado, ou None se cache miss
+        """
+        # Calcula hashes MD5 (mesma lógica de _get_key_info)
+        b1 = str(text1).encode('utf-8')
+        b2 = str(text2).encode('utf-8')
+        h1 = hashlib.md5(b1).hexdigest()
+        h2 = hashlib.md5(b2).hexdigest()
+        
+        # Ordenação determinística (mesma lógica de _get_key_info)
+        swapped = False
+        if h1 > h2:
+            swapped = True
+            h_first, h_second = h2, h1
+            bytes_first, bytes_second = len(b2), len(b1)
+        else:
+            h_first, h_second = h1, h2
+            bytes_first, bytes_second = len(b1), len(b2)
+        
+        chave = f"{h_first}-{h_second}"
+        data = cache_mem.get(chave)
+        
+        if data is None:
+            return None
+        
+        # Validação de integridade (tamanho dos textos)
+        if data.get('bytes1') != bytes_first or data.get('bytes2') != bytes_second:
+            return None
+        
+        p_val = data['P']
+        r_val = data['R']
+        f1_val = data['F1']
+        
+        # Se a ordem foi trocada, P e R se invertem
+        if swapped:
+            p_val, r_val = r_val, p_val
+        
+        return (p_val, r_val, f1_val)
+
     def limpar_cache(self, tempo_minutos: int = None, verbose: bool = True) -> int:
         """
         Remove arquivos de cache antigos.
