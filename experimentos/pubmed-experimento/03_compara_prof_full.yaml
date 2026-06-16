@@ -83,10 +83,6 @@ configuracao_comparacao:
   campos:
     bertscore:
       - "(global)"
-      - "title"
-      - "publication"
-      - "journal"
-      - "keywords"
       - "background"
       - "objective"
       - "methods"
@@ -98,14 +94,16 @@ configuracao_comparacao:
     rouge_1:
 
     rouge_2:
-      - "keywords"
-      - "journal"
-
-    rouge_l:
-      - "(global)"
       - "title"
       - "publication"
-      - "Sentencas"
+      - "journal"
+      - "keywords"
+
+    rouge_l:
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
 
     levenshtein:
       - "publication"
@@ -113,13 +111,13 @@ configuracao_comparacao:
 
     sbert_grande:
       - "(global)"
-      - "title"
       - "background"
       - "objective"
       - "methods"
       - "results"
       - "conclusions"
       - "Sentencas"
+      - "MetaDados"
 
 campos_virtuais:
   Sentencas:

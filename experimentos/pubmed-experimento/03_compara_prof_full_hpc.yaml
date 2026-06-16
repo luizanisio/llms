@@ -1,5 +1,7 @@
 # Configuração para comparação de extrações - Experimento PubMed 
 # Executar com: python ../../src/comparar_extracoes.py --config 03_compara_prof_full.yaml
+# Zipar e apagar a pasta: zip -r "analises_comparacao_pubmed (full).zip" "analises_comparacao_pubmed (full)"
+#                         rm -rf "analises_comparacao_pubmed (full)"
 
 # Configuração Global de Saída
 saida:
@@ -83,10 +85,6 @@ configuracao_comparacao:
   campos:
     bertscore:
       - "(global)"
-      - "title"
-      - "publication"
-      - "journal"
-      - "keywords"
       - "background"
       - "objective"
       - "methods"
@@ -98,14 +96,16 @@ configuracao_comparacao:
     rouge_1:
 
     rouge_2:
-      - "keywords"
-      - "journal"
-
-    rouge_l:
-      - "(global)"
       - "title"
       - "publication"
-      - "Sentencas"
+      - "journal"
+      - "keywords"
+
+    rouge_l:
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
 
     levenshtein:
       - "publication"
@@ -113,13 +113,13 @@ configuracao_comparacao:
 
     sbert_grande:
       - "(global)"
-      - "title"
       - "background"
       - "objective"
       - "methods"
       - "results"
       - "conclusions"
       - "Sentencas"
+      - "MetaDados"
 
 campos_virtuais:
   Sentencas:
