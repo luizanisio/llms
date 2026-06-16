@@ -137,10 +137,13 @@ configuracao_comparacao:
     bertscore:
       - "(global)"
       - "Materia"
+      - "Dispositivo"      
+      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"
       - "Temas.Conceitos"
+      - "Temas.Explicacao"      
       - "Resumo"
       - "Likert"
       - "MetaDados"
