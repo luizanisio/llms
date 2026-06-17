@@ -83,3 +83,4 @@ Esse arquivo pode ser usado diretamente para o arquivo yaml de treinamento para 
 
 # Acrescentar na documentação
 - comparar extrações para gerar divisões completas, devemos configurar "ignorar_erro_extracao: false". Se for true, vai ignorar arquivos com erro mas esses devem ser incluídos como difíceis pois não foram extraídos corretamente.
+- o protocolo c (ou Full Finetuning) precisa que seja configurado no treinamento bits: 16 (vai dar erro quantizar e ser FF)
