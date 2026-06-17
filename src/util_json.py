@@ -2172,12 +2172,20 @@ class JsonAnaliseDataFrame():
         
         for idx, linha in enumerate(self.dados):
             for modelo_idx, modelo in enumerate(self.rotulos[1:], start=1):
-                pred_json = linha.get(modelo)
-                if not isinstance(pred_json, dict):
+                pred_json_original = linha.get(modelo)
+                if not isinstance(pred_json_original, dict):
                     continue
                 
-                true_json = linha.get(self.rotulos[1])  # Primeira referência
-                if not isinstance(true_json, dict):
+                true_json_original = linha.get(self.rotulos[1])  # Primeira referência
+                if not isinstance(true_json_original, dict):
+                    continue
+                
+                true_json = self._filtro_callable(true_json_original, origem=True)
+                if true_json is None:
+                    continue
+
+                pred_json = self._filtro_callable(pred_json_original, origem=False)
+                if pred_json is None:
                     continue
                 
                 # Removemos os campos virtuais da métrica (global) para evitar textos duplicados
@@ -2332,11 +2340,19 @@ class JsonAnaliseDataFrame():
         
         for idx, linha in enumerate(self.dados):
             for modelo in self.rotulos[1:]:
-                pred_json = linha.get(modelo)
-                if not isinstance(pred_json, dict):
+                pred_json_original = linha.get(modelo)
+                if not isinstance(pred_json_original, dict):
                     continue
-                true_json = linha.get(self.rotulos[1])
-                if not isinstance(true_json, dict):
+                true_json_original = linha.get(self.rotulos[1])
+                if not isinstance(true_json_original, dict):
+                    continue
+                
+                true_json = self._filtro_callable(true_json_original, origem=True)
+                if true_json is None:
+                    continue
+
+                pred_json = self._filtro_callable(pred_json_original, origem=False)
+                if pred_json is None:
                     continue
                 
                 # Removemos os campos virtuais da métrica (global) para evitar textos duplicados
