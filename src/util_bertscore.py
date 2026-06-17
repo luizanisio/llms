@@ -467,6 +467,16 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
                             pass
                         s._tokenizer.model_max_length = safe_max
 
+        def _make_thread_safe(s):
+            import threading
+            if not hasattr(s, '_instance_lock'):
+                s._instance_lock = threading.Lock()
+                original_score = s.score
+                def thread_safe_score(*args, **kwargs):
+                    with s._instance_lock:
+                        return original_score(*args, **kwargs)
+                s.score = thread_safe_score
+
         # Cria novo scorer
         try:
             # SOLUÇÃO: Usa BERTScorer que carrega o modelo corretamente
@@ -500,6 +510,7 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
                 )
             
             _fix_tokenizer_max_length(scorer)
+            _make_thread_safe(scorer)
             
             # Armazena metadados para verificação
             scorer._cache_key = cache_key
@@ -527,6 +538,7 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
                     )
                 
                 _fix_tokenizer_max_length(scorer)
+                _make_thread_safe(scorer)
                 
                 scorer._cache_key = cache_key_cpu
                 _bert_scorer_cache[cache_key_cpu] = scorer

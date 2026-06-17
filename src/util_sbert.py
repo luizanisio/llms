@@ -535,6 +535,8 @@ class BERTScoreLike:
             modelo (str): Nome do modelo ou alias ("pequeno", "medio", "grande").
                           Padrão: "medio".
         """
+        import threading
+        self._instance_lock = threading.Lock()
         self.nome_modelo = self.MODELOS.get(modelo.lower(), modelo)
         print(f"Carregando modelo SBERT: {self.nome_modelo} ...")
         self.model = SentenceTransformer(self.nome_modelo)
@@ -577,41 +579,42 @@ class BERTScoreLike:
         if not textos:
             return np.zeros((0, 1), dtype=np.float32)
 
-        embs: List[Optional[np.ndarray]] = [None] * len(textos)
-        to_encode: List[str] = []
-        idx_map: List[int] = []
+        with self._instance_lock:
+            embs: List[Optional[np.ndarray]] = [None] * len(textos)
+            to_encode: List[str] = []
+            idx_map: List[int] = []
 
-        for i, t in enumerate(textos):
-            t_norm = self._norm_text(t)
-            if not t_norm:
-                embs[i] = None
-                continue
-            if t_norm in self._emb_cache:
-                embs[i] = self._emb_cache[t_norm]
-            else:
-                to_encode.append(t_norm)
-                idx_map.append(i)
+            for i, t in enumerate(textos):
+                t_norm = self._norm_text(t)
+                if not t_norm:
+                    embs[i] = None
+                    continue
+                if t_norm in self._emb_cache:
+                    embs[i] = self._emb_cache[t_norm]
+                else:
+                    to_encode.append(t_norm)
+                    idx_map.append(i)
 
-        if to_encode:
-            enc = self.model.encode(
-                to_encode,
-                convert_to_numpy=True,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
-            for j, i in enumerate(idx_map):
-                self._emb_cache[to_encode[j]] = enc[j]
-                embs[i] = enc[j]
+            if to_encode:
+                enc = self.model.encode(
+                    to_encode,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
+                for j, i in enumerate(idx_map):
+                    self._emb_cache[to_encode[j]] = enc[j]
+                    embs[i] = enc[j]
 
-        dim = next((e.shape[0] for e in embs if e is not None), 0)
-        if dim == 0:
-            return np.zeros((len(textos), 1), dtype=np.float32)
+            dim = next((e.shape[0] for e in embs if e is not None), 0)
+            if dim == 0:
+                return np.zeros((len(textos), 1), dtype=np.float32)
 
-        out = np.vstack([
-            e if e is not None else np.zeros((dim,), dtype=np.float32)
-            for e in embs
-        ])
-        return out
+            out = np.vstack([
+                e if e is not None else np.zeros((dim,), dtype=np.float32)
+                for e in embs
+            ])
+            return out
 
     @staticmethod
     def _apply_threshold(x: np.ndarray, threshold: Optional[float]) -> np.ndarray:

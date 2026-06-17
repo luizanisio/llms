@@ -953,9 +953,7 @@ class JsonAnalise:
             # busca resultado direto no dict — evita abrir/ler/parsear JSON individual.
             if cls._cache_bertscore_mem is not None:
                 from util_bertscore import BERTScoreCache
-                modelo_bertscore = config.get('modelo_bertscore', None)
-                _cache_inst = BERTScoreCache(model_type=modelo_bertscore)
-                resultado_mem = _cache_inst.lookup_em_memoria(texto_pred, texto_true, cls._cache_bertscore_mem)
+                resultado_mem = BERTScoreCache.lookup_em_memoria(texto_pred, texto_true, cls._cache_bertscore_mem)
                 if resultado_mem is not None:
                     return {
                         'P': round(resultado_mem[0], 3),
@@ -1050,8 +1048,7 @@ class JsonAnalise:
             cache_sbert_modelo = cls._cache_sbert_mem.get(tamanho_modelo)
             if cache_sbert_modelo is not None:
                 from util_sbert import SBERTCache
-                _cache_inst = SBERTCache(modelo=tamanho_modelo)
-                resultado_mem = _cache_inst.lookup_em_memoria(texto_pred, texto_true, cache_sbert_modelo)
+                resultado_mem = SBERTCache.lookup_em_memoria(texto_pred, texto_true, cache_sbert_modelo)
                 if resultado_mem is not None:
                     return {
                         'P': round(resultado_mem[0], 4),
@@ -2210,18 +2207,19 @@ class JsonAnaliseDataFrame():
                 campos_pred = JsonAnalise._extrair_todos_campos(pred_json)
                 campos_true = JsonAnalise._extrair_todos_campos(true_json)
                 
-                campos_comparacao = config.get('campos_comparacao', [])
-                for campo in campos_comparacao:
-                    if campo in campos_bertscore:
-                        valor_pred = campos_pred.get(campo)
-                        valor_true = campos_true.get(campo)
-                        
-                        if valor_pred is not None or valor_true is not None:
-                            texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
-                                valor_true, valor_pred, 'bertscore', config, alinhar=True
-                            )
-                            prefixo = f'{campo}_bertscore'
-                            todos_pares.append((idx, modelo, prefixo, texto_pred, texto_true))
+                for campo in campos_bertscore:
+                    if campo.startswith('('):
+                        continue
+                    
+                    valor_pred = campos_pred.get(campo)
+                    valor_true = campos_true.get(campo)
+                    
+                    if valor_pred is not None or valor_true is not None:
+                        texto_true, texto_pred = JsonAnalise._converter_pares_para_texto(
+                            valor_true, valor_pred, 'bertscore', config, alinhar=True
+                        )
+                        prefixo = f'{campo}_bertscore'
+                        todos_pares.append((idx, modelo, prefixo, texto_pred, texto_true))
         
         if not todos_pares:
             print("   ⚠️  Nenhum par BERTScore encontrado")
