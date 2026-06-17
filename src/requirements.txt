@@ -18,6 +18,12 @@ datasets>=2.18.0
 sentence-transformers>=5.3.0
 # Opcional: vLLM para inferência de alta performance
 vllm
+# ------------------------
+# Opcional - Otimizadores
+# ver dicas de uso e limitações mais abaixo
+liger-kernel 
+# Flash Attention - ver instruções de instalação manual mais abaixo
+# ------------------------
 
 # Opcional: DeepSpeed para treinamento distribuído (ZeRO)
 # deepspeed>=0.14.0
@@ -56,15 +62,150 @@ python-dotenv
 openrouter
 openai
 
-# ⚡ Redução de uso de VRAM
+# ==============================================================================
+# ⚡ REDUÇÃO DE USO DE VRAM — flash-attn + liger-kernel
+# ==============================================================================
+#
+# Ambos os pacotes reduzem VRAM e aumentam throughput, mas atuam em pontos
+# diferentes do pipeline e têm caveats distintos em treinamento multi-GPU.
+# Resumo: são COMPLEMENTARES, não concorrentes. Use os dois juntos quando o
+# ambiente permitir — flash-attn cuida do bloco de atenção, liger-kernel cuida
+# do resto (RMSNorm, RoPE, SwiGLU, Cross-Entropy).
+#
+# ------------------------------------------------------------------------------
+# 🔥 flash-attn — IO-aware exact attention (Tri Dao)
+# ------------------------------------------------------------------------------
+#
 # 🚨 IMPORTANTE: flash-attn DEVE ser compilado do source contra o PyTorch instalado.
 # ❌ NÃO usar wheels pré-compilados (pip install flash-attn) nem conda install,
 # pois geram erro "undefined symbol" por incompatibilidade de ABI com o PyTorch.
 # ❌ NÃO instalar via requirements.txt: ele exige CUDA toolkit visível no shell
 # e deve ser compilado manualmente após instalar o PyTorch.
 # 👇 Ver instruções de instalação manual ao final deste arquivo.
-# flash-attn
-liger-kernel
+#
+# ✅ PRÓS:
+#   • Atenção exata (sem aproximação) com complexidade de memória O(N) em vez
+#     de O(N²) — viabiliza sequências longas (8K, 32K, 128K+).
+#   • 2–4x mais rápido que SDPA padrão do PyTorch em sequências longas;
+#     na A100/Ampere chega a ~70% do FLOPS teórico (FP16/BF16).
+#   • FA-3 no H100 (Hopper): 1.5–2.0x mais rápido que FA-2 graças a TMA,
+#     WGMMA e warp-specialization; suporta FP8 (~1.3 PFLOPS/s).
+#   • Compatível com FSDP, DeepSpeed ZeRO e DDP — é o padrão de facto da
+#     indústria para treinar transformers em múltiplas GPUs.
+#   • Compatível com GQA/MQA (usado por Llama 3, Mistral, Qwen).
+#
+# ⚠️  CONTRAS / LIMITAÇÕES:
+#   • Compilação dolorosa: 20–60 min, exige CUDA toolkit casado com o PyTorch
+#     e bastante RAM (96GB+ ajudam; em máquina pequena reduzir MAX_JOBS).
+#   • ABI rígida: qualquer upgrade do torch quebra o binário e exige recompilar.
+#   • Hardware restrito: requer Ampere, Ada ou Hopper (sm_80+).
+#       - RTX 3060 (Ampere/sm_86): roda FA-2 normalmente.
+#       - H100/H800 (Hopper/sm_90): habilita FA-3 (FA-2 funciona, mas só usa
+#         ~35% do FLOPS teórico do H100 — desperdiça o hardware novo).
+#       - Turing (T4, RTX 2080): NÃO suportado — usar `flash-attention-turing`.
+#   • bf16 só funciona em Ampere ou superior.
+#   • Head dim > 192 no backward exige A100/H100 (não funciona em RTX 3060).
+#   • Head dims não-power-of-2 (96, 192) e máscaras customizadas podem ter
+#     gaps de cobertura em FA-3 — testar antes de migrar.
+#   • Windows: suporte experimental (>= v2.3.2); compilação ainda instável.
+#
+# 🌐 IMPACTO EM MULTI-GPU:
+#   • Funciona bem em PURE DATA PARALLEL (DDP/FSDP/ZeRO-2/ZeRO-3): cada GPU
+#     processa um shard de dados independente — flash-attn opera no nível do
+#     bloco de atenção local e não vê a comunicação inter-GPU.
+#   • TENSOR PARALLEL (Megatron/TP-style): exige máscaras e shapes específicos;
+#     a integração padrão do HF Transformers nem sempre passa os argumentos
+#     corretos. Validar perplexidade contra SDPA antes de confiar.
+#   • CONTEXT/SEQUENCE PARALLEL (Ring-Attention, Ulysses): NÃO funciona com a
+#     API estándar `flash_attn_func`. Requer kernels específicos
+#     (`flash_attn_varlen_func` + comunicação manual all-to-all). Frameworks
+#     como verl, OpenRLHF e Megatron-LM trazem wrappers prontos; em código
+#     próprio é trabalhoso.
+#   • PIPELINE PARALLEL: ok, mas o pipeline schedule pode emergir como
+#     gargalo antes do attention; ganho marginal vs. SDPA.
+#   • Em treino com PEFT/LoRA + FSDP: ok, desde que `fsdp_use_orig_params=True`.
+#
+# flash-attn   # <-- ver instruções manuais ao final
+#
+# ------------------------------------------------------------------------------
+# 🦁 liger-kernel — Triton kernels para LLM training (LinkedIn)
+# ------------------------------------------------------------------------------
+#
+# liger-kernel patcheia camadas NÃO-atenção (RMSNorm, RoPE, SwiGLU, GeGLU,
+# CrossEntropy, FusedLinearCrossEntropy) com kernels Triton fundidos. Compõe
+# com flash-attn — atende ao "resto" do transformer.
+#
+# ✅ PRÓS:
+#   • +20% throughput e -60% VRAM em multi-GPU (benchmark LinkedIn em LLaMA-3
+#     8B com 8x A100). Reduz tempo end-to-end em até 3x.
+#   • Computação EXATA (sem aproximação) — passes forward/backward validados
+#     com testes de convergência contra baseline puro PyTorch.
+#   • Dependências mínimas: só Torch + Triton. Sem CUDA toolkit, sem compilação.
+#     Instala via pip em segundos.
+#   • Habilita contextos 4–8x maiores: HF puro estoura OOM a 4K; com Liger,
+#     mesmo modelo escala até 16K–32K na mesma GPU.
+#   • FusedLinearCrossEntropy (FLCE) é o grande diferencial: NUNCA materializa
+#     o tensor de logits [B, T, V]. Em LLaMA-3 (V=128K) ou Gemma (V=256K) com
+#     seq=4K e batch=8, isso economiza ~16.8 GB em bfloat16.
+#   • Compatível com FSDP, DeepSpeed ZeRO/ZeRO++, DDP.
+#   • Integrado em Axolotl, LLaMA-Factory, SFTTrainer, HF Trainer, SWIFT.
+#   • Funciona em AMD (ROCm/MI300X) — único ajuste é warp_size=64.
+#   • Patching de uma linha: `apply_liger_kernel_to_<model>(...)` ou
+#     `AutoLigerKernelForCausalLM.from_pretrained(...)`.
+#
+# ⚠️  CONTRAS / LIMITAÇÕES:
+#   • Cobertura de modelos LIMITADA — patcher específico por arquitetura
+#     (Llama, Qwen2/3, Mistral, Mixtral, Gemma, Phi3, Granite, etc.). Modelos
+#     novos só funcionam após PR no repo.
+#   • Triton pode atrapalhar a depuração — tracebacks ficam menos legíveis e
+#     `torch.compile` pode brigar com os kernels patcheados.
+#   • Patching alteração global do modelo: misturar com outras libs que também
+#     patcheiam (Unsloth, xformers) gera conflito silencioso.
+#
+# 🌐 IMPACTO EM MULTI-GPU — onde Liger pode ATRAPALHAR:
+#   • ❌ device_map="auto" (naive model parallel): NÃO FUNCIONA. ValueError
+#     conhecido (Issue #593) porque os kernels assumem que entrada e pesos
+#     estão na mesma GPU. Se você dividir o modelo entre GPUs com device_map,
+#     desative o Liger ou troque para FSDP/DeepSpeed.
+#   • ⚠️  FSDP + PEFT/LoRA com `modules_to_save` (ex.: embeddings treináveis):
+#     bug recorrente (Issues #48, #631 do Liger; #5941 do LLaMA-Factory). A
+#     FLCE quebra com "Output 0 of ViewBackward0 is a view... modified inplace"
+#     quando a lm_head é sharded sob FSDP. Mitigações:
+#       - desabilitar APENAS `fused_linear_cross_entropy=False` e manter os
+#         outros patches (RMSNorm, RoPE, SwiGLU);
+#       - usar `fsdp_use_orig_params=True`;
+#       - ou trocar para DeepSpeed ZeRO-3, onde o problema não ocorre.
+#   • ⚠️  TENSOR PARALLEL: Liger é "single-rank-aware" — os kernels operam em
+#     tensores locais. Se a sua lm_head ou MLP estão TP-sharded, os patches
+#     de FLCE e SwiGLU NÃO sabem disso e podem produzir resultados errados
+#     ou crashar. Em pipeline com TP (Megatron, vLLM TP, Nemo), desabilitar
+#     os patches que tocam linear sharded.
+#   • ⚠️  Sequence Parallel (Megatron-style): também precisa de cuidado com
+#     RMSNorm, que em SP exige reduce_scatter — Liger não faz isso sozinho.
+#   • ✅ FSDP (ZeRO-3 equivalente) puro com DATA PARALLEL: funciona out-of-box.
+#   • ✅ DeepSpeed ZeRO-1/2/3: funciona out-of-box.
+#   • ✅ DDP puro: funciona out-of-box.
+#   • ✅ Combina perfeitamente com flash-attn (são layers diferentes).
+#
+# 📊 QUANDO USAR O QUÊ:
+#   ┌────────────────────────────────┬──────────────┬──────────────┐
+#   │ Cenário                        │ flash-attn   │ liger-kernel │
+#   ├────────────────────────────────┼──────────────┼──────────────┤
+#   │ Single-GPU SFT/LoRA            │ ✅ Sim       │ ✅ Sim       │
+#   │ Multi-GPU FSDP/DDP (DP puro)   │ ✅ Sim       │ ✅ Sim       │
+#   │ Multi-GPU + LoRA + embeddings  │ ✅ Sim       │ ⚠️  Cuidado* │
+#   │ DeepSpeed ZeRO-3               │ ✅ Sim       │ ✅ Sim       │
+#   │ Tensor Parallel (Megatron)    │ ⚠️  Verificar│ ❌ Desligar  │
+#   │ Sequence/Context Parallel      │ ⚠️  Avançado │ ❌ Desligar  │
+#   │ device_map="auto"              │ ✅ Sim       │ ❌ Quebra    │
+#   │ H100 / Hopper                  │ ✅ FA-3 FP8  │ ✅ Sim       │
+#   │ RTX 3060 / Ampere consumer     │ ✅ FA-2      │ ✅ Sim       │
+#   │ T4 / Turing                    │ ❌ (use 1.x) │ ✅ Sim       │
+#   └────────────────────────────────┴──────────────┴──────────────┘
+#   * Desabilitar APENAS `fused_linear_cross_entropy` quando lm_head sharded
+#     em FSDP + PEFT com `modules_to_save`.
+#
+# liger-kernel
 
 # ==============================================================================
 # 📋 INSTALAÇÃO MANUAL — ORDEM E VERSÕES CORRETAS (funcional em 03/2026)
@@ -82,6 +223,10 @@ liger-kernel
 #   transformers==4.57.6      accelerate==1.13.0        trl==0.24.0
 #   vllm==0.18.0              bitsandbytes==0.49.2       peft==0.18.1
 #   datasets==4.3.0           triton==3.6.0              sentence-transformers==5.3.0
+#
+# 💡 NOTA SOBRE FA-3: No H100, considere instalar a branch hopper de flash-attn
+#    para habilitar FA-3 (TMA + WGMMA + FP8). Em RTX 3060 não há ganho — fique
+#    em FA-2 (a versão 2.8.3 acima).
 #
 # ==============================================================================
 # 🛠️  PASSO 0 — Instalar o CUDA Toolkit no Linux (somente se nvcc não for encontrado)
@@ -167,6 +312,7 @@ liger-kernel
 #   python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
 #   python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('rotary OK')"
 #   python -c "import vllm; print(vllm.__version__)"
+#   python -c "from liger_kernel.transformers import AutoLigerKernelForCausalLM; print('liger OK')"
 #
 # ==============================================================================
 # 🆘 SOLUÇÃO DE PROBLEMAS
@@ -185,9 +331,27 @@ liger-kernel
 # ❌ Erro "No space left on device":
 #   → 🔧 Usar TMPDIR=/var/tmp antes do pip.
 #
+# ❌ Liger + FSDP: "Output 0 of ViewBackward0 is a view... modified inplace":
+#   → Conflito FLCE + FSDP-sharded lm_head + PEFT modules_to_save.
+#   → 🔧 Desabilitar APENAS o FLCE no patcher:
+#       apply_liger_kernel_to_llama(fused_linear_cross_entropy=False,
+#                                   cross_entropy=True, rms_norm=True,
+#                                   rope=True, swiglu=True)
+#   → Alternativa: usar `fsdp_use_orig_params=True` ou migrar para DeepSpeed ZeRO-3.
+#
+# ❌ Liger + device_map="auto": ValueError em forward:
+#   → Liger não suporta naive model parallel (Issue #593 do repo linkedin/Liger-Kernel).
+#   → 🔧 Migrar para FSDP/DeepSpeed (data parallel) ou desativar Liger nesse run.
+#
+# ❌ FA-2 lento no H100 (<40% utilização):
+#   → FA-2 não usa TMA/WGMMA do Hopper.
+#   → 🔧 No H100, compilar a branch hopper do flash-attn para habilitar FA-3.
+#
 # ⚠️  pip fez upgrade do torch automaticamente (ex: 2.10→2.11):
 #   → Reverter: pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128 --no-deps
 #   → --no-deps evita que o pip arraste dependências indesejadas.
+#   → ⚠️  Importante: qualquer upgrade do torch invalida o flash-attn compilado;
+#     será preciso recompilar o flash-attn após reverter.
 #
 # 🏠 RTX 3060 — compilação muito lenta ou máquina travando:
 #   → Reduzir MAX_JOBS: MAX_JOBS=2 pip install flash-attn --no-build-isolation --force-reinstall

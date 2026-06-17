@@ -15,7 +15,6 @@ python ../../src/util_ckan.py --config config_extracao.yaml
 
 > TODO: Avaliar se a extração pode considerar distância do cosseno e qtd de itens para extrair.
 
-
 ---
 
 # Passo 02 - Geração de Dados de Treino e Teste
@@ -76,3 +75,11 @@ python ../../src/util_vllm_batch.py --config config_batch_gpt5.yaml
 - **Treinamento:** até 08/2024
 - Janela 128k
 - Nome: sabia-4 ou sabia-4-2026-01-06
+
+# Passo 03 - Realizar comparação entre o professor (ou dados raw) e o modelo base sem treinamento
+A realização da comparação gera um arquivo de divisão de treino, teste e validação, que será utilizado nas próximas etapas. 
+Outro resultado da comparação é o nível de dificuldade de cada instância de acordo com a performance do modelo base e da quantidade de chaves do item.
+Esse arquivo pode ser usado diretamente para o arquivo yaml de treinamento para configuração dos níveis de dificuldade e alvo (treino, teste e avaliação)
+
+# Acrescentar na documentação
+- comparar extrações para gerar divisões completas, devemos configurar "ignorar_erro_extracao: false". Se for true, vai ignorar arquivos com erro mas esses devem ser incluídos como difíceis pois não foram extraídos corretamente.
