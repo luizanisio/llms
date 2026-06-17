@@ -51,6 +51,7 @@ class TreinarChatTemplate:
         self.tokenizer = tokenizer
         self.model_name = model_name
         self.template_name = None
+        self.detected_template = None
 
         # Configura template automaticamente
         self._setup_chat_template()
@@ -65,6 +66,8 @@ class TreinarChatTemplate:
             if model_key in model_lower:
                 detected_template = template_name
                 break
+
+        self.detected_template = detected_template
 
         # Se o tokenizer já tem um chat_template, mantém (a menos que seja genérico)
         if hasattr(self.tokenizer, 'chat_template') and self.tokenizer.chat_template:
@@ -164,7 +167,11 @@ class TreinarChatTemplate:
             'deepseek': 'Assistant:',
         }
 
-        return response_templates.get(self.template_name)
+        template = response_templates.get(self.template_name)
+        if template is None and self.template_name == "native" and self.detected_template:
+            template = response_templates.get(self.detected_template)
+            
+        return template
 
     def formatar_dataset_coluna_text(self, dataset, num_proc: int = 2):
         """Formata dataset adicionando coluna 'text' com chat template aplicado.
@@ -252,8 +259,8 @@ class TreinarChatTemplate:
                 print(f"   Treinando em sequência completa (sem masking)...")
                 return trainer
 
-            # Cria data collator para completion-only
-            from trl import DataCollatorForCompletionOnlyLM
+            # Cria data collator para completion-only (usa implementação local segura)
+            DataCollatorForCompletionOnlyLM = FallbackDataCollatorForCompletionOnlyLM
 
             # Salva estado original (caso precise restaurar)
             collator_original = trainer.data_collator
@@ -335,11 +342,41 @@ def get_data_collator_for_completion_only(
     Returns:
         DataCollatorForCompletionOnlyLM do trl
     """
-    from trl import DataCollatorForCompletionOnlyLM
-
-    return DataCollatorForCompletionOnlyLM(
+    return FallbackDataCollatorForCompletionOnlyLM(
         response_template=response_template,
         instruction_template=instruction_template,
         tokenizer=tokenizer,
         mlm=mlm,
     )
+
+from transformers import DataCollatorForLanguageModeling
+import numpy as np
+
+class FallbackDataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
+    """Implementação local compatível com versões mais recentes da TRL que removeram esta classe."""
+    def __init__(self, response_template, tokenizer, instruction_template=None, *args, **kwargs):
+        super().__init__(tokenizer=tokenizer, *args, **kwargs)
+        self.response_template = response_template
+        self.instruction_template = instruction_template
+        if isinstance(response_template, str):
+            self.response_token_ids = self.tokenizer.encode(response_template, add_special_tokens=False)
+        else:
+            self.response_token_ids = response_template
+
+    def torch_call(self, examples):
+        batch = super().torch_call(examples)
+        
+        for i in range(len(examples)):
+            labels = batch["labels"][i]
+            response_token_ids = self.response_token_ids
+            
+            match_idx = -1
+            for idx in range(len(labels) - len(response_token_ids) + 1):
+                if labels[idx:idx+len(response_token_ids)].tolist() == response_token_ids:
+                    match_idx = idx + len(response_token_ids)
+                    break
+                    
+            if match_idx >= 0:
+                labels[:match_idx] = -100
+                
+        return batch

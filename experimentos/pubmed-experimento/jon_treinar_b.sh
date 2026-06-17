@@ -4,33 +4,28 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=compara_full_pubmed
+#SBATCH --job-name=treinar_d1_pubmed
 
 # Partição de execução:
-#   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
-#   shared — GPU compartilhada via MPS, limite de 4 h, VRAM não reservada (testes)
 #SBATCH --partition=gpu
 
 # Recurso de GPU:
-#   gpu:1  — 1 GPU exclusiva (partição gpu)
-#   mps:50 — 50 % de compute compartilhado (partição shared — NÃO usar aqui)
 #SBATCH --gres=gpu:1
 
 # CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=16
 
-# RAM do sistema (CPU). vLLM com 20 k prompts e contexto de 32 k precisa de folga
+# RAM do sistema (CPU)
 #SBATCH --mem=64G
 
-# Tempo máximo de execução (HH:MM:SS). Job é cancelado ao atingir o limite.
-# 20 k prompts × ~32 k tokens @ ~750 tok/s estimado ≈ 30-40 h no caso médio.
-#SBATCH --time=99:00:00
+# Tempo máximo de execução (HH:MM:SS)
+#SBATCH --time=48:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.out
+#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.err
+#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -53,8 +48,6 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-
-#python baixar-qwen7b.py
-python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/03_compara_prof_full.yaml
+python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_D01.yaml
 
 echo "=== Job finalizado: $(date) ==="

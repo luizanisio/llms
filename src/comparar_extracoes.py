@@ -227,7 +227,7 @@ def calcular_divisao_grupos(config):
 
     return (treino, teste, validacao)
 
-def configurar_metricas(config_yaml):
+def configurar_metricas(config_yaml, base_dir="", pasta_modelos_ativa=""):
     """Converte a configuração YAML para o formato esperado pelo JsonAnalise."""
     conf_comp = config_yaml.get('configuracao_comparacao', {})
     campos = conf_comp.get('campos', {})
@@ -255,6 +255,21 @@ def configurar_metricas(config_yaml):
         'sbert_batch_size': conf_comp.get('modelos', {}).get('sbert_batch_size', None),
         'campos_virtuais': config_yaml.get('campos_virtuais', {})
     }
+    
+    # Resolve modelos locais
+    if config_final['modelos_sbert']:
+        for k, v in config_final['modelos_sbert'].items():
+            if v and not os.path.isabs(v) and not v.startswith(("hf://", "huggingface://")):
+                v_res = resolver_caminho(v, base_dir, pasta_modelos_ativa)
+                if os.path.exists(v_res):
+                    config_final['modelos_sbert'][k] = v_res
+                    
+    v_bert = config_final['modelo_bertscore']
+    if v_bert and not os.path.isabs(v_bert) and not v_bert.startswith(("hf://", "huggingface://")):
+        v_res = resolver_caminho(v_bert, base_dir, pasta_modelos_ativa)
+        if os.path.exists(v_res):
+            config_final['modelo_bertscore'] = v_res
+    
     
     # Ajuste para teste rápido (desativa BERTScore e SBERT)
     if config_yaml.get('execucao', {}).get('teste_rapido', False):
@@ -304,11 +319,9 @@ def extrair_campos_unicos(config_metricas):
 # MAIN
 # ============================================================================
 
-def resolver_caminho(caminho_relativo, base_dir):
-    """Resolve caminhos relativos baseado no diretório do arquivo de configuração."""
-    if os.path.isabs(caminho_relativo):
-        return caminho_relativo
-    return os.path.normpath(os.path.join(base_dir, caminho_relativo))
+def resolver_caminho(caminho_relativo, base_dir, pasta_base=""):
+    """Resolve caminhos relativos baseado no diretório do arquivo de configuração ou pasta_base."""
+    return util.Util.resolver_caminho(caminho_relativo, base_dir, pasta_base)
 
 def _gerar_grafico_erros(dados_analise, pasta_saida, lang='pt'):
     """Gera gráfico de barras empilhadas com status dos documentos por modelo."""
@@ -432,13 +445,42 @@ def main():
     base_dir_yaml = os.path.dirname(caminho_yaml_abs)
     config = ler_configuracao(caminho_yaml_abs)
     
+    misc = config.get("misc", {}) or {}
+    
+    pastas_base = misc.get("pastas_base", [])
+    if isinstance(pastas_base, str):
+        pastas_base = [pastas_base]
+        
+    pasta_base_ativa = ""
+    for pb in pastas_base:
+        pb_abs = pb if os.path.isabs(pb) else os.path.normpath(os.path.join(base_dir_yaml, pb))
+        if os.path.isdir(pb_abs):
+            pasta_base_ativa = pb_abs
+            break
+            
+    if not pasta_base_ativa and pastas_base:
+        pb = pastas_base[0]
+        pasta_base_ativa = pb if os.path.isabs(pb) else os.path.normpath(os.path.join(base_dir_yaml, pb))
+        
+    pastas_modelos = misc.get("pastas_modelos", misc.get("pasta_modelos", []))
+    if isinstance(pastas_modelos, str):
+        pastas_modelos = [pastas_modelos] if pastas_modelos else []
+        
+    pasta_modelos_ativa = pasta_base_ativa
+    if pastas_modelos:
+        for pm in pastas_modelos:
+            pm_abs = pm if os.path.isabs(pm) else os.path.normpath(os.path.join(pasta_base_ativa or base_dir_yaml, pm))
+            if os.path.isdir(pm_abs):
+                pasta_modelos_ativa = pm_abs
+                break
+    
     # 2. Inicializar ambiente
     max_workers_env, _ = _inicializar_ambiente()
     max_workers = config['execucao'].get('max_workers', max_workers_env)
     
     # 3. Setup de Pastas e Rótulos (Resolvendo caminhos)
     pasta_saida_raw = config['saida']['pasta']
-    pasta_saida = resolver_caminho(pasta_saida_raw, base_dir_yaml)
+    pasta_saida = resolver_caminho(pasta_saida_raw, base_dir_yaml, pasta_base_ativa)
     
     if not os.path.exists(pasta_saida):
         os.makedirs(pasta_saida)
@@ -496,7 +538,7 @@ def main():
         campo_id_filtro = config_filtro.get('campo_id')
         
         if arquivo_filtro and campo_id_filtro:
-            arquivo_filtro_abs = resolver_caminho(arquivo_filtro, base_dir_yaml)
+            arquivo_filtro_abs = resolver_caminho(arquivo_filtro, base_dir_yaml, pasta_base_ativa)
             if os.path.exists(arquivo_filtro_abs):
                 import pandas as pd
                 try:
@@ -522,8 +564,8 @@ def main():
         
         if arquivo and arquivo.endswith('.parquet'):
             from comparar_extracoes_util import ExtracaoParquet, resolver_pasta_parquet
-            arquivo_abs = resolver_caminho(arquivo, base_dir_yaml)
-            pasta_parquet_abs = resolver_caminho(pasta_parquet_raw, base_dir_yaml)
+            arquivo_abs = resolver_caminho(arquivo, base_dir_yaml, pasta_base_ativa)
+            pasta_parquet_abs = resolver_caminho(pasta_parquet_raw, base_dir_yaml, pasta_base_ativa)
             pasta_destino = resolver_pasta_parquet(arquivo_abs, pasta_parquet_abs)
             
             extrator = ExtracaoParquet(arquivo_abs, pasta_destino, campos_parquet, ids_filtro=ids_filtro)
@@ -539,7 +581,7 @@ def main():
                 
             return extrator.extrair()
         elif pasta:
-            return resolver_caminho(pasta, base_dir_yaml)
+            return resolver_caminho(pasta, base_dir_yaml, pasta_base_ativa)
         else:
             print(f"❌ Modelo '{modelo_config.get('rotulo', '?')}' deve ter 'arquivo' (.parquet) ou 'pasta' definido.")
             sys.exit(1)
@@ -558,7 +600,7 @@ def main():
             sys.exit(1)
     
     # 4. Configuração das Métricas
-    config_comparacao = configurar_metricas(config)
+    config_comparacao = configurar_metricas(config, base_dir_yaml, pasta_modelos_ativa)
     campos_comparacao = extrair_campos_unicos(config_comparacao)
     
     print("\n⚙️  Configuração de Comparação:")

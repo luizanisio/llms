@@ -1661,7 +1661,11 @@ class LLMsTrainer:
         # Para garantir compatibilidade, usamos TrainingArguments que é base
         from trl import SFTConfig
         
-        args = SFTConfig(
+        import trl
+        from packaging import version
+        use_max_length = version.parse(trl.__version__) >= version.parse("0.12.0")
+
+        sft_kwargs = dict(
             per_device_train_batch_size=treino_cfg.batch_size,
             gradient_accumulation_steps=treino_cfg.grad_batch_size,
             warmup_steps=treino_cfg.warmup_steps,
@@ -1696,9 +1700,15 @@ class LLMsTrainer:
             packing=False,
             per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
             eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
-            max_length=treino_cfg.max_seq_length,  # max_length substitui max_seq_length no TRL >= 0.12.0
             use_liger_kernel=treino_cfg.liger_kernel and _LIGER_DISPONIVEL,  # Informa ao TRL para NÃO acessar outputs.logits (Liger fused CE retorna logits=None)
         )
+        
+        if use_max_length:
+            sft_kwargs["max_length"] = treino_cfg.max_seq_length
+        else:
+            sft_kwargs["max_seq_length"] = treino_cfg.max_seq_length
+
+        args = SFTConfig(**sft_kwargs)
 
         # Monta eval_dataset para o SFTTrainer.
         # Se houver eval_global, passa como dict {"current": eval_ds, "global": eval_ds_global}

@@ -4,6 +4,18 @@
 # Visualizar com: python ../../src/util_ckan.py --config 01_extracao.yaml --view
 # ==========================================================================
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+
 # --- Configuração Geral ---
 config:
   download_dir: "./downloads_stj"

@@ -40,6 +40,7 @@ except ImportError:
 
 # Importa utilitários do projeto
 from util import UtilTextos as Util  # UtilTextos tem mensagem_to_json
+import util
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +264,8 @@ class ConfigMisc:
     """Configurações diversas do projeto."""
     log_level: str = "INFO"  # Nível de log (DEBUG, INFO, WARNING, ERROR)
     env_chave_criptografia: str = ""  # Nome da var de ambiente com chave de criptografia
+    pasta_base: str = ""  # Caminho base ativo identificado dentre as pastas_base
+    pasta_modelos: str = ""  # Caminho base ativo para resolução específica de modelos
     
     def __post_init__(self):
         niveis_validos = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -525,12 +528,14 @@ class YamlTreinamento:
         return config
     
     def _resolver_caminho(self, caminho: str) -> str:
-        """Resolve um caminho relativo em relação ao diretório do YAML."""
-        if not caminho:
-            return caminho
-        if os.path.isabs(caminho):
-            return caminho
-        return os.path.normpath(os.path.join(self._yaml_dir, caminho))
+        """Resolve um caminho relativo em relação ao diretório do YAML ou pasta_base."""
+        pasta_base = getattr(self, "misc", ConfigMisc()).pasta_base if hasattr(self, "misc") else ""
+        return util.Util.resolver_caminho(caminho, self._yaml_dir, pasta_base)
+
+    def _resolver_caminho_modelo(self, caminho: str) -> str:
+        """Resolve um caminho relativo de modelo usando pasta_modelos."""
+        pasta_modelos = getattr(self, "misc", ConfigMisc()).pasta_modelos if hasattr(self, "misc") else ""
+        return util.Util.resolver_caminho(caminho, self._yaml_dir, pasta_modelos)
     
     # ---------------------------------------------------------------------------
     # Processamento de seções do YAML
@@ -542,9 +547,41 @@ class YamlTreinamento:
         if not isinstance(misc_raw, dict):
             misc_raw = {}
         
+        # 1. Resolve pastas_base
+        pastas_base = misc_raw.get("pastas_base", [])
+        if isinstance(pastas_base, str):
+            pastas_base = [pastas_base]
+        
+        pasta_base_ativa = ""
+        for pb in pastas_base:
+            pb_abs = pb if os.path.isabs(pb) else os.path.normpath(os.path.join(self._yaml_dir, pb))
+            if os.path.isdir(pb_abs):
+                pasta_base_ativa = pb_abs
+                break
+                
+        # Fallback se nenhuma existir (usa a primeira para manter consistência de erros)
+        if not pasta_base_ativa and pastas_base:
+            pb = pastas_base[0]
+            pasta_base_ativa = pb if os.path.isabs(pb) else os.path.normpath(os.path.join(self._yaml_dir, pb))
+            
+        # 2. Resolve pasta_modelos
+        pastas_modelos = misc_raw.get("pastas_modelos", misc_raw.get("pasta_modelos", []))
+        if isinstance(pastas_modelos, str):
+            pastas_modelos = [pastas_modelos] if pastas_modelos else []
+            
+        pasta_modelos_ativa = pasta_base_ativa
+        if pastas_modelos:
+            for pm in pastas_modelos:
+                pm_abs = pm if os.path.isabs(pm) else os.path.normpath(os.path.join(pasta_base_ativa or self._yaml_dir, pm))
+                if os.path.isdir(pm_abs):
+                    pasta_modelos_ativa = pm_abs
+                    break
+        
         return ConfigMisc(
             log_level=misc_raw.get("log_level", "INFO"),
-            env_chave_criptografia=misc_raw.get("env_chave_criptografia", "")
+            env_chave_criptografia=misc_raw.get("env_chave_criptografia", ""),
+            pasta_base=pasta_base_ativa,
+            pasta_modelos=pasta_modelos_ativa
         )
     
     def _processar_curriculum(self) -> ConfigCurriculum:
@@ -749,8 +786,15 @@ class YamlTreinamento:
         if saida:
             saida = self._resolver_caminho(saida)
 
+        base = modelo_raw.get("base", "") or modelo_raw.get("base_model_name", "")
+        # Tenta resolver o base_model_name caso seja um diretório local
+        if base and not os.path.isabs(base) and not base.startswith(("hf://", "huggingface://")):
+            base_resolvido = self._resolver_caminho_modelo(base)
+            if os.path.exists(base_resolvido):
+                base = base_resolvido
+
         return ConfigModelo(
-            base=modelo_raw.get("base", "") or modelo_raw.get("base_model_name", ""),
+            base=base,
             saida=saida,
             alias=(modelo_raw.get("alias", "") or "").strip(),
             ollama=modelo_raw.get("ollama", ""),

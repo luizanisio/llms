@@ -23,6 +23,8 @@ python src/comparar_extracoes.py
 ## ⚙️ Configuração (O Arquivo YAML)
 Todas as manobras e experimentos de comparação prescindem da necessidade de entrar no código. Você declara suas intenções dentro do arquivo `.yaml` de configuração, com as seguintes chaves de destaque:
 
+- **`misc`**: Configurações diversas do projeto.
+  - `pasta_base`: (Opcional) Permite definir um diretório base (absoluto ou relativo) que atua como prefixo para resolver todos os caminhos dinamicamente.
 - **`saida`**: (Dicionário) Pasta raiz `.pasta` das avaliações e relatórios a serem gerados, além dos arquivos contendo as subdivisões no futuro de seu treinamento iterativo. Inclui também `pasta_parquet` (obrigatória quando se usa entrada `.parquet`) para definir a pasta base onde os JSONs extraídos serão armazenados.
 - **`modelo_base`**: Configurações do modelo de referência (Ground Truth). Pode usar `pasta` (diretório com JSONs soltos) ou `arquivo` (caminho para um `.parquet`).
 - **`modelos_comparacao`**: (Lista) Suas diversas frentes de modelos prevendo outputs do texto. Cada modelo pode usar `pasta` ou `arquivo` (.parquet). Pode usar `ativo: false` para desabilitar algum.

@@ -48,7 +48,7 @@ DICAS_YAML = {
 
     # Dicas Específicas - Curriculum/Validação
     "curriculum/validacao": """#| exigir_json_valido: Se `true`, durante a validação, o sistema rejeitará exemplos que falharem na validação JSON. Se `false`, ignora JSONs inválidos, o que pode ser útil em fases iniciais de teste.
-#| exigir_ids_pareados: Exige que os IDs do dataframe de entrada tenham correspondentes no gold dataset (saida). Se true, o sistema verificará se cada ID presente no dataframe de entrada tem um arquivo correspondente no gold dataset, garantindo que o modelo seja treinado apenas com exemplos completos e pareados.""",
+#| exigir_ids_pareados: Validação estrita de pares. Se `true`, o treinamento será interrompido com erro se houver IDs na entrada sem correspondente na saída (gold dataset) ou se existirem dados pareados ausentes no arquivo de divisão (CSV). Se `false`, o sistema ignora as sobras e treina apenas com os itens em comum (interseção), útil quando a entrada possui itens extras que ainda não têm gabarito na saída.""",
 
     # Dicas Específicas - Treinamento
     "treinamento/eval_steps": "#| Frequência de avaliação (ex: '15%' das steps ou número inteiro).",

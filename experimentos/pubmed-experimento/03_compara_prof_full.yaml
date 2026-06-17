@@ -1,17 +1,19 @@
 # Configuração para comparação de extrações - Experimento PubMed 
 # Executar com: python ../../src/comparar_extracoes.py --config 03_compara_prof_full.yaml
+# Zipar e apagar a pasta: zip -r "analises_comparacao_pubmed (full).zip" "analises_comparacao_pubmed (full)"
+#                         rm -rf "analises_comparacao_pubmed (full)"
 
 # Configuração Global de Saída
 saida:
-  pasta: "./compara/analises_comparacao_pubmed (full)"
-  pasta_parquet: "./compara/"
+  pasta: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/compara/analises_comparacao_pubmed (full)"
+  pasta_parquet: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/compara/"
   arquivo_base: "comparacao_pubmed"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
   linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
 
 # Configurações de Execução
 execucao:
-  max_workers: 10
+  max_workers: 20
   teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
   gerar_graficos: true 
   llm_as_a_judge: false
@@ -24,13 +26,13 @@ execucao:
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  arquivo: "./saidas/saida_pubmed_prof.parquet"
+  arquivo: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/saida_pubmed_prof.parquet"
   rotulo: "Professor"
   familia: "PubMed-Gold"
 
 # Modelos Comparados
 modelos_comparacao:
-  - arquivo: "./saidas/saida_pubmed_1_5b.parquet"
+  - arquivo: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     familia: "Qwen-1.5B"
 

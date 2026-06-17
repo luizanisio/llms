@@ -54,6 +54,7 @@ except ImportError:
 
 # Helpers de detecção de API remota (util_openai.py)
 from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_modelo_api
+from util import Util
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -67,6 +68,11 @@ _YAML_EXEMPLO = """\
 # Configuração para inferência em lote com vLLM
 # Executar com: python util_vllm_batch.py --config {nome_arquivo}
 # ==========================================================================
+
+# --- Miscelânea ---
+# pasta_base: diretório base (opcional) que será concatenado com os caminhos relativos de arquivos e pastas.
+misc:
+  pasta_base: ""
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
@@ -171,13 +177,9 @@ saida:
 # Funções de Configuração
 # ---------------------------------------------------------------------------
 
-def _resolver_caminho(caminho: str, base_dir: str) -> str:
-    """Resolve caminho relativo em relação ao diretório base."""
-    if not caminho:
-        return caminho
-    if os.path.isabs(caminho):
-        return caminho
-    return os.path.normpath(os.path.join(base_dir, caminho))
+def _resolver_caminho(caminho: str, base_dir: str, pasta_base: str = "") -> str:
+    """Resolve caminho relativo em relação ao diretório base ou pasta_base."""
+    return Util.resolver_caminho(caminho, base_dir, pasta_base)
 
 
 def carregar_config(yaml_path: str) -> Dict[str, Any]:
@@ -204,6 +206,36 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
 
     base_dir = os.path.dirname(os.path.abspath(yaml_path))
 
+    # --- Miscelânea ---
+    misc = config.get("misc", {}) or {}
+    
+    pastas_base = misc.get("pastas_base", [])
+    if isinstance(pastas_base, str):
+        pastas_base = [pastas_base]
+        
+    pasta_base_ativa = ""
+    for pb in pastas_base:
+        pb_abs = pb if os.path.isabs(pb) else os.path.normpath(os.path.join(base_dir, pb))
+        if os.path.isdir(pb_abs):
+            pasta_base_ativa = pb_abs
+            break
+            
+    if not pasta_base_ativa and pastas_base:
+        pb = pastas_base[0]
+        pasta_base_ativa = pb if os.path.isabs(pb) else os.path.normpath(os.path.join(base_dir, pb))
+        
+    pastas_modelos = misc.get("pastas_modelos", misc.get("pasta_modelos", []))
+    if isinstance(pastas_modelos, str):
+        pastas_modelos = [pastas_modelos] if pastas_modelos else []
+        
+    pasta_modelos_ativa = pasta_base_ativa
+    if pastas_modelos:
+        for pm in pastas_modelos:
+            pm_abs = pm if os.path.isabs(pm) else os.path.normpath(os.path.join(pasta_base_ativa or base_dir, pm))
+            if os.path.isdir(pm_abs):
+                pasta_modelos_ativa = pm_abs
+                break
+
     # --- Modelo (obrigatório) ---
     modelo = config.get("modelo", {}) or {}
     caminho_modelo = modelo.get("caminho", "")
@@ -213,10 +245,15 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     if eh_modelo_api_remota(caminho_modelo):
         modelo["caminho"] = caminho_modelo.strip()
     else:
-        modelo["caminho"] = _resolver_caminho(caminho_modelo, base_dir)
+        # Se não é absoluto nem URL de HF, tenta resolver
+        if not os.path.isabs(caminho_modelo) and not caminho_modelo.startswith(("hf://", "huggingface://")):
+            cm_resolvido = _resolver_caminho(caminho_modelo, base_dir, pasta_modelos_ativa)
+            if os.path.exists(cm_resolvido):
+                modelo["caminho"] = cm_resolvido
+    
     lora = modelo.get("lora", "")
     if lora:
-        modelo["lora"] = _resolver_caminho(lora, base_dir)
+        modelo["lora"] = _resolver_caminho(lora, base_dir, pasta_modelos_ativa)
     config["modelo"] = modelo
 
     # --- vLLM (defaults) ---
@@ -248,12 +285,12 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     arquivo_entrada = entrada.get("arquivo", "")
     if not arquivo_entrada:
         raise ValueError("entrada.arquivo é obrigatório no YAML")
-    entrada["arquivo"] = _resolver_caminho(arquivo_entrada, base_dir)
+    entrada["arquivo"] = _resolver_caminho(arquivo_entrada, base_dir, pasta_base)
     entrada.setdefault("campo_chave", "id")
     entrada.setdefault("campo_texto", "texto")
     prompt_tpl = entrada.get("prompt_template", "")
     if prompt_tpl:
-        entrada["prompt_template"] = _resolver_caminho(prompt_tpl, base_dir)
+        entrada["prompt_template"] = _resolver_caminho(prompt_tpl, base_dir, pasta_base)
     entrada.setdefault("variavel_texto", "<--TEXTO-->")
     entrada.setdefault("system_prompt", "")
 
@@ -261,17 +298,17 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     if filtro and isinstance(filtro, dict):
         arquivo_filtro = filtro.get("arquivo", "")
         if arquivo_filtro:
-            filtro["arquivo"] = _resolver_caminho(arquivo_filtro, base_dir)
+            filtro["arquivo"] = _resolver_caminho(arquivo_filtro, base_dir, pasta_base_ativa)
         entrada["filtro"] = filtro
 
     config["entrada"] = entrada
 
     # --- Saída (obrigatório) ---
     saida = config.get("saida", {}) or {}
-    arquivo_saida = saida.get("arquivo", "")
-    if not arquivo_saida:
+    caminho_saida = saida.get("arquivo", "")
+    if not caminho_saida:
         raise ValueError("saida.arquivo é obrigatório no YAML")
-    saida["arquivo"] = _resolver_caminho(arquivo_saida, base_dir)
+    saida["arquivo"] = _resolver_caminho(caminho_saida, base_dir, pasta_base_ativa)
     # tipo_saida: "str" (padrão) ou "json"/"dict"
     tipo_saida = str(saida.get("tipo_saida", "str")).strip().lower()
     if tipo_saida in ("json", "dict"):

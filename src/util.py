@@ -242,6 +242,49 @@ class Util():
         return padrao
 
     @classmethod
+    def resolver_caminho(cls, caminho: str, base_dir: str, pasta_base: str = "") -> str:
+        """
+        Resolve um caminho de arquivo de forma dinâmica, permitindo uma pasta_base configurável.
+        
+        Ordem de resolução:
+        1. Se `pasta_base` existir, tenta concatenar: `pasta_base + caminho`. 
+           Se o resultado existir, o retorna.
+        2. Se não existir o item acima (ou se `pasta_base` não for fornecida), verifica se o `caminho` 
+           já é absoluto e se ele existe no disco. Se sim, o retorna.
+        3. Se `pasta_base` for fornecida mas nenhum dos testes acima funcionou, retorna a concatenação 
+           `pasta_base + caminho` como tentativa principal para que os erros apontem para ela.
+        4. Fallback padrão: se o `caminho` for absoluto, o retorna; caso contrário, concatena com `base_dir`.
+        
+        Args:
+            caminho (str): O caminho relativo ou absoluto a ser resolvido.
+            base_dir (str): O diretório base para resolver caminhos relativos (ex: local do arquivo de configuração).
+            pasta_base (str): Um diretório raiz opcional para sobrepor a busca.
+            
+        Returns:
+            str: O caminho final resolvido.
+        """
+        if not caminho:
+            return caminho
+            
+        if pasta_base:
+            # Resolve pasta_base relativa em relação ao base_dir
+            if not os.path.isabs(pasta_base):
+                pasta_base = os.path.normpath(os.path.join(base_dir, pasta_base))
+                
+            caminho_com_base = os.path.normpath(os.path.join(pasta_base, caminho))
+            if os.path.exists(caminho_com_base):
+                return caminho_com_base
+            # Fallback se o caminho absoluto já existir
+            if os.path.isabs(caminho) and os.path.exists(caminho):
+                return caminho
+            # Se não encontrou, retorna o concatenado para estourar erro apontando a tentativa correta
+            return caminho_com_base
+
+        if os.path.isabs(caminho):
+            return caminho
+        return os.path.normpath(os.path.join(base_dir, caminho))
+
+    @classmethod
     def hash_string_sha1(cls, texto):
         ''' retorna o sha1 do texto ou json recebido '''
         if isinstance(texto, dict):

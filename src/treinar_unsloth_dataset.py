@@ -578,7 +578,7 @@ class DatasetTreinamento:
             )
         else:
             df_divisao = self.carregar_ou_criar_divisao()
-            ids_alvo = set(df_divisao[df_divisao["alvo"] == alvo]["id_arquivo"])
+            ids_alvo = set(df_divisao[df_divisao["alvo"] == alvo]["id_arquivo"].astype(str))
         
         arquivos_pareados = self.parear_arquivos()
         arquivos_filtrados = [p for p in arquivos_pareados if p["id"] in ids_alvo]

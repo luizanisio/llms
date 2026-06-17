@@ -8,12 +8,24 @@
 # visualizar: python ../../src/util_vllm_batch.py --config 02_summa_7b_hpc.yaml --view
 
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
   #caminho: "/mnt/d/wsl_pucdev/slurm/models/Qwen2.5-1.5B-Instruct"
-  caminho: "/students/luiz.abatitucci/models/Qwen2.5-7B-Instruct"
+  caminho: "Qwen2.5-7B-Instruct"
   lora: ""
 
 # --- Configuração do vLLM ---
@@ -59,10 +71,10 @@ geracao:
 #   Se informado, o chat template do modelo é aplicado automaticamente.
 #   Se vazio, o texto montado é enviado diretamente ao modelo (sem chat template).
 entrada:
-  arquivo: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/dados/integras_experimento_summa_novos.parquet"
+  arquivo: "./dados/integras_experimento_summa_novos.parquet"
   campo_chave: "seq_documento_acordao"
   campo_texto: "integra"
-  prompt_template: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/dados/prompt_summa_raw.txt"
+  prompt_template: "./dados/prompt_summa_raw.txt"
   variavel_texto: "<<--TEXTO-->>"
   system_prompt: ""
 
@@ -78,5 +90,5 @@ entrada:
 # Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
 #   Itens com erro ou ausentes são reprocessados automaticamente.
 saida:
-  arquivo: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/saida/saida_qwen7b.parquet"
+  arquivo: "./saida/saida_qwen7b.parquet"
   tipo_saida: "json"

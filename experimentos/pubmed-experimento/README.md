@@ -229,6 +229,29 @@ Análise estatística: Wilcoxon signed-rank bilateral A vs. B, A vs. D-best,
 B vs. D-best. Tamanho de efeito $r = |z| / \sqrt{n}$.
 
 
+## Passo a passo para replicação
+
+Para replicar o experimento do protocolo D01 (treinamento direto do modelo 1.5B), siga os seguintes passos no ambiente HPC (Slurm):
+
+1. **Preparação dos dados**: 
+   Certifique-se de ter baixado o dataset `PubMed_20k_RCT` e executado o script `util_pubmed.py` para gerar o parquet principal e o gold dataset:
+   ```bash
+   python util_pubmed.py
+   ```
+
+2. **Treinamento do modelo (D01)**:
+   Submeta o job de treinamento para o gerenciador Slurm. O arquivo `04_treinar_D01.yaml` já está configurado com os caminhos corretos do servidor e parâmetros otimizados para treino do modelo Qwen 2.5 1.5B.
+   ```bash
+   sbatch jon_treinar_d1.sh
+   ```
+   *Nota: O script `jon_treinar_d1.sh` aloca uma GPU e inicia o processo `treinar_unsloth.py`. Os logs podem ser acompanhados na pasta `saidas/`.*
+
+3. **Inferência e Extração**:
+   Após o treinamento ser concluído, o modelo ajustado estará salvo em `models/Qwen2.5-1.5B-Instruct(direto)`. Para extrair as informações do conjunto de teste, atualize o caminho do `lora` na configuração de inferência (`02_pubmed_rct_1_5b.yaml`) e execute:
+   ```bash
+   python ../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
+   ```
+
 ## Alguns datasets considerados para um experimento com o framework
 
 - **RAMS v1.0 (Ebner et al., 2020)**: Principal candidato para validação externa. Possui ~9.6k instâncias, 139 tipos de evento e 65 papéis, com gabarito 100% humano e argumentos *cross-sentence*.

@@ -1,6 +1,18 @@
 # Configuração para comparação de extrações - Experimento Summa 
 # Executar com: python ../../src/comparar_extracoes.py --config 03_compara_gpt5.yaml
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+
 # Configuração Global de Saída
 saida:
   pasta: "./compara/analises_comparacao_summa_gpt5 (f12 sabia)"

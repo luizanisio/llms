@@ -4,10 +4,22 @@
 # Executar com: python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/03_compara_q235_full.yaml
 # 
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+
 # Configuração Global de Saída
 saida:
-  pasta: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/compara/analises_comparacao_summa_q235 (full)"
-  pasta_parquet: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/compara/"
+  pasta: "./compara/analises_comparacao_summa_q235 (full)"
+  pasta_parquet: "./compara/"
   arquivo_base: "comparacao_summa"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
   linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
@@ -27,17 +39,17 @@ execucao:
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  arquivo: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/saida/saida_or_235b.parquet"
+  arquivo: "./saida/saida_or_235b.parquet"
   rotulo: "Qwen235b"
   familia: "Qwen-235B"
 
 # Modelos Comparados
 modelos_comparacao:
-  - arquivo: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/saida/saida_qwen7b.parquet"
+  - arquivo: "./saida/saida_qwen7b.parquet"
     rotulo: "Qwen7b"
     familia: "Qwen-7B"
 
-  - arquivo: "/students/luiz.abatitucci/llms/experimentos/summa_experimento/saida/saida_oa_gpt5.parquet"
+  - arquivo: "./saida/saida_oa_gpt5.parquet"
     rotulo: "GPT5"
     familia: "GPT-5"
 

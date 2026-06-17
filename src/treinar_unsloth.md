@@ -31,6 +31,9 @@ python src/treinar_realizar_predicoes.py meu_config.yaml --engine vllm --predict
 ## ⚙️ Configuração (O Arquivo YAML)
 O comportamento de todos os scripts transita em volta do seu YAML. Os principais pontos que os pesquisadores devem observar e configurar para um novo experimento são:
 
+- **`misc`**: Configurações diversas do projeto.
+  - `pasta_base`: (Opcional) Diretório base (absoluto ou relativo ao YAML) que atua como prefixo para que todos os caminhos subsequentes do arquivo de configuração (datasets, modelos, saídas) sejam resolvidos dinamicamente a partir dele. Facilita a portabilidade do projeto entre diferentes máquinas.
+
 - **`modelo`**:
   - `base_model_name`: Identificador no Hugging Face (ex: `Qwen/Qwen2.5-1.5B-Instruct`) ou caminho local de um fallback preexistente.
   - `saida`: Pasta raiz onde **tudo** que seu modelo evolutivo produzir nascerá. Os checkpoints ficarão em `/chkpt`, os gráficos na pasta de treinamento, e as respostas na pasta de sua escolha.
