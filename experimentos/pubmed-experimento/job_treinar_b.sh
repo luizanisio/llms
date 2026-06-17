@@ -22,10 +22,10 @@
 #SBATCH --time=48:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/%x_%j.out
+#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/%x_%j.err
+#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -48,6 +48,6 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_b.yaml
+python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_b.yaml
 
 echo "=== Job finalizado: $(date) ==="
