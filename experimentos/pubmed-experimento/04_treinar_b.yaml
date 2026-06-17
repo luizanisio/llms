@@ -67,7 +67,7 @@ curriculum:
       alias: "completo"
       tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 1
+      pace_epochs: 4
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 8192
 
