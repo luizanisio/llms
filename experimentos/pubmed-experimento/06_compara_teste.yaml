@@ -1,0 +1,125 @@
+# Configuração para comparação de extrações dos Casos de Teste - Experimento PubMed 
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_teste.yaml
+
+# --- Miscelânea ---
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_pubmed_teste"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_pubmed_teste"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  gerar_graficos: true 
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: true
+  # divisão omitida pois já filtramos apenas os casos de teste através do 'filtro'
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_pubmed_prof.parquet"
+  rotulo: "Professor"
+  familia: "PubMed-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  - arquivo: "saidas/saida_pubmed_1_5b.parquet"
+    rotulo: "Qwen1.5B"
+    familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b_treinado_teste.parquet"
+    rotulo: "Qwen1.5B_Treinado"
+    familia: "Qwen-1.5B"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+  
+  # Configuração do campo ID
+  nome_campo_id: "id"  # Nome interno do campo de ID (usado em DataFrames, gráficos, etc)
+  rotulo_campo_id: "ID"  # Rótulo de exibição do campo ID (usado em relatórios)
+  
+  # Configuração dos campos do parquet (quando a entrada for .parquet)
+  campos_parquet:
+    id: "chave"             # coluna com o ID do documento
+    resposta: "resposta"    # coluna com o JSON da extração (será salvo como {id}.json)
+    resumo_tokens: "resumo" # coluna com o JSON de tokens (será salvo como {id}.tokens.json)
+    avaliacao: ""           # coluna com avaliação LLM (se disponível, salvo como {id}.avaliacao.json)
+    erro: "erro"            # coluna com mensagem de erro (se disponível)
+  
+
+  # Modelos customizados (Opcional)
+  modelos:
+    # Tamanhos de mini-batch para otimização de memória no pré-cálculo (Padrão: 256)
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  # Máscaras de arquivos (Regex ou Sufixo)
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json" 
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Mapeamento de campos para métricas
+  campos:
+    bertscore:
+      - "(global)"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+    rouge_1:
+
+    rouge_2:
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
+
+    rouge_l:
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
+
+    levenshtein:
+      - "publication"
+      - "journal"
+
+    sbert_grande:
+      - "(global)"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+campos_virtuais:
+  Sentencas:
+    - background
+    - objective
+    - methods
+    - results
+    - conclusions
+  MetaDados:
+    - title
+    - publication
+    - journal
+    - keywords
