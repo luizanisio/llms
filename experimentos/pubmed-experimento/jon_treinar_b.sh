@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=treinar_d1_pubmed
+#SBATCH --job-name=treinar_b_pubmed
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -48,6 +48,6 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_D01.yaml
+python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_b.yaml
 
 echo "=== Job finalizado: $(date) ==="
