@@ -428,6 +428,27 @@ class UtilPandasExcel:
             raise AttributeError("Writer não possui método save(), close() ou _save()")
 
 
+def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro: dict) -> pd.DataFrame:
+    """
+    Aplica um filtro em formato de dicionário a um DataFrame pandas.
+    Ex: dataset_filtro = {"alvo": "teste", "dificuldade": "facil"}
+    """
+    if not dataset_filtro or not isinstance(dataset_filtro, dict):
+        return df
+        
+    df_filtrado = df.copy()
+    for coluna, valor in dataset_filtro.items():
+        if coluna not in df_filtrado.columns:
+            raise ValueError(f"Coluna de filtro '{coluna}' não encontrada no dataframe. "
+                             f"Colunas disponíveis: {list(df_filtrado.columns)}")
+        df_filtrado = df_filtrado[df_filtrado[coluna] == valor]
+            
+    if len(df) != len(df_filtrado):
+        print(f"🔍 dataset_filtro aplicado: {dataset_filtro} → {len(df_filtrado)} de {len(df)} registros")
+        
+    return df_filtrado
+
+
 if __name__ == '__main__':
     teste = [{"ano":"2000", "quantidade":10, 'linha_grande' : "aka slkjsdlfjasldjf lasdjflsjdflaksjdlkf"},
              {"ano":"2001", "quantidade":15, "linha_grande" : "dlsafalskjdf lflak sjdflasldfasldkfjsaldkfjalsdfjlaskjdflkas"}]

@@ -285,12 +285,12 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     arquivo_entrada = entrada.get("arquivo", "")
     if not arquivo_entrada:
         raise ValueError("entrada.arquivo é obrigatório no YAML")
-    entrada["arquivo"] = _resolver_caminho(arquivo_entrada, base_dir, pasta_base)
+    entrada["arquivo"] = _resolver_caminho(arquivo_entrada, base_dir, pasta_base_ativa)
     entrada.setdefault("campo_chave", "id")
     entrada.setdefault("campo_texto", "texto")
     prompt_tpl = entrada.get("prompt_template", "")
     if prompt_tpl:
-        entrada["prompt_template"] = _resolver_caminho(prompt_tpl, base_dir, pasta_base)
+        entrada["prompt_template"] = _resolver_caminho(prompt_tpl, base_dir, pasta_base_ativa)
     entrada.setdefault("variavel_texto", "<--TEXTO-->")
     entrada.setdefault("system_prompt", "")
 
@@ -498,6 +498,16 @@ def _carregar_entrada_parquet(
         raise FileNotFoundError(f"Arquivo parquet de entrada não encontrado: '{arquivo}'")
 
     df = pd.read_parquet(arquivo)
+    
+    filtro_config = cfg_entrada.get("filtro", {})
+    dataset_filtro = filtro_config.get("dataset_filtro")
+    if not dataset_filtro:
+        dataset_filtro = cfg_entrada.get("dataset_filtro")
+        
+    if dataset_filtro and isinstance(dataset_filtro, dict):
+        from util_pandas import aplicar_filtro_dataset
+        df = aplicar_filtro_dataset(df, dataset_filtro)
+
     campo_chave = cfg_entrada["campo_chave"]
     campo_texto = cfg_entrada["campo_texto"]
 

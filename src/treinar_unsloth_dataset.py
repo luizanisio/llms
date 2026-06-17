@@ -454,14 +454,8 @@ class DatasetTreinamento:
         
         # Aplica filtro de dataset se configurado
         if entrada.dataset_filtro:
-            total_antes = len(df)
-            for coluna, valor in entrada.dataset_filtro.items():
-                if coluna not in df.columns:
-                    raise ValueError(f"Coluna de filtro '{coluna}' não encontrada no dataframe de entrada. "
-                                     f"Colunas disponíveis: {list(df.columns)}")
-                df = df[df[coluna] == valor]
-            print(f"🔍 dataset_filtro aplicado: {entrada.dataset_filtro} → "
-                  f"{len(df)} de {total_antes} registros")
+            from util_pandas import aplicar_filtro_dataset
+            df = aplicar_filtro_dataset(df, entrada.dataset_filtro)
         
         # Inicializa criptografia se o campo de texto está criptografado
         cripto = self._obter_cripto() if entrada.texto_criptografado else None
