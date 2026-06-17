@@ -1,4 +1,4 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_b.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_c.yaml
 
 # ==========================================================================
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
@@ -64,7 +64,7 @@ curriculum:
     - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
       #dataset_filtro: {"dificuldade": "facil"}
       alias: "completo"
-      tipo: "lora"
+      tipo: "full"
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 4
       #| Limite de tokens da janela de contexto para este dataset
@@ -77,10 +77,10 @@ curriculum:
 modelo:
   #| Caminho do modelo pré-treinado usado como fundação
   base_model_name: Qwen2.5-1.5B-Instruct
-  #| Diretório final onde os pesos atualizados (adaptador LoRA) serão salvos
-  saida: treinos/Qwen2.5-1.5B-Instruct(b)
+  #| Diretório final onde os pesos atualizados (modelo com full finetuning) serão salvos
+  saida: treinos/Qwen2.5-1.5B-Instruct(c)
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
-  ollama: Qwen2.5-1.5B-Instruct(b):latest
+  ollama: Qwen2.5-1.5B-Instruct(c):latest
   ollama_base: qwen2.5:1.5b
   ollama_url: 
 
@@ -105,8 +105,8 @@ treinamento:
   max_seq_length: 16384
   validar_max_seq_length: true 
   
-  #| Taxa de aprendizado base, otimizada para LoRA
-  learning_rate: 0.0002
+  #| Taxa de aprendizado base, otimizada para full finetuning
+  learning_rate: 0.00002
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
@@ -122,24 +122,3 @@ treinamento:
   
   #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
   train_on_responses_only: true
-
-#| =========================================================================
-#| LORA (Low-Rank Adaptation)
-#| =========================================================================
-#| Configura a técnica de Parameter-Efficient Fine-Tuning.
-lora:
-  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
-  r: 16
-  #| Fator de escala, geralmente o dobro do rank.
-  alpha: 32
-  dropout: 0.05
-  
-  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
-  target_modules:
-    - q_proj
-    - k_proj
-    - v_proj
-    - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
