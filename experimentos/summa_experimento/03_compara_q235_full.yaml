@@ -126,10 +126,8 @@ configuracao_comparacao:
       - "Partes.Nome"
 
     rouge_l:
-      - "(global)"
       - "Materia"
       - "Dispositivo"      
-      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"

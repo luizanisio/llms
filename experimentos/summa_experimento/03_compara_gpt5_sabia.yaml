@@ -99,7 +99,7 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-# Mapeamento de campos para métricas
+  # Mapeamento de campos para métricas
   campos:
     bertscore:
       - "(global)"
@@ -123,10 +123,8 @@ configuracao_comparacao:
       - "Partes.Nome"
 
     rouge_l:
-      - "(global)"
       - "Materia"
       - "Dispositivo"      
-      - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"

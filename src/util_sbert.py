@@ -220,13 +220,22 @@ class SBERTCache:
         if not os.path.exists(self.cache_dir):
             return cache_mem
             
-        if chaves_necessarias is not None:
-            arquivos = [f"{c}.json" for c in chaves_necessarias]
-        else:
-            arquivos = [f for f in os.listdir(self.cache_dir) if f.endswith('.json')]
+        # OTIMIZAÇÃO I/O NFS: Sempre lista o diretório primeiro para evitar 
+        # milhares de FileNotFoundError ao abrir chaves que não geraram cache (ex: strings vazias).
+        try:
+            arquivos_existentes = {f for f in os.listdir(self.cache_dir) if f.endswith('.json')}
+        except OSError:
+            arquivos_existentes = set()
             
-        erros = 0
-        
+        if chaves_necessarias is not None:
+            # Filtra apenas os arquivos que realmente existem no disco
+            arquivos = [f"{c}.json" for c in chaves_necessarias if f"{c}.json" in arquivos_existentes]
+            # O que foi solicitado mas não existe contabiliza como erro (ex: string vazia)
+            erros = len(chaves_necessarias) - len(arquivos)
+        else:
+            arquivos = list(arquivos_existentes)
+            erros = 0
+            
         for arquivo in arquivos:
             filepath = os.path.join(self.cache_dir, arquivo)
             try:
