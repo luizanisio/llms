@@ -1058,6 +1058,9 @@ class LLMsTrainer:
         # Valida max_seq_length (obrigatório) e exibe info de tokens por etapa
         self._yaml_config.validar_max_seq_length()
         
+        # Rastreia quantização atual na memória
+        self._nbits_atual = self._yaml_config.treinamento.nbits
+        
         # Carrega modelo e tokenizer
         # Nota: O modelo é carregado com seu max_position_embeddings nativo
         # (ex: Qwen2.5 = 32768 com rope_theta=1e6 suportando até 131072).
@@ -2038,6 +2041,41 @@ class LLMsTrainer:
         """
         treino = self._yaml_config.treinamento
         msl_anterior = treino.max_seq_length
+
+        # === Recarregamento dinâmico de modelo se nbits mudar (quantização vs 16 bits) ===
+        alvo_nbits = 16 if etapa.tipo == "full" else self._yaml_config.treinamento.nbits
+        
+        # Se for um novo treinamento, o _load_model() original foi executado, caso contrário temos que recarregar.
+        # Usa getattr em precaução para evitar erros em inicializações.
+        nbits_memoria = getattr(self, "_nbits_atual", self._yaml_config.treinamento.nbits)
+        
+        if alvo_nbits != nbits_memoria:
+            logger.info(f"🔄 Etapa '{etapa.alias}' exige quantização nbits={alvo_nbits} (atual: {nbits_memoria}). Descarregando e recarregando o modelo para ajustar configuração...")
+            import gc
+            
+            # Limpeza completa de memória
+            if hasattr(self, "model"):
+                del self.model
+            if hasattr(self, "tokenizer"):
+                del self.tokenizer
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Sobrescreve YAML temporariamente para _load_model ler
+            _nbits_global_original = self._yaml_config.treinamento.nbits
+            self._yaml_config.treinamento.nbits = alvo_nbits
+            
+            # Recarrega o modelo base / adaptadores persistidos na saída
+            self.model, self.tokenizer = self._load_model()
+            
+            # Atualiza o template de chat com o tokenizer novo
+            self.chat_handler = TreinarChatTemplate(self.tokenizer, self._yaml_config.modelo.base)
+            self.tokenizer = self.chat_handler.tokenizer
+            
+            # Restaura global no YAML e avança status de memória
+            self._yaml_config.treinamento.nbits = _nbits_global_original
+            self._nbits_atual = alvo_nbits
 
         # === Alterna modo de treinamento conforme tipo da etapa ===
         if etapa.tipo == "full":
