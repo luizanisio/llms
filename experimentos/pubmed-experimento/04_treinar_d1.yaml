@@ -79,7 +79,7 @@ curriculum:
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 8192
     - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "medio"}
+      dataset_filtro: {"dificuldade": "dificil"}
       alias: "difícil"
       tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
