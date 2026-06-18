@@ -73,7 +73,7 @@ modelo:
 #| TREINAMENTO
 #| =========================================================================
 treinamento:
-  flash_attention_2: false
+  flash_attention_2: true
   liger_kernel: true
 
   eval_steps: 20%
