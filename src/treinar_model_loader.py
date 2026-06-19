@@ -159,7 +159,7 @@ class ModelLoader:
         if use_liger_kernel and _LIGER_DISPONIVEL:
             _model_cls = AutoLigerKernelForCausalLM
             
-            if getattr(model_config, "_attn_implementation", attn_implementation) != "flash_attention_2" and attn_implementation != "flash_attention_2":
+            if attn_implementation != "flash_attention_2":
                 print_cores(
                     "  <amarelo>⚠️  Liger Kernel: desativando cross_entropy pois flash_attention_2 está desativado "
                     "(evita NaN no eval loss com SDPA)</amarelo>", color_auto=False
