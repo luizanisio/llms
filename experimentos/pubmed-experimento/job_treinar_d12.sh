@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=treinar_d1234_pubmed
+#SBATCH --job-name=treinar_d12_pubmed
 
 # Partição de execução:
 #SBATCH --partition=gpu
