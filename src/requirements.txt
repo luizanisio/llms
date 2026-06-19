@@ -240,6 +240,26 @@ openai
 #       sudo apt update && sudo apt install -y cuda-toolkit-12-8
 #       echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
 #
+#       💡NO SEU AMBIENTE(Lab): instalar no próprio ambiente conda, se for assim, criar o ambiente antes
+#       - Instala o GCC e G++ locais no ambiente conda
+#           conda install -c conda-forge gcc gxx
+#
+#       - Garante que o compilador CUDA (nvcc) compatível esteja instalado
+#           conda install -c nvidia cuda-nvcc
+#         OU com o cuda específico
+#           python -c "import torch; print(torch.version.cuda)"
+#           conda install -c nvidia cuda-nvcc=13.0 
+#           export CUDA_HOME=$CONDA_PREFIX
+#
+#         Versão do pacote de desenvolvimento: 
+#           nvcc --version
+#
+#       Flash Attention 2
+#           - pip install flash-attn --no-build-isolation --no-deps --force-reinstall
+#       OU com jobs
+   #        - TMPDIR=/var/tmp MAX_JOBS=16 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
+#       ↘️ vá para o PASSO 5 para testar a instalação
+#
 #   🏠 [B] RTX 3060 / WSL2 Debian 13 — instala o toolkit mais recente (13.x),
 #       mas aponta CUDA_HOME para a versão 12.8 compatível com o PyTorch:
 #       sudo apt update && sudo apt install -y wget gnupg ca-certificates
