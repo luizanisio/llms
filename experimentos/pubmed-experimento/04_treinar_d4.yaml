@@ -1,4 +1,5 @@
 # Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d4.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d4.yaml
 
 # ==========================================================================
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
@@ -114,8 +115,8 @@ modelo:
 #| =========================================================================
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
-  liger_kernel: false        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
+  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
   

@@ -47,6 +47,7 @@ class EtapaCurriculum:
     max_seq_length: int = 0        # 0 = usa valor global
     learning_rate: float = 0.0     # 0 = usa valor global
     batch_size: int = 0            # 0 = usa valor global (treinamento.batch_size)
+    dataset_filtro: Optional[Dict[str, Any]] = None # Filtro específico da etapa (mesclado/substitui o global)
 
     @property
     def is_treinavel(self) -> bool:
@@ -405,6 +406,7 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             max_seq_length=int(item.get("max_seq_length", 0)),
             learning_rate=float(item.get("learning_rate", 0.0)),
             batch_size=int(item.get("batch_size", 0)),
+            dataset_filtro=yaml_config._processar_dataset_filtro(item.get("dataset_filtro")),
         )
         etapas.append(etapa)
     

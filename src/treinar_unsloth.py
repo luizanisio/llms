@@ -1072,6 +1072,16 @@ class LLMsTrainer:
         self.chat_handler = TreinarChatTemplate(self.tokenizer, self._yaml_config.modelo.base)
         self.tokenizer = self.chat_handler.tokenizer
         
+        # --- APLICAÇÃO DE FILTRO DA PRIMEIRA ETAPA ---
+        # Salva o filtro global da divisão (se houver) e aplica o da primeira etapa
+        import copy
+        self._global_dataset_filtro_divisao = copy.deepcopy(self._yaml_config.curriculum_config.divisao.dataset_filtro)
+        primeira_etapa = self._etapas[0] if self._etapas else None
+        if primeira_etapa and primeira_etapa.dataset_filtro is not None:
+            self._yaml_config.curriculum_config.divisao.dataset_filtro = primeira_etapa.dataset_filtro
+            self._yaml_config.dataset_manager._dados_divisao = None # Limpa cache se já carregou
+            logger.info(f"🔍 Filtro de divisão aplicado para etapa inicial '{primeira_etapa.alias}': {primeira_etapa.dataset_filtro}")
+        
         # Carrega datasets a partir do curriculum (pastas/dataframes + divisão)
         self.train_ds = self._load_from_pastas(alvo="treino")
         self.eval_ds = self._load_from_pastas(alvo="validacao")
@@ -1209,9 +1219,9 @@ class LLMsTrainer:
                 logger.info(f"ℹ️  Eval global: {n_val_global} instância(s) = mesma qtde da etapa atual ({n_val_etapa}). Desativado.")
                 return None
             
-            # Desativa temporariamente o dataset_filtro para carregar TODOS os itens da divisão
-            filtro_original = self._yaml_config.curriculum.entrada.dataset_filtro
-            self._yaml_config.curriculum.entrada.dataset_filtro = None
+            # Desativa temporariamente o filtro de divisão específico da etapa usando o filtro global original
+            filtro_original = self._yaml_config.curriculum.divisao.dataset_filtro
+            self._yaml_config.curriculum.divisao.dataset_filtro = getattr(self, "_global_dataset_filtro_divisao", None)
             
             try:
                 # Carrega mensagens de validação usando a divisão unificada
@@ -1220,7 +1230,7 @@ class LLMsTrainer:
                 )
             finally:
                 # Restaura filtro
-                self._yaml_config.curriculum.entrada.dataset_filtro = filtro_original
+                self._yaml_config.curriculum.divisao.dataset_filtro = filtro_original
             
             if not mensagens:
                 return None
@@ -1233,15 +1243,20 @@ class LLMsTrainer:
             )
             
             ds = dataset_loader.dataset
-            if ds and len(ds) > 0:
-                print_cores(
-                    f"<cinza>   📊 Eval global: {len(ds)} instâncias de validação "
-                    f"(todas as etapas combinadas, vs {n_val_etapa} da etapa atual)</cinza>",
-                    color_auto=False
-                )
-                return ds
+            if not ds or len(ds) == 0:
+                return None
+                
+            if len(ds) <= n_val_etapa:
+                logger.info(f"ℹ️  Eval global: {len(ds)} instância(s) filtradas = qtde da etapa atual ({n_val_etapa}). Desativado após aplicação do filtro.")
+                return None
+                
+            print_cores(
+                f"<cinza>   📊 Eval global: {len(ds)} instâncias de validação "
+                f"(todas as etapas combinadas, vs {n_val_etapa} da etapa atual)</cinza>",
+                color_auto=False
+            )
+            return ds
             
-            return None
         except Exception as e:
             logger.warning(f"⚠️  Erro ao carregar eval global: {e}")
             return None
@@ -2188,21 +2203,34 @@ class LLMsTrainer:
                   f"média={info_tokens['media']:.0f} → max_seq_length={msl_atual} {suficiente}")
 
         # Para etapas além da primeira, recarrega dados com o arquivo de divisão da etapa
-        if step_index > 0 and etapa.arquivo:
-            self._yaml_config.curriculum_config.divisao.arquivo = etapa.arquivo
-            # Limpa cache de divisão para forçar releitura
-            self._yaml_config.dataset_manager._dados_divisao = None
-
-            self.train_ds = self._load_from_pastas(alvo="treino")
-            self.eval_ds  = self._load_from_pastas(alvo="validacao")
-
-            # Atualiza estatísticas do dataset
-            ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino")
-            self._dataset_stats = {
-                "treino_len":    len(self.train_ds),
-                "validacao_len": len(self.eval_ds) if self.eval_ds else 0,
-                "token_stats":   ts,
-            }
+        if step_index > 0:
+            recarregar = False
+            
+            if etapa.arquivo and self._yaml_config.curriculum_config.divisao.arquivo != etapa.arquivo:
+                self._yaml_config.curriculum_config.divisao.arquivo = etapa.arquivo
+                recarregar = True
+                
+            # Verifica se o filtro mudou
+            filtro_alvo = etapa.dataset_filtro if etapa.dataset_filtro is not None else getattr(self, "_global_dataset_filtro_divisao", None)
+            if self._yaml_config.curriculum_config.divisao.dataset_filtro != filtro_alvo:
+                self._yaml_config.curriculum_config.divisao.dataset_filtro = filtro_alvo
+                recarregar = True
+                logger.info(f"🔍 Filtro de divisão alterado para etapa '{etapa.alias}': {filtro_alvo}")
+                
+            if recarregar:
+                # Limpa cache de divisão para forçar releitura
+                self._yaml_config.dataset_manager._dados_divisao = None
+    
+                self.train_ds = self._load_from_pastas(alvo="treino")
+                self.eval_ds  = self._load_from_pastas(alvo="validacao")
+    
+                # Atualiza estatísticas do dataset
+                ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino")
+                self._dataset_stats = {
+                    "treino_len":    len(self.train_ds),
+                    "validacao_len": len(self.eval_ds) if self.eval_ds else 0,
+                    "token_stats":   ts,
+                }
 
     # ------------------------- execução ----------------------------------
     def train(self):
@@ -3632,8 +3660,8 @@ def _cli() -> None:
         description="Fine-tune LLMs (Gemma, Qwen, Llama, DeepSeek) com configuração YAML.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Ações de treinamento:
   --treinar         Inicia ou continua o treinamento
+  --datasets        Levanta e exibe relatório de instâncias dos datasets (dry-run)
   --reset           Limpa o treinamento atual (com confirmação)
   --reset --treinar Limpa e inicia treinamento do zero
   --dicas           Injeta comentários de dicas no YAML de configuração
@@ -3655,6 +3683,8 @@ Exemplos:
     # Ações de treinamento
     parser.add_argument("--treinar", action="store_true",
                         help="Inicia ou continua o treinamento")
+    parser.add_argument("--datasets", action="store_true",
+                        help="Gera e exibe relatório de instâncias e filtros dos datasets (dry-run)")
     parser.add_argument("--reset", action="store_true",
                         help="Limpa treinamento atual (checkpoints e modelo LoRA)")
     
@@ -3722,7 +3752,13 @@ Exemplos:
     from treinar_unsloth_actions import executar_treinar, executar_reset
     
     # --- Identifica se há ação explícita ---
-    tem_acao_explicita = args.treinar or args.reset
+    tem_acao_explicita = args.treinar or args.reset or args.datasets
+    
+    if args.datasets and not args.treinar and not args.reset:
+        # Modo apenas dry-run: gera relatório e sai
+        from treinar_unsloth_datasets_relatorio import gerar_relatorio_datasets
+        gerar_relatorio_datasets(cfg_path, print_console=True)
+        sys.exit(0)
     
     if not tem_acao_explicita:
         # Modo interativo: menu de ações de treinamento

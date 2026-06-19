@@ -367,6 +367,7 @@ class ConfigEntrada:
 class ConfigDivisao:
     """Configuração de divisão treino/teste/avaliação."""
     arquivo: str = ""
+    dataset_filtro: Optional[Dict[str, Any]] = None
     proporcao: List[float] = field(default_factory=lambda: PROPORCAO_PADRAO.copy())
     seed: int = SEED_PADRAO
     proporcao_reais: Optional[List[float]] = None # Campo para armazenar distribuição real do arquivo
@@ -1304,7 +1305,8 @@ def criar_yaml_exemplo_curriculum(caminho: str) -> None:
                 "pasta": "./saidas/textos",
                 "mascara": r"^(.+)\.txt$",
                 "prompt_template": "./prompts/template.txt",
-                "tag_texto": "<<TEXTO>>"
+                "tag_texto": "<<TEXTO>>",
+                "dataset_filtro": {"fold": "!=12"}
             },
             "divisao": [
                 {

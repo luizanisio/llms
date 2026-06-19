@@ -431,7 +431,7 @@ class UtilPandasExcel:
 def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro: dict) -> pd.DataFrame:
     """
     Aplica um filtro em formato de dicionário a um DataFrame pandas.
-    Ex: dataset_filtro = {"alvo": "teste", "dificuldade": "facil"}
+    Ex: dataset_filtro = {"alvo": "teste", "dificuldade": "!=facil", "idade": ">=18"}
     """
     if not dataset_filtro or not isinstance(dataset_filtro, dict):
         return df
@@ -441,7 +441,59 @@ def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro: dict) -> pd.DataFra
         if coluna not in df_filtrado.columns:
             raise ValueError(f"Coluna de filtro '{coluna}' não encontrada no dataframe. "
                              f"Colunas disponíveis: {list(df_filtrado.columns)}")
-        df_filtrado = df_filtrado[df_filtrado[coluna] == valor]
+        
+        # Analisa o operador e o valor
+        operador = "=="
+        valor_limpo = valor
+        
+        if isinstance(valor, str):
+            val_str = valor.strip()
+            if val_str.startswith("!="):
+                operador = "!="
+                valor_limpo = val_str[2:].strip()
+            elif val_str.startswith(">="):
+                operador = ">="
+                valor_limpo = val_str[2:].strip()
+            elif val_str.startswith("<="):
+                operador = "<="
+                valor_limpo = val_str[2:].strip()
+            elif val_str.startswith(">"):
+                operador = ">"
+                valor_limpo = val_str[1:].strip()
+            elif val_str.startswith("<"):
+                operador = "<"
+                valor_limpo = val_str[1:].strip()
+            elif val_str.startswith("=="):
+                operador = "=="
+                valor_limpo = val_str[2:].strip()
+            elif val_str.startswith("="):
+                operador = "=="
+                valor_limpo = val_str[1:].strip()
+                
+        # Tentar converter valor_limpo para o tipo da coluna original se possível
+        if isinstance(valor_limpo, str):
+            dtype_coluna = df_filtrado[coluna].dtype
+            if pd.api.types.is_numeric_dtype(dtype_coluna):
+                try:
+                    if '.' in valor_limpo:
+                        valor_limpo = float(valor_limpo)
+                    else:
+                        valor_limpo = int(valor_limpo)
+                except ValueError:
+                    pass
+        
+        if operador == "==":
+            df_filtrado = df_filtrado[df_filtrado[coluna] == valor_limpo]
+        elif operador == "!=":
+            df_filtrado = df_filtrado[df_filtrado[coluna] != valor_limpo]
+        elif operador == ">":
+            df_filtrado = df_filtrado[df_filtrado[coluna] > valor_limpo]
+        elif operador == ">=":
+            df_filtrado = df_filtrado[df_filtrado[coluna] >= valor_limpo]
+        elif operador == "<":
+            df_filtrado = df_filtrado[df_filtrado[coluna] < valor_limpo]
+        elif operador == "<=":
+            df_filtrado = df_filtrado[df_filtrado[coluna] <= valor_limpo]
             
     if len(df) != len(df_filtrado):
         print(f"🔍 dataset_filtro aplicado: {dataset_filtro} → {len(df_filtrado)} de {len(df)} registros")

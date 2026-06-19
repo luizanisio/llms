@@ -1,4 +1,4 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d3.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_b.yaml
 
 # ==========================================================================
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
@@ -13,8 +13,8 @@
 #| Configurações diversas (logs, variáveis de ambiente).
 misc:
   pastas_base: 
-    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
-    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
   pastas_modelos:  
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
@@ -30,7 +30,7 @@ curriculum:
   #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
   saida:
     #| Caminho do arquivo parquet que contém as respostas esperadas
-    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe: saida/saida_or_235b.parquet
     #| Nome da coluna que contém o JSON de resposta
     dataframe_col: resposta
     #| Nome da coluna que contém o identificador do item
@@ -42,13 +42,14 @@ curriculum:
   #| Entrada: Especifica os dados que o modelo vai receber como prompt
   entrada:
     #| Arquivo parquet com o texto fonte a ser processado
-    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe: dados/integras_experimento_summa_novos.parquet
+    dataset_filtro: {"fold": "<=10"}
     #| Nome da coluna que contém o texto (prompt)
-    dataframe_col: article
+    dataframe_col: integra
     #| Nome da coluna que contém o identificador do item
-    dataframe_id: pmid
+    dataframe_id: seq_documento_acordao
     #| Arquivo TXT com o template que dita como o texto bruto será empacotado
-    prompt_template: dados/prompt_pubmed_rct.txt
+    prompt_template: dados/prompt_summa_raw.txt
     tag_texto: '<<--TEXTO-->>'
     texto_criptografado: false
     prompt_criptografado: false
@@ -61,39 +62,14 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   divisao:
     #| Divisão principal, pois é um treinamento direto de etapa única
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "facil"}
-      alias: "fácil"
-      tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "medio"}
-      alias: "médio"
-      tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "dificil"}
-      alias: "difícil"
-      tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      #dataset_filtro: {"dificuldade": "medio"}
+    - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+      #dataset_filtro: {"dificuldade": "facil"}
       alias: "completo"
       tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
+      pace_epochs: 4
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 8192
-    
 
 #| =========================================================================
 #| MODELO
@@ -102,10 +78,10 @@ curriculum:
 modelo:
   #| Caminho do modelo pré-treinado usado como fundação
   base_model_name: Qwen2.5-1.5B-Instruct
-  #| Diretório final onde os pesos atualizados (modelo com full finetuning) serão salvos
-  saida: treinos/Qwen2.5-1.5B-Instruct(d3)
+  #| Diretório final onde os pesos atualizados (adaptador LoRA) serão salvos
+  saida: treinos/Qwen2.5-1.5B-Instruct(b)
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
-  ollama: Qwen2.5-1.5B-Instruct(d3):latest
+  ollama: Qwen2.5-1.5B-Instruct(b):latest
   ollama_base: qwen2.5:1.5b
   ollama_url: 
 
@@ -114,8 +90,8 @@ modelo:
 #| =========================================================================
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
-  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
+  liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
   
@@ -130,8 +106,8 @@ treinamento:
   max_seq_length: 16384
   validar_max_seq_length: true 
   
-  #| Taxa de aprendizado base, otimizada para full finetuning
-  learning_rate: 0.00002
+  #| Taxa de aprendizado base, otimizada para LoRA
+  learning_rate: 0.0002
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
@@ -142,8 +118,29 @@ treinamento:
   lr_scheduler_type: cosine
   seed: 3407
   
-  #| Realiza o treinamento em 16-bits (Full)
-  nbits: 16
+  #| Realiza o treinamento em 4-bits (QLoRA) para maior economia de VRAM
+  nbits: 4
   
   #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
   train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+  
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

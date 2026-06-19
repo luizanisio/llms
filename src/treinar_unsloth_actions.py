@@ -324,6 +324,14 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
         if not executar_reset(yaml_path, confirmar=True):
             # Se cancelou o reset ou não havia nada para limpar, continua
             pass
+            
+    # Gera relatório de datasets estrutural silenciosamente para histórico
+    try:
+        from treinar_unsloth_datasets_relatorio import gerar_relatorio_datasets
+        logger.info("<azul>📊 Extraindo quantitativos do dataset...</azul>")
+        gerar_relatorio_datasets(yaml_path, print_console=False)
+    except Exception as e:
+        logger.warning(f"⚠️  Não foi possível gerar relatório prévio de datasets: {e}")
     
     # Inicializa e executa treinamento
     trainer = LLMsTrainer(yaml_path)

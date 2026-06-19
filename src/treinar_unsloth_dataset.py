@@ -96,7 +96,7 @@ class DatasetTreinamento:
         # --- Obtém IDs da entrada ---
         if usa_entrada_df:
             ids_entrada = set(self._carregar_ids_dataframe(
-                cc.entrada.dataframe, cc.entrada.dataframe_id
+                cc.entrada.dataframe, cc.entrada.dataframe_id, is_entrada=True
             ))
         else:
             arquivos_entrada = self.listar_arquivos_por_mascara(
@@ -163,9 +163,14 @@ class DatasetTreinamento:
         
         return self._arquivos_pareados
     
-    def _carregar_ids_dataframe(self, caminho: str, col_id: str) -> List[str]:
+    def _carregar_ids_dataframe(self, caminho: str, col_id: str, is_entrada: bool = False) -> List[str]:
         """Carrega a lista de IDs de um dataframe parquet."""
         df = self._obter_dataframe(caminho)
+        
+        if is_entrada and getattr(self.curriculum.entrada, 'dataset_filtro', None):
+            from util_pandas import aplicar_filtro_dataset
+            df = aplicar_filtro_dataset(df, self.curriculum.entrada.dataset_filtro)
+            
         if col_id not in df.columns:
             raise ValueError(f"Coluna '{col_id}' não encontrada no dataframe '{caminho}'")
         return [str(v) for v in df[col_id].tolist()]
@@ -200,15 +205,18 @@ class DatasetTreinamento:
         # Validação 1: IDs no CSV mas não nos arquivos pareados
         ids_apenas_csv = ids_divisao - ids_pareados
         if ids_apenas_csv:
-            ids_lista = sorted(ids_apenas_csv)
-            if len(ids_lista) > 10:
-                ids_mostra = ids_lista[:10] + [f"... (+{len(ids_lista) - 10} outros)"]
+            if getattr(self.curriculum.entrada, 'dataset_filtro', None):
+                print(f"⚠️  Aviso: {len(ids_apenas_csv)} ID(s) no arquivo de divisão foram ignorados devido ao dataset_filtro.")
             else:
-                ids_mostra = ids_lista
-            erros.append(
-                f"❌ {len(ids_apenas_csv)} ID(s) no arquivo de divisão não encontrados nos arquivos pareados:\n"
-                f"   {ids_mostra}"
-            )
+                ids_lista = sorted(ids_apenas_csv)
+                if len(ids_lista) > 10:
+                    ids_mostra = ids_lista[:10] + [f"... (+{len(ids_lista) - 10} outros)"]
+                else:
+                    ids_mostra = ids_lista
+                erros.append(
+                    f"❌ {len(ids_apenas_csv)} ID(s) no arquivo de divisão não encontrados nos arquivos pareados:\n"
+                    f"   {ids_mostra}"
+                )
         
         # Validação 2: IDs nos arquivos pareados mas não no CSV
         # (Controlado por validacao.exigir_ids_pareados)
@@ -276,6 +284,11 @@ class DatasetTreinamento:
             if "id_arquivo" not in df.columns or "alvo" not in df.columns:
                 raise ValueError(f"Arquivo de divisão deve ter colunas 'id_arquivo' e 'alvo', nenhuma opção de migração encontrada. Colunas atuais: {df.columns.tolist()}")
             
+            if getattr(self.curriculum.divisao, 'dataset_filtro', None):
+                from util_pandas import aplicar_filtro_dataset
+                df = aplicar_filtro_dataset(df, self.curriculum.divisao.dataset_filtro)
+                print(f"🔍 Filtro de divisão aplicado: restaram {len(df)} instâncias.")
+                
             self._dados_divisao = df
             
             # Migração automática: avaliacao -> validacao
@@ -402,7 +415,11 @@ class DatasetTreinamento:
                 mask = df["alvo"].isin(["avaliacao", "avaliação", "eval"])
                 if mask.any():
                     df.loc[mask, "alvo"] = "validacao"
-
+                # Aplica filtro da etapa (se configurado) para esta etapa da divisão
+                if etapa.dataset_filtro:
+                    from util_pandas import aplicar_filtro_dataset
+                    df = aplicar_filtro_dataset(df, etapa.dataset_filtro)
+                    
                 csvs_lidos += 1
                 for _, row in df.iterrows():
                     id_val = str(row["id_arquivo"]).strip()
@@ -435,7 +452,7 @@ class DatasetTreinamento:
             with open(caminho, "r", encoding="latin-1") as f:
                 return f.read()
 
-    def _carregar_dataframe_entrada(self) -> Dict[str, str]:
+    def _carregar_dataframe_entrada(self, ids_permitidos: Optional[set] = None) -> Dict[str, str]:
         """Carrega textos de entrada de um dataframe parquet, com decriptografia opcional.
 
         Se ``entrada.dataset_filtro`` estiver definido, aplica o filtro ao dataframe
@@ -456,6 +473,9 @@ class DatasetTreinamento:
         if entrada.dataset_filtro:
             from util_pandas import aplicar_filtro_dataset
             df = aplicar_filtro_dataset(df, entrada.dataset_filtro)
+            
+        if ids_permitidos is not None:
+            df = df[df[entrada.dataframe_id].astype(str).isin(ids_permitidos)]
         
         # Inicializa criptografia se o campo de texto está criptografado
         cripto = self._obter_cripto() if entrada.texto_criptografado else None
@@ -477,7 +497,7 @@ class DatasetTreinamento:
         print(f"📂 Carregados {len(mapa_textos)} textos de entrada do dataframe")
         return mapa_textos
 
-    def _carregar_dataframe_saida(self) -> Dict[str, str]:
+    def _carregar_dataframe_saida(self, ids_permitidos: Optional[set] = None) -> Dict[str, str]:
         """Carrega textos de saída (gold) de um dataframe parquet, com decriptografia opcional."""
         saida = self.curriculum.saida
         if not saida.dataframe:
@@ -489,6 +509,9 @@ class DatasetTreinamento:
             raise ValueError(f"Coluna '{saida.dataframe_col}' não encontrada no dataframe de saída")
         if saida.dataframe_id not in df.columns:
             raise ValueError(f"Coluna '{saida.dataframe_id}' não encontrada no dataframe de saída")
+            
+        if ids_permitidos is not None:
+            df = df[df[saida.dataframe_id].astype(str).isin(ids_permitidos)]
         
         cripto = self._obter_cripto() if saida.texto_criptografado else None
         
@@ -577,14 +600,16 @@ class DatasetTreinamento:
         arquivos_pareados = self.parear_arquivos()
         arquivos_filtrados = [p for p in arquivos_pareados if p["id"] in ids_alvo]
         
+        ids_filtrados = set(p["id"] for p in arquivos_filtrados)
+        
         # Carrega dados de entrada/saída via dataframe se configurado
         mapa_textos_entrada = {}
         if cc.entrada.dataframe:
-            mapa_textos_entrada = self._carregar_dataframe_entrada()
+            mapa_textos_entrada = self._carregar_dataframe_entrada(ids_permitidos=ids_filtrados)
         
         mapa_textos_saida = {}
         if cc.saida.dataframe:
-            mapa_textos_saida = self._carregar_dataframe_saida()
+            mapa_textos_saida = self._carregar_dataframe_saida(ids_permitidos=ids_filtrados)
             
         mensagens = []
         erros = []
@@ -644,6 +669,7 @@ class DatasetTreinamento:
             print(f"⚠️  {len(erros)} erro(s) ao processar arquivos")
             
         print(f"✅ {len(mensagens)} mensagem(ns) carregada(s)" + (f" para '{alvo}'" if alvo else ""))
+        self._cache_dataframes.clear()
         return mensagens
 
     def carregar_mensagens_dataset_completo(self) -> List[Dict[str, Any]]:
@@ -682,7 +708,8 @@ class DatasetTreinamento:
         mapa_textos_saida: Dict[str, str] = {}
         try:
             if cc.saida.dataframe:
-                mapa_textos_saida = self._carregar_dataframe_saida()
+                ids_entrada = set(mapa_textos_entrada.keys())
+                mapa_textos_saida = self._carregar_dataframe_saida(ids_permitidos=ids_entrada)
             elif cc.saida.pasta:
                 arquivos_saida = self.listar_arquivos_por_mascara(cc.saida.pasta, cc.saida.mascara)
                 for id_arq, caminho in arquivos_saida.items():
@@ -729,6 +756,7 @@ class DatasetTreinamento:
         n_com_gold = sum(1 for m in mensagens if len(m["messages"]) > 1)
         print(f"✅ {len(mensagens)} item(ns) carregado(s) do dataset completo "
               f"({n_com_gold} com saída gold)")
+        self._cache_dataframes.clear()
         return mensagens
 
     def mostrar_exemplo(self, titulo: str, msgs_lista: List[Dict]):

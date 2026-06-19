@@ -50,6 +50,11 @@ DICAS_YAML = {
     "curriculum/validacao": """#| exigir_json_valido: Se `true`, durante a validação, o sistema rejeitará exemplos que falharem na validação JSON. Se `false`, ignora JSONs inválidos, o que pode ser útil em fases iniciais de teste.
 #| exigir_ids_pareados: Validação estrita de pares. Se `true`, o treinamento será interrompido com erro se houver IDs na entrada sem correspondente na saída (gold dataset) ou se existirem dados pareados ausentes no arquivo de divisão (CSV). Se `false`, o sistema ignora as sobras e treina apenas com os itens em comum (interseção), útil quando a entrada possui itens extras que ainda não têm gabarito na saída.""",
 
+    "curriculum/entrada/dataset_filtro": "#| (Opcional) Filtro JSON (ex: {\"fold\": \"!=12\"}). Aplica-se APENAS ao arquivo de ENTRADA (parquet). Registros ignorados não acionam erros de validação da divisão.",
+    
+    # Dicas Específicas - Divisao
+    "divisao/dataset_filtro": "#| (Opcional) Filtro JSON aplicado APENAS ao arquivo de DIVISÃO (CSV) da etapa atual (ex: {\"dificuldade\": \"facil\"}).",
+
     # Dicas Específicas - Treinamento
     "treinamento/eval_steps": "#| Frequência de avaliação (ex: '15%' das steps ou número inteiro).",
     "treinamento/batch_size": """#| Amostras por GPU. Menor gasta menos VRAM.
