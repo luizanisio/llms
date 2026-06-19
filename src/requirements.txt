@@ -218,10 +218,10 @@ openai
 #
 # Versões testadas e compatíveis (Março/2026, Python 3.13.9):
 #
-#   [A] torch==2.10.0+cu128   [B] torch==2.10.0+cu128  (mesmo wheel, diferente toolkit)
+#   [A] torch==2.11.0+cu128   [B] torch==2.11.0+cu128  (mesmo wheel, diferente toolkit)
 #   flash-attn==2.8.3         liger-kernel==0.7.0
 #   transformers==4.57.6      accelerate==1.13.0        trl==0.24.0
-#   vllm==0.18.0              bitsandbytes==0.49.2       peft==0.18.1
+#   vllm==0.22.0              bitsandbytes==0.49.2       peft==0.18.1
 #   datasets==4.3.0           triton==3.6.0              sentence-transformers==5.3.0
 #
 # 💡 NOTA SOBRE FA-3: No H100, considere instalar a branch hopper de flash-attn
@@ -241,20 +241,21 @@ openai
 #       echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
 #
 #       💡NO SEU AMBIENTE(Lab): instalar no próprio ambiente conda, se for assim, criar o ambiente antes
-#       - Instala o GCC e G++ locais no ambiente conda
-#           conda install -c conda-forge gcc gxx
+#       - Instala o GCC e G++ locais no ambiente conda (CUDA 12.8 exige GCC < 14.0)
+#           conda install -c conda-forge "gcc<14.0" "gxx<14.0"
 #
 #       - Garante que o compilador CUDA (nvcc) compatível esteja instalado
 #           conda install -c nvidia cuda-nvcc
 #         OU com o cuda específico
 #           python -c "import torch; print(torch.version.cuda)"
-#           conda install -c nvidia cuda-nvcc=13.0 
+#           conda install -c nvidia cuda-nvcc=12.8 -y
 #           export CUDA_HOME=$CONDA_PREFIX
 #
 #         Versão do pacote de desenvolvimento: 
 #           nvcc --version
 #
 #       Flash Attention 2
+#           - pip cache purge
 #           - pip install flash-attn --no-build-isolation --no-deps --force-reinstall
 #       OU com jobs
    #        - TMPDIR=/var/tmp MAX_JOBS=16 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
@@ -291,16 +292,18 @@ openai
 #   conda activate treina
 #
 # ==============================================================================
-# 🔥 PASSO 2 — Instalar o PyTorch (cu128 funciona nas duas máquinas)
+# 🔥 PASSO 2 — Instalar o PyTorch (cu128 exigido pelo driver da máquina)
 # ==============================================================================
 #
-#   pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+#   pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 #
 # ==============================================================================
-# 📦 PASSO 3 — Instalar os demais pacotes
+# 📦 PASSO 3 — Instalar os demais pacotes (sem --index-url do PyTorch!)
 # ==============================================================================
 #
 #   TMPDIR=/var/tmp pip install -r requirements.txt
+#   # Alinhar pacotes caso haja conflitos do PIP devido ao cuda-python ou numpy:
+#   pip install "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "cuda-pathfinder>=1.4.2"
 #
 # ==============================================================================
 # ⚡ PASSO 4 — Compilar o flash-attn do source (OBRIGATÓRIO)
@@ -367,11 +370,11 @@ openai
 #   → FA-2 não usa TMA/WGMMA do Hopper.
 #   → 🔧 No H100, compilar a branch hopper do flash-attn para habilitar FA-3.
 #
-# ⚠️  pip fez upgrade do torch automaticamente (ex: 2.10→2.11):
-#   → Reverter: pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128 --no-deps
-#   → --no-deps evita que o pip arraste dependências indesejadas.
-#   → ⚠️  Importante: qualquer upgrade do torch invalida o flash-attn compilado;
-#     será preciso recompilar o flash-attn após reverter.
+# ⚠️  pip fez upgrade do torch ou quebrou dependências do vLLM/cuda-python:
+#   → Reverter PyTorch: pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
+#   → Reverter pacotes PyPI bagunçados: pip install "setuptools==80.0.0" "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "fsspec<=2026.2.0"
+#   → ⚠️  Importante: qualquer downgrade/upgrade do torch invalida o flash-attn compilado;
+#     será preciso recompilar o flash-attn (Passo 4) passando `--no-deps` no pip para evitar atualizar o PyTorch de novo.
 #
 # 🏠 RTX 3060 — compilação muito lenta ou máquina travando:
 #   → Reduzir MAX_JOBS: MAX_JOBS=2 pip install flash-attn --no-build-isolation --force-reinstall
