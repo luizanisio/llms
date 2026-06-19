@@ -2,7 +2,7 @@
 # Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_c.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Direto / sem Curriculum)
 # ==========================================================================
 # Ambiente: 2x H100 80GB (CUDA_VISIBLE_DEVICES="2,3")
 # Modo: curriculum (etapa única, treino direto)
@@ -70,7 +70,7 @@ curriculum:
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 4
       #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
+      #max_seq_length: 8192
 
 #| =========================================================================
 #| MODELO
@@ -78,12 +78,12 @@ curriculum:
 #| Configurações do modelo base e diretório de saída.
 modelo:
   #| Caminho do modelo pré-treinado usado como fundação
-  base_model_name: Qwen2.5-1.5B-Instruct
+  base_model_name: Qwen2.5-7B-Instruct
   #| Diretório final onde os pesos atualizados (modelo com full finetuning) serão salvos
-  saida: treinos/Qwen2.5-1.5B-Instruct(c)
+  saida: treinos/Qwen2.5-7B-Instruct(c)
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
-  ollama: Qwen2.5-1.5B-Instruct(c):latest
-  ollama_base: qwen2.5:1.5b
+  ollama: Qwen2.5-7B-Instruct(c):latest
+  ollama_base: qwen2.5:7b
   ollama_url: 
 
 #| =========================================================================
@@ -104,7 +104,7 @@ treinamento:
   
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
-  max_seq_length: 16384
+  max_seq_length: 35840
   validar_max_seq_length: true 
   
   #| Taxa de aprendizado base reduzida (de 2e-5 para 5e-6). 
