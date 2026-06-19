@@ -40,10 +40,6 @@ cd "$SCRIPT_DIR"
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat02
 
-echo "Configurando variáveis de ambiente..."
-export CUDA_HOME=$CONDA_PREFIX
-export PATH=$CUDA_HOME/bin:$PATH
-
 echo "=== Flash Attention 2 disponível? ==="
 python -c "import torch; print(torch.__version__)"
 python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
