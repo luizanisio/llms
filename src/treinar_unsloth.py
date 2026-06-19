@@ -2270,6 +2270,15 @@ class LLMsTrainer:
         epoch_offset_global = acumulados_retomada.get("epoch_offset_global", 0.0)
         tokens_acumulados = acumulados_retomada.get("tokens_acumulados", 0)
 
+        # Salva defaults globais para evitar vazamento de overrides (ex: learning_rate) de uma etapa para outra
+        treino_cfg = self._yaml_config.treinamento
+        global_defaults = {
+            "learning_rate": treino_cfg.learning_rate,
+            "batch_size": treino_cfg.batch_size,
+            "epochs": treino_cfg.epochs,
+            "max_seq_length": treino_cfg.max_seq_length
+        }
+
         for step_index, etapa_atual in enumerate(self._etapas):
             # --- Pula etapas já concluídas na retomada ---
             if step_index < etapa_retomada:
@@ -2279,6 +2288,13 @@ class LLMsTrainer:
             # --- Preparação da etapa (full/lora, hiperparâmetros, dados) ---
             # Sempre chamado: configura modo full/lora, aplica LoRA sob demanda,
             # ajusta epochs/lr/max_seq_length e recarrega dados se necessário.
+            
+            # Restaura defaults globais ANTES de aplicar os overrides da etapa atual
+            treino_cfg.learning_rate = global_defaults["learning_rate"]
+            treino_cfg.batch_size = global_defaults["batch_size"]
+            treino_cfg.epochs = global_defaults["epochs"]
+            treino_cfg.max_seq_length = global_defaults["max_seq_length"]
+            
             if is_curriculum:
                 logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
             self._aplicar_etapa_curriculum(step_index, etapa_atual)

@@ -2,17 +2,6 @@
 Autor: Luiz Anísio
 Fonte: https://github.com/luizanisio/llms/tree/main/src
 
-## Ambiente de treinamento do zero 
-Python 3.12 não tem necessidade de compilação do flash attention 2
-> conda create -n treina2 python=3.12   
-> pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-> pip install --no-deps "xformers<0.0.28" "trl<0.10.0" peft accelerate bitsandbytes
-> pip install liger-kernel datasets
-> pip install -r ../src/requirements_mini.txt
-
-Instalar manualmente com compilação
-> pip install flash-attn --no-build-isolation
-
 ## Contents
 
 ### Utilities

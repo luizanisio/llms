@@ -89,6 +89,8 @@ curriculum:
       #dataset_filtro: {"dificuldade": "medio"}
       alias: "completo-FF"
       tipo: "full"
+      #| learning_rate local para sobrescrever o valor global apenas nesta etapa. Útil para separar FF de LoRA.
+      learning_rate: 0.000005
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 2
       batch_size: 1
