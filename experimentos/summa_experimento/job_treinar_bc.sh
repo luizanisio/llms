@@ -10,13 +10,13 @@
 #SBATCH --partition=gpu
 
 # Recurso de GPU:
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 
 # CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 
 # RAM do sistema (CPU)
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 
 # Tempo máximo de execução (HH:MM:SS)
 #SBATCH --time=48:00:00
