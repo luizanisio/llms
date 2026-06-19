@@ -44,6 +44,10 @@ echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX
 export PATH=$CUDA_HOME/bin:$PATH
 
+echo "=== Flash Attention 2 disponível? ==="
+python -c "from transformers.utils import is_flash_attn_2_available; print(is_flash_attn_2_available())"
+echo "==============================="
+
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
