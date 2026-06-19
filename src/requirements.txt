@@ -1,4 +1,5 @@
 # 🐍 conda create -n treina python=3.13.9
+# 🐍 conda create -n treina python=3.12.11
 
 # ⚠️  erro de espaço para instalar os pacotes (vllm principalmente)
 # TMPDIR=/var/tmp pip install -r requirements.txt
