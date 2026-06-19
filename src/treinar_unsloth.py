@@ -1209,10 +1209,18 @@ class LLMsTrainer:
                 logger.info(f"ℹ️  Eval global: {n_val_global} instância(s) = mesma qtde da etapa atual ({n_val_etapa}). Desativado.")
                 return None
             
-            # Carrega mensagens de validação usando a divisão unificada
-            mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(
-                alvo="validacao", divisao=divisao_unificada
-            )
+            # Desativa temporariamente o dataset_filtro para carregar TODOS os itens da divisão
+            filtro_original = self._yaml_config.curriculum.entrada.dataset_filtro
+            self._yaml_config.curriculum.entrada.dataset_filtro = None
+            
+            try:
+                # Carrega mensagens de validação usando a divisão unificada
+                mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(
+                    alvo="validacao", divisao=divisao_unificada
+                )
+            finally:
+                # Restaura filtro
+                self._yaml_config.curriculum.entrada.dataset_filtro = filtro_original
             
             if not mensagens:
                 return None

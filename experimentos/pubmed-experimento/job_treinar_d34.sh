@@ -49,8 +49,6 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 CONFIGS=(
-  "04_treinar_d1.yaml"
-  "04_treinar_d2.yaml"
   "04_treinar_d3.yaml"
   "04_treinar_d4.yaml"
 )

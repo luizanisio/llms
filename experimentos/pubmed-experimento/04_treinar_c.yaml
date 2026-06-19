@@ -90,7 +90,9 @@ modelo:
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
   flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
-  liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  #| O Liger Kernel foi desativado (false) porque costuma gerar instabilidade matemática (NaN/Inf)
+  #| quando combinado com Full Fine-Tuning (16-bits). Desativar garante maior estabilidade no cálculo da loss.
+  liger_kernel: false        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
   
@@ -105,8 +107,10 @@ treinamento:
   max_seq_length: 16384
   validar_max_seq_length: true 
   
-  #| Taxa de aprendizado base, otimizada para full finetuning
-  learning_rate: 0.00002
+  #| Taxa de aprendizado base reduzida (de 2e-5 para 5e-6). 
+  #| Como no Full Fine-Tuning 100% dos pesos são atualizados, taxas altas tendem a explodir 
+  #| os gradientes (divergência e loss=NaN). Uma taxa menor é o padrão seguro para treino completo.
+  learning_rate: 0.000005
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5

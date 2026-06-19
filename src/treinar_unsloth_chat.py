@@ -168,12 +168,45 @@ class TreinarChatTemplate:
             ds_eval_original = trainer.eval_dataset
             collator_original = trainer.data_collator
             
-            # Aplica train_on_responses_only do unsloth
-            trainer = train_on_responses_only(
-                trainer,
-                instruction_part=instruction_part,
-                response_part=response_part,
-            )
+            # Aplica train_on_responses_only do unsloth.
+            # O unsloth não suporta dict no eval_dataset (causa falha no .map()).
+            if isinstance(trainer.eval_dataset, dict):
+                dict_eval = trainer.eval_dataset
+                
+                # 1. Mapeia treino e current
+                trainer.eval_dataset = dict_eval.get("current")
+                trainer = train_on_responses_only(
+                    trainer,
+                    instruction_part=instruction_part,
+                    response_part=response_part,
+                )
+                
+                mapped_train = trainer.train_dataset
+                mapped_current = trainer.eval_dataset
+                
+                # 2. Mapeia global
+                trainer.train_dataset = None  # Evita mapear o treino novamente
+                if dict_eval.get("global") is not None:
+                    trainer.eval_dataset = dict_eval.get("global")
+                    trainer = train_on_responses_only(
+                        trainer,
+                        instruction_part=instruction_part,
+                        response_part=response_part,
+                    )
+                    mapped_global = trainer.eval_dataset
+                else:
+                    mapped_global = None
+                    
+                # 3. Restaura estado e monta o dict
+                trainer.train_dataset = mapped_train
+                trainer.eval_dataset = {"current": mapped_current, "global": mapped_global}
+            else:
+                trainer = train_on_responses_only(
+                    trainer,
+                    instruction_part=instruction_part,
+                    response_part=response_part,
+                )
+                
             print(f'   ✅ train_on_responses_only aplicado')
             print(f'      Tag User: "{instruction_part.strip()}"')
             print(f'      Tag Asst: "{response_part.strip()}"')
