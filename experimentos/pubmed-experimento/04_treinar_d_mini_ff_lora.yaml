@@ -50,7 +50,7 @@ curriculum:
       tipo: "full"
       pace_epochs: 1
       batch_size: 1
-      max_seq_length: 4096
+      # max_seq_length: 8192
       
     #| 2ª Divisão: Treinamento LORA (Retornará ao nbits global=4)
     - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
@@ -58,7 +58,7 @@ curriculum:
       alias: "médio"
       tipo: "lora"
       pace_epochs: 1
-      max_seq_length: 4096
+      # max_seq_length: 8192
 
 #| =========================================================================
 #| MODELO
