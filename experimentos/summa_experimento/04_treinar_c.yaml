@@ -92,9 +92,7 @@ modelo:
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
   flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
-  #| O Liger Kernel foi desativado (false) porque costuma gerar instabilidade matemática (NaN/Inf)
-  #| quando combinado com Full Fine-Tuning (16-bits). Desativar garante maior estabilidade no cálculo da loss.
-  liger_kernel: false        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
   
