@@ -70,4 +70,39 @@ python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/
 
 python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
 
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/02_pubmed_rct_1_5b.yaml
+
+
 echo "=== Job finalizado: $(date) ==="
