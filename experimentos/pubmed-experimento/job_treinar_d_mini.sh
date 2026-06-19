@@ -45,6 +45,12 @@ export CUDA_HOME=$CONDA_PREFIX
 export PATH=$CUDA_HOME/bin:$PATH
 
 echo "=== Flash Attention 2 disponível? ==="
+python -c "import torch; print(torch.__version__)"
+python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
+python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('rotary OK')"
+python -c "import vllm; print(vllm.__version__)"
+python -c "from liger_kernel.transformers import AutoLigerKernelForCausalLM; print('liger OK')"
+
 python -c "from transformers.utils import is_flash_attn_2_available; print(is_flash_attn_2_available())"
 echo "==============================="
 
