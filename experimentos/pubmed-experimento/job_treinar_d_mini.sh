@@ -41,11 +41,24 @@ source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat02
 
 echo "=== Diagnóstico Detalhado PyTorch vs GPU ==="
-python -c "import torch; print(f'1. PyTorch version: {torch.__version__}')"
-python -c "import torch; print(f'2. PyTorch CUDA version: {torch.version.cuda}')"
-python -c "import torch; print(f'3. torch.cuda.is_available(): {torch.cuda.is_available()}')"
-python -c "import torch; print(f'4. Device count: {torch.cuda.device_count()}')"
-python -c "import torch; print(f'5. Device name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+python -c "
+import torch
+print(f'1. PyTorch version: {torch.__version__}')
+print(f'2. PyTorch CUDA version: {torch.version.cuda}')
+print(f'3. torch.cuda.is_available(): {torch.cuda.is_available()}')
+print(f'4. Device count: {torch.cuda.device_count()}')
+
+# Tenta forçar a inicialização para capturar o erro real
+try:
+    torch._C._cuda_init()
+    print('5. Inicialização interna do CUDA: Sucesso')
+except Exception as e:
+    print(f'5. ERRO na inicialização interna do CUDA: {e}')
+"
+echo "---"
+echo "=== NVIDIA-SMI COMPLETO (Compute Node) ==="
+nvidia-smi
+echo "==========================================="
 echo "---"
 echo "Testando imports críticos:"
 python -c "from flash_attn import flash_attn_func; print('✅ flash-attn importado OK')" || echo "❌ Falha ao importar flash-attn"
