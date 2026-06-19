@@ -45,6 +45,10 @@ cd "$SCRIPT_DIR"
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat01
 
+echo "Configurando variáveis de ambiente..."
+export CUDA_HOME=$CONDA_PREFIX
+export PATH=$CUDA_HOME/bin:$PATH
+
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
