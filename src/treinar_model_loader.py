@@ -154,40 +154,36 @@ class ModelLoader:
         # O max_seq_length de treinamento é aplicado apenas na truncagem de dados
         # (via SFTConfig.max_length), não na arquitetura do modelo.
 
-        # Determina a classe de carregamento: Liger Kernel ou AutoModelForCausalLM
+        # Determina a classe de carregamento e kwargs: Liger Kernel ou AutoModelForCausalLM
+        liger_kwargs = {}
         if use_liger_kernel and _LIGER_DISPONIVEL:
             _model_cls = AutoLigerKernelForCausalLM
+            
+            if getattr(model_config, "_attn_implementation", attn_implementation) != "flash_attention_2" and attn_implementation != "flash_attention_2":
+                print_cores(
+                    "  <amarelo>⚠️  Liger Kernel: desativando cross_entropy pois flash_attention_2 está desativado "
+                    "(evita NaN no eval loss com SDPA)</amarelo>", color_auto=False
+                )
+                liger_kwargs["cross_entropy"] = False
+                liger_kwargs["fused_linear_cross_entropy"] = False
+                
             print_cores(
-                "<verde>🔥 Liger Kernel ativo: fused cross-entropy, RoPE, RMSNorm "
+                "<verde>🔥 Liger Kernel ativo: fused CE/RoPE/RMSNorm "
                 "(economia ~40% VRAM pico)</verde>", color_auto=False
             )
             # Liger Kernel fused loss requer que hidden_states e lm_head.weight
             # estejam no MESMO device. Com device_map="auto" e múltiplas GPUs,
             # o accelerate distribui camadas entre GPUs (model parallelism),
             # causando RuntimeError: "Expected all tensors to be on the same device".
-            # Solução: forçar modelo em uma única GPU quando Liger está ativo.
+            # Solução: desativar cross_entropy no Liger Kernel e usar o do HuggingFace.
             if device_map == "auto" and torch.cuda.device_count() > 1:
-                n_gpus = torch.cuda.device_count()
-                visible = os.environ.get("CUDA_VISIBLE_DEVICES", "não definido")
-                raise RuntimeError(
-                    f"\n{'='*72}\n"
-                    f"❌ ERRO: Liger Kernel + múltiplas GPUs ({n_gpus}) detectadas.\n\n"
-                    f"O Liger Kernel utiliza fused cross-entropy loss, que exige que\n"
-                    f"hidden_states e lm_head.weight estejam no MESMO device.\n"
-                    f"Com device_map='auto' e {n_gpus} GPUs visíveis "
-                    f"(CUDA_VISIBLE_DEVICES={visible}), o modelo seria\n"
-                    f"distribuído entre GPUs, causando erro de device mismatch.\n\n"
-                    f"SOLUÇÕES (escolha uma):\n\n"
-                    f"  1. Restringir a UMA GPU antes de executar:\n"
-                    f"     export CUDA_VISIBLE_DEVICES=0\n"
-                    f"     python treinar_unsloth.py config.yaml\n\n"
-                    f"  2. Usar DDP com torchrun (cada processo usa 1 GPU):\n"
-                    f"     torchrun --nproc_per_node={n_gpus} treinar_unsloth.py config.yaml\n\n"
-                    f"  3. Desativar Liger Kernel no YAML (permite model parallelism):\n"
-                    f"     treinamento:\n"
-                    f"       liger_kernel: false\n"
-                    f"{'='*72}"
+                print_cores(
+                    "  <amarelo>⚠️  Liger Kernel: desativando cross_entropy pois múltiplas GPUs "
+                    "foram detectadas com device_map='auto' (evita erro de device mismatch "
+                    "ao computar a perda)</amarelo>", color_auto=False
                 )
+                liger_kwargs["cross_entropy"] = False
+                liger_kwargs["fused_linear_cross_entropy"] = False
         else:
             _model_cls = AutoModelForCausalLM
             if use_liger_kernel and not _LIGER_DISPONIVEL:
@@ -204,6 +200,7 @@ class ModelLoader:
                 trust_remote_code=trust_remote_code,
                 attn_implementation=attn_implementation,
                 use_cache=use_cache,
+                **liger_kwargs
             )
         except Exception as e:
             logger.warning(f"Falha ao carregar com attn_implementation={attn_implementation}: {e}")
@@ -216,6 +213,7 @@ class ModelLoader:
                 trust_remote_code=trust_remote_code,
                 attn_implementation="sdpa",
                 use_cache=use_cache,
+                **({"cross_entropy": False, "fused_linear_cross_entropy": False} if (use_liger_kernel and _LIGER_DISPONIVEL) else {})
             )
 
         # Tokenizer — NÃO sobrescreve model_max_length.

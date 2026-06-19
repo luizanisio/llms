@@ -1726,7 +1726,15 @@ class LLMsTrainer:
             packing=False,
             per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
             eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
-            use_liger_kernel=treino_cfg.liger_kernel and _LIGER_DISPONIVEL,  # Informa ao TRL para NÃO acessar outputs.logits (Liger fused CE retorna logits=None)
+            # Se flash_attention_2 estiver desativado OU houver múltiplas GPUs (device_map='auto'),
+            # o ModelLoader desativa o fused cross entropy do Liger para evitar NaN / Erro de device.
+            # Portanto, o modelo retornará logits normalmente, e o TRL deve computá-los.
+            use_liger_kernel=(
+                treino_cfg.liger_kernel 
+                and _LIGER_DISPONIVEL 
+                and getattr(treino_cfg, 'flash_attention_2', True)
+                and (torch.cuda.device_count() <= 1)
+            ),
         )
         
         if use_max_length:

@@ -140,5 +140,22 @@ A verificação é feita em **duas camadas**:
 
 ## Diferença entre campo vazio e documento com erro
 
-- **Campo vazio**: o documento foi extraído com sucesso, mas o campo tem valor nulo/vazio. Segue as regras acima.
 - **Documento com erro**: a extração falhou (dict com chave `'erro'`). É tratado pela flag `ignorar_erro_extracao` no YAML — se `true`, o documento é excluído da comparação; se `false`, recebe métricas zeradas.
+
+# Liger Kernel e Múltiplas GPUs (Device Map Auto)
+
+O framework de treinamento possui integração nativa e flexível com o **Liger Kernel** para reduzir consideravelmente o consumo de VRAM através de fusão de operações (Fused RoPE, Fused RMSNorm, Fused Cross Entropy). 
+
+No entanto, o Liger Kernel possui limitações inerentes de *device mismatch* na `CrossEntropyLoss` quando os parâmetros e os dados de entrada são divididos entre múltiplas GPUs (ex: `device_map="auto"`). Além disso, a ausência do *Flash Attention 2* pode gerar erros numéricos (`NaN`) ao computar o loss durante a validação caso a Cross Entropy do Liger esteja habilitada.
+
+### Comportamento Automático do Model Loader
+
+Para tornar a experiência fluida sem perda de recursos, a ferramenta adota as seguintes **medidas de segurança automáticas**:
+
+1. Se `liger_kernel: true` for configurado e o framework detectar o uso de múltiplas GPUs (via `device_map="auto"`), ele **desligará a Fused Cross Entropy do Liger automaticamente**.
+2. O mesmo comportamento de fallback se aplica caso o `flash_attention_2` esteja **desativado**.
+
+**Impacto Prático:**
+- Isso permite que você divida os tensores do modelo em 2 ou mais GPUs sem travar o treinamento com RuntimeError!
+- Você **continua se beneficiando da economia de VRAM** trazida pelo Fused RMSNorm, Fused SwiGLU e Fused RoPE do Liger Kernel nas camadas internas do Transformer.
+- O treinamento e o cálculo de loss na validação (`eval_loss`) ocorrerão corretamente, pois o framework retornará o controle da perda para o HuggingFace usando a `CrossEntropyLoss` padrão e propagando os tensores no ambiente Multi-GPU da forma esperada.

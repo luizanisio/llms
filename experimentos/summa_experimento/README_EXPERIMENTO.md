@@ -81,7 +81,12 @@ A realização da comparação gera um arquivo de divisão de treino, teste e va
 Outro resultado da comparação é o nível de dificuldade de cada instância de acordo com a performance do modelo base e da quantidade de chaves do item.
 Esse arquivo pode ser usado diretamente para o arquivo yaml de treinamento para configuração dos níveis de dificuldade e alvo (treino, teste e avaliação)
 
-# Acrescentar na documentação
-- comparar extrações para gerar divisões completas, devemos configurar "ignorar_erro_extracao: false". Se for true, vai ignorar arquivos com erro mas esses devem ser incluídos como difíceis pois não foram extraídos corretamente.
-- o protocolo c (ou Full Finetuning) precisa que seja configurado no treinamento bits: 16 (vai dar erro quantizar e ser FF)
-- quando usar o liger_kernel com 16 bits, é importante usar também o flash_attention_2, caso contrário pode havel falhas de valores nos cálculos do loss para train e eval.
+# Observações Importantes (Dicas de Treinamento)
+
+- **Comparação de Extrações**: Para gerar divisões completas e consistentes, configure `ignorar_erro_extracao: false`. Se estiver como `true`, arquivos com erro de extração pelo modelo base serão ignorados. Ao manter `false`, eles são contabilizados e classificados (geralmente como "difíceis"), o que é o comportamento desejado para garantir que o modelo aprenda com seus erros de formato.
+- **Full Finetuning (Ex: Protocolo C)**: Ao realizar Full Finetuning, o treinamento exige que o modelo seja carregado em pesos completos ou meia precisão. É fundamental configurar `bits: 16` no YAML (vai dar erro se tentar aplicar Full Finetuning em um modelo quantizado em 4-bits ou 8-bits).
+- **Liger Kernel Inteligente (Múltiplas GPUs e SDPA)**:
+  - O framework possui uma inteligência embarcada para garantir que o **Liger Kernel** calcule a perda corretamente e sem erros (como os problemas de `NaN` no `eval_loss` ou travamentos por *device mismatch*).
+  - **Uso sem Flash Attention 2:** Se o `flash_attention_2` não estiver disponível no servidor, a atenção padrão (SDPA) será usada. O sistema desativará automaticamente a *Fused Cross Entropy* do Liger, evitando o bug de `NaN` em 16-bits.
+  - **Uso com Múltiplas GPUs:** Ao treinar em 2 ou mais GPUs (`device_map="auto"`), a *Fused Cross Entropy* também é desligada automaticamente para permitir que os parâmetros fluam de forma segura e paralela.
+  - Nas duas situações de adaptação, você continua se beneficiando da **economia de VRAM** nas outras operações do Liger (RMSNorm, RoPE, SwiGLU) sem precisar mexer em nada!
