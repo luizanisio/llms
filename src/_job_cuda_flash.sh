@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=treinar_cuda_flash
+#SBATCH --job-name=treinar_pytorch
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -48,35 +48,13 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-echo "1. Rebaixando compiladores C++ para série 13.x (CUDA 12.8 rejeita 14.x)..."
-conda install -c conda-forge "gcc<14.0" "gxx<14.0" -y
 
-echo "2. Instalando compilador nvcc (12.8) via conda..."
-conda install -c nvidia cuda-nvcc=12.8 -y
+echo "1. Instalando pytorch"
+pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu130
 
-echo "3. Configurando variáveis de ambiente..."
-export CUDA_HOME=$CONDA_PREFIX
-export PATH=$CUDA_HOME/bin:$PATH
+echo "1. Instalando requirements"
+pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
 
-echo "Verificando compilador nvcc local do conda..."
-nvcc --version
-
-echo "4. Instalando PyTorch 2.11.0 alinhado para CUDA 12.8..."
-pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
-
-echo "5. Corrigindo dependências acessórias (vLLM, etc)..."
-pip install "setuptools==80.0.0" "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "fsspec<=2026.2.0"
-
-echo "6. Limpando cache do pip..."
-pip cache purge
-
-echo "7. Instalando flash-attn a partir do código fonte (pode demorar ~20 minutos)..."
-# Usa MAX_JOBS proporcional ao cpus-per-task (16) para acelerar o build
-TMPDIR=/var/tmp MAX_JOBS=16 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
-
-echo "=== Testando instalação ==="
-python -c "import torch; print('PyTorch CUDA:', torch.version.cuda); print('GPU Ativada?', torch.cuda.is_available())"
-python -c "from flash_attn import flash_attn_func; print('✅ flash-attn instalado com sucesso _o/')"
-python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('✅ rotary (Triton) OK _o/')"
+python /students/luiz.abatitucci/llms/src/teste_ambiente.py
 
 echo "=== Job de Instalação Finalizado: $(date) ==="
