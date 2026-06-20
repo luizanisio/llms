@@ -159,3 +159,23 @@ Para tornar a experiência fluida sem perda de recursos, a ferramenta adota as s
 - Isso permite que você divida os tensores do modelo em 2 ou mais GPUs sem travar o treinamento com RuntimeError!
 - Você **continua se beneficiando da economia de VRAM** trazida pelo Fused RMSNorm, Fused SwiGLU e Fused RoPE do Liger Kernel nas camadas internas do Transformer.
 - O treinamento e o cálculo de loss na validação (`eval_loss`) ocorrerão corretamente, pois o framework retornará o controle da perda para o HuggingFace usando a `CrossEntropyLoss` padrão e propagando os tensores no ambiente Multi-GPU da forma esperada.
+
+
+## Instalação rápida do ambiente
+```bash
+# 1. Cria e ativa o ambiente
+conda create -n luizbat02 python=3.12.11 -y
+conda activate luizbat02
+# desnecessário se ele já consegue acessar o nvcc --version
+	# 2. Garante o compilador NVCC 13.0 dentro do Conda (segurança)
+	#conda install -c nvidia cuda-nvcc=13.0 -y
+	#export CUDA_HOME=$CONDA_PREFIX
+	#export PATH=$CUDA_HOME/bin:$PATH
+# 3. Baixa o GCC < 14.0 (Muito bem lembrado! O código do Flash Attention às vezes briga com o GCC 14, então é mais seguro usar o 13)
+conda install -c conda-forge "gcc<14.0" "gxx<14.0" -y
+# 4. Força a âncora do PyTorch no CUDA 13.0 PRIMEIRO (Evita que o pip baixe a versão errada)
+pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu130
+# 5. Instala todo o resto
+pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
+
+```
