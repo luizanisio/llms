@@ -19,7 +19,7 @@
 #SBATCH --mem=128G
 
 # Tempo máximo de execução (HH:MM:SS)
-#SBATCH --time=48:00:00
+#SBATCH --time=99:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
 #SBATCH --output=/students/luiz.abatitucci/llms/experimentos/summa_experimento/jobs_logs/%x_%j.out
