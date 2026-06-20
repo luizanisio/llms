@@ -3,7 +3,7 @@
 # ==========================================================================
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
 # ==========================================================================
-# Ambiente: 2x H100 80GB (CUDA_VISIBLE_DEVICES="2,3")
+# Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (etapa única, treino direto)
 # ==========================================================================
 
@@ -89,7 +89,7 @@ modelo:
 #| =========================================================================
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
   liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%

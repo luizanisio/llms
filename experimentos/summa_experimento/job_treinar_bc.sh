@@ -10,7 +10,7 @@
 #SBATCH --partition=gpu
 
 # Recurso de GPU:
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 
 # CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
 #SBATCH --cpus-per-task=32
@@ -38,7 +38,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate luizbat01
+conda activate luizbat02
 
 echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX

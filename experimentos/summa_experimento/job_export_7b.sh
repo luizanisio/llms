@@ -43,7 +43,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate luizbat01
+conda activate luizbat02
 
 echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX
@@ -59,15 +59,15 @@ echo "==============================="
 
 
 #python baixar-qwen7b.py
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
 
 # Mais rodadas para repescagem do que deu erro
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch_hpc.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
 
 echo "=== Job finalizado: $(date) ==="

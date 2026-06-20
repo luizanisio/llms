@@ -102,8 +102,9 @@ treinamento:
   #| Frequência de avaliação (ex: '15%' das steps ou número inteiro).
   eval_steps: 20%
 
-  flash_attention_2: false
-  
+  flash_attention_2: true
+  liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+
   #| Amostras por GPU. Menor gasta menos VRAM.
   #| Para evitar OOM, use 1 ou 2 e aumente grad_batch_size.
   #| ⚠️ Com sequências longas (30k+), o tensor de logits (batch × seq × vocab × 4B)

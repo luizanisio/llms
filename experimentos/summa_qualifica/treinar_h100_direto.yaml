@@ -121,8 +121,11 @@ treinamento:
   #| Validação de tokens segura. Recomendado: true.
   #| Se `false` e o max_seq_length for > 0, o sistema confia na sua configuração
   #| e pula a contagem demorada de tokens para economizar tempo imediato de boot.
-  validar_max_seq_length: true 
-  
+  validar_max_seq_length: true
+
+  flash_attention_2: true    # Atenção O(n) em VRAM em vez de O(n²)
+  liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+
   #| Taxa de aprendizado. QLoRA/LoRA: start 2e-4. RL (DPO): 5e-6.
   #| Se overfitting/loss < 0.2: Reduzir. Se underfitting: Aumentar.
   #| [7B] Modelos maiores são mais sensíveis; force 1e-4.

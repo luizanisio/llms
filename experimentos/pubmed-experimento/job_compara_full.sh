@@ -43,7 +43,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate luizbat01
+conda activate luizbat02
 
 echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX

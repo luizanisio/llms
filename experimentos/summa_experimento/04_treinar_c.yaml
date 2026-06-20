@@ -4,7 +4,7 @@
 # ==========================================================================
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Direto / sem Curriculum)
 # ==========================================================================
-# Ambiente: 2x H100 80GB (CUDA_VISIBLE_DEVICES="2,3")
+# Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (etapa única, treino direto)
 # ==========================================================================
 
