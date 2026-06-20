@@ -20,6 +20,19 @@ Os scripts principais de execução estão organizados na pasta `src/`:
 
 ---
 
+## ⚙️ Configuração do Ambiente Local
+
+Para rodar o pipeline de treinamento localmente, instale o PyTorch com CUDA **manualmente antes** dos demais pacotes (o PyTorch CUDA não está no PyPI padrão). Consulte o guia completo de instalação em [`src/requirements.txt`](./src/requirements.txt).
+
+Após instalar, verifique o ambiente com:
+```bash
+conda activate treina
+python src/teste_ambiente.py
+```
+O script confere todos os pacotes, versões, disponibilidade de CUDA/GPU e flash attention, e exibe dicas de instalação para o que estiver faltando.
+
+---
+
 ## 🛠️ Instalação Básica e Guias de Referência em Notebooks (Colab)
 
 -  Notebook com exemplo para predições: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/luizanisio/llms/blob/main//Git_LuizAnisio_LLMs_GEMMA_exemplos_2025.ipynb)

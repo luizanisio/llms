@@ -1,3 +1,18 @@
+# ==============================================================================
+# ⚠️  LEIA ANTES DE INSTALAR
+# ==============================================================================
+#
+# 1. O PyTorch com CUDA NÃO está no PyPI padrão — instale MANUALMENTE primeiro
+#    (ver Passo 2 ao final). Instalar sem isso resultará na versão CPU do torch,
+#    sem suporte a GPU, CUDA ou flash attention nativo.
+#
+# 2. Após instalar, verifique o ambiente completo com:
+#       python src/teste_ambiente.py
+#    O script verifica pacotes, versões, CUDA, GPU e flash attention,
+#    e exibe dicas de instalação para o que estiver faltando.
+#
+# ==============================================================================
+
 # 🐍 conda create -n treina python=3.13.9
 # 🐍 conda create -n treina python=3.12.11
 
@@ -17,13 +32,19 @@ trl>=0.8.0
 peft>=0.10.0
 datasets>=2.18.0
 sentence-transformers>=5.3.0
+# PyTorch >= 2.0 com CUDA é OBRIGATÓRIO para flash attention nativo via SDPA.
+# (torch.backends.cuda.flash_sdp — disponível sem instalação extra desde PyTorch 2.0)
+# Ver Passo 2 para o comando de instalação do PyTorch cu128.
+# torch>=2.0.0  # instalado manualmente via --index-url (ver Passo 2 abaixo)
 # Opcional: vLLM para inferência de alta performance
 vllm
 # ------------------------
 # Opcional - Otimizadores
 # ver dicas de uso e limitações mais abaixo
-liger-kernel 
-# Flash Attention - ver instruções de instalação manual mais abaixo
+liger-kernel
+# flash-attn é OPCIONAL desde PyTorch >= 2.0 (SDPA nativo oferece a mesma economia de VRAM).
+# Instale apenas se precisar de features avançadas (sliding window, paged attention, FA-3 no H100).
+# Ver instruções de instalação manual (Passo 4) mais abaixo.
 # ------------------------
 
 # Opcional: DeepSpeed para treinamento distribuído (ZeRO)
@@ -64,147 +85,65 @@ openrouter
 openai
 
 # ==============================================================================
-# ⚡ REDUÇÃO DE USO DE VRAM — flash-attn + liger-kernel
+# ⚡ REDUÇÃO DE USO DE VRAM — flash attention + liger-kernel
 # ==============================================================================
-#
-# Ambos os pacotes reduzem VRAM e aumentam throughput, mas atuam em pontos
-# diferentes do pipeline e têm caveats distintos em treinamento multi-GPU.
-# Resumo: são COMPLEMENTARES, não concorrentes. Use os dois juntos quando o
-# ambiente permitir — flash-attn cuida do bloco de atenção, liger-kernel cuida
-# do resto (RMSNorm, RoPE, SwiGLU, Cross-Entropy).
+# São COMPLEMENTARES: flash attention atua no bloco de atenção;
+# liger-kernel atua no restante (RMSNorm, RoPE, Cross-Entropy).
 #
 # ------------------------------------------------------------------------------
-# 🔥 flash-attn — IO-aware exact attention (Tri Dao)
+# 🔥 flash attention — atenção O(n) VRAM vs O(n²) (nunca materializa matriz NxN)
 # ------------------------------------------------------------------------------
 #
-# 🚨 IMPORTANTE: flash-attn DEVE ser compilado do source contra o PyTorch instalado.
-# ❌ NÃO usar wheels pré-compilados (pip install flash-attn) nem conda install,
-# pois geram erro "undefined symbol" por incompatibilidade de ABI com o PyTorch.
-# ❌ NÃO instalar via requirements.txt: ele exige CUDA toolkit visível no shell
-# e deve ser compilado manualmente após instalar o PyTorch.
-# 👇 Ver instruções de instalação manual ao final deste arquivo.
+# OPÇÃO 1 — SDPA nativo do PyTorch >= 2.0 (RECOMENDADA, sem instalação extra)
+#   Ative com: flash_attention_2: true  no YAML de treinamento.
+#   O código detecta torch.backends.cuda.flash_sdp automaticamente.
+#   Economia de VRAM equivalente ao pacote pip para LoRA/QLoRA fine-tuning.
+#   Requisito: PyTorch >= 2.0 com CUDA (Ampere+, inclusive RTX 3060 sm_86).
 #
-# ✅ PRÓS:
-#   • Atenção exata (sem aproximação) com complexidade de memória O(N) em vez
-#     de O(N²) — viabiliza sequências longas (8K, 32K, 128K+).
-#   • 2–4x mais rápido que SDPA padrão do PyTorch em sequências longas;
-#     na A100/Ampere chega a ~70% do FLOPS teórico (FP16/BF16).
-#   • FA-3 no H100 (Hopper): 1.5–2.0x mais rápido que FA-2 graças a TMA,
-#     WGMMA e warp-specialization; suporta FP8 (~1.3 PFLOPS/s).
-#   • Compatível com FSDP, DeepSpeed ZeRO e DDP — é o padrão de facto da
-#     indústria para treinar transformers em múltiplas GPUs.
-#   • Compatível com GQA/MQA (usado por Llama 3, Mistral, Qwen).
+# OPÇÃO 2 — Pacote pip flash-attn (opcional, apenas para features avançadas)
+#   Kernels customizados (Tri Dao) — marginalmente mais rápido em seq. longas.
+#   Necessário apenas para: sliding window attention, paged attention, FA-3 no H100.
+#   ⚠️  DEVE ser compilado do source contra o PyTorch instalado (ver Passo 4).
+#   ❌ NÃO instalar via requirements.txt nem usar wheels pré-compilados
+#      (geram erro "undefined symbol" por incompatibilidade de ABI).
+#   Hardware: requer Ampere+ (sm_80+). T4/Turing: não suportado.
+#   ABI rígida: upgrade do torch invalida o binário — recompilar após qualquer update.
 #
-# ⚠️  CONTRAS / LIMITAÇÕES:
-#   • Compilação dolorosa: 20–60 min, exige CUDA toolkit casado com o PyTorch
-#     e bastante RAM (96GB+ ajudam; em máquina pequena reduzir MAX_JOBS).
-#   • ABI rígida: qualquer upgrade do torch quebra o binário e exige recompilar.
-#   • Hardware restrito: requer Ampere, Ada ou Hopper (sm_80+).
-#       - RTX 3060 (Ampere/sm_86): roda FA-2 normalmente.
-#       - H100/H800 (Hopper/sm_90): habilita FA-3 (FA-2 funciona, mas só usa
-#         ~35% do FLOPS teórico do H100 — desperdiça o hardware novo).
-#       - Turing (T4, RTX 2080): NÃO suportado — usar `flash-attention-turing`.
-#   • bf16 só funciona em Ampere ou superior.
-#   • Head dim > 192 no backward exige A100/H100 (não funciona em RTX 3060).
-#   • Head dims não-power-of-2 (96, 192) e máscaras customizadas podem ter
-#     gaps de cobertura em FA-3 — testar antes de migrar.
-#   • Windows: suporte experimental (>= v2.3.2); compilação ainda instável.
-#
-# 🌐 IMPACTO EM MULTI-GPU:
-#   • Funciona bem em PURE DATA PARALLEL (DDP/FSDP/ZeRO-2/ZeRO-3): cada GPU
-#     processa um shard de dados independente — flash-attn opera no nível do
-#     bloco de atenção local e não vê a comunicação inter-GPU.
-#   • TENSOR PARALLEL (Megatron/TP-style): exige máscaras e shapes específicos;
-#     a integração padrão do HF Transformers nem sempre passa os argumentos
-#     corretos. Validar perplexidade contra SDPA antes de confiar.
-#   • CONTEXT/SEQUENCE PARALLEL (Ring-Attention, Ulysses): NÃO funciona com a
-#     API estándar `flash_attn_func`. Requer kernels específicos
-#     (`flash_attn_varlen_func` + comunicação manual all-to-all). Frameworks
-#     como verl, OpenRLHF e Megatron-LM trazem wrappers prontos; em código
-#     próprio é trabalhoso.
-#   • PIPELINE PARALLEL: ok, mas o pipeline schedule pode emergir como
-#     gargalo antes do attention; ganho marginal vs. SDPA.
-#   • Em treino com PEFT/LoRA + FSDP: ok, desde que `fsdp_use_orig_params=True`.
-#
-# flash-attn   # <-- ver instruções manuais ao final
+# flash-attn   # <-- OPCIONAL; ver Passo 4 ao final
 #
 # ------------------------------------------------------------------------------
 # 🦁 liger-kernel — Triton kernels para LLM training (LinkedIn)
 # ------------------------------------------------------------------------------
+# Patcheia camadas não-atenção com kernels Triton fundidos (RMSNorm, RoPE,
+# SwiGLU, FusedLinearCrossEntropy). Instala via pip em segundos, sem compilação.
 #
-# liger-kernel patcheia camadas NÃO-atenção (RMSNorm, RoPE, SwiGLU, GeGLU,
-# CrossEntropy, FusedLinearCrossEntropy) com kernels Triton fundidos. Compõe
-# com flash-attn — atende ao "resto" do transformer.
+# Benefícios principais:
+#   • FusedLinearCrossEntropy: NUNCA materializa o tensor de logits [B, T, V].
+#     Em Gemma (V=256K) com seq=4K e batch=8: economia de ~16 GB em bfloat16.
+#   • +20% throughput, -60% VRAM em multi-GPU (benchmark LinkedIn, LLaMA-3 8B).
+#   • Habilita contextos 4–8x maiores na mesma GPU.
 #
-# ✅ PRÓS:
-#   • +20% throughput e -60% VRAM em multi-GPU (benchmark LinkedIn em LLaMA-3
-#     8B com 8x A100). Reduz tempo end-to-end em até 3x.
-#   • Computação EXATA (sem aproximação) — passes forward/backward validados
-#     com testes de convergência contra baseline puro PyTorch.
-#   • Dependências mínimas: só Torch + Triton. Sem CUDA toolkit, sem compilação.
-#     Instala via pip em segundos.
-#   • Habilita contextos 4–8x maiores: HF puro estoura OOM a 4K; com Liger,
-#     mesmo modelo escala até 16K–32K na mesma GPU.
-#   • FusedLinearCrossEntropy (FLCE) é o grande diferencial: NUNCA materializa
-#     o tensor de logits [B, T, V]. Em LLaMA-3 (V=128K) ou Gemma (V=256K) com
-#     seq=4K e batch=8, isso economiza ~16.8 GB em bfloat16.
-#   • Compatível com FSDP, DeepSpeed ZeRO/ZeRO++, DDP.
-#   • Integrado em Axolotl, LLaMA-Factory, SFTTrainer, HF Trainer, SWIFT.
-#   • Funciona em AMD (ROCm/MI300X) — único ajuste é warp_size=64.
-#   • Patching de uma linha: `apply_liger_kernel_to_<model>(...)` ou
-#     `AutoLigerKernelForCausalLM.from_pretrained(...)`.
+# Caveats importantes:
+#   • ❌ device_map="auto": NÃO FUNCIONA (kernels assumem mesma GPU para entrada e pesos).
+#   • ⚠️  FSDP + PEFT com modules_to_save: desabilitar fused_linear_cross_entropy=False.
+#   • ⚠️  Tensor/Sequence Parallel: desabilitar patches que tocam linear sharded.
+#   • Cobertura limitada por arquitetura — modelos novos dependem de PR no repo.
 #
-# ⚠️  CONTRAS / LIMITAÇÕES:
-#   • Cobertura de modelos LIMITADA — patcher específico por arquitetura
-#     (Llama, Qwen2/3, Mistral, Mixtral, Gemma, Phi3, Granite, etc.). Modelos
-#     novos só funcionam após PR no repo.
-#   • Triton pode atrapalhar a depuração — tracebacks ficam menos legíveis e
-#     `torch.compile` pode brigar com os kernels patcheados.
-#   • Patching alteração global do modelo: misturar com outras libs que também
-#     patcheiam (Unsloth, xformers) gera conflito silencioso.
-#
-# 🌐 IMPACTO EM MULTI-GPU — onde Liger pode ATRAPALHAR:
-#   • ❌ device_map="auto" (naive model parallel): NÃO FUNCIONA. ValueError
-#     conhecido (Issue #593) porque os kernels assumem que entrada e pesos
-#     estão na mesma GPU. Se você dividir o modelo entre GPUs com device_map,
-#     desative o Liger ou troque para FSDP/DeepSpeed.
-#   • ⚠️  FSDP + PEFT/LoRA com `modules_to_save` (ex.: embeddings treináveis):
-#     bug recorrente (Issues #48, #631 do Liger; #5941 do LLaMA-Factory). A
-#     FLCE quebra com "Output 0 of ViewBackward0 is a view... modified inplace"
-#     quando a lm_head é sharded sob FSDP. Mitigações:
-#       - desabilitar APENAS `fused_linear_cross_entropy=False` e manter os
-#         outros patches (RMSNorm, RoPE, SwiGLU);
-#       - usar `fsdp_use_orig_params=True`;
-#       - ou trocar para DeepSpeed ZeRO-3, onde o problema não ocorre.
-#   • ⚠️  TENSOR PARALLEL: Liger é "single-rank-aware" — os kernels operam em
-#     tensores locais. Se a sua lm_head ou MLP estão TP-sharded, os patches
-#     de FLCE e SwiGLU NÃO sabem disso e podem produzir resultados errados
-#     ou crashar. Em pipeline com TP (Megatron, vLLM TP, Nemo), desabilitar
-#     os patches que tocam linear sharded.
-#   • ⚠️  Sequence Parallel (Megatron-style): também precisa de cuidado com
-#     RMSNorm, que em SP exige reduce_scatter — Liger não faz isso sozinho.
-#   • ✅ FSDP (ZeRO-3 equivalente) puro com DATA PARALLEL: funciona out-of-box.
-#   • ✅ DeepSpeed ZeRO-1/2/3: funciona out-of-box.
-#   • ✅ DDP puro: funciona out-of-box.
-#   • ✅ Combina perfeitamente com flash-attn (são layers diferentes).
-#
-# 📊 QUANDO USAR O QUÊ:
+# 📊 QUANDO USAR:
 #   ┌────────────────────────────────┬──────────────┬──────────────┐
 #   │ Cenário                        │ flash-attn   │ liger-kernel │
 #   ├────────────────────────────────┼──────────────┼──────────────┤
-#   │ Single-GPU SFT/LoRA            │ ✅ Sim       │ ✅ Sim       │
-#   │ Multi-GPU FSDP/DDP (DP puro)   │ ✅ Sim       │ ✅ Sim       │
+#   │ Single-GPU SFT/LoRA            │ ✅ SDPA/pip  │ ✅ Sim       │
+#   │ Multi-GPU FSDP/DDP             │ ✅ Sim       │ ✅ Sim       │
 #   │ Multi-GPU + LoRA + embeddings  │ ✅ Sim       │ ⚠️  Cuidado* │
 #   │ DeepSpeed ZeRO-3               │ ✅ Sim       │ ✅ Sim       │
-#   │ Tensor Parallel (Megatron)    │ ⚠️  Verificar│ ❌ Desligar  │
-#   │ Sequence/Context Parallel      │ ⚠️  Avançado │ ❌ Desligar  │
+#   │ Tensor / Sequence Parallel     │ ⚠️  Verificar│ ❌ Desligar  │
 #   │ device_map="auto"              │ ✅ Sim       │ ❌ Quebra    │
 #   │ H100 / Hopper                  │ ✅ FA-3 FP8  │ ✅ Sim       │
-#   │ RTX 3060 / Ampere consumer     │ ✅ FA-2      │ ✅ Sim       │
-#   │ T4 / Turing                    │ ❌ (use 1.x) │ ✅ Sim       │
+#   │ RTX 3060 / Ampere consumer     │ ✅ SDPA/FA-2 │ ✅ Sim       │
+#   │ T4 / Turing                    │ ❌ pip N/A   │ ✅ Sim       │
 #   └────────────────────────────────┴──────────────┴──────────────┘
-#   * Desabilitar APENAS `fused_linear_cross_entropy` quando lm_head sharded
-#     em FSDP + PEFT com `modules_to_save`.
+#   * Desabilitar fused_linear_cross_entropy quando lm_head sharded em FSDP + PEFT.
 #
 # liger-kernel
 
@@ -254,6 +193,7 @@ openai
 #
 #         Versão do pacote de desenvolvimento: 
 #           nvcc --version
+#           gcc --version
 #
 #       Flash Attention 2
 #           - pip cache purge
@@ -307,7 +247,8 @@ openai
 #   pip install "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "cuda-pathfinder>=1.4.2"
 #
 # ==============================================================================
-# ⚡ PASSO 4 — Compilar o flash-attn do source (OBRIGATÓRIO)
+# ⚡ PASSO 4 — Compilar o flash-attn do source (OPCIONAL — só se precisar de
+#             sliding window / FA-3 no H100; PyTorch >= 2.0 já cobre o resto)
 # ==============================================================================
 #
 #   ⚠️  Garantir que o shell enxerga o toolkit antes de compilar:
@@ -321,8 +262,12 @@ openai
 #       # ⏱️  ~20 minutos com MAX_JOBS=8
 #
 #   🏠 [B] RTX 3060 / WSL2 (menos CPUs disponíveis):
-#       TMPDIR=/var/tmp MAX_JOBS=4 pip install flash-attn --no-build-isolation --force-reinstall
-#       # ⏱️  ~40-60 minutos com MAX_JOBS=4; reduza para MAX_JOBS=2 se a máquina travar
+#       TORCH_CUDA_ARCH_LIST="8.6" MAX_JOBS=1 pip install flash-attn --no-build-isolation --force-reinstall
+#       # ⏱️  ~60-90 minutos com MAX_JOBS=1
+#       # ⚠️  TORCH_CUDA_ARCH_LIST="8.6" compila apenas para a RTX 3060 (Ampere sm_86),
+#       #     reduzindo de 4 para 1 os processos cicc simultâneos (~3 GB RAM vs ~12 GB)
+#       # ⚠️  MAX_JOBS=1 evita pico de memória que derruba o WSL2 durante a compilação
+#       # 💡 Alternativa sem compilação: PyTorch >= 2.0 já inclui SDPA com flash attention
 #
 #   🔑 Flags importantes:
 #   - --no-build-isolation  usa o PyTorch já instalado no env (garante ABI correta)
@@ -332,51 +277,50 @@ openai
 # ✅ PASSO 5 — Verificar se tudo funciona
 # ==============================================================================
 #
-#   python -c "import torch; print(torch.__version__)"
-#   python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"
-#   python -c "from flash_attn.ops.triton.rotary import apply_rotary; print('rotary OK')"
-#   python -c "import vllm; print(vllm.__version__)"
+#   python src/teste_ambiente.py
+#
+#   O script verifica todos os pacotes, versões, CUDA, GPU, SDPA backends e
+#   flash attention, exibindo dicas de instalação para o que estiver faltando.
+#
+#   Verificações manuais rápidas (se preferir):
+#   python -c "import torch; print(torch.__version__, '| CUDA:', torch.cuda.is_available())"
+#   python -c "import torch; print('flash_sdp:', torch.backends.cuda.flash_sdp_enabled())"
+#   python -c "import vllm; print('vllm', vllm.__version__)"
 #   python -c "from liger_kernel.transformers import AutoLigerKernelForCausalLM; print('liger OK')"
+#   python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"  # se instalado
 #
 # ==============================================================================
 # 🆘 SOLUÇÃO DE PROBLEMAS
 # ==============================================================================
 #
-# ❌ Erro "CUDA_HOME environment variable is not set":
-#   → nvcc não está no PATH.
-#   → 🔍 Verificar: which nvcc
-#   → Se não encontrar: instalar cuda-toolkit-12-8 conforme Passo 0.
-#   → Se encontrar: exportar CUDA_HOME, PATH e LD_LIBRARY_PATH antes do pip.
+# ❌ "CUDA_HOME environment variable is not set" (ao compilar flash-attn):
+#   → nvcc não está no PATH. Verificar: which nvcc
+#   → Exportar antes do pip: export CUDA_HOME=...; export PATH=$CUDA_HOME/bin:$PATH
 #
-# ❌ Erro "undefined symbol: _ZN3c104cuda...":
-#   → flash-attn foi compilado contra um CUDA diferente do PyTorch.
-#   → 🔧 Solução: garantir CUDA_HOME=/usr/local/cuda-12.8 e repetir o Passo 4.
+# ❌ "undefined symbol: _ZN3c104cuda..." (ao importar flash-attn):
+#   → flash-attn compilado contra CUDA diferente do PyTorch.
+#   → Garantir CUDA_HOME casado com torch.version.cuda e recompilar (Passo 4).
 #
-# ❌ Erro "No space left on device":
-#   → 🔧 Usar TMPDIR=/var/tmp antes do pip.
+# ❌ "No space left on device":
+#   → Usar TMPDIR=/var/tmp antes do pip.
 #
 # ❌ Liger + FSDP: "Output 0 of ViewBackward0 is a view... modified inplace":
 #   → Conflito FLCE + FSDP-sharded lm_head + PEFT modules_to_save.
-#   → 🔧 Desabilitar APENAS o FLCE no patcher:
-#       apply_liger_kernel_to_llama(fused_linear_cross_entropy=False,
-#                                   cross_entropy=True, rms_norm=True,
-#                                   rope=True, swiglu=True)
-#   → Alternativa: usar `fsdp_use_orig_params=True` ou migrar para DeepSpeed ZeRO-3.
+#   → Desabilitar apenas o FLCE: fused_linear_cross_entropy=False no patcher.
+#   → Alternativa: fsdp_use_orig_params=True ou migrar para DeepSpeed ZeRO-3.
 #
 # ❌ Liger + device_map="auto": ValueError em forward:
-#   → Liger não suporta naive model parallel (Issue #593 do repo linkedin/Liger-Kernel).
-#   → 🔧 Migrar para FSDP/DeepSpeed (data parallel) ou desativar Liger nesse run.
+#   → Liger não suporta model parallel. Migrar para FSDP/DeepSpeed ou desativar Liger.
 #
 # ❌ FA-2 lento no H100 (<40% utilização):
-#   → FA-2 não usa TMA/WGMMA do Hopper.
-#   → 🔧 No H100, compilar a branch hopper do flash-attn para habilitar FA-3.
+#   → FA-2 não usa TMA/WGMMA do Hopper. Compilar branch hopper do flash-attn (FA-3).
 #
-# ⚠️  pip fez upgrade do torch ou quebrou dependências do vLLM/cuda-python:
-#   → Reverter PyTorch: pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
-#   → Reverter pacotes PyPI bagunçados: pip install "setuptools==80.0.0" "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "fsspec<=2026.2.0"
-#   → ⚠️  Importante: qualquer downgrade/upgrade do torch invalida o flash-attn compilado;
-#     será preciso recompilar o flash-attn (Passo 4) passando `--no-deps` no pip para evitar atualizar o PyTorch de novo.
+# ⚠️  pip atualizou o torch e quebrou dependências:
+#   → Reverter: pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
+#   → Realinhar: pip install "setuptools==80.0.0" "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "fsspec<=2026.2.0"
+#   → Qualquer troca de versão do torch invalida o flash-attn compilado — recompilar.
 #
-# 🏠 RTX 3060 — compilação muito lenta ou máquina travando:
-#   → Reduzir MAX_JOBS: MAX_JOBS=2 pip install flash-attn --no-build-isolation --force-reinstall
+# 🏠 RTX 3060 / WSL2 — WSL trava durante compilação do flash-attn:
+#   → Usar TORCH_CUDA_ARCH_LIST="8.6" MAX_JOBS=1 (ver Passo 4).
+#   → Alternativa: PyTorch >= 2.0 já inclui SDPA equivalente, sem compilação.
 # ==============================================================================

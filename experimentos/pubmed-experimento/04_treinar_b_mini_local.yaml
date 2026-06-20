@@ -62,6 +62,7 @@ curriculum:
   divisao:
     #| Divisão principal, pois é um treinamento direto de etapa única
     - arquivo: compara/divisao_mini_300.csv
+    #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
       dataset_filtro: {"dificuldade": "facil"}
       alias: "facil"
       tipo: "lora"
@@ -70,6 +71,7 @@ curriculum:
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 8192
     - arquivo: compara/divisao_mini_300.csv
+    #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
       dataset_filtro: {"dificuldade": "medio"}
       alias: "médio"
       tipo: "lora"
@@ -78,8 +80,17 @@ curriculum:
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 8192
     - arquivo: compara/divisao_mini_300.csv
+    #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
       dataset_filtro: {"dificuldade": "dificil"}
       alias: "dificil"
+      tipo: "lora"
+      #| Número de vezes que o modelo verá o dataset (epochs)
+      pace_epochs: 1
+      #| Limite de tokens da janela de contexto para este dataset
+      max_seq_length: 8192
+    - arquivo: compara/divisao_mini_300.csv
+      #dataset_filtro: {"dificuldade": "dificil"}
+      alias: "completo"
       tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 1
@@ -94,9 +105,9 @@ modelo:
   #| Caminho do modelo pré-treinado usado como fundação
   base_model_name: Qwen2.5-1.5B-Instruct
   #| Diretório final onde os pesos atualizados (adaptador LoRA) serão salvos
-  saida: treinos_local/Qwen2.5-1.5B-Instruct(b)
+  saida: treinos_local/Qwen2.5-1.5B-Instruct(b-mini)
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
-  ollama: Qwen2.5-1.5B-Instruct(b):latest
+  ollama: Qwen2.5-1.5B-Instruct(b-mini):latest
   ollama_base: qwen2.5:1.5b
   ollama_url: 
 
@@ -105,7 +116,7 @@ modelo:
 #| =========================================================================
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
+  flash_attention_2: true    # Atenção O(n) em VRAM em vez de O(n²)
   liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%

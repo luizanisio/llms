@@ -77,10 +77,16 @@ import torch
 # Liger Kernel: fused cross-entropy + fused RoPE + fused RMSNorm
 #   Reduz pico de VRAM ~40% ao evitar materializar tensor de logits completo
 #   (batch × seq_len × vocab_size × 4B). Crítico para sequências longas (>16k tokens).
-# Flash Attention 2: atenção O(n) vs O(n²) em VRAM.
-# A disponibilidade é verificada pelo treinar_model_loader.py.
-# Se ativados no YAML e não instalados, o treinamento será interrompido com instruções.
-from treinar_model_loader import _LIGER_DISPONIVEL, _FLASH_ATTN_DISPONIVEL
+# Flash Attention: atenção O(n) vs O(n²) em VRAM.
+#   Primário: SDPA nativo do PyTorch >= 2.0 (torch.backends.cuda.flash_sdp).
+#   Alternativo: pacote pip flash-attn (kernels customizados, instalação manual necessária).
+# Se ativados no YAML e não disponíveis, o treinamento será interrompido com instruções.
+from treinar_model_loader import (
+    _LIGER_DISPONIVEL,
+    _FLASH_ATTN_DISPONIVEL,
+    _FLASH_ATTN_SDPA_DISPONIVEL,
+    _FLASH_ATTN_PACOTE_DISPONIVEL,
+)
 
 
 import pandas as pd
@@ -1280,12 +1286,18 @@ class LLMsTrainer:
         if use_flash_attn and not _FLASH_ATTN_DISPONIVEL:
             raise RuntimeError(
                 "\n" + "=" * 70 + "\n"
-                "❌ Flash Attention 2 está ATIVADO no YAML (treinamento.flash_attention_2: true)\n"
-                "   mas o pacote 'flash-attn' não está instalado.\n\n"
+                "❌ Flash Attention está ATIVADO no YAML (treinamento.flash_attention_2: true)\n"
+                "   mas não está disponível no ambiente atual.\n\n"
+                f"   PyTorch {torch.__version__}:\n"
+                f"     - SDPA nativo (flash_sdp): {'✅ disponível' if _FLASH_ATTN_SDPA_DISPONIVEL else '❌ NÃO disponível'}\n"
+                f"     - Pacote pip flash-attn:   {'✅ instalado' if _FLASH_ATTN_PACOTE_DISPONIVEL else '❌ NÃO instalado'}\n\n"
                 "Opções:\n"
-                "  1. Instalar: pip install flash-attn --no-build-isolation\n"
-                "  2. Desativar no YAML: flash_attention_2: false\n"
-                "     (usará SDPA como fallback, mais lento e mais memória)\n"
+                "  1. Atualizar para PyTorch >= 2.0 com CUDA:\n"
+                "     pip install torch>=2.0 --index-url https://download.pytorch.org/whl/cu128\n"
+                "     (SDPA nativo oferece a mesma economia de VRAM O(n) sem instalação extra)\n"
+                "  2. Instalar o pacote flash-attn (kernels customizados, compilação ~40 min):\n"
+                "     TORCH_CUDA_ARCH_LIST='8.6' MAX_JOBS=1 pip install flash-attn --no-build-isolation\n"
+                "  3. Desativar no YAML: flash_attention_2: false\n"
                 + "=" * 70
             )
 
@@ -1303,12 +1315,26 @@ class LLMsTrainer:
                 + "=" * 70
             )
 
-        attn_impl = "flash_attention_2" if use_flash_attn else "sdpa"
+        # Seleciona implementação de atenção:
+        # - Pacote flash-attn instalado: usa kernels customizados (flash_attention_2)
+        # - Caso contrário: SDPA nativo do PyTorch >= 2.0, que já usa flash attention
+        #   internamente via torch.backends.cuda.flash_sdp — economia de VRAM equivalente
+        if use_flash_attn:
+            attn_impl = "flash_attention_2" if _FLASH_ATTN_PACOTE_DISPONIVEL else "sdpa"
+        else:
+            attn_impl = "sdpa"
 
         # Log das otimizações ativas
+        if use_flash_attn:
+            _flash_status = (
+                "✅ ativo (pacote flash-attn)" if _FLASH_ATTN_PACOTE_DISPONIVEL
+                else "✅ ativo (SDPA nativo PyTorch — equivalente para LoRA fine-tuning)"
+            )
+        else:
+            _flash_status = "❌ desativado (usando SDPA padrão)"
         print_cores(f"<cinza>   🛠️  Otimizações de memória GPU:</cinza>", color_auto=False)
-        print_cores(f"<cinza>      - Flash Attention 2: {'✅ ativo' if use_flash_attn else '❌ desativado (usando SDPA)'}</cinza>", color_auto=False)
-        print_cores(f"<cinza>      - Liger Kernel:      {'✅ ativo (fused CE + RoPE + RMSNorm)' if use_liger else '❌ desativado'}</cinza>", color_auto=False)
+        print_cores(f"<cinza>      - Flash Attention: {_flash_status}</cinza>", color_auto=False)
+        print_cores(f"<cinza>      - Liger Kernel:    {'✅ ativo (fused CE + RoPE + RMSNorm)' if use_liger else '❌ desativado'}</cinza>", color_auto=False)
 
         # Configuração de quantização
         nbits = self._yaml_config.treinamento.nbits

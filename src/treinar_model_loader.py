@@ -44,11 +44,23 @@ try:
 except ImportError:
     _LIGER_DISPONIVEL = False
 
+# Flash Attention — duas fontes independentes:
+#   SDPA nativo: PyTorch >= 2.0 já inclui flash attention via torch.backends.cuda.flash_sdp.
+#     Economia de VRAM equivalente ao pacote pip para fine-tuning com LoRA.
+#     Não exige instalação extra — disponível sempre que CUDA + PyTorch >= 2.0.
+#   Pacote pip flash-attn: kernels customizados (Tri Dao), marginalmennte mais rápido
+#     em sequências longas e com mais features (sliding window, paged attn).
+#     Exige compilação manual (~40 min); ABI vinculada à versão do PyTorch instalado.
+_FLASH_ATTN_SDPA_DISPONIVEL = (
+    torch.cuda.is_available() and torch.backends.cuda.flash_sdp_enabled()
+)
 try:
     from transformers.utils import is_flash_attn_2_available
-    _FLASH_ATTN_DISPONIVEL = is_flash_attn_2_available()
+    _FLASH_ATTN_PACOTE_DISPONIVEL = is_flash_attn_2_available()
 except Exception:
-    _FLASH_ATTN_DISPONIVEL = False
+    _FLASH_ATTN_PACOTE_DISPONIVEL = False
+
+_FLASH_ATTN_DISPONIVEL = _FLASH_ATTN_SDPA_DISPONIVEL or _FLASH_ATTN_PACOTE_DISPONIVEL
 
 
 # ---------------------------------------------------------------------------

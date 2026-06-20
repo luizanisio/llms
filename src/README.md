@@ -50,7 +50,7 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `treinar_unsloth_logging.py` | Centralized logging configuration (levels, timestamps, file + console output) |
 | `treinar_unsloth_monitor.py` | Resource monitor — continuous RAM/GPU tracking during predictions |
 | `treinar_unsloth_dicas.py` | Inline documentation hints injected into YAML configuration files |
-| `treinar_model_loader.py` | Model loading via HF Transformers + PEFT (base & LoRA), 4-bit/8-bit quantization |
+| `treinar_model_loader.py` | Model loading via HF Transformers + PEFT (base & LoRA), 4-bit/8-bit quantization. Flash attention via PyTorch SDPA nativo (primário, PyTorch >= 2.0) ou pacote `flash-attn` (alternativa). |
 | `treinar_chat_templates.py` | Native HF chat-template module — auto-detects template by model family |
 | `treinar_vllm_inference.py` | Fast inference engine using vLLM (PagedAttention, continuous batching, multi-GPU) |
 | `treinar_realizar_predicoes.py` | Prediction and interactive inference classes for LLM models (HF, vLLM, Unsloth, Ollama) |
@@ -175,7 +175,12 @@ conda activate luizbat02
 conda install -c conda-forge "gcc<14.0" "gxx<14.0" -y
 # 4. Força a âncora do PyTorch no CUDA 13.0 PRIMEIRO (Evita que o pip baixe a versão errada)
 pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu130
-# 5. Instala todo o resto
+# 5. Instala todo o resto 
+#(verifique o path)
 pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
+# ou (verifique o path)
+pip install -r /mnt/d/wsl_dev/llms/src/requirements.txt
+# ou (verifique o path)
+pip install -r ./src/requirements.txt
 
 ```
