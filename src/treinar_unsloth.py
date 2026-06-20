@@ -1220,8 +1220,8 @@ class LLMsTrainer:
                 return None
             
             # Desativa temporariamente o filtro de divisão específico da etapa usando o filtro global original
-            filtro_original = self._yaml_config.curriculum.divisao.dataset_filtro
-            self._yaml_config.curriculum.divisao.dataset_filtro = getattr(self, "_global_dataset_filtro_divisao", None)
+            filtro_original = self._yaml_config.curriculum_config.divisao.dataset_filtro
+            self._yaml_config.curriculum_config.divisao.dataset_filtro = getattr(self, "_global_dataset_filtro_divisao", None)
             
             try:
                 # Carrega mensagens de validação usando a divisão unificada
@@ -1230,7 +1230,7 @@ class LLMsTrainer:
                 )
             finally:
                 # Restaura filtro
-                self._yaml_config.curriculum.divisao.dataset_filtro = filtro_original
+                self._yaml_config.curriculum_config.divisao.dataset_filtro = filtro_original
             
             if not mensagens:
                 return None
