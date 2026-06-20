@@ -195,11 +195,6 @@ openai
 #           nvcc --version
 #           gcc --version
 #
-#       Flash Attention 2
-#           - pip cache purge
-#           - pip install flash-attn --no-build-isolation --no-deps --force-reinstall
-#       OU com jobs
-   #        - TMPDIR=/var/tmp MAX_JOBS=16 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
 #       ↘️ vá para o PASSO 5 para testar a instalação
 #
 #   🏠 [B] RTX 3060 / WSL2 Debian 13 — instala o toolkit mais recente (13.x),
@@ -277,7 +272,7 @@ openai
 # ✅ PASSO 5 — Verificar se tudo funciona
 # ==============================================================================
 #
-#   python src/teste_ambiente.py
+#   💡 python src/teste_ambiente.py
 #
 #   O script verifica todos os pacotes, versões, CUDA, GPU, SDPA backends e
 #   flash attention, exibindo dicas de instalação para o que estiver faltando.

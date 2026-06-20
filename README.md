@@ -20,16 +20,53 @@ Os scripts principais de execução estão organizados na pasta `src/`:
 
 ---
 
-## ⚙️ Configuração do Ambiente Local
+## ⚙️ Instalação rápida do ambiente
 
-Para rodar o pipeline de treinamento localmente, instale o PyTorch com CUDA **manualmente antes** dos demais pacotes (o PyTorch CUDA não está no PyPI padrão). Consulte o guia completo de instalação em [`src/requirements.txt`](./src/requirements.txt).
+> O PyTorch com CUDA **não está no PyPI padrão** — deve ser instalado manualmente com o índice correto para a sua versão de CUDA. Instalar sem isso resultará na versão CPU do torch.
+> Para detalhes e solução de problemas, consulte [`src/requirements.txt`](./src/requirements.txt).
 
-Após instalar, verifique o ambiente com:
+### 1. Identificar a versão do CUDA
+
 ```bash
+nvidia-smi        # coluna "CUDA Version" no canto superior direito — versão máxima suportada pelo driver
+nvcc --version    # versão do toolkit instalado (pode ser menor que a do driver)
+```
+
+Use o **maior índice disponível** no PyTorch que seja ≤ à versão do driver:
+
+| Driver CUDA | Índice PyTorch |
+|---|---|
+| ≥ 12.8 | `cu128` |
+| ≥ 12.4 | `cu124` |
+| ≥ 12.1 | `cu121` |
+| ≥ 11.8 | `cu118` |
+
+### 2. Criar o ambiente conda
+
+```bash
+conda create -n treina python=3.13.9 -y
 conda activate treina
+```
+
+### 3. Instalar o PyTorch (substituir `cu128` pelo índice correto)
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+```
+
+### 4. Instalar os demais pacotes
+
+```bash
+TMPDIR=/var/tmp pip install -r src/requirements.txt
+```
+
+### 5. Verificar o ambiente
+
+```bash
 python src/teste_ambiente.py
 ```
-O script confere todos os pacotes, versões, disponibilidade de CUDA/GPU e flash attention, e exibe dicas de instalação para o que estiver faltando.
+
+O script confere todos os pacotes, versões, CUDA, GPU e flash attention, e exibe dicas de instalação para o que estiver faltando.
 
 ---
 
