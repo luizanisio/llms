@@ -272,7 +272,8 @@ class MetricsLoggerCallback(TrainerCallback):
                  etapa_index: int = 0, instancias_previas: int = 0,
                  step_offset: int = 0, epoch_offset: float = 0.0,
                  media_tokens_por_instancia: float = 0, tokens_previos: int = 0,
-                 retomada: bool = False, modelo_alias: str = ""):
+                 retomada: bool = False, modelo_alias: str = "",
+                 historico=None):
         """
         Args:
             output_dir: Diretório onde salvar o arquivo de métricas
@@ -304,6 +305,7 @@ class MetricsLoggerCallback(TrainerCallback):
         self._effective_batch_size = 1  # Calculado em on_train_begin
         self._media_tokens_por_instancia = media_tokens_por_instancia
         self._tokens_previos = tokens_previos
+        self._historico = historico
         
         # Cria diretório; trunca arquivo apenas na primeira etapa e se NÃO for retomada
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
@@ -425,6 +427,37 @@ class MetricsLoggerCallback(TrainerCallback):
         # Métricas de treinamento
         if "loss" in logs:
             val = logs["loss"]
+            
+            # --- DETECÇÃO DE COLAPSO DE LOSS ---
+            if val == 0.0 or val > 1000 or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
+                if not getattr(self, "_alerta_colapso_emitido", False):
+                    self._alerta_colapso_emitido = True
+                    msg_console = (
+                        f"\n<fundo_vermelho><branco> ⚠️ ALERTA CRÍTICO: Possível colapso no treinamento detectado! </branco></fundo_vermelho>\n"
+                        f"<vermelho>   O loss relatado pelo modelo é {val} no step {state.global_step}.\n"
+                        f"   Isso significa que o modelo parou de aprender. Valores NaN/Inf costumam ser limpos para 0.0.\n\n"
+                        f"   Recomendações para corrigir isso (altere o YAML):\n"
+                        f"   1) Reduza o 'learning_rate' drasticamente (ex: de 2e-5 para 5e-6).\n"
+                        f"   2) Se usar 'train_on_responses_only: true' + 'liger_kernel: true', pode haver\n"
+                        f"      instabilidade numérica (fused CE com muitos labels mascarados). Tente desativar um deles.</vermelho>\n"
+                    )
+                    from util_print import print_cores
+                    print_cores(msg_console, color_auto=False)
+                    
+                    if self._historico:
+                        detalhes = (
+                            f"- **Loss registrado:** `{val}` no step {state.global_step}\n"
+                            f"- **Diagnóstico:** O modelo parou de aprender. O gradient pode ter explodido "
+                            f"(loss enorme > 1000) ou colapsado (loss 0.0, geralmente sinal de NaN/Inf sendo mascarado).\n"
+                            f"- **Recomendações:**\n"
+                            f"  1. Reduza o `learning_rate` significativamente (ex: de `2e-5` para `5e-6`).\n"
+                            f"  2. Tente definir `liger_kernel: false` para usar a Cross-Entropy padrão do PyTorch, "
+                            f"pois o fused CE pode ser instável com altas proporções de labels ignorados (`-100`) "
+                            f"gerados pelo `train_on_responses_only: true`."
+                        )
+                        self._historico.registrar_evento("🚨 ALERTA CRÍTICO: COLAPSO DE LOSS DETECTADO", detalhes)
+            # -----------------------------------
+            
             if not (isinstance(val, float) and math.isnan(val)):
                 registro["train_loss"] = round(val, 6)
                 self._train_losses.append(val)
@@ -1920,6 +1953,7 @@ class LLMsTrainer:
             tokens_previos=tokens_previos,
             retomada=is_retomada,
             modelo_alias=self._yaml_config.modelo.alias,
+            historico=self.historico,
         ))
         
         # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding + limpeza)
