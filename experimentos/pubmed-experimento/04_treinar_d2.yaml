@@ -12,12 +12,12 @@
 #| =========================================================================
 #| Configurações diversas (logs, variáveis de ambiente).
 misc:
-  pastas_base: 
-    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
-    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
-  pastas_modelos:  
-    - /students/luiz.abatitucci/models
-    - /mnt/d/wsl_ollama/hf-models
+  pastas_base:
+  - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+  - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+  pastas_modelos:
+  - /students/luiz.abatitucci/models
+  - /mnt/d/wsl_ollama/hf-models
 #   log_level: DEBUG
 #   env_chave_criptografia: CHAVE_CRIPT
 
@@ -38,7 +38,7 @@ curriculum:
     #| Formato estruturado esperado
     formato: json
     texto_criptografado: false
-  
+
   #| Entrada: Especifica os dados que o modelo vai receber como prompt
   entrada:
     #| Arquivo parquet com o texto fonte a ser processado
@@ -52,52 +52,51 @@ curriculum:
     tag_texto: '<<--TEXTO-->>'
     texto_criptografado: false
     prompt_criptografado: false
-  
+
   validacao:
     exigir_json_valido: true
     #| exigir_ids_pareados: Validação estrita de pares. Se `true`, o treinamento será interrompido com erro se houver IDs na entrada sem correspondente na saída (gold dataset) ou se existirem dados pareados ausentes no arquivo de divisão (CSV). Se `false`, o sistema ignora as sobras e treina apenas com os itens em comum (interseção), útil quando a entrada possui itens extras que ainda não têm gabarito na saída.
     exigir_ids_pareados: false
-  
+
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   divisao:
     #| Divisão principal, pois é um treinamento direto de etapa única
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "facil"}
-      alias: "fácil"
-      tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-      learning_rate: 0.000005
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "medio"}
-      alias: "médio"
-      tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "dificil"}
-      alias: "difícil"
-      tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      #dataset_filtro: {"dificuldade": "medio"}
-      alias: "completo-FF"
-      tipo: "full"
-      #| learning_rate local para sobrescrever o valor global apenas nesta etapa. Útil para separar FF de LoRA.
-      learning_rate: 0.000005
-      #| Número de vezes que o modelo verá o dataset (epochs)
-      pace_epochs: 2
-      batch_size: 1
-      #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
-    
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil"
+    tipo: "lora"
+    #| Número de vezes que o modelo verá o dataset (epochs)
+    pace_epochs: 2
+    #| Limite de tokens da janela de contexto para este dataset
+    max_seq_length: 8192
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio"
+    tipo: "lora"
+    #| Número de vezes que o modelo verá o dataset (epochs)
+    pace_epochs: 2
+    #| Limite de tokens da janela de contexto para este dataset
+    max_seq_length: 8192
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil"
+    tipo: "lora"
+    #| Número de vezes que o modelo verá o dataset (epochs)
+    pace_epochs: 2
+    #| Limite de tokens da janela de contexto para este dataset
+    max_seq_length: 8192
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    #dataset_filtro: {"dificuldade": "medio"}
+    alias: "completo-FF"
+    tipo: "full"
+    #| learning_rate local para sobrescrever o valor global apenas nesta etapa. Útil para separar FF de LoRA.
+    learning_rate: 5e-06 # Padrão para Full FT
+    #| Número de vezes que o modelo verá o dataset (epochs)
+    pace_epochs: 2
+    batch_size: 1
+    #| Limite de tokens da janela de contexto para este dataset
+    max_seq_length: 8192
+
 
 #| =========================================================================
 #| MODELO
@@ -111,7 +110,7 @@ modelo:
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
   ollama: Qwen2.5-1.5B-Instruct(d2):latest
   ollama_base: qwen2.5:1.5b
-  ollama_url: 
+  ollama_url:
 
 #| =========================================================================
 #| TREINAMENTO
@@ -122,32 +121,32 @@ treinamento:
   liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
-  
+
   #| Configuração do tamanho do lote (batch). Lote por GPU é 2, com acumulação de 8.
   batch_size:
     efetivo: 16
     batch_size: 2
   grad_batch_size: 8
-  
+
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
   max_seq_length: 16384
-  validar_max_seq_length: true 
-  
+  validar_max_seq_length: true
+
   #| Taxa de aprendizado base, otimizada para full finetuning
-  learning_rate: 0.00002
+  learning_rate: 0.0002
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
-  
+
   #| Curva de decaimento da taxa de aprendizado (suaviza nos passos finais)
   lr_scheduler_type: cosine
   seed: 3407
-  
+
   #| Realiza o treinamento em 16-bits (Full)
   nbits: 16
-  
+
   #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
   train_on_responses_only: true

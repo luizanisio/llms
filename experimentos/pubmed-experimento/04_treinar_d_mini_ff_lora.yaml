@@ -11,12 +11,12 @@
 #| MISCELÂNEA
 #| =========================================================================
 misc:
-  pastas_base: 
-    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
-    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
-  pastas_modelos:  
-    - /students/luiz.abatitucci/models
-    - /mnt/d/wsl_ollama/hf-models
+  pastas_base:
+  - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+  - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+  pastas_modelos:
+  - /students/luiz.abatitucci/models
+  - /mnt/d/wsl_ollama/hf-models
 
 #| =========================================================================
 #| CURRICULUM
@@ -28,7 +28,7 @@ curriculum:
     dataframe_id: chave
     formato: json
     texto_criptografado: false
-  
+
   entrada:
     dataframe: dados/pubmed-rct-20k.parquet
     dataframe_col: article
@@ -37,28 +37,26 @@ curriculum:
     tag_texto: '<<--TEXTO-->>'
     texto_criptografado: false
     prompt_criptografado: false
-  
+
   validacao:
     exigir_json_valido: true
     exigir_ids_pareados: false
-  
+
   divisao:
     #| 1ª Divisão: Treinamento FULL (Forçará nbits=16)
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "facil"}
-      alias: "fácil-FF"
-      tipo: "full"
-      pace_epochs: 1
-      batch_size: 1
-      # max_seq_length: 8192
-      
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-FF"
+    tipo: "full"
+    pace_epochs: 1
+    batch_size: 1
+    learning_rate: 5e-06 # Padrão para Full FT
     #| 2ª Divisão: Treinamento LORA (Retornará ao nbits global=4)
-    - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      dataset_filtro: {"dificuldade": "medio"}
-      alias: "médio"
-      tipo: "lora"
-      pace_epochs: 1
-      # max_seq_length: 8192
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio"
+    tipo: "lora"
+    pace_epochs: 1
 
 #| =========================================================================
 #| MODELO
@@ -77,27 +75,27 @@ treinamento:
   liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
-  
+
   batch_size:
     efetivo: 16
     batch_size: 2
   grad_batch_size: 8
-  
+
   num_train_epochs: 2
   max_seq_length: 8192
-  validar_max_seq_length: true 
-  
-  learning_rate: 0.00002
+  validar_max_seq_length: true
+
+  learning_rate: 0.0002
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
-  
+
   lr_scheduler_type: cosine
   seed: 3407
-  
+
   #| Quantização global do YAML (será ignorada temporariamente pela etapa "full")
   nbits: 4
-  
+
   train_on_responses_only: true
