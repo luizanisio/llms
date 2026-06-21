@@ -64,8 +64,8 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
     
     # Tabela principal de etapas
     relatorio_linhas.append("## Etapas do Curriculum\n")
-    relatorio_linhas.append("| Etapa (Alias) | Arquivo CSV | Filtro Ativo | Treino (Qtd) | Validação (Qtd) | Teste (Qtd) | Ignorados/Erros (Qtd) |")
-    relatorio_linhas.append("|---|---|---|---|---|---|---|")
+    relatorio_linhas.append("| Etapa (Alias) | Arquivo CSV | Filtro Ativo | Max Seq Length | Filtra Excesso | Treino (Qtd) | Validação (Qtd) | Teste (Qtd) | Ignorados/Erros (Qtd) |")
+    relatorio_linhas.append("|---|---|---|---|---|---|---|---|---|")
 
     total_etapas = len(etapas)
     
@@ -123,7 +123,11 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
         arquivo_nome = os.path.basename(etapa.arquivo) if etapa.arquivo else "N/A"
         str_filtro = json.dumps(filtro_atual, ensure_ascii=False) if filtro_atual else "(Sem filtro)"
         
-        relatorio_linhas.append(f"| {alias} | {arquivo_nome} | `{str_filtro}` | {qtd_treino} | {qtd_val} | {qtd_teste} | {qtd_ignorados} |")
+        msl_val = etapa.max_seq_length if (hasattr(etapa, "max_seq_length") and etapa.max_seq_length > 0) else yaml_config.treinamento.max_seq_length
+        str_msl = str(msl_val) if msl_val > 0 else "Auto"
+        filtrar_msl = "Sim" if getattr(yaml_config.treinamento, 'filtrar_max_seq_length', False) else "Não"
+        
+        relatorio_linhas.append(f"| {alias} | {arquivo_nome} | `{str_filtro}` | {str_msl} | {filtrar_msl} | {qtd_treino} | {qtd_val} | {qtd_teste} | {qtd_ignorados} |")
         
         if print_console:
             print_cores(f"   <verde>✓</verde> Etapa '{alias}': Treino={qtd_treino}, Validação={qtd_val}, Teste={qtd_teste}, Ignorados={qtd_ignorados}", color_auto=False)

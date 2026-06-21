@@ -187,6 +187,7 @@ class ConfigTreinamento:
     grad_batch_size: int = 5
     epochs: int = 1
     max_seq_length: int = 4096
+    filtrar_max_seq_length: bool = False
     learning_rate: float = 2e-4
     save_checkpoints: bool = True
     save_checkpoints_qtd: int = 1  # Quantidade de checkpoints mantidos além do melhor e último (0 = manter todos)
@@ -836,6 +837,7 @@ class YamlTreinamento:
             grad_batch_size=grad_batch_size_val,
             epochs=int(treino_raw.get("epochs") or treino_raw.get("num_train_epochs") or 1),
             max_seq_length=msl_val,
+            filtrar_max_seq_length=treino_raw.get("filtrar_max_seq_length", False) in {True, "true", "True", 1, "1", "sim"},
             learning_rate=float(treino_raw.get("learning_rate", 2e-4)),
             save_checkpoints=treino_raw.get("save_checkpoints", True) in {True, "true", "True", 1, "1", "sim"},
             save_checkpoints_qtd=int(treino_raw.get("save_checkpoints_qtd", 1)),

@@ -56,6 +56,7 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
 
 - **`treinamento`**:
   - `max_seq_length`: Comprimento máximo de sequência. Se **omitido ou 0**, o sistema auto-estima a partir de `max(token_total)` dos CSVs de divisão + 10% margem, arredondado para múltiplo de 128. Se o CSV não possuir a coluna `token_total`, falha com instrução para definir manualmente. Se **definido > 0**, funciona como teto que trunca instâncias maiores. Quando o global é auto-estimado, cada etapa do curriculum também recebe um valor auto-estimado a partir do seu próprio CSV (otimizando memória por etapa).
+  - `filtrar_max_seq_length`: (true/false) Se definido como true, os exemplos de treinamento e validação que ultrapassam o `max_seq_length` efetivo (da divisão ou global) serão **removidos** do dataset. Diferente do padrão do modelo (que apenas trunca as instâncias excedentes), esta flag garante que o modelo treine apenas com instâncias que cabem perfeitamente na janela de contexto delimitada. (Padrão: false).
   - `batch_size`: Suporta `efetivo: N` para autoavaliar quantas GPUs o torch tem na ponta e calcular perfeitamente o Gradient Acceleration Substep garantindo reprodutibilidade independentemente da topologia física!
   - `train_on_responses_only`: (true/false) Se a perda da atenção deve pular o lado Prompter (Usuário). Ótimo para modelos instruct.
 

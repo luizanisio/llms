@@ -96,16 +96,18 @@ treinamento:
 
   eval_steps: 20%
   
-  #| Configuração do tamanho do lote (batch). Lote por GPU é 2, com acumulação de 8.
+  #| Configuração do tamanho do lote (batch). Lote por GPU é 1, com acumulação de 16.
+  #| batch_size=1 é necessário para full FT 16-bit em 80 GB com seq=32768.
   batch_size:
     efetivo: 16
-    batch_size: 2
-  grad_batch_size: 8
+    batch_size: 1
+  grad_batch_size: 16
   
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
-  max_seq_length: 35840
+  max_seq_length: 32768
   validar_max_seq_length: true 
+  filtrar_max_seq_length: true
   
   #| Taxa de aprendizado base reduzida (de 2e-5 para 5e-6). 
   #| Como no Full Fine-Tuning 100% dos pesos são atualizados, taxas altas tendem a explodir 

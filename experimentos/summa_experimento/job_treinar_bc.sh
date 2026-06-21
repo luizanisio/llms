@@ -10,7 +10,7 @@
 #SBATCH --partition=gpu
 
 # Recurso de GPU:
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 
 # CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
 #SBATCH --cpus-per-task=32
@@ -43,6 +43,9 @@ conda activate luizbat02
 echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX
 export PATH=$CUDA_HOME/bin:$PATH
+# Permite que o alocador CUDA expanda segmentos existentes em vez de exigir blocos
+# contíguos — elimina OOM por fragmentação (reservado-mas-não-alocado ~10 GB)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"

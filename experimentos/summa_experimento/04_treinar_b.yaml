@@ -104,8 +104,10 @@ treinamento:
   
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
-  max_seq_length: 35840
+  max_seq_length: 32768
   validar_max_seq_length: true 
+  #| Remove os exemplos de treino e validação que ultrapassam o limite definido
+  filtrar_max_seq_length: true
   
   #| Taxa de aprendizado base, otimizada para LoRA
   learning_rate: 0.0002

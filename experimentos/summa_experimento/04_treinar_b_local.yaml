@@ -106,6 +106,7 @@ treinamento:
   num_train_epochs: 4
   max_seq_length: 35840
   validar_max_seq_length: true 
+  filtrar_max_seq_length: true
   
   #| Taxa de aprendizado base, otimizada para LoRA
   learning_rate: 0.0002

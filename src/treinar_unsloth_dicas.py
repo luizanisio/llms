@@ -70,6 +70,8 @@ DICAS_YAML = {
     "treinamento/max_seq_length": """#| Contexto máximo (OBRIGATÓRIO). Qwen/Llama suportam long context, mas 2048-4096 é comum.
 #| Valor maior consome mais VRAM. Consulte token_total no CSV de divisão.
 #| [7B] Suporta até 128k, mas 4096-8192 é prático.""",
+    "treinamento/filtrar_max_seq_length": """#| (Opcional) Remove do dataset instâncias que ultrapassam o max_seq_length.
+#| Diferente da truncagem padrão, garante que o modelo treine apenas com textos 100% contidos na janela (Padrão: false).""",
     "treinamento/learning_rate": """#| Taxa de aprendizado. QLoRA/LoRA: start 2e-4. RL (DPO): 5e-6.
 #| Se overfitting/loss < 0.2: Reduzir. Se underfitting: Aumentar.
 #| [7B] Modelos maiores são mais sensíveis; force 1e-4.""",

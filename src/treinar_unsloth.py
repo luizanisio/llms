@@ -38,6 +38,7 @@ batch_size: 2
 grad_batch_size: 5
 num_train_epochs: 1
 max_seq_length: 4096
+filtrar_max_seq_length: false
 lora_r: 8
 save_checkpoints: True
 resume_from_checkpoint: True
@@ -1666,10 +1667,51 @@ class LLMsTrainer:
         self.chat_handler.verificar_dataset_formatado(self.train_ds)
         # =====================================================
 
-        total_examples = len(self.train_ds)
-        # cfg = self.cfg (removido)
-        
         treino_cfg = self._yaml_config.treinamento
+
+        # Filtragem por max_seq_length se ativado no YAML
+        if getattr(treino_cfg, 'filtrar_max_seq_length', False):
+            msl = etapa.max_seq_length if (etapa and hasattr(etapa, "max_seq_length") and etapa.max_seq_length > 0) else treino_cfg.max_seq_length
+            if msl > 0:
+                print_cores(f"<amarelo>⏳ Filtrando exemplos que excedem {msl} tokens...</amarelo>", color_auto=False)
+                
+                _tok = self.tokenizer
+                def _filtra_tamanho(ex):
+                    # O tokenizer já aplica formatação na pipeline anterior, aqui apenas conta os tokens
+                    return len(_tok(ex["text"], add_special_tokens=False)["input_ids"]) <= msl
+                
+                tamanho_antes = len(self.train_ds)
+                self.train_ds = self.train_ds.filter(_filtra_tamanho, num_proc=n_proc_train, desc="Filtrando treino")
+                filtrados = tamanho_antes - len(self.train_ds)
+                if filtrados > 0:
+                    print_cores(f"<vermelho>⚠️  {filtrados} instâncias de treino removidas (excederam {msl} tokens)</vermelho>", color_auto=False)
+                if len(self.train_ds) == 0:
+                    raise ValueError(f"Dataset de treino ficou vazio após filtrar exemplos maiores que {msl} tokens.")
+                
+                if self.eval_ds:
+                    tamanho_antes_eval = len(self.eval_ds)
+                    n_proc_eval = min(n_proc, len(self.eval_ds)) if len(self.eval_ds) > 0 else 1
+                    self.eval_ds = self.eval_ds.filter(_filtra_tamanho, num_proc=n_proc_eval, desc="Filtrando eval")
+                    filtrados_eval = tamanho_antes_eval - len(self.eval_ds)
+                    if filtrados_eval > 0:
+                        print_cores(f"<vermelho>⚠️  {filtrados_eval} instâncias de validação removidas (excederam {msl} tokens)</vermelho>", color_auto=False)
+                
+                if filtrados > 0 or (self.eval_ds and filtrados_eval > 0):
+                    try:
+                        import os
+                        rel_path = os.path.join(self._yaml_config.treinamento_dir, "relatorio_datasets.md")
+                        if os.path.exists(rel_path):
+                            with open(rel_path, "a", encoding="utf-8") as f:
+                                alias_etapa = etapa.alias if etapa and hasattr(etapa, "alias") else "Etapa Atual"
+                                f.write(f"\n### Filtro On-the-fly de Sequências ({alias_etapa})\n")
+                                f.write(f"A flag `filtrar_max_seq_length` estava ativada. Instâncias que excederam o limite de **{msl} tokens** foram removidas da memória antes do treinamento:\n")
+                                f.write(f"- **Treinamento**: {filtrados} instâncias removidas (Restaram {len(self.train_ds)}).\n")
+                                if self.eval_ds:
+                                    f.write(f"- **Validação**: {filtrados_eval} instâncias removidas (Restaram {len(self.eval_ds)}).\n")
+                    except Exception as e:
+                        print_cores(f"<amarelo>⚠️  Erro ao registrar estatísticas no relatorio_datasets.md: {e}</amarelo>", color_auto=False)
+
+        total_examples = len(self.train_ds)
         
         eval_steps = treino_cfg.eval_steps
         n_gpus = max(torch.cuda.device_count(), 1)
