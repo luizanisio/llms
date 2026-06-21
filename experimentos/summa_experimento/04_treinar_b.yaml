@@ -110,7 +110,8 @@ treinamento:
   filtrar_max_seq_length: true
   
   #| Taxa de aprendizado base, otimizada para LoRA
-  learning_rate: 0.0002
+  #learning_rate: 0.0002
+  learning_rate: 0.000005
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5

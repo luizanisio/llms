@@ -69,6 +69,7 @@ curriculum:
       pace_epochs: 2
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 8192
+      learning_rate: 0.000005
     - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
       dataset_filtro: {"dificuldade": "medio"}
       alias: "médio"
