@@ -59,13 +59,6 @@ echo "---"
 echo "=== NVIDIA-SMI COMPLETO (Compute Node) ==="
 nvidia-smi
 echo "==========================================="
-echo "---"
-echo "Testando imports críticos:"
-python -c "from flash_attn import flash_attn_func; print('✅ flash-attn importado OK')" || echo "❌ Falha ao importar flash-attn"
-python -c "from liger_kernel.transformers import AutoLigerKernelForCausalLM; print('✅ liger-kernel importado OK')" || echo "❌ Falha ao importar liger-kernel"
-python -c "from transformers.utils import is_flash_attn_2_available; print(f'✅ is_flash_attn_2_available() = {is_flash_attn_2_available()}')"
-echo "==========================================="
-
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
