@@ -67,7 +67,7 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_d_mini_local.yaml
+python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_b_mini_local.yaml
 
 
 python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_d_mini_ff_lora.yaml
