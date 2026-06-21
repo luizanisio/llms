@@ -13,18 +13,28 @@ O script `comparar_extracoes.py` é uma **ferramenta genérica e agnóstica** pr
 O script é agnóstico a comandos secundários e funciona via cardápio de entrada baseado nos seus arquivos YAML de experimento:
 
 ```bash
-# Para pular o fluxo interativo visual:
-python src/comparar_extracoes.py ./experimento_revisoes/meu_config_comparacao.yaml
+# Para rodar a análise completa (extração, comparação e relatórios) com um yaml específico:
+python src/comparar_extracoes.py --config ./experimento_revisoes/meu_config_comparacao.yaml
 
-# Para utilizar o console guiado que lê quais são os metadados ativos na raiz do seu desenvolvimento:
+# Para utilizar o console guiado (sem parâmetros informados):
 python src/comparar_extracoes.py
+
+# Para REGERAR apenas os gráficos, estatísticas ou a planilha base (sem refazer a análise pesada via NLP):
+# (Exige que a análise principal já tenha sido processada previamente)
+python src/comparar_extracoes.py --config ./experimento_revisoes/meu_config_comparacao.yaml --graficos --estatisticas --planilha
 ```
 
 ## ⚙️ Configuração (O Arquivo YAML)
 Todas as manobras e experimentos de comparação prescindem da necessidade de entrar no código. Você declara suas intenções dentro do arquivo `.yaml` de configuração, com as seguintes chaves de destaque:
 
 - **`misc`**: Configurações diversas do projeto.
-  - `pasta_base`: (Opcional) Permite definir um diretório base (absoluto ou relativo) que atua como prefixo para resolver todos os caminhos dinamicamente.
+  - `pastas_base`: (Opcional) Permite definir uma lista de diretórios base (absolutos ou relativos) que atua como prefixo para resolver todos os caminhos dinamicamente. O sistema tentará validar as pastas na ordem informada. Exemplo:
+    ```yaml
+    misc:
+      pastas_base: 
+        - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+        - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    ```
 - **`saida`**: (Dicionário) Pasta raiz `.pasta` das avaliações e relatórios a serem gerados, além dos arquivos contendo as subdivisões no futuro de seu treinamento iterativo. Inclui também `pasta_parquet` (obrigatória quando se usa entrada `.parquet`) para definir a pasta base onde os JSONs extraídos serão armazenados.
 - **`modelo_base`**: Configurações do modelo de referência (Ground Truth). Pode usar `pasta` (diretório com JSONs soltos) ou `arquivo` (caminho para um `.parquet`).
 - **`modelos_comparacao`**: (Lista) Suas diversas frentes de modelos prevendo outputs do texto. Cada modelo pode usar `pasta` ou `arquivo` (.parquet). Pode usar `ativo: false` para desabilitar algum.

@@ -323,68 +323,8 @@ def resolver_caminho(caminho_relativo, base_dir, pasta_base=""):
     """Resolve caminhos relativos baseado no diretório do arquivo de configuração ou pasta_base."""
     return util.Util.resolver_caminho(caminho_relativo, base_dir, pasta_base)
 
-def _gerar_grafico_erros(dados_analise, pasta_saida, lang='pt'):
-    """Gera gráfico de barras empilhadas com status dos documentos por modelo."""
-    from util_graficos import UtilGraficos, Cores
-    from util_json_graficos import traduzir_rotulos
-    import pandas as pd
-    
-    # Usa rotulos[1:] para incluir também o modelo de origem (base) mantendo a mesma ordem do YAML
-    rotulos_modelos = dados_analise.rotulos[1:] if len(dados_analise.rotulos) > 1 else []
-    # Chaves internas em português para processamento
-    stats = {m: {'Sucesso': 0, 'Erro': 0, 'Inexistente': 0} for m in rotulos_modelos}
-    
-    for linha in dados_analise.dados_completos:
-        for modelo in rotulos_modelos:
-            val = linha.get(modelo)
-            # Verifica status baseado no valor
-            if val is None:
-                stats[modelo]['Inexistente'] += 1
-            elif isinstance(val, dict) and 'erro' in val:
-                erro_msg = str(val['erro'])
-                if 'Inexistente' in erro_msg:
-                     stats[modelo]['Inexistente'] += 1
-                else:
-                     stats[modelo]['Erro'] += 1
-            else:
-                stats[modelo]['Sucesso'] += 1
-                
-    df_stats = pd.DataFrame(stats).transpose()
-    
-    # Ordena colunas para mapear na paleta RdYlGn (Red -> Green)
-    # 1. Inexistente (Red)
-    # 2. Erro (Yellow/Orange)
-    # 3. Sucesso (Green)
-    cols_ordem = ['Inexistente', 'Erro', 'Sucesso']
+# As funções de geração de gráficos foram extraídas para comparar_extracoes_graficos.py
 
-    # Garante que todas as colunas existem
-    for c in cols_ordem:
-        if c not in df_stats.columns:
-            df_stats[c] = 0
-            
-    pasta_graficos = os.path.join(pasta_saida, 'graficos')
-    os.makedirs(pasta_graficos, exist_ok=True)
-            
-    df_stats = df_stats[cols_ordem]
-    
-    # Traduz nomes de colunas para exibição no gráfico
-    cols_traduzidas = {
-        'Inexistente': traduzir_rotulos('status_inexistente', lang),
-        'Erro': traduzir_rotulos('status_erro', lang),
-        'Sucesso': traduzir_rotulos('status_sucesso', lang)
-    }
-    df_stats = df_stats.rename(columns=cols_traduzidas)
-    
-    arquivo = os.path.join(pasta_graficos, 'status_modelos.png')
-    UtilGraficos.gerar_grafico_empilhado(
-        df_stats, 
-        titulo=traduzir_rotulos('status_titulo', lang),
-        ylabel=traduzir_rotulos('status_ylabel', lang),
-        xlabel=traduzir_rotulos('modelo_xlabel', lang),
-        arquivo_saida=arquivo,
-        paleta_cores=Cores.RdYlGn
-    )
-    print(f"   ✓ Gráfico de status gerado: {os.path.basename(arquivo)}")
 
 # ============================================================================
 # MAIN
@@ -393,7 +333,12 @@ def _gerar_grafico_erros(dados_analise, pasta_saida, lang='pt'):
 def main():
     parser = argparse.ArgumentParser(description="Comparador de Extrações JSON via YAML")
     parser.add_argument('--config', dest='config_file', default=None, help="Caminho do arquivo de configuração YAML")
+    parser.add_argument('--graficos', action='store_true', help="Apenas atualiza os gráficos a partir de uma comparação já realizada")
+    parser.add_argument('--estatisticas', action='store_true', help="Apenas atualiza as estatísticas a partir de uma comparação já realizada")
+    parser.add_argument('--planilha', action='store_true', help="Apenas atualiza a formatação da planilha base a partir de uma comparação já realizada")
     args = parser.parse_args()
+
+    qualquer_flag_parcial = args.graficos or args.estatisticas or args.planilha
 
     # 1. Carregar configuração
     caminho_yaml_abs = ""
@@ -678,30 +623,43 @@ def main():
     nome_arquivo_base = config['saida'].get('arquivo_base', 'comparacao_resultados')
     arquivo_excel = os.path.join(pasta_saida, f'{nome_arquivo_base}.xlsx')
     
-    # Checa reuso
-    regerar = config['saida'].get('regerar_planilha_base', True)
-    if houve_reextracao:
+    # Checa reuso e valida execução parcial
+    if qualquer_flag_parcial:
+        if houve_reextracao:
+            print("\n❌ ERRO: O arquivo base/parquet foi atualizado ou reextraído.")
+            print("Execute a comparação completa (sem flags parciais) antes de gerar apenas gráficos, estatísticas ou planilhas.")
+            sys.exit(1)
+        if not os.path.isfile(arquivo_excel):
+            print("\n❌ ERRO: Planilha de comparação não encontrada.")
+            print(f"Esperado: {arquivo_excel}")
+            print("Execute a comparação completa primeiro (sem usar as flags --graficos, --estatisticas ou --planilha).")
+            sys.exit(1)
+
+        flag_graficos = args.graficos
+        flag_estatisticas = args.estatisticas
+        flag_planilha = args.planilha
+        flag_llm = False # Se for execução parcial, pulamos LLM por envolver custo de API
+        regerar = False
+    else:
+        # Execução Padrão: faz tudo!
+        flag_graficos = True
+        flag_estatisticas = True
+        flag_planilha = False
         regerar = True
-        print("\n⚠️  Parquet foi atualizado. Forçando 'regerar_planilha_base=True' para garantir consistência dos dados.")
-        
+        flag_llm = config.get('execucao', {}).get('llm_as_a_judge', False)
+
     analisador_instanciado = False
     
-    # Define flags de execução
-    flag_graficos = config['execucao'].get('gerar_graficos', False)
-    flag_llm = config['execucao'].get('llm_as_a_judge', False)
-    lang_graficos = config['saida'].get('linguagem_graficos', '').strip().lower()
+    lang_graficos = config.get('saida', {}).get('linguagem_graficos', '').strip().lower()
     if lang_graficos not in ('pt', 'en'):
         lang_graficos = 'en'
     
     # Lógica Principal de Execução ou Reuso
     if os.path.isfile(arquivo_excel) and not regerar:
-        print(f"\n⚠️  Arquivo Excel já existe e 'regerar_planilha_base' é FALSE.")
-        print(f"   Pulando re-análise completa. Usando arquivo existente: {arquivo_excel}")
+        print(f"\n⚠️  Execução Parcial Solicitada via CLI.")
+        print(f"   Pulando re-análise pesada. Usando arquivo existente: {arquivo_excel}")
         
-        # Se for para apenas gerar gráficos ou LLM judge em cima do existente
-        if flag_graficos or flag_llm:
-            # mas talvez não precise processar tudo se tiver hooks específicos. 
-            # O código original instanciava tudo. Vamos instanciar para garantir consistência.
+        if flag_graficos or flag_estatisticas or flag_planilha or flag_llm:
             print("   Instanciando analisador para operações em arquivo existente...")
             pasta_jsons = os.path.join(pasta_saida, 'jsons')
             analisador = JsonAnaliseDataFrame(
@@ -715,6 +673,17 @@ def main():
                 lang=lang_graficos
             )
             analisador_instanciado = True
+            
+            if flag_planilha:
+                print("📊 Regerando Excel e formatação...")
+                analisador.to_df()
+                analisador.exportar_excel(
+                    arquivo_excel, 
+                    incluir_estatisticas=True, 
+                    usar_formatacao_avancada=True,
+                    congelar_paineis=True,
+                    gerar_graficos=False 
+                )
     else:
         # EXECUÇÃO COMPLETA
         print(f"\n🚀 Iniciando análise completa...")
@@ -769,9 +738,13 @@ def main():
     # 7. Pós-Processamento (Gráficos, LLM Judge, Stats)
     
     if flag_graficos and analisador_instanciado:
+        from comparar_extracoes_graficos import CompararExtracoesGraficos
         print("\n📈 Gerando/Atualizando Gráficos no Excel...")
         # Gera gráfico de status/erros
-        _gerar_grafico_erros(dados_analise, pasta_saida, lang=lang_graficos)
+        CompararExtracoesGraficos.gerar_grafico_erros(dados_analise, pasta_saida, lang=lang_graficos)
+        
+        # Gera gráficos de métricas de treinamento (se configurado na pasta do modelo)
+        CompararExtracoesGraficos.gerar_graficos_treinamento(config, base_dir_yaml, pasta_base_ativa, dados_analise, pasta_saida, lang=lang_graficos)
         
         if os.path.isfile(arquivo_excel):
             analisador.gerar_graficos_de_excel(arquivo_excel, pasta_saida=pasta_saida)
@@ -781,10 +754,14 @@ def main():
         if os.path.isfile(arquivo_excel):
             analisador.atualizar_avaliacao_llm_no_excel(arquivo_excel, gerar_graficos=True, pasta_saida=pasta_saida)
 
-    if config['execucao'].get('analise_estatistica', False):
+    if flag_estatisticas:
         processar_analise_estatistica(dados_analise, pasta_saida, config)
 
-    # 8. Divisão dos Dados (Treino/Teste/Validação)
+    # 8. Divisão dos Dados (Treino/Teste/Validação) (pula se for execução parcial)
+    if qualquer_flag_parcial:
+        print("\n🏁 Execução parcial finalizada com sucesso!")
+        return
+
     print("\n🗂️  Gerando divisões de dados (Treino/Teste/Validação)...")
     try:
         from util_json_divisoes import UtilJsonDivisoes, contar_chaves_recursivo
