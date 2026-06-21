@@ -1953,7 +1953,7 @@ class LLMsTrainer:
             tokens_previos=tokens_previos,
             retomada=is_retomada,
             modelo_alias=self._yaml_config.modelo.alias,
-            historico=self.historico,
+            historico=self._historico,
         ))
         
         # 3. CheckpointRenameCallback (renomeia checkpoints com zero-padding + limpeza)
