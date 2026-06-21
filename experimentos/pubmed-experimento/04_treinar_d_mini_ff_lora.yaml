@@ -65,7 +65,7 @@ curriculum:
 #| =========================================================================
 modelo:
   base_model_name: Qwen2.5-1.5B-Instruct
-  saida: treinos/Qwen2.5-1.5B-Instruct(d-mini)
+  saida: treinos_local/Qwen2.5-1.5B-Instruct(d-mini)
   ollama: Qwen2.5-1.5B-Instruct(d-mini):latest
   ollama_base: qwen2.5:1.5b
 
