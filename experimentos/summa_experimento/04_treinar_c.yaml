@@ -113,7 +113,7 @@ treinamento:
   #| Taxa de aprendizado base reduzida (de 2e-5 para 5e-6). 
   #| Como no Full Fine-Tuning 100% dos pesos são atualizados, taxas altas tendem a explodir 
   #| os gradientes (divergência e loss=NaN). Uma taxa menor é o padrão seguro para treino completo.
-  learning_rate: 0.0002
+  learning_rate: 2e-05
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
