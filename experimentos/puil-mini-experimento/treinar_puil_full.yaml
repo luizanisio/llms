@@ -10,7 +10,7 @@ misc:
 
 curriculum:
   saida:
-    dataframe: saidas/saida_puil.csv
+    dataframe: dados/saida_puil.csv
     dataframe_col: completion
     dataframe_id: id
     formato: texto
