@@ -77,6 +77,7 @@ curriculum:
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
+    learning_rate: 2e-05
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
       #| Limite de tokens da janela de contexto para este dataset
@@ -85,6 +86,7 @@ curriculum:
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
+    learning_rate: 2e-05
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
       #| Limite de tokens da janela de contexto para este dataset
@@ -93,6 +95,7 @@ curriculum:
       #dataset_filtro: {"dificuldade": "medio"}
     alias: "completo"
     tipo: "lora"
+    learning_rate: 2e-05
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
       #| Limite de tokens da janela de contexto para este dataset

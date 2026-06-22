@@ -57,6 +57,7 @@ curriculum:
     alias: "médio"
     tipo: "lora"
     pace_epochs: 1
+    learning_rate: 2e-05 # Taxa reduzida pois a base já foi estabilizada no Full FT anterior
 
 #| =========================================================================
 #| MODELO
