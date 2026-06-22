@@ -70,7 +70,7 @@ curriculum:
     #| Limite de tokens da janela de contexto para este dataset
     batch_size: 2
     max_seq_length: 8192
-    learning_rate: 0.0002
+    learning_rate: 5e-06 # Padrão para Full FT
 
 #| =========================================================================
 #| MODELO
@@ -91,7 +91,7 @@ modelo:
 #| =========================================================================
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
   liger_kernel: false        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
