@@ -12,8 +12,8 @@ Uso:
 Se o arquivo YAML não existir, o programa pergunta se deseja criá-lo
 com um exemplo comentado e explicativo.
 
-Entrada: arquivo parquet (com colunas chave + texto) ou pasta com arquivos .txt
-Saída: arquivo parquet (com colunas chave, resumo, resposta, erro) ou pasta com .txt/.json
+Entrada: arquivo parquet ou csv (com colunas chave + texto) ou pasta com arquivos .txt
+Saída: arquivo parquet ou csv (com colunas chave, resumo, resposta, erro) ou pasta com .txt/.json
 
 Retomada automática: ao reiniciar, ignora itens já processados com sucesso
 e reprocessa itens com erro ou ausentes na saída.
@@ -130,11 +130,11 @@ geracao:
   # think: "low"
 
 # --- Entrada ---
-# arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
-#   Se parquet: usa campo_chave como ID e campo_texto como conteúdo
+# arquivo: caminho para arquivo .parquet/.csv OU pasta com arquivos .txt
+#   Se parquet/csv: usa campo_chave como ID e campo_texto como conteúdo
 #   Se pasta: cada arquivo .txt é um item (nome sem extensão = chave)
-# campo_chave: nome da coluna com o ID (apenas para parquet). Padrão: "id"
-# campo_texto: nome da coluna com o texto (apenas para parquet). Padrão: "texto"
+# campo_chave: nome da coluna com o ID (apenas para parquet/csv). Padrão: "id"
+# campo_texto: nome da coluna com o texto (apenas para parquet/csv). Padrão: "texto"
 # prompt_template: arquivo .txt com template do prompt (opcional).
 #   Se informado, o texto do campo_texto substitui o placeholder variavel_texto.
 #   Se vazio, o texto é usado diretamente como conteúdo do prompt.
@@ -253,7 +253,19 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     
     lora = modelo.get("lora", "")
     if lora:
-        modelo["lora"] = _resolver_caminho(lora, base_dir, pasta_modelos_ativa)
+        if not os.path.isabs(lora):
+            lora_resolvido = _resolver_caminho(lora, base_dir, pasta_base_ativa)
+            if os.path.exists(lora_resolvido):
+                modelo["lora"] = lora_resolvido
+            else:
+                lora_resolvido_modelos = _resolver_caminho(lora, base_dir, pasta_modelos_ativa)
+                if os.path.exists(lora_resolvido_modelos):
+                    modelo["lora"] = lora_resolvido_modelos
+                else:
+                    # Se não existe em nenhum lugar, deixa como estava ou passa o absoluto da pasta base
+                    modelo["lora"] = _resolver_caminho(lora, base_dir, pasta_base_ativa)
+        else:
+            modelo["lora"] = lora
     config["modelo"] = modelo
 
     # --- vLLM (defaults) ---
@@ -363,7 +375,7 @@ def validar_config(config: Dict[str, Any]) -> List[str]:
     # --- Entrada ---
     cfg_entrada = config["entrada"]
     arquivo_entrada = cfg_entrada["arquivo"]
-    if arquivo_entrada.lower().endswith(".parquet"):
+    if arquivo_entrada.lower().endswith((".parquet", ".csv")):
         if not os.path.isfile(arquivo_entrada):
             erros.append(
                 f"Arquivo de entrada não encontrado: '{arquivo_entrada}'\n"
@@ -479,25 +491,26 @@ def carregar_entrada(config: Dict[str, Any]) -> List[Dict[str, str]]:
             else:
                 print(f"⚠️  Aviso: Arquivo de filtro não encontrado: {arquivo_filtro}")
 
-    if arquivo.lower().endswith(".parquet"):
+    if arquivo.lower().endswith((".parquet", ".csv")):
         return _carregar_entrada_parquet(arquivo, cfg_entrada, ids_filtro)
     elif os.path.isdir(arquivo):
         return _carregar_entrada_pasta(arquivo, ids_filtro)
     else:
         raise FileNotFoundError(
             f"Entrada não encontrada: '{arquivo}' "
-            f"(esperado arquivo .parquet ou pasta com .txt)"
+            f"(esperado arquivo .parquet/.csv ou pasta com .txt)"
         )
 
 
 def _carregar_entrada_parquet(
     arquivo: str, cfg_entrada: Dict[str, Any], ids_filtro: Optional[set] = None
 ) -> List[Dict[str, str]]:
-    """Carrega entrada de arquivo parquet."""
+    """Carrega entrada de arquivo parquet ou csv."""
     if not os.path.isfile(arquivo):
-        raise FileNotFoundError(f"Arquivo parquet de entrada não encontrado: '{arquivo}'")
+        raise FileNotFoundError(f"Arquivo de entrada não encontrado: '{arquivo}'")
 
-    df = pd.read_parquet(arquivo)
+    from util_pandas import ler_dataset
+    df = ler_dataset(arquivo)
     
     filtro_config = cfg_entrada.get("filtro", {})
     dataset_filtro = filtro_config.get("dataset_filtro")
