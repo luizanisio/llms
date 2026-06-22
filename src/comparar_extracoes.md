@@ -56,11 +56,12 @@ Todas as manobras e experimentos de comparação prescindem da necessidade de en
   ```
   Se omitido, o comparador usa os modelos e aliases padrão: SBERT pequeno (`MiniLM`), SBERT médio (`MPNet`), SBERT grande (`E5-Large`), e BERTScore (`mBERT`).
 - **`configuracao_comparacao.campos_parquet`**: Mapeamento das colunas do arquivo `.parquet` para os dados esperados pelo pipeline (ver seção abaixo).
-- **`configuracao_comparacao.filtro`**: Permite definir um arquivo CSV e a coluna que servirá como filtro para a extração e carga. Apenas os IDs (da coluna especificada) que coincidirem com os dados do parquet/json serão avaliados.
+- **`configuracao_comparacao.filtro`**: Permite definir um arquivo CSV ou Parquet e a coluna que servirá como filtro para a extração e carga. Apenas os IDs (da coluna especificada) que coincidirem com os dados da tabela serão avaliados. Você também pode utilizar o parâmetro `dataset_filtro` para aplicar queries dinâmicas do Pandas sobre essa base antes da extração dos IDs.
   ```yaml
   filtro: 
-    arquivo: "./filtro_teste.csv"
+    arquivo: "./dados/integras_experimento_summa_novos.parquet" # Suporta CSV ou Parquet
     campo_id: "seq_documento_acordao"
+    dataset_filtro: "fold <= 10" # (Opcional) Query Pandas aplicada sobre o arquivo
   ```
 - **`campos_virtuais`**: (Opcional) Dicionário que permite combinar o conteúdo de múltiplas chaves do JSON em um novo campo "virtual", gerado em tempo de execução durante a carga. Ideal para métricas globais (como SBERT) ou de Prompt (LLM-as-a-judge) que precisam avaliar grandes blocos de texto agregados.
   ```yaml

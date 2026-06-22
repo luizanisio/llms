@@ -67,12 +67,13 @@ class ExtracaoDataset:
             - 'erro': nome da coluna com mensagem de erro (opcional)
     """
 
-    def __init__(self, arquivo_dataset: str, pasta_destino: str, campos_dataset: dict, ids_filtro: set = None, saida_json: bool = True):
+    def __init__(self, arquivo_dataset: str, pasta_destino: str, campos_dataset: dict, ids_filtro: set = None, saida_json: bool = True, dataset_filtro = None):
         self.arquivo_dataset = arquivo_dataset
         self.pasta_destino = pasta_destino
         self.campos_dataset = campos_dataset or {}
         self.ids_filtro = ids_filtro
         self.saida_json = saida_json
+        self.dataset_filtro = dataset_filtro
 
         # Mapeamento de campos (com defaults seguros)
         self._col_id = self.campos_dataset.get('id', 'chave')
@@ -88,8 +89,10 @@ class ExtracaoDataset:
         if self._df is None:
             if not os.path.exists(self.arquivo_dataset):
                 raise FileNotFoundError(f"Arquivo dataset não encontrado: {self.arquivo_dataset}")
-            from util_pandas import ler_dataset
+            from util_pandas import ler_dataset, aplicar_filtro_dataset
             self._df = ler_dataset(self.arquivo_dataset)
+            if self.dataset_filtro:
+                self._df = aplicar_filtro_dataset(self._df, self.dataset_filtro)
         return self._df
 
     def validar_colunas(self) -> list:

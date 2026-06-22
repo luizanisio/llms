@@ -453,12 +453,27 @@ def ler_dataset(arquivo: str) -> pd.DataFrame:
     else:
         raise ValueError(f"Formato de arquivo não suportado para extração de dados tabulares: {ext}")
 
-def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro: dict) -> pd.DataFrame:
+def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro) -> pd.DataFrame:
     """
-    Aplica um filtro em formato de dicionário a um DataFrame pandas.
+    Aplica um filtro em formato de dicionário ou string (query) a um DataFrame pandas.
     Ex: dataset_filtro = {"alvo": "teste", "dificuldade": "!=facil", "idade": ">=18"}
+        ou dataset_filtro = "fold <= 10"
     """
-    if not dataset_filtro or not isinstance(dataset_filtro, dict):
+    if not dataset_filtro:
+        return df
+
+    if isinstance(dataset_filtro, str):
+        df_filtrado = df.copy()
+        try:
+            df_filtrado = df_filtrado.query(dataset_filtro)
+            if len(df) != len(df_filtrado):
+                print(f"🔍 dataset_filtro aplicado (query): '{dataset_filtro}' → {len(df_filtrado)} de {len(df)} registros")
+            return df_filtrado
+        except Exception as e:
+            print(f"⚠️ Erro ao aplicar filtro query '{dataset_filtro}': {e}")
+            return df
+            
+    if not isinstance(dataset_filtro, dict):
         return df
         
     df_filtrado = df.copy()

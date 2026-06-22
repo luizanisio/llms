@@ -546,9 +546,14 @@ def main():
         if arquivo_filtro and campo_id_filtro:
             arquivo_filtro_abs = resolver_caminho(arquivo_filtro, base_dir_yaml, pasta_base_ativa)
             if os.path.exists(arquivo_filtro_abs):
-                import pandas as pd
+                from util_pandas import ler_dataset, aplicar_filtro_dataset
                 try:
-                    df_filtro = pd.read_csv(arquivo_filtro_abs)
+                    df_filtro = ler_dataset(arquivo_filtro_abs)
+                    
+                    filtro_query = config_filtro.get('dataset_filtro')
+                    if filtro_query:
+                        df_filtro = aplicar_filtro_dataset(df_filtro, filtro_query)
+                        
                     if campo_id_filtro in df_filtro.columns:
                         ids_filtro = set(df_filtro[campo_id_filtro].astype(str).str.strip())
                         print(f"🔍 Filtro carregado: {len(ids_filtro)} IDs de '{arquivo_filtro}' (campo '{campo_id_filtro}')")
@@ -588,7 +593,8 @@ def main():
             
             campos_modelo = modelo_config.get('campos_parquet', campos_dataset)
             saida_json_config = campos_modelo.get('saida_json', campos_dataset.get('saida_json', True))
-            extrator = ExtracaoDataset(arquivo_abs, pasta_destino, campos_modelo, ids_filtro=ids_filtro, saida_json=saida_json_config)
+            dataset_filtro_config = modelo_config.get('dataset_filtro')
+            extrator = ExtracaoDataset(arquivo_abs, pasta_destino, campos_modelo, ids_filtro=ids_filtro, saida_json=saida_json_config, dataset_filtro=dataset_filtro_config)
             erros = extrator.validar_colunas()
             if erros:
                 print(f"❌ Erro ao validar dataset '{arquivo_abs}':")
