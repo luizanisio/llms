@@ -1,8 +1,5 @@
 # Configuração para comparação de extrações - Experimento Summa 
-# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_q235_full.yaml
-# CIS.IA
-# Executar com: python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/03_compara_q235_full.yaml
-# 
+# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_gpt5_curadoria.yaml
 
 #| =========================================================================
 #| MISCELÂNEA
@@ -18,7 +15,7 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "./compara/analises_comparacao_summa_q235 (full)"
+  pasta: "./compara/analises_comparacao_summa_gpt5 (curadoria)"
   pasta_parquet: "./compara/"
   arquivo_base: "comparacao_summa"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
@@ -26,11 +23,9 @@ saida:
 
 # Configurações de Execução
 execucao:
-  max_workers: 40
+  max_workers: 10
   teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
-  gerar_graficos: true 
   llm_as_a_judge: false
-  analise_estatistica: true
   ignorar_erro_extracao: true
   divisao:
     treino: 0.70
@@ -39,23 +34,15 @@ execucao:
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  arquivo: "./saida/saida_or_235b.parquet"
-  rotulo: "Qwen235b"
-  familia: "Qwen-235B"
+  arquivo: "./saida/saida_oa_gpt5.parquet"
+  rotulo: "GPT5"
+  familia: "GPT-5"
 
 # Modelos Comparados
 modelos_comparacao:
-  - arquivo: "./saida/saida_qwen7b.parquet"
-    rotulo: "Qwen7b"
-    familia: "Qwen-7B"
-
-  - arquivo: "./saida/saida_oa_gpt5.parquet"
-    rotulo: "GPT5"
-    familia: "GPT-5"
-
-  # - arquivo: "./saida/saida_sabia4.parquet"
-  #   rotulo: "Sabia-4"
-  #   familia: "Sabia-4"
+  - arquivo: "./saida/saida_or_235b.parquet"
+    rotulo: "Qwen235b"
+    familia: "Qwen-235B"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
@@ -78,12 +65,12 @@ configuracao_comparacao:
   
   # carrega a lista de campo_id e filtra o parquet ou os ids das extrações antes de fazer a comparação
   # serve para análises de subconjuntos da base ou testes
-  # filtro: 
-  #   #arquivo: "./saida/filtro_teste_fold_12.csv"
-  #   arquivo: "./saida/filtro_teste_fold_12_100_teste.csv"
-  #   campo_id: "seq_documento_acordao"     
+  #filtro: 
+  #  arquivo: "./dados/integras_experimento_summa_novos.parquet"
+  #  campo_id: "seq_documento_acordao"
+  #  dataset_filtro: "fold <= 10"
 
-  # Modelos customizados (Opcional)
+# Modelos customizados (Opcional)
   # (Opcional) Sobrescrita de modelos HF para SBERT e BERTScore
   modelos:
     sbert:
@@ -105,67 +92,14 @@ configuracao_comparacao:
   # Mapeamento de campos para métricas
   campos:
     bertscore:
-      - "(global)"
-      - "Materia"
-      - "Dispositivo"      
-      - "Temas"
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
-      - "Temas.Doutrina"
-      - "Temas.Conceitos"
-      - "Temas.Explicacao"      
-      - "Resumo"
       - "Likert"
       - "MetaDados"
-
-    rouge_1:
-
-    rouge_2:
-      - "Partes"
-      - "Partes.Tipo"
-      - "Partes.Nome"
-
-    rouge_l:
-      - "Materia"
-      - "Dispositivo"      
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
-      - "Temas.Doutrina"
-      - "Temas.Conceitos"
-      - "Temas.Explicacao"      
-      - "Resumo"
-      - "Likert"
-      - "MetaDados"
-
-    levenshtein:
-      - "Tipo"
-      - "DataJulgamento"
 
     sbert_medio:
-      - "(global)"
-      - "Materia"
-      - "Dispositivo"      
-      - "Temas"
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
-      - "Temas.Doutrina"
-      - "Temas.Conceitos"
-      - "Temas.Explicacao"      
-      - "Resumo"
       - "Likert"
       - "MetaDados"
 
     sbert_grande:
-      - "(global)"
-      - "Materia"
-      - "Dispositivo"      
-      - "Temas"
-      - "Temas.Ponto"
-      - "Temas.Argumentos"
-      - "Temas.Doutrina"
-      - "Temas.Conceitos"
-      - "Temas.Explicacao"      
-      - "Resumo"
       - "Likert"
       - "MetaDados"
 

@@ -167,15 +167,15 @@ configuracao_comparacao:
       - "MetaDados"
 
 campos_virtuais:
-  Likert:
-    - Materia
+  Likert:                       # 6 campos críticos de recuperação
+    - Materia                   #   (mesmos da avaliação humana e juiz LLM)
     - Temas.Ponto
     - Temas.Argumentos
     - Temas.Doutrina
     - Temas.Conceitos
     - Resumo
-  MetaDados:
-    - Materia
-    - Partes
-    - "Temas.Normas"
-    - "Temas.Jurisprudencia"
+  MetaDados:                    # 5 campos estruturados/complementares
+    - Partes.Tipo
+    - Partes.Nome
+    - Temas.Normas
+    - Temas.Jurisprudencia
