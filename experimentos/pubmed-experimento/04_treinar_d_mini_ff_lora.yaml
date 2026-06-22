@@ -50,7 +50,7 @@ curriculum:
     tipo: "full"
     pace_epochs: 1
     batch_size: 1
-    #learning_rate: 5e-06 # Padrão para Full FT
+    learning_rate: 5e-06 # Padrão para Full FT
     #| 2ª Divisão: Treinamento LORA (Retornará ao nbits global=4)
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}

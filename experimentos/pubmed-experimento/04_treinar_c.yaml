@@ -70,7 +70,7 @@ curriculum:
     #| Limite de tokens da janela de contexto para este dataset
     batch_size: 2
     max_seq_length: 8192
-    #learning_rate: 5e-06 # Padrão para Full FT
+    learning_rate: 5e-06 # Padrão para Full FT
 
 #| =========================================================================
 #| MODELO
