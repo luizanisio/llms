@@ -177,7 +177,7 @@ O framework suporta tanto treinamento via adaptadores quantizados (QLoRA) quanto
    Caso continue observando pequenos espasmos no loss durante o Full FT, você pode configurar o clipe global de gradiente no YAML na chave de treinamento:
    ```yaml
    treinamento:
-     max_grad_norm: 0.3
+     max_grad_norm: 1
    ```
    Isso limitará o tamanho máximo do passo de atualização, salvando o modelo de divergências catastróficas.
 

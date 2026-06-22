@@ -293,8 +293,22 @@ class ModelLoader:
         """
         print_cores(f"<azul>🔄 Aplicando adaptadores LoRA (r={r}, alpha={lora_alpha})...</azul>", color_auto=False)
 
-        # Prepara modelo para treinamento quantizado (se aplicável)
-        model = prepare_model_for_kbit_training(model)
+        # Prepara modelo para treinamento:
+        # - Modelos quantizados (4/8-bit): prepare_model_for_kbit_training congela base,
+        #   habilita gradient checkpointing e upcast LayerNorm/embeddings para float32.
+        # - Modelos 16-bit (bfloat16/float16): NÃO usar prepare_model_for_kbit_training!
+        #   Ela converte LayerNorm para float32, criando dtype mismatch com o modelo
+        #   bfloat16. Com Liger Kernel (fused RMSNorm), esse mismatch causa NaN
+        #   imediatamente. Mesmo sem Liger, a conversão pode causar instabilidade.
+        #   Para 16-bit, basta habilitar input_require_grads (necessário para gradient
+        #   checkpointing com LoRA).
+        _is_quantized = getattr(model, 'is_quantized', False) or getattr(model, 'is_loaded_in_8bit', False) or getattr(model, 'is_loaded_in_4bit', False)
+        if _is_quantized:
+            model = prepare_model_for_kbit_training(model)
+        else:
+            # Para modelos 16-bit, apenas habilita gradientes nas entradas
+            # (necessário para gradient checkpointing funcionar com LoRA)
+            model.enable_input_require_grads()
 
         # Auto-detecta target_modules se não especificado
         if target_modules is None:

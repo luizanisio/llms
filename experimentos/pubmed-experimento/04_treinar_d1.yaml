@@ -139,7 +139,7 @@ treinamento:
 
   #| Taxa de aprendizado base, otimizada para full finetuning
   learning_rate: 2e-05
-  max_grad_norm: 0.3
+  max_grad_norm: 1
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
