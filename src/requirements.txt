@@ -63,6 +63,8 @@ liger-kernel==0.7.0
 tqdm
 regex==2026.2.28
 PyYAML==6.0.3
+# similar ao htop só que para GPU
+nvitop==1.7.0
 
 # 💡 Para exportação GGUF (opcional), instale:
 #   pip install -r requirements-gguf.txt
