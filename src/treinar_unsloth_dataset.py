@@ -179,7 +179,13 @@ class DatasetTreinamento:
         """Obtém um dataframe com cache (para compartilhamento entre entrada/saída)."""
         caminho_abs = os.path.abspath(caminho)
         if caminho_abs not in self._cache_dataframes:
-            self._cache_dataframes[caminho_abs] = pd.read_parquet(caminho)
+            ext = os.path.splitext(caminho)[1].lower()
+            if ext == '.csv':
+                df = pd.read_csv(caminho, sep=None, engine='python')
+                df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+                self._cache_dataframes[caminho_abs] = df
+            else:
+                self._cache_dataframes[caminho_abs] = pd.read_parquet(caminho)
         return self._cache_dataframes[caminho_abs]
     
     def _validar_consistencia_divisao(self) -> None:
