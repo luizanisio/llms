@@ -12,6 +12,7 @@ Classe utilitária para criação de gráficos estatísticos incluindo boxplots,
 gráficos de quantidade, soma e média com suporte a múltiplas colunas e paletas de cores.
 """
 
+import os
 import math
 try:
     import pandas as pd
@@ -120,6 +121,7 @@ class UtilGraficos:
                                 squeeze=False)
         axes_flat = axes.flatten()
         pal_padrao = paleta_cores.value if isinstance(paleta_cores, Cores) else paleta_cores
+        md_linhas = []
 
         for ax, (titulo, cfg) in zip(axes_flat, configuracao.items()):
             df      = cfg['df']
@@ -257,6 +259,40 @@ class UtilGraficos:
                                 ax=ax,
                                 palette=paleta,
                                 boxprops=dict(alpha=.8))
+                    
+                    # Extrai métricas para o markdown
+                    md_linhas.append(f"## {titulo}")
+                    md_linhas.append("")
+                    md_linhas.append("| Coluna | Média | Mediana | Q1 | Q3 | IQR | Lim. Inf. | Lim. Sup. |")
+                    md_linhas.append("|---|---|---|---|---|---|---|---|")
+                    
+                    outliers_info = []
+                    for col in df_plot.columns:
+                        s = df_plot[col].dropna()
+                        if len(s) == 0:
+                            continue
+                        q1 = s.quantile(0.25)
+                        q3 = s.quantile(0.75)
+                        iqr = q3 - q1
+                        lim_inf = q1 - 1.5 * iqr
+                        lim_sup = q3 + 1.5 * iqr
+                        media = s.mean()
+                        mediana = s.median()
+                        
+                        md_linhas.append(f"| {col} | {media:.4f} | {mediana:.4f} | {q1:.4f} | {q3:.4f} | {iqr:.4f} | {lim_inf:.4f} | {lim_sup:.4f} |")
+                        
+                        outliers = s[(s < lim_inf) | (s > lim_sup)]
+                        if len(outliers) > 0:
+                            outliers_info.append(f"- **{col}** ({len(outliers)} outliers): {', '.join([f'{v:.4f}' for v in outliers])}")
+                    
+                    md_linhas.append("")
+                    if outliers_info:
+                        md_linhas.append("### Outliers")
+                        md_linhas.extend(outliers_info)
+                    else:
+                        md_linhas.append("Nenhum outlier detectado.")
+                    md_linhas.append("")
+
                 else:
                     ax.text(0.5, 0.5, 'Sem dados após filtros', 
                            ha='center', va='center', transform=ax.transAxes)
@@ -336,11 +372,16 @@ class UtilGraficos:
             plt.show()
         else:
             plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
-        if not arquivo_saida:
-            plt.show()
-        else:
-            plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
             plt.close()
+            
+            # Salva o arquivo markdown se houver dados
+            if md_linhas:
+                arquivo_md = os.path.splitext(arquivo_saida)[0] + '.md'
+                try:
+                    with open(arquivo_md, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(md_linhas))
+                except Exception as e:
+                    print(f"⚠️ Erro ao salvar arquivo .md com estatísticas: {e}")
 
     @classmethod
     def gerar_grafico_barras(cls, df: pd.DataFrame, titulo: str,

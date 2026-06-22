@@ -335,7 +335,7 @@ class JsonAnaliseGraficos:
         
         # Limpa gráficos antigos
         if limpar_graficos_antigos:
-            padroes = ['grafico_*.png', 'boxplot_*.png', 'tokens_*.png', 'avaliacao_*.png', 'observabilidade_*.png', 'comparativo_*.png']
+            padroes = ['grafico_*.png', 'grafico_*.md', 'boxplot_*.png', 'boxplot_*.md', 'tokens_*.png', 'tokens_*.md', 'avaliacao_*.png', 'avaliacao_*.md', 'observabilidade_*.png', 'observabilidade_*.md', 'comparativo_*.png', 'comparativo_*.md']
             graficos_antigos = []
             for p in padroes:
                 graficos_antigos.extend(glob.glob(os.path.join(pasta_saida, p)))
