@@ -1,5 +1,5 @@
 # Configuração para comparação de extrações - Experimento Puil
-# Executar com: python ../../src/comparar_extracoes.py --config 05_comparar_treinos.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 06_comparar_treinos.yaml
 
 #| =========================================================================
 #| MISCELÂNEA
@@ -61,9 +61,13 @@ modelos_comparacao:
   - arquivo: "saidas/saida_puil_full.parquet"
     rotulo: "puil_full"
     ativo: true
+    # pasta com os dados de treinamento para comparação de loss
+    pasta_treinamento: "treinos_local/Qwen2.5-1.5B-Instruct(puil_full)/treinamento"
   - arquivo: "saidas/saida_puil_lora.parquet"
     rotulo: "puil_lora"
     ativo: true
+    # pasta com os dados de treinamento para comparação de loss
+    pasta_treinamento: "treinos_local/Qwen2.5-1.5B-Instruct(puil_lora)/treinamento"
 
 # ---- Configuração de Métricas e Campos ----
 configuracao_comparacao:
