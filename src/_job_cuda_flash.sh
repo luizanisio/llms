@@ -38,7 +38,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate luizbat02
+conda activate luizbat01
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -50,7 +50,7 @@ echo "==============================="
 
 
 echo "1. Instalando pytorch"
-pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu130
+pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu128
 
 echo "1. Instalando requirements"
 pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
