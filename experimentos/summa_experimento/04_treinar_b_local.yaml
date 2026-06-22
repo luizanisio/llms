@@ -104,7 +104,7 @@ treinamento:
   
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
-  max_seq_length: 35840
+  max_seq_length: 32768
   validar_max_seq_length: true 
   filtrar_max_seq_length: true
   

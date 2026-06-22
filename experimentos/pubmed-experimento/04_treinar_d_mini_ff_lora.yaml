@@ -71,19 +71,20 @@ modelo:
 #| TREINAMENTO
 #| =========================================================================
 treinamento:
-  flash_attention_2: false   # Atenção O(n) em VRAM em vez de O(n²)
-  liger_kernel: false        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
+  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
 
   batch_size:
     efetivo: 16
-    batch_size: 2
+    batch_size: 4
   grad_batch_size: 8
 
   num_train_epochs: 2
-  max_seq_length: 8192
-  validar_max_seq_length: true
+  max_seq_length: 4096
+  validar_max_seq_length: true 
+  filtrar_max_seq_length: true
 
   learning_rate: 0.0002
   save_checkpoints: true
