@@ -65,11 +65,12 @@ curriculum:
       #dataset_filtro: {"dificuldade": "facil"}
     alias: "completo"
     tipo: "full"
-      #| Número de vezes que o modelo verá o dataset (epochs)
+    #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 4
-      #| Limite de tokens da janela de contexto para este dataset
+    #| Limite de tokens da janela de contexto para este dataset
+    batch_size: 2
     max_seq_length: 8192
-    learning_rate: 5e-06 # Padrão para Full FT
+    learning_rate: 0.0002
 
 #| =========================================================================
 #| MODELO
@@ -91,7 +92,7 @@ modelo:
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
   flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
-  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  liger_kernel: false        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
 
   eval_steps: 20%
 
