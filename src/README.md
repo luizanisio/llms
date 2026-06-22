@@ -160,6 +160,27 @@ Para tornar a experiência fluida sem perda de recursos, a ferramenta adota as s
 - Você **continua se beneficiando da economia de VRAM** trazida pelo Fused RMSNorm, Fused SwiGLU e Fused RoPE do Liger Kernel nas camadas internas do Transformer.
 - O treinamento e o cálculo de loss na validação (`eval_loss`) ocorrerão corretamente, pois o framework retornará o controle da perda para o HuggingFace usando a `CrossEntropyLoss` padrão e propagando os tensores no ambiente Multi-GPU da forma esperada.
 
+# Full Finetuning vs LoRA: Evitando Explosão de Loss (NaN/Inf)
+
+O framework suporta tanto treinamento via adaptadores quantizados (QLoRA) quanto atualização total dos pesos (Full Finetuning). No entanto, o Full Finetuning de grandes LLMs (como Qwen 1.5B/7B) em sequências longas exige configuração cuidadosa para evitar instabilidade numérica e colapso de perda (Loss `NaN` ou Infinito).
+
+### Dicas Críticas para Full Finetuning:
+
+1. **Precisão Nativa e o Parâmetro `nbits`**:
+   Full Finetuning exige que os pesos do modelo sejam totalmente atualizáveis, ou seja, não podem estar em matrizes quantizadas (4-bits ou 8-bits). 
+   - **Automação do Framework**: Ao configurar uma divisão do currículo com `tipo: "full"`, o framework **automaticamente força `nbits=16`**, descarrega o modelo quantizado da memória e recarrega a rede em **`torch.bfloat16`** nativo para aquela etapa. Portanto, não é necessário fixar `nbits: 16` globalmente no YAML se for usar um currículo com divisões.
+   - **Importância do bfloat16**: Essa precisão de 16-bits é essencial. Antes, tentar misturar pesos em `float32` com o otimizador `adamw_8bit` causava overflow nos tensores e explodia o loss imediatamente em sequências longas.
+2. **Ajuste o Learning Rate drasticamente para baixo**:
+   Enquanto o LoRA funciona perfeitamente com `learning_rate: 0.0002` (2e-4), aplicar essa mesma taxa a 100% dos parâmetros da rede (Full FT) é o erro mais comum. As correções dos gradientes se tornam tão grandes que corrompem o modelo em um único passo.
+   - **Para Full Finetuning:** Sempre utilize algo entre **`5e-6`** e **`1e-5`**. Se o seu YAML tiver partições/divisões do tipo `full`, defina a taxa local `learning_rate: 5e-06` nelas.
+3. **Clipagem de Gradiente (`max_grad_norm`)**:
+   Caso continue observando pequenos espasmos no loss durante o Full FT, você pode configurar o clipe global de gradiente no YAML na chave de treinamento:
+   ```yaml
+   treinamento:
+     max_grad_norm: 0.3
+   ```
+   Isso limitará o tamanho máximo do passo de atualização, salvando o modelo de divergências catastróficas.
+
 
 ## Instalação rápida do ambiente
 ```bash
