@@ -69,7 +69,7 @@ curriculum:
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
+      max_seq_length: 4096
     - arquivo: compara/divisao_mini_300.csv
     #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
       dataset_filtro: {"dificuldade": "medio"}
@@ -78,7 +78,7 @@ curriculum:
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
+      max_seq_length: 4096
     - arquivo: compara/divisao_mini_300.csv
     #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
       dataset_filtro: {"dificuldade": "dificil"}
@@ -87,7 +87,7 @@ curriculum:
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
+      max_seq_length: 4096
     - arquivo: compara/divisao_mini_300.csv
       #dataset_filtro: {"dificuldade": "dificil"}
       alias: "completo"
@@ -95,7 +95,6 @@ curriculum:
       #| Número de vezes que o modelo verá o dataset (epochs)
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
-      max_seq_length: 8192
 
 #| =========================================================================
 #| MODELO
@@ -124,13 +123,14 @@ treinamento:
   #| Configuração do tamanho do lote (batch). Lote por GPU é 2, com acumulação de 8.
   batch_size:
     efetivo: 16
-    batch_size: 1
+    batch_size: 2
   grad_batch_size: 8
   
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
   max_seq_length: 8192
   validar_max_seq_length: true 
+  filtrar_max_seq_length: true
   
   #| Taxa de aprendizado base, otimizada para LoRA
   learning_rate: 0.0002
