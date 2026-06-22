@@ -44,6 +44,10 @@ echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX
 export PATH=$CUDA_HOME/bin:$PATH
 
+# Permite que o alocador CUDA expanda segmentos existentes em vez de exigir blocos
+# contíguos — elimina OOM por fragmentação (reservado-mas-não-alocado ~10 GB)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
