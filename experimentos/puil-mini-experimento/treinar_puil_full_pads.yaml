@@ -1,4 +1,4 @@
-# python ../../src/treinar_unsloth.py --treinar treinar_puil_full.yaml --reset
+# python ../../src/treinar_unsloth.py --treinar treinar_puil_full_pads.yaml --reset
 
 misc:
   pastas_base:
