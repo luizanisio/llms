@@ -77,11 +77,12 @@ configuracao_comparacao:
   modelos:
     # substitui o modelo padrão sbert médio e bertscore pelo modelo jurídico
     sbert:
+      grande: "intfloat/multilingual-e5-base"
       medio: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
       medio_alias: STJIris
     bertscore: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
     bertscore_alias: STJIris
-    bertscore_batch_size: 5012
+    bertscore_batch_size: 512
     sbert_batch_size: 512
 
   # Configuração dos campos do parquet (quando a entrada for .parquet ou .csv)
@@ -102,28 +103,19 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"                 # Padrão dos arquivos de avaliação
     observabilidade: ".obs.json"                 # Padrão dos arquivos de observabilidade
 
-  # Mapeamento de campos para métricas
-  modelos:
-    sbert:
-      grande: "intfloat/multilingual-e5-base"           
-      medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1" 
-    bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"    
-
-    bertscore_batch_size: 1024
-    sbert_batch_size: 1024
 
   campos:
-    # Como o CSV contém apenas um campo de texto livre ("completion"),
-    # usamos apenas o campo "(global)" para calcular a similaridade da resposta inteira.
+    # Como o CSV contém apenas um campo de texto livre ("completion") e não um json, é criado um campo chamado
+    # "resposta" com o conteúdo do texto. Pode-se usar o campo (global) mas ele sozinho não gera comparações completas por campo
 
     bertscore:
-    - "(global)"
+    - resposta
 
     rouge_l:
-    - "(global)"
+    - resposta
 
     sbert_medio:
-    - "(global)"
+    - resposta
 
     rouge_2:
     - resposta

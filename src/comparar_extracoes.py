@@ -247,13 +247,44 @@ def configurar_metricas(config_yaml, base_dir="", pasta_modelos_ativa=""):
         'campos_sbert_medio': campos.get('sbert_medio') or [],
         'campos_sbert_grande': campos.get('sbert_grande') or [],
         # Configuração de modelos personalizados (opcional)
-        # modelos_sbert: dict com overrides por tamanho. Ex: {'grande': 'intfloat/multilingual-e5-base'}
-        # modelo_bertscore: string com nome do modelo HuggingFace. Ex: 'microsoft/deberta-xlarge-mnli'
         'modelos_sbert': conf_comp.get('modelos', {}).get('sbert', {}),
         'modelo_bertscore': conf_comp.get('modelos', {}).get('bertscore', None),
         'bertscore_batch_size': conf_comp.get('modelos', {}).get('bertscore_batch_size', None),
         'sbert_batch_size': conf_comp.get('modelos', {}).get('sbert_batch_size', None),
         'campos_virtuais': config_yaml.get('campos_virtuais', {})
+    }
+    
+    # Processamento de Aliases para Modelos
+    modelos_conf = conf_comp.get('modelos', {})
+    sbert_conf = modelos_conf.get('sbert', {})
+    
+    defaults_modelos = {
+        'sbert_pequeno': ('paraphrase-multilingual-MiniLM-L12-v2', 'MiniLM'),
+        'sbert_medio': ('paraphrase-multilingual-mpnet-base-v2', 'MPNet'),
+        'sbert_grande': ('intfloat/multilingual-e5-large', 'E5-Large'),
+        'bertscore': ('bert-base-multilingual-cased', 'mBERT')
+    }
+    
+    def _obter_alias(dict_fonte, chave_valor, chave_alias, default_val, default_alias):
+        v = dict_fonte.get(chave_valor)
+        a = dict_fonte.get(chave_alias)
+        if not v:
+            return (default_val, default_alias)
+        if not a:
+            import os as _os
+            a = _os.path.basename(v.rstrip('/\\'))
+        return (v, a)
+
+    v_peq, a_peq = _obter_alias(sbert_conf, 'pequeno', 'pequeno_alias', *defaults_modelos['sbert_pequeno'])
+    v_med, a_med = _obter_alias(sbert_conf, 'medio', 'medio_alias', *defaults_modelos['sbert_medio'])
+    v_gra, a_gra = _obter_alias(sbert_conf, 'grande', 'grande_alias', *defaults_modelos['sbert_grande'])
+    v_bert, a_bert = _obter_alias(modelos_conf, 'bertscore', 'bertscore_alias', *defaults_modelos['bertscore'])
+
+    config_final['modelos_aliases'] = {
+        'sbert_pequeno': (a_peq, v_peq),
+        'sbert_medio': (a_med, v_med),
+        'sbert_grande': (a_gra, v_gra),
+        'bertscore': (a_bert, v_bert)
     }
     
     # Resolve modelos locais

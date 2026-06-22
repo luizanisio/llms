@@ -48,10 +48,13 @@ Todas as manobras e experimentos de comparação prescindem da necessidade de en
   modelos:
     sbert:
       grande: "intfloat/multilingual-e5-base"  # override individual do SBERT grande
-      pequeno: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1" # override com modelo Jurídico do STJ de Portugual
-    bertscore: "microsoft/deberta-xlarge-mnli"  # modelo personalizado para BERTScore
+      grande_alias: "E5-Base"                  # apelido que será exibido nos relatórios e gráficos
+      pequeno: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+      pequeno_alias: "STJIris"                 # se omitido, o alias usa o final do path ('...-sts-v1')
+    bertscore: "microsoft/deberta-xlarge-mnli" # modelo personalizado para BERTScore
+    bertscore_alias: "DeBERTa"
   ```
-  Se omitido, usa os modelos padrão: SBERT pequeno (`paraphrase-multilingual-MiniLM-L12-v2`), SBERT médio (`paraphrase-multilingual-mpnet-base-v2`), SBERT grande (`intfloat/multilingual-e5-large`), BERTScore (`bert-base-multilingual-cased` via `lang='pt'`).
+  Se omitido, o comparador usa os modelos e aliases padrão: SBERT pequeno (`MiniLM`), SBERT médio (`MPNet`), SBERT grande (`E5-Large`), e BERTScore (`mBERT`).
 - **`configuracao_comparacao.campos_parquet`**: Mapeamento das colunas do arquivo `.parquet` para os dados esperados pelo pipeline (ver seção abaixo).
 - **`configuracao_comparacao.filtro`**: Permite definir um arquivo CSV e a coluna que servirá como filtro para a extração e carga. Apenas os IDs (da coluna especificada) que coincidirem com os dados do parquet/json serão avaliados.
   ```yaml

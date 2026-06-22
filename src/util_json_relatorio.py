@@ -155,6 +155,13 @@ class JsonAnaliseRelatorio:
             campos_rouge1, campos_rouge2, campos_levenshtein
         )
         
+        modelos_aliases = config.get('modelos_aliases', {})
+        tabela_modelos = ""
+        if modelos_aliases:
+            tabela_modelos = "\n### Modelos Utilizados nas Métricas\n\n| Métrica | Alias | Modelo |\n|---|---|---|\n"
+            for param, (alias, caminho) in modelos_aliases.items():
+                tabela_modelos += f"| `{param}` | `{alias}` | `{caminho}` |\n"
+        
         conteudo = f"""## ⚙️ Configuração da Análise
 
 ### Configurações Ativas
@@ -173,7 +180,7 @@ class JsonAnaliseRelatorio:
 ### Distribuição de Métricas por Campo
 
 {self._formatar_tabela_metricas(metricas_por_campo)}
-
+{tabela_modelos}
 **Campos especiais:**
 - `(global)`: Visão geral do documento completo
 - `(estrutura)`: Acurácia estrutural (campos presentes/ausentes)

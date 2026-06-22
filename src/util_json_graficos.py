@@ -122,7 +122,8 @@ class JsonAnaliseGraficos:
                  relatorio=None,
                  gerar_relatorio: bool = True,
                  lang: str = 'pt',
-                 to_df_callable=None):
+                 to_df_callable=None,
+                 config: dict = None):
         self._dados_analise = dados_analise
         self._rotulos = rotulos or []
         self._pasta_analises = pasta_analises
@@ -130,6 +131,7 @@ class JsonAnaliseGraficos:
         self._gerar_relatorio = gerar_relatorio and relatorio is not None
         self._lang = lang if lang in ('pt', 'en') else 'pt'
         self._to_df_callable = to_df_callable
+        self.config = config or {}
 
     # ═════════════════════════════════════════════════════════════════════════
     # Propriedades de compatibilidade (mapeiam para os atributos internos)
@@ -283,8 +285,11 @@ class JsonAnaliseGraficos:
         )
         
         # Gera gráficos adicionais de interesse
+        # Busca alias se houver
+        modelos_aliases = getattr(self, 'config', {}).get('modelos_aliases', {})
+                
         arquivos_adicionais = self._gerar_graficos_adicionais(
-            df, estrutura, pasta_saida, paleta
+            df, estrutura, pasta_saida, paleta, modelos_aliases=modelos_aliases
         )
         
         arquivos_gerados.extend(arquivos_adicionais)
@@ -444,12 +449,26 @@ class JsonAnaliseGraficos:
                 print("⚠️  Aviso: Nenhum dado encontrado nas abas de resultados")
                 return []
             
+            # Lê modelos_aliases da aba Config
+            modelos_aliases = {}
+            try:
+                if 'Config' in xl_file.sheet_names:
+                    df_config = pd.read_excel(arquivo_excel, sheet_name='Config')
+                    for _, row in df_config.iterrows():
+                        p = row.get('parametro')
+                        v = row.get('valor')
+                        d = row.get('descricao', '')
+                        if pd.notna(p) and p in ['sbert_pequeno', 'sbert_medio', 'sbert_grande', 'bertscore']:
+                            modelos_aliases[p] = (v, d)
+            except Exception as e:
+                print(f"⚠️  Erro ao carregar modelos_aliases da aba Config: {e}")
+            
             # Extrai estrutura do DataFrame consolidado
             estrutura = cls._extrair_estrutura_metricas_estatico(df_consolidado, tecnica_aba='', rotulos_modelos_ordenados=rotulos_modelos_ordenados)
             
             # Gera gráficos com TODOS os modelos
             arquivos_gerados = cls._gerar_boxplots_por_campo_metrica_estatico(
-                df_consolidado, estrutura, pasta_saida, paleta, tecnica_aba='', rotulos_modelos_ordenados=rotulos_modelos_ordenados, lang=lang
+                df_consolidado, estrutura, pasta_saida, paleta, tecnica_aba='', rotulos_modelos_ordenados=rotulos_modelos_ordenados, lang=lang, modelos_aliases=modelos_aliases
             )
             
             # ═══════════════════════════════════════════════════════════════════════
@@ -764,9 +783,17 @@ class JsonAnaliseGraficos:
                             if not sufixo_encontrado:
                                 continue
                                 
-                            tecnica = resto[:-len(sufixo_encontrado)]
+                            tecnica_raw = resto[:-len(sufixo_encontrado)]
+                            
+                            # Busca alias
+                            alias_info = ""
+                            if tecnica_raw in modelos_aliases:
+                                alias = modelos_aliases[tecnica_raw][0]
+                                if alias:
+                                    alias_info = f" ({alias})"
+                            
                             # Normaliza nome da técnica
-                            tecnica = tecnica.replace('_', ' ').strip()
+                            tecnica = tecnica_raw.replace('_', ' ').strip().upper() + alias_info
                             tecnicas_globais.add(tecnica)
                             
                             media_score = df_consolidado[col].mean()
@@ -872,11 +899,17 @@ class JsonAnaliseGraficos:
                             
                             tipo_score = traduzir_rotulos('similaridade', lang) if tecnica == 'levenshtein' else traduzir_rotulos('f1_score', lang)
                             
+                            alias_info = ""
+                            if tecnica in modelos_aliases:
+                                alias = modelos_aliases[tecnica][0]
+                                if alias:
+                                    alias_info = f" ({alias})"
+                                    
                             # Usa gerar_grafico_barras (agrupado por modelo para cada campo)
                             # Index (Campo) será o eixo X. Colunas (Modelos) serão as barras.
                             UtilGraficos.gerar_grafico_barras(
                                 df=df_pivot,
-                                titulo=traduzir_rotulos('campo_score_titulo', lang, tecnica=tecnica.upper(), tipo_score=tipo_score),
+                                titulo=traduzir_rotulos('campo_score_titulo', lang, tecnica=tecnica.upper() + alias_info, tipo_score=tipo_score),
                                 xlabel=traduzir_rotulos('campo_xlabel', lang),
                                 ylabel=traduzir_rotulos('campo_score_ylabel', lang, tipo_score=tipo_score),
                                 arquivo_saida=arquivo_tec,
@@ -2029,8 +2062,17 @@ class JsonAnaliseGraficos:
                         print(f"⚠️  Aviso: Nenhuma coluna encontrada para {campo}/{tecnica}/{metrica}")
                         continue
                     
+                    # Busca alias se houver
+                    alias_info = ""
+                    modelos_aliases = getattr(self, 'config', {}).get('modelos_aliases', {})
+                    
+                    if tecnica in modelos_aliases:
+                        alias = modelos_aliases[tecnica][0]
+                        if alias:
+                            alias_info = f" ({alias})"
+                    
                     # Título do gráfico
-                    titulo = f'{campo} - {metrica} ({tecnica_nome})'
+                    titulo = f'{campo} - {metrica} ({tecnica_nome}{alias_info})'
                     
                     # Configuração: um boxplot por modelo, comparando todos lado a lado
                     config = {
@@ -2066,7 +2108,7 @@ class JsonAnaliseGraficos:
     def _gerar_boxplots_por_campo_metrica_estatico(df, estrutura: dict, 
                                                    pasta_saida: str, paleta: str,
                                                    tecnica_aba: str = '', rotulos_modelos_ordenados: list = None,
-                                                   lang: str = 'pt') -> List[str]:
+                                                   lang: str = 'pt', modelos_aliases: dict = None) -> List[str]:
         """
         Versão estática - Gera boxplots agrupando todos os modelos para cada campo.
         
@@ -2181,8 +2223,15 @@ class JsonAnaliseGraficos:
                         print(f"⚠️  Aviso: Nenhuma coluna encontrada para {campo}/{tecnica}/{metrica}")
                         continue
                     
+                    # Busca alias se houver
+                    alias_info = ""
+                    if modelos_aliases and tecnica in modelos_aliases:
+                        alias = modelos_aliases[tecnica][0]
+                        if alias:
+                            alias_info = f" ({alias})"
+                    
                     # Título
-                    titulo = f'{campo} - {metrica} ({tecnica_nome})'
+                    titulo = f'{campo} - {metrica} ({tecnica_nome}{alias_info})'
                     
                     # Configuração: um boxplot por modelo, comparando todos lado a lado
                     config = {
@@ -2215,7 +2264,7 @@ class JsonAnaliseGraficos:
     
 
     def _gerar_graficos_adicionais(self, df, estrutura: dict, 
-                                   pasta_saida: str, paleta: str) -> List[str]:
+                                   pasta_saida: str, paleta: str, modelos_aliases: dict = None) -> List[str]:
         """
         Gera gráficos adicionais de interesse:
         1. Comparação global F1 entre modelos (todos os campos)
@@ -2258,9 +2307,17 @@ class JsonAnaliseGraficos:
                         aliases.append(modelo)
                     
                     tecnica_label = tecnica.upper() if tecnica != 'geral' else ''
+                    
+                    # Busca alias se houver
+                    alias_info = ""
+                    if modelos_aliases and tecnica in modelos_aliases:
+                        alias = modelos_aliases[tecnica][0]
+                        if alias:
+                            alias_info = f" ({alias})"
+                            
                     titulo = traduzir_rotulos('comp_global_f1', self._lang)
                     if tecnica_label:
-                        titulo += f' ({tecnica_label})'
+                        titulo += f' ({tecnica_label}{alias_info})'
                     
                     nome_arquivo = f'grafico_comp_global_f1_{tecnica}.png'
                     caminho_completo = os.path.join(pasta_saida, nome_arquivo)
@@ -2360,9 +2417,17 @@ class JsonAnaliseGraficos:
                         aliases.append(modelo)
                     
                     tecnica_label = tecnica.upper() if tecnica != 'geral' else 'Levenshtein'
+                    
+                    # Busca alias se houver
+                    alias_info = ""
+                    if modelos_aliases and tecnica in modelos_aliases:
+                        alias = modelos_aliases[tecnica][0]
+                        if alias:
+                            alias_info = f" ({alias})"
+                            
                     titulo = traduzir_rotulos('comp_global_sim', self._lang)
                     if tecnica_label:
-                        titulo += f' ({tecnica_label})'
+                        titulo += f' ({tecnica_label}{alias_info})'
                     
                     nome_arquivo = f'grafico_comp_global_sim_{tecnica}.png'
                     caminho_completo = os.path.join(pasta_saida, nome_arquivo)

@@ -3396,6 +3396,15 @@ class JsonAnaliseDataFrame():
             }
         ]
         
+        # Adiciona modelos e seus aliases na configuração
+        modelos_aliases = self.config.get('modelos_aliases', {}) if self.config else {}
+        for param, (alias, caminho) in modelos_aliases.items():
+            config_data.append({
+                'parametro': param,
+                'valor': alias,
+                'descricao': caminho
+            })
+        
         # Como não usaremos pd.DataFrame().to_excel para aba Config,
         # precisamos criar a aba manualmente antes de chamar write_table.
         if 'Config' not in excel.writer.sheets:
@@ -3497,7 +3506,8 @@ class JsonAnaliseDataFrame():
                 relatorio=self.relatorio,
                 gerar_relatorio=self.gerar_relatorio,
                 lang=self._lang,
-                to_df_callable=self.to_df
+                to_df_callable=self.to_df,
+                config=self.config
             )
         return self._graficos_instance
     
