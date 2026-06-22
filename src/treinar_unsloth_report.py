@@ -333,7 +333,7 @@ class GeradorRelatorio:
         conteudo.append(f"| Seed | {cfg.treinamento.seed} |")
         
         # --- Otimizações de memória GPU ---
-        conteudo.append(f"| **Flash Attention 2** | {'✅ ativo' if cfg.treinamento.flash_attention_2 else '❌ desativado (usando SDPA)'} |")
+        conteudo.append(f"| **Flash Attention 2** | {'✅ ativo' if cfg.treinamento.flash_attention_2 else '❌ desativado (usando eager)'} |")
         conteudo.append(f"| **Liger Kernel** | {'✅ ativo (fused CE + RoPE + RMSNorm)' if cfg.treinamento.liger_kernel else '❌ desativado'} |")
         
         # --- Modo de treinamento usado ---

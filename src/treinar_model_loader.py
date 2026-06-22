@@ -144,7 +144,7 @@ class ModelLoader:
             quant_config: Configuração de quantização (None = sem quantização)
             device_map: Estratégia de distribuição ("auto", "cuda:0", etc.)
             trust_remote_code: Confiar em código remoto (necessário para alguns modelos)
-            attn_implementation: Implementação de atenção ("flash_attention_2", "sdpa", "eager")
+            attn_implementation: Implementação de atenção ("flash_attention_2", "eager")
             use_cache: Ativar cache KV (desabilitar durante treinamento)
             use_liger_kernel: Usar Liger Kernel (fused cross-entropy, RoPE, RMSNorm).
                 Reduz pico de VRAM ~40% ao evitar materializar tensor de logits completo.
@@ -202,7 +202,7 @@ class ModelLoader:
                 # Não deveria chegar aqui (validação é feita antes), mas por segurança
                 logger.warning("Liger Kernel solicitado mas não disponível. Usando AutoModelForCausalLM.")
 
-        # Tenta usar flash_attention_2 se disponível, senão fallback para sdpa
+        # Tenta usar flash_attention_2 se disponível, senão fallback para eager
         try:
             model = _model_cls.from_pretrained(
                 model_name,
@@ -216,14 +216,14 @@ class ModelLoader:
             )
         except Exception as e:
             logger.warning(f"Falha ao carregar com attn_implementation={attn_implementation}: {e}")
-            logger.info("Tentando com attn_implementation='sdpa' (fallback)...")
+            logger.info("Tentando com attn_implementation='eager' (fallback)...")
             model = _model_cls.from_pretrained(
                 model_name,
                 quantization_config=bnb_config,
                 device_map=device_map,
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
-                attn_implementation="sdpa",
+                attn_implementation="eager",
                 use_cache=use_cache,
                 **({"cross_entropy": False, "fused_linear_cross_entropy": False} if (use_liger_kernel and _LIGER_DISPONIVEL) else {})
             )
@@ -359,7 +359,7 @@ class ModelLoader:
             max_seq_length: Comprimento máximo de sequência
             quant_config: Configuração de quantização
             device_map: Estratégia de distribuição
-            attn_implementation: Implementação de atenção ("flash_attention_2", "sdpa", "eager")
+            attn_implementation: Implementação de atenção ("flash_attention_2", "eager")
             use_liger_kernel: Usar Liger Kernel para otimização de memória
 
         Returns:

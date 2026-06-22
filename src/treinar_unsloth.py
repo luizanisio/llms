@@ -1351,21 +1351,23 @@ class LLMsTrainer:
 
         # Seleciona implementação de atenção:
         # - Pacote flash-attn instalado: usa kernels customizados (flash_attention_2)
-        # - Caso contrário: SDPA nativo do PyTorch >= 2.0, que já usa flash attention
-        #   internamente via torch.backends.cuda.flash_sdp — economia de VRAM equivalente
+        # - Caso contrário: Fallback para EAGER. IMPORTANTE: Não usar SDPA para fallback em LoRA bfloat16
+        #   pois o kernel SDPA nativo do PyTorch no Hopper/H100 causa overflow e NaN loss no step 0
+        #   quando combinado com adaptadores LoRA em bfloat16! (Isso não acontecia com o unsloth porque ele
+        #   tinha seus próprios kernels triton).
         if use_flash_attn:
-            attn_impl = "flash_attention_2" if _FLASH_ATTN_PACOTE_DISPONIVEL else "sdpa"
+            attn_impl = "flash_attention_2" if _FLASH_ATTN_PACOTE_DISPONIVEL else "eager"
         else:
-            attn_impl = "sdpa"
+            attn_impl = "eager"
 
         # Log das otimizações ativas
         if use_flash_attn:
             _flash_status = (
                 "✅ ativo (pacote flash-attn)" if _FLASH_ATTN_PACOTE_DISPONIVEL
-                else "✅ ativo (SDPA nativo PyTorch — equivalente para LoRA fine-tuning)"
+                else "❌ desativado (usando EAGER padrão para evitar NaN no SDPA)"
             )
         else:
-            _flash_status = "❌ desativado (usando SDPA padrão)"
+            _flash_status = "❌ desativado (usando EAGER padrão)"
         print_cores(f"<cinza>   🛠️  Otimizações de memória GPU:</cinza>", color_auto=False)
         print_cores(f"<cinza>      - Flash Attention: {_flash_status}</cinza>", color_auto=False)
         print_cores(f"<cinza>      - Liger Kernel:    {'✅ ativo (fused CE + RoPE + RMSNorm)' if use_liger else '❌ desativado'}</cinza>", color_auto=False)
@@ -1837,7 +1839,7 @@ class LLMsTrainer:
             #
             # A condição correta deve verificar _FLASH_ATTN_PACOTE_DISPONIVEL (o estado real
             # do runtime) e não treino_cfg.flash_attention_2 (a intenção do YAML, que pode
-            # fazer fallback para SDPA quando o pacote flash-attn não está instalado).
+            # fazer fallback para eager quando o pacote flash-attn não está instalado).
             use_liger_kernel=False,  # Desativado: o model loader já aplica Liger no modelo via AutoLigerKernelForCausalLM
         )
         

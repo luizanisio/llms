@@ -143,7 +143,7 @@ Ambas são habilitadas por padrão (`true`) e validadas no carregamento: se ativ
 
 **Detecção:** Usa `transformers.utils.is_flash_attn_2_available()` no nível do módulo (`treinar_model_loader.py`). A detecção via `import flash_attn` diretamente não é confiável — a função do Transformers verifica a mesma coisa que é checada internamente quando se passa `attn_implementation="flash_attention_2"`.
 
-**Fallback:** Se o modelo não suportar Flash Attention 2 (ex: arquitetura incompatível), o carregamento captura a exceção e retenta automaticamente com `attn_implementation="sdpa"` (Scaled Dot Product Attention do PyTorch).
+**Fallback:** Se o modelo não suportar Flash Attention 2 (ex: arquitetura incompatível), o carregamento captura a exceção e retenta automaticamente com `attn_implementation="eager"` (atenção padrão do PyTorch). **Nota:** O fallback anterior era `"sdpa"` (Scaled Dot Product Attention), mas o kernel SDPA fused do PyTorch causa overflow e NaN loss no step 0 quando combinado com LoRA em bfloat16 em GPUs Hopper (H100). Por isso o fallback foi alterado para `"eager"`, que é numericamente estável em todos os cenários.
 
 **Arquivo:** `treinar_model_loader.py` → `ModelLoader.load_base_model()`.
 

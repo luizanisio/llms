@@ -204,7 +204,7 @@ class ConfigTreinamento:
     # flash_attention_2: usa Flash Attention 2 (O(n) VRAM vs O(n²)), crítico para sequências longas.
     #   Requer: pip install flash-attn --no-build-isolation
     #   Se True e não instalado, o treinamento será interrompido com sugestão de instalação.
-    #   Se False, usa 'sdpa' (Scaled Dot Product Attention) como fallback.
+    #   Se False, usa 'eager' (atenção padrão) como fallback seguro — SDPA causa NaN com LoRA bfloat16 no H100.
     flash_attention_2: bool = True
     # liger_kernel: usa Liger Kernel fused cross-entropy + RoPE + RMSNorm (~40% menos VRAM no pico).
     #   Evita materializar tensor de logits completo (batch × seq × vocab × 4B).
