@@ -428,6 +428,31 @@ class UtilPandasExcel:
             raise AttributeError("Writer não possui método save(), close() ou _save()")
 
 
+def ler_dataset(arquivo: str) -> pd.DataFrame:
+    """
+    Lê um arquivo de dados (.parquet, .csv) de forma robusta.
+    Remove caracteres invisíveis como BOM (\\ufeff) e espaços das colunas
+    (comum quando arquivos são salvos no Excel/Windows).
+    No caso de CSV, tenta inferir o separador e o encoding.
+    """
+    ext = os.path.splitext(arquivo)[1].lower()
+    
+    if ext == ".parquet":
+        df = pd.read_parquet(arquivo)
+        df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+        return df
+        
+    elif ext == ".csv":
+        try:
+            df = pd.read_csv(arquivo, sep=None, engine='python', encoding='utf-8')
+        except UnicodeDecodeError:
+            df = pd.read_csv(arquivo, sep=None, engine='python', encoding='latin-1')
+            
+        df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+        return df
+    else:
+        raise ValueError(f"Formato de arquivo não suportado para extração de dados tabulares: {ext}")
+
 def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro: dict) -> pd.DataFrame:
     """
     Aplica um filtro em formato de dicionário a um DataFrame pandas.

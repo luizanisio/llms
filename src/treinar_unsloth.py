@@ -3375,10 +3375,11 @@ class LLMsDataset:
         return False # string funcionou
 
     def _load_dataset(self):
-        """Carrega dataset de arquivo parquet, json, jsonl ou txt."""
+        """Carrega dataset de arquivo parquet, csv, json, jsonl ou txt."""
         ext = os.path.splitext(self.path)[1].lower()
-        if ext == ".parquet":
-            df = pd.read_parquet(self.path)
+        if ext in {".parquet", ".csv"}:
+            from util_pandas import ler_dataset
+            df = ler_dataset(self.path)
             if self.prompt_col and self.prompt_col not in df.columns:
                 raise KeyError(f"Coluna '{self.prompt_col}' não encontrada em {self.path}")
             return Dataset.from_pandas(df)
