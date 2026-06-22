@@ -158,7 +158,7 @@ class ModelLoader:
         bnb_config = quant_config.to_bnb_config() if quant_config else None
 
         # Dtype padrão (se não quantizado)
-        torch_dtype = torch.bfloat16 if quant_config is None else None
+        torch_dtype = torch.bfloat16 if bnb_config is None else None
 
         # IMPORTANTE: NÃO passamos max_position_embeddings ao from_pretrained().
         # Esse parâmetro altera a arquitetura RoPE do modelo, sobrescrevendo o valor

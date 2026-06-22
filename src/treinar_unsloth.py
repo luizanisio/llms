@@ -1804,6 +1804,7 @@ class LLMsTrainer:
             optim=treino_cfg.optim,
             weight_decay=treino_cfg.weight_decay,
             lr_scheduler_type=treino_cfg.lr_scheduler_type,
+            max_grad_norm=treino_cfg.max_grad_norm,
             seed=treino_cfg.seed,
             output_dir=os.path.join(self._yaml_config.modelo.saida, "chkpt"),  # checkpoints em subpasta
             save_strategy="steps" if self.save_checkpoints else "no",

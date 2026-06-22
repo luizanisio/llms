@@ -199,6 +199,7 @@ class ConfigTreinamento:
     weight_decay: float = 0.01
     optim: str = "adamw_8bit"
     lr_scheduler_type: str = "linear"
+    max_grad_norm: float = 1.0
     # --- Otimizações de memória GPU (padrão: ativadas) ---
     # flash_attention_2: usa Flash Attention 2 (O(n) VRAM vs O(n²)), crítico para sequências longas.
     #   Requer: pip install flash-attn --no-build-isolation
@@ -849,6 +850,7 @@ class YamlTreinamento:
             weight_decay=float(treino_raw.get("weight_decay", 0.01)),
             optim=str(treino_raw.get("optim", "adamw_8bit")),
             lr_scheduler_type=str(treino_raw.get("lr_scheduler_type", "linear")),
+            max_grad_norm=float(treino_raw.get("max_grad_norm", 1.0)),
             flash_attention_2=treino_raw.get("flash_attention_2", True) in {True, "true", "True", 1, "1", "sim"},
             liger_kernel=treino_raw.get("liger_kernel", True) in {True, "true", "True", 1, "1", "sim"},
         )
