@@ -106,7 +106,8 @@ class CargaDadosComparacao():
                  pasta_log_erros: str = None,
                  ignorar_erro_extracao: bool = False,
                  ids_filtro: set = None,
-                 campos_virtuais: dict = None):
+                 campos_virtuais: dict = None,
+                 avaliar_global: bool = False):
         """
         Inicializa a classe de carga de dados com suporte a Regex.
         
@@ -122,6 +123,10 @@ class CargaDadosComparacao():
             mascara_avaliacao: Regex para arquivos de avaliação (grupo 1 deve ser o ID)
             mascara_observabilidade: Regex para arquivos de observabilidade (grupo 1 deve ser o ID)
             ignorar_erro_extracao: Se True, ignora erros de extração e contabiliza apenas extrações completas nos cálculos de métricas
+            avaliar_global: Flag interna que informa à carga de dados que, mesmo se o filtro 
+                            de campos retornar vazio (quando configurado via yaml sem mapeamento explícito),
+                            o JSON completo original deve ser retornado para que as métricas
+                            virtuais como `(global)` e `(estrutura)` tenham acesso aos dados.
         """
         assert len(pastas_destinos) == len(rotulos_destinos), \
             "Número de pastas_destinos deve ser igual ao número de rotulos_destinos"
@@ -136,6 +141,7 @@ class CargaDadosComparacao():
         self.ignorar_erro_extracao = ignorar_erro_extracao
         self.ids_filtro = ids_filtro
         self.campos_virtuais = campos_virtuais or {}
+        self.avaliar_global = avaliar_global
         
         # Compilação das Regex
         self.re_extracao = re.compile(mascara_extracao)
@@ -342,7 +348,10 @@ class CargaDadosComparacao():
         """
         if 'erro' in json_data:
             return json_data
-        
+            
+        if not campos:
+            return json_data
+            
         resultado = {}
         for campo in campos:
             if '.' in campo:
@@ -644,6 +653,10 @@ class CargaDadosComparacao():
             json_origem = self._carregar_json(path_origem)
             json_origem = self._aplicar_campos_virtuais(json_origem)
             json_origem_filtrado = self._filtrar_campos(json_origem, self.campos_comparacao)
+            
+            if not json_origem_filtrado and self.avaliar_global:
+                json_origem_filtrado = json_origem
+                
             json_origem_filtrado = self._filtro_origem(json_origem_filtrado)
             
             if json_origem_filtrado is None:
@@ -665,6 +678,9 @@ class CargaDadosComparacao():
                     json_dest = self._carregar_json(path_dest)
                     json_dest = self._aplicar_campos_virtuais(json_dest)
                     json_dest_filtrado = self._filtrar_campos(json_dest, self.campos_comparacao)
+                    
+                    if not json_dest_filtrado and self.avaliar_global:
+                        json_dest_filtrado = json_dest
                 else:
                     json_dest_filtrado = {'erro': 'Inexistente (Não encontrado no mapa)'}
                 

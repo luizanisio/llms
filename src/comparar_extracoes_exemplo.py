@@ -16,20 +16,35 @@ YAML_EXEMPLO_PARQUET = '''
 # Configuração para comparação de extrações usando arquivos .parquet como entrada.
 # Executar com: python comparar_extracoes.py config_exemplo.yaml
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base: 
+    # identifica a pasta base de arquivos, a primeira encontrada é fixada
+    - /students/luiz.abatitucci/llms/experimentos/experimento_exemplo
+    - /mnt/d/wsl_dev/llms/experimentos/experimento_exemplo
+  pastas_modelos:  
+    # identifica a pasta de modelos base, a primeira encontrada é fixada
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+  pastas_modelos_treinados:
+    # procura os modelos indicados para comparação que podem estar em qualquer uma das pastas ou um modelo em cada uma 
+    - /students/luiz.abatitucci/experimentos/experimento_exemplo/treinos_local    
+    - /mnt/d/wsl_dev/llms/experimentos/experimento_exemplo/treinos_local    
+
 # ---- Configuração Global de Saída ----
 saida:
   pasta: "./compara/analises_comparacao"        # Pasta raiz para relatórios, gráficos e planilhas
   pasta_parquet: "./compara/"                    # (Obrigatório com .parquet) Pasta base para extração dos JSONs
                                                  # Os JSONs serão extraídos em: <pasta_parquet>/<nome_parquet_sem_ext>/
   arquivo_base: "comparacao_resultados"          # Nome base dos arquivos de saída (.xlsx, .csv)
-  regerar_planilha_base: true                    # Se false, não regera planilha se já existir
   linguagem_graficos: "en"                       # "pt" ou "en" para legendas dos gráficos
 
 # ---- Configurações de Execução ----
 execucao:
   max_workers: 10                                # Número de threads para processamento paralelo
   teste_rapido: false                            # true = pula BERTScore/SBERT (move campos para ROUGE-L)
-  gerar_graficos: true                           # Gera gráficos comparativos
   llm_as_a_judge: false                          # Executa avaliação LLM-as-a-Judge (requer API)
   analise_estatistica: true                      # Gera relatório estatístico
   ignorar_erro_extracao: true                    # true = ignora documentos com erro nos cálculos de métricas
@@ -73,6 +88,7 @@ configuracao_comparacao:
     resumo_tokens: "resumo"                      # (Opcional) Coluna com JSON de tokens → {id}.tokens.json
     avaliacao: ""                                # (Opcional) Coluna com avaliação LLM → {id}.avaliacao.json
     erro: "erro"                                 # (Opcional) Coluna com mensagem de erro
+    saida_json: true                             # (Opcional) true=valida e salva JSON; false=salva texto puro dentro de {"resposta": "..."}
 
   # Máscaras de arquivos (usadas para identificar os JSONs extraídos na pasta)
   mascaras:
@@ -87,8 +103,8 @@ configuracao_comparacao:
     sbert:
       grande: "intfloat/multilingual-e5-base"           # Ex: SBERT grande personalizado
       # pequeno: "outro/modelo"                        # Omitidos usam o padrão
-      medio: grande: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1" # Jurídico
-    bertscore: grande: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"    # Ex: BERTScore personalizado modelo STJ de Portugual
+      medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1" # Jurídico
+    bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"    # Ex: BERTScore personalizado modelo STJ de Portugual
 
     # Tamanhos de mini-batch para otimização de memória no pré-cálculo (Padrão: 1024)
     bertscore_batch_size: 1024
@@ -117,16 +133,31 @@ YAML_EXEMPLO_PASTA = '''
 # Configuração usando diretórios de JSONs soltos (formato legado).
 # Neste modo, NÃO é necessário definir 'pasta_parquet' nem 'campos_parquet'.
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base: 
+    # identifica a pasta base de arquivos, a primeira encontrada é fixada
+    - /students/luiz.abatitucci/llms/experimentos/experimento_exemplo
+    - /mnt/d/wsl_dev/llms/experimentos/experimento_exemplo
+  pastas_modelos:  
+    # identifica a pasta de modelos base, a primeira encontrada é fixada
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+  pastas_modelos_treinados:
+    # procura os modelos indicados para comparação que podem estar em qualquer uma das pastas ou um modelo em cada uma 
+    - /students/luiz.abatitucci/experimentos/experimento_exemplo/treinos_local    
+    - /mnt/d/wsl_dev/llms/experimentos/experimento_exemplo/treinos_local      
+
 saida:
   pasta: "./compara/analises_comparacao"
   arquivo_base: "comparacao_resultados"
-  regerar_planilha_base: true
   linguagem_graficos: "pt"
 
 execucao:
   max_workers: 10
   teste_rapido: false
-  gerar_graficos: true
   ignorar_erro_extracao: true
   divisao:
     treino: 0.70

@@ -56,10 +56,6 @@ echo "==============================="
 
 python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento/treinar_puil_full.yaml --reset
 
-python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento/treinar_puil_full_lr2.yaml --reset
-
-python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento/treinar_puil_full_pads.yaml --reset
-
 python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento/treinar_puil_lora.yaml --reset
 
 echo "=== Job finalizado: $(date) ==="

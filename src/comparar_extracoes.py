@@ -378,9 +378,35 @@ def main():
                 shutil.copy('config_espelho.yaml', caminho_yaml_abs)
                 print(f"✅ Arquivo {nome} criado a partir de config_espelho.yaml!")
             else:
+                try:
+                    from comparar_extracoes_exemplo import YAML_EXEMPLO_PASTA, YAML_EXEMPLO_PARQUET
+                    
+                    print("\n────────────────────────────────────────────────────────────")
+                    print("  Qual formato de template você deseja usar?")
+                    print("────────────────────────────────────────────────────────────")
+                    print("  [1] Formato com PARQUET (Novo padrão, ideal para grandes volumes)")
+                    print("  [2] Formato com PASTA de JSONs (Mais simples, pastas com jsons)")
+                    print("────────────────────────────────────────────────────────────")
+                    
+                    while True:
+                        formato = input("  Escolha uma opção [1/2]: ").strip()
+                        if formato in ['1', '2']:
+                            break
+                        print("  ⚠️  Opção inválida. Digite 1 ou 2.")
+                    
+                    if formato == '2':
+                        template_yaml = YAML_EXEMPLO_PASTA.strip() + "\n"
+                        msg_sucesso = f"✅ Arquivo {nome} criado usando o template de PASTA!"
+                    else:
+                        template_yaml = YAML_EXEMPLO_PARQUET.strip() + "\n"
+                        msg_sucesso = f"✅ Arquivo {nome} criado usando o template PARQUET!"
+                except ImportError:
+                    template_yaml = "# Novo arquivo de configuração YAML\n# Não foi possível carregar o exemplo em comparar_extracoes_exemplo.py\n"
+                    msg_sucesso = f"✅ Arquivo {nome} criado com template básico!"
+
                 with open(caminho_yaml_abs, 'w', encoding='utf-8') as f:
-                    f.write("# Novo arquivo de configuração YAML\n")
-                print(f"✅ Arquivo {nome} criado!")
+                    f.write(template_yaml)
+                print(msg_sucesso)
                 
             print(f"Edite-o e execute o script novamente com: python comparar_extracoes.py {nome}")
             sys.exit(0)
@@ -418,6 +444,10 @@ def main():
             if os.path.isdir(pm_abs):
                 pasta_modelos_ativa = pm_abs
                 break
+
+    pastas_modelos_treinados = misc.get("pastas_modelos_treinados", [])
+    if isinstance(pastas_modelos_treinados, str):
+        pastas_modelos_treinados = [pastas_modelos_treinados] if pastas_modelos_treinados else []
     
     # 2. Inicializar ambiente
     max_workers_env, _ = _inicializar_ambiente()
@@ -434,9 +464,9 @@ def main():
     arquivo_log_execucao = os.path.join(pasta_saida, 'execucao.log')
     sys.stdout = LoggerDuplo(arquivo_log_execucao)
     print(f"📄 Log de execução iniciado em: {arquivo_log_execucao}")
-        
+    # 3.4 Pega as configurações gerais
     modelo_base = config['modelo_base']
-    modelos_comp_all = config['modelos_comparacao']
+    modelos_comp_all = config.get('modelos_comparacao', [])
     
     # Filtra apenas modelos ativos (padrão: ativo=True)
     modelos_comp = [m for m in modelos_comp_all if m.get('ativo', True)]
@@ -462,17 +492,17 @@ def main():
     rotulo_id = config.get('configuracao_comparacao', {}).get('nome_campo_id', 'id')
     rotulos_destinos = [m['rotulo'] for m in modelos_comp]
     
-    # 3.5 Pré-processamento: Parquet → Pasta de JSONs
-    campos_parquet = config.get('configuracao_comparacao', {}).get('campos_parquet', {})
-    pasta_parquet_raw = config.get('saida', {}).get('pasta_parquet', '')
+    # 3.5 Pré-processamento: Dataset (Parquet/CSV) → Pasta de JSONs
+    campos_dataset = config.get('configuracao_comparacao', {}).get('campos_dataset', config.get('configuracao_comparacao', {}).get('campos_parquet', {}))
+    pasta_extracao_raw = config.get('saida', {}).get('pasta_extracao', config.get('saida', {}).get('pasta_parquet', ''))
     
     houve_reextracao = False
     
-    # Valida obrigatoriedade de pasta_parquet quando há entrada .parquet
+    # Valida obrigatoriedade de pasta_extracao quando há entrada em formato de tabela
     todos_modelos_config = [modelo_base] + modelos_comp
-    tem_parquet = any(m.get('arquivo', '').endswith('.parquet') for m in todos_modelos_config)
-    if tem_parquet and not pasta_parquet_raw:
-        print("❌ 'saida.pasta_parquet' é obrigatório quando se usa arquivos .parquet como entrada.")
+    tem_dataset = any(m.get('arquivo', '').endswith('.parquet') or m.get('arquivo', '').endswith('.csv') for m in todos_modelos_config)
+    if tem_dataset and not pasta_extracao_raw:
+        print("❌ 'saida.pasta_parquet' ou 'saida.pasta_extracao' é obrigatório quando se usa arquivos .parquet ou .csv como entrada.")
         sys.exit(1)
         
     # Lê filtro de IDs se configurado
@@ -507,16 +537,30 @@ def main():
         arquivo = modelo_config.get('arquivo', '')
         pasta = modelo_config.get('pasta', '')
         
-        if arquivo and arquivo.endswith('.parquet'):
-            from comparar_extracoes_util import ExtracaoParquet, resolver_pasta_parquet
+        caminhos_busca = pastas_modelos_treinados + pastas_modelos + pastas_base
+        
+        if arquivo and (arquivo.endswith('.parquet') or arquivo.endswith('.csv')):
+            from comparar_extracoes_util import ExtracaoDataset, resolver_pasta_dataset
             arquivo_abs = resolver_caminho(arquivo, base_dir_yaml, pasta_base_ativa)
-            pasta_parquet_abs = resolver_caminho(pasta_parquet_raw, base_dir_yaml, pasta_base_ativa)
-            pasta_destino = resolver_pasta_parquet(arquivo_abs, pasta_parquet_abs)
             
-            extrator = ExtracaoParquet(arquivo_abs, pasta_destino, campos_parquet, ids_filtro=ids_filtro)
+            if not os.path.exists(arquivo_abs):
+                for p_busca in caminhos_busca:
+                    p_busca_abs = p_busca if os.path.isabs(p_busca) else os.path.normpath(os.path.join(base_dir_yaml, p_busca))
+                    caminho_teste = os.path.join(p_busca_abs, arquivo)
+                    if os.path.exists(caminho_teste):
+                        arquivo_abs = caminho_teste
+                        print(f"🔍 Arquivo dataset resolvido em: {arquivo_abs}")
+                        break
+            
+            pasta_extracao_abs = resolver_caminho(pasta_extracao_raw, base_dir_yaml, pasta_base_ativa)
+            pasta_destino = resolver_pasta_dataset(arquivo_abs, pasta_extracao_abs)
+            
+            campos_modelo = modelo_config.get('campos_parquet', campos_dataset)
+            saida_json_config = campos_modelo.get('saida_json', campos_dataset.get('saida_json', True))
+            extrator = ExtracaoDataset(arquivo_abs, pasta_destino, campos_modelo, ids_filtro=ids_filtro, saida_json=saida_json_config)
             erros = extrator.validar_colunas()
             if erros:
-                print(f"❌ Erro ao validar parquet '{arquivo}':")
+                print(f"❌ Erro ao validar dataset '{arquivo_abs}':")
                 for e in erros:
                     print(f"   - {e}")
                 sys.exit(1)
@@ -526,9 +570,21 @@ def main():
                 
             return extrator.extrair()
         elif pasta:
-            return resolver_caminho(pasta, base_dir_yaml, pasta_base_ativa)
+            pasta_abs = resolver_caminho(pasta, base_dir_yaml, pasta_base_ativa)
+            if os.path.exists(pasta_abs):
+                return pasta_abs
+                
+            for p_busca in caminhos_busca:
+                p_busca_abs = p_busca if os.path.isabs(p_busca) else os.path.normpath(os.path.join(base_dir_yaml, p_busca))
+                caminho_teste = os.path.join(p_busca_abs, pasta)
+                if os.path.exists(caminho_teste):
+                    print(f"🔍 Pasta do modelo resolvida em: {caminho_teste}")
+                    return caminho_teste
+            
+            print(f"❌ Pasta do modelo '{modelo_config.get('rotulo', '?')}' ({pasta}) não encontrada diretamente nem nas pastas listadas em 'misc'.")
+            sys.exit(1)
         else:
-            print(f"❌ Modelo '{modelo_config.get('rotulo', '?')}' deve ter 'arquivo' (.parquet) ou 'pasta' definido.")
+            print(f"❌ Modelo '{modelo_config.get('rotulo', '?')}' deve ter 'arquivo' (.parquet ou .csv) ou 'pasta' definido.")
             sys.exit(1)
     
     origem = _resolver_entrada_modelo(modelo_base)
@@ -593,6 +649,16 @@ def main():
     print(f"   Aval.:    {mascara_avaliacao}")
     print(f"   Obs.:     {mascara_observabilidade}")
 
+    # Flag avaliar_global: garante que se o filtro de campos do json retornar
+    # vazio (por não haver campos folha mapeados explicitamente no yaml), o json
+    # original inteiro ainda será passado adiante para o motor de similaridade 
+    # se qualquer métrica global (ex: SBERT, BERTScore) ou estrutural estiver configurada.
+    avaliar_global = any('(global)' in config.get(k, []) for k in [
+        'campos_bertscore', 'campos_rouge', 'campos_rouge1', 'campos_rouge2',
+        'campos_levenshtein', 'campos_sbert', 'campos_sbert_pequeno',
+        'campos_sbert_medio', 'campos_sbert_grande'
+    ])
+
     carga = CargaDadosComparacao(
         pasta_origem=origem,
         pastas_destinos=pastas_destinos,
@@ -607,7 +673,8 @@ def main():
         pasta_log_erros=pasta_saida,
         ignorar_erro_extracao=config['execucao'].get('ignorar_erro_extracao', False),
         ids_filtro=ids_filtro,
-        campos_virtuais=config.get('campos_virtuais', {})
+        campos_virtuais=config.get('campos_virtuais', {}),
+        avaliar_global=avaliar_global
     )
     
     if tem_memory_logger: MemoryLogger.set_nome_etapa("ANTES DE CARREGAR DADOS JSON")
@@ -626,7 +693,7 @@ def main():
     # Checa reuso e valida execução parcial
     if qualquer_flag_parcial:
         if houve_reextracao:
-            print("\n❌ ERRO: O arquivo base/parquet foi atualizado ou reextraído.")
+            print("\n❌ ERRO: O arquivo base ou modelo foi atualizado ou reextraído.")
             print("Execute a comparação completa (sem flags parciais) antes de gerar apenas gráficos, estatísticas ou planilhas.")
             sys.exit(1)
         if not os.path.isfile(arquivo_excel):

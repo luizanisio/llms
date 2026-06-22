@@ -1,0 +1,129 @@
+# Configuração para comparação de extrações - Experimento Puil
+# Executar com: python ../../src/comparar_extracoes.py --config 05_comparar_treinos.yaml
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    # identifica a pasta base de arquivos, a primeira encontrada é fixada
+    - /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/puil-mini-experimento
+  pastas_modelos:  
+    # identifica a pasta de modelos base, a primeira encontrada é fixada
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+  pastas_modelos_treinados:
+    # procura os modelos indicados para comparação que podem estar em qualquer uma das pastas ou um modelo em cada uma 
+    - /students/luiz.abatitucci/experimentos/puil-mini-experimento/treinos_local    
+    - /students/luiz.abatitucci/experimentos/puil-mini-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/puil-mini-experimento/treinos_local    
+    - /mnt/d/wsl_dev/llms/experimentos/puil-mini-experimento/treinos
+
+# ---- Configuração Global de Saída ----
+saida:
+  pasta_extracao: "./compara"
+  pasta: "./compara/analises_comparacao_puil"        # Pasta raiz para relatórios, gráficos e planilhas
+  arquivo_base: "comparacao_resultados"          # Nome base dos arquivos de saída (.xlsx, .csv)
+  regerar_planilha_base: true                    # Se false, não regera planilha se já existir
+  linguagem_graficos: "en"                       # "pt" ou "en" para legendas dos gráficos
+
+   
+# ---- Configurações de Execução ----
+execucao:
+  max_workers: 10                                # Número de threads para processamento paralelo
+  teste_rapido: false                            # true = pula BERTScore/SBERT (move campos para ROUGE-L)
+  gerar_graficos: true                           # Gera gráficos comparativos (incluindo os loss de treinamento)
+  llm_as_a_judge: false                          # Executa avaliação LLM-as-a-Judge (requer API)
+  analise_estatistica: true                      # Gera relatório estatístico
+  ignorar_erro_extracao: true                    # true = ignora documentos com erro nos cálculos de métricas
+  divisao:
+    treino: 0.70                                 # Proporção para treino
+    validacao: 0.10                              # Proporção para validação  
+    teste: 0.20                                  # Proporção para teste
+
+# ---- Modelo Base (Gabarito/Referência) ----
+# Aponta para a pasta onde os JSONs do gabarito foram/serão extraídos a partir de dados/saida_puil.csv
+modelo_base:
+  arquivo: "./dados/saida_puil.csv"                    
+  rotulo: "Gabarito"                           
+  campos_parquet:
+    id: "id"
+    resposta: "completion"
+    saida_json: false
+  familia: "Humano"                         
+
+# ---- Modelos Comparados ----
+# Define os modelos a serem comparados.
+# Cada modelo deve ter um 'rotulo' e um caminho de 'arquivo' (parquet/csv) ou 'pasta' (json).
+modelos_comparacao:
+  - arquivo: "saidas/saida_puil_full.parquet"
+    rotulo: "puil_full"
+    ativo: true
+  - arquivo: "saidas/saida_puil_lora.parquet"
+    rotulo: "puil_lora"
+    ativo: true
+
+# ---- Configuração de Métricas e Campos ----
+configuracao_comparacao:
+  padronizar_simbolos: true                      # Normaliza símbolos antes de comparar
+  rouge_stemmer: true                            # Usa stemmer no cálculo ROUGE
+
+  # Campo de ID
+  nome_campo_id: "id"                            # Nome interno do campo de ID
+  rotulo_campo_id: "ID"                          # Rótulo de exibição
+
+  modelos:
+    # substitui o modelo padrão sbert médio e bertscore pelo modelo jurídico
+    sbert:
+      medio: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
+      medio_alias: STJIris
+    bertscore: stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1
+    bertscore_alias: STJIris
+    bertscore_batch_size: 5012
+    sbert_batch_size: 512
+
+  # Configuração dos campos do parquet (quando a entrada for .parquet ou .csv)
+  # Mapeia os nomes das colunas do arquivo parquet para os dados esperados pelo pipeline.
+  # Campos obrigatórios: id, resposta. Campos opcionais: resumo_tokens, avaliacao, erro.
+  campos_parquet:
+    id: "chave"             # coluna com o ID do documento
+    resposta: "resposta"    # coluna com o JSON da extração (será salvo como {id}.json)
+    # resumo_tokens: "resumo" # coluna com o JSON de tokens (será salvo como {id}.tokens.json)
+    # avaliacao: ""           # coluna com avaliação LLM (se disponível, salvo como {id}.avaliacao.json)
+    # erro: "erro"            # coluna com mensagem de erro (se disponível)
+    saida_json: false         # se false, encapsula o texto em {"resposta": "texto puro"}
+
+  # Máscaras de arquivos (usadas para identificar os JSONs extraídos na pasta)
+  mascaras:
+    extracao: ".json"                            # Padrão dos arquivos de extração
+    tokens: ".tokens.json"                       # Padrão dos arquivos de tokens
+    avaliacao: ".avaliacao.json"                 # Padrão dos arquivos de avaliação
+    observabilidade: ".obs.json"                 # Padrão dos arquivos de observabilidade
+
+  # Mapeamento de campos para métricas
+  modelos:
+    sbert:
+      grande: "intfloat/multilingual-e5-base"           
+      medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1" 
+    bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"    
+
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  campos:
+    # Como o CSV contém apenas um campo de texto livre ("completion"),
+    # usamos apenas o campo "(global)" para calcular a similaridade da resposta inteira.
+
+    bertscore:
+    - "(global)"
+
+    rouge_l:
+    - "(global)"
+
+    sbert_medio:
+    - "(global)"
+
+    rouge_2:
+    - resposta

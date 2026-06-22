@@ -316,6 +316,7 @@ class JsonAnaliseGraficos:
         """
         import pandas as pd
         import glob
+        from util_graficos import Cores
         
         if not os.path.isfile(arquivo_excel):
             raise FileNotFoundError(f"Arquivo não encontrado: {arquivo_excel}")
@@ -401,7 +402,11 @@ class JsonAnaliseGraficos:
                 if '_' in aba:
                     # Converte hífen para underscore para manter consistência
                     # Ex: SBERT-Pequeno -> sbert_pequeno
-                    tecnica_nome = aba.split('_', 1)[1].lower().replace('-', '_')
+                    tecnica_nome = aba.split('_', 1)[1].lower()
+                    if tecnica_nome.startswith('rouge-'):
+                        tecnica_nome = tecnica_nome.replace('-', '')
+                    else:
+                        tecnica_nome = tecnica_nome.replace('-', '_')
                 else:
                     tecnica_nome = 'geral'
                 
@@ -620,6 +625,12 @@ class JsonAnaliseGraficos:
             if 'Observabilidade' in xl_file.sheet_names:
                 try:
                     df_obs = pd.read_excel(arquivo_excel, sheet_name='Observabilidade')
+                    
+                    # Resolve paleta
+                    try:
+                        paleta_enum = Cores[paleta] if isinstance(paleta, str) else paleta
+                    except Exception:
+                        paleta_enum = Cores.Cividis
                     
                     # Sufixos de interesse
                     sufixos_info = {
@@ -1536,6 +1547,7 @@ class JsonAnaliseGraficos:
         """
         import pandas as pd
         import os
+        from util_graficos import Cores
         
         # Define pasta de saída
         if pasta_saida is None:
@@ -1566,6 +1578,12 @@ class JsonAnaliseGraficos:
         if df_obs is None or len(df_obs) == 0:
             print("⚠️  Nenhum dado de observabilidade disponível para gerar gráficos")
             return []
+        
+        try:
+            paleta = self.dados_analise.config.paleta_graficos if hasattr(self, 'dados_analise') else 'Cividis'
+            paleta_enum = Cores[paleta] if isinstance(paleta, str) else paleta
+        except Exception:
+            paleta_enum = Cores.Cividis
         
         # Identifica nome do campo ID
         nome_campo_id = self.dados_analise.config.nome_campo_id

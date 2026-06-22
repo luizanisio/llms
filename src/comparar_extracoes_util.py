@@ -16,12 +16,12 @@ A extração ocorre uma única vez e é cacheada via arquivo de controle
 ou o diretório de destino inteiro.
 
 Uso:
-    from comparar_extracoes_util import ExtracaoParquet
+    from comparar_extracoes_util import ExtracaoDataset
 
-    extrator = ExtracaoParquet(
-        arquivo_parquet='./saida/saida_qwen7b.parquet',
+    extrator = ExtracaoDataset(
+        arquivo_dataset='./saida/saida_qwen7b.parquet',
         pasta_destino='./compara/saida_qwen7b/',
-        campos_parquet={'id': 'chave', 'resposta': 'resposta', 'resumo_tokens': 'resumo', 'avaliacao': '', 'erro': 'erro'}
+        campos_dataset={'id': 'chave', 'resposta': 'resposta', 'resumo_tokens': 'resumo', 'avaliacao': '', 'erro': 'erro'}
     )
     erros = extrator.validar_colunas()
     if erros:
@@ -42,9 +42,9 @@ from tqdm import tqdm
 ARQUIVO_CONTROLE = 'extracao_finalizada.md'
 
 
-class ExtracaoParquet:
+class ExtracaoDataset:
     """
-    Converte um arquivo .parquet em um diretório de arquivos JSON para
+    Converte um arquivo .parquet ou .csv em um diretório de arquivos JSON para
     uso pelo pipeline de comparação de extrações.
 
     Arquivos gerados por registro:
@@ -54,12 +54,12 @@ class ExtracaoParquet:
 
     Parâmetros:
     -----------
-    arquivo_parquet : str
-        Caminho do arquivo .parquet de entrada
+    arquivo_dataset : str
+        Caminho do arquivo .parquet ou .csv de entrada
     pasta_destino : str
         Pasta onde os JSONs serão extraídos
-    campos_parquet : dict
-        Mapeamento de campos do parquet. Chaves esperadas:
+    campos_dataset : dict
+        Mapeamento de campos do dataset. Chaves esperadas:
             - 'id': nome da coluna com o ID do documento
             - 'resposta': nome da coluna com o JSON da extração
             - 'resumo_tokens': nome da coluna com o JSON de tokens (opcional)
@@ -67,32 +67,34 @@ class ExtracaoParquet:
             - 'erro': nome da coluna com mensagem de erro (opcional)
     """
 
-    def __init__(self, arquivo_parquet: str, pasta_destino: str, campos_parquet: dict, ids_filtro: set = None):
-        self.arquivo_parquet = arquivo_parquet
+    def __init__(self, arquivo_dataset: str, pasta_destino: str, campos_dataset: dict, ids_filtro: set = None, saida_json: bool = True):
+        self.arquivo_dataset = arquivo_dataset
         self.pasta_destino = pasta_destino
-        self.campos_parquet = campos_parquet or {}
+        self.campos_dataset = campos_dataset or {}
         self.ids_filtro = ids_filtro
+        self.saida_json = saida_json
 
         # Mapeamento de campos (com defaults seguros)
-        self._col_id = self.campos_parquet.get('id', 'chave')
-        self._col_resposta = self.campos_parquet.get('resposta', 'resposta')
-        self._col_tokens = self.campos_parquet.get('resumo_tokens', '')
-        self._col_avaliacao = self.campos_parquet.get('avaliacao', '')
-        self._col_erro = self.campos_parquet.get('erro', '')
+        self._col_id = self.campos_dataset.get('id', 'chave')
+        self._col_resposta = self.campos_dataset.get('resposta', 'resposta')
+        self._col_tokens = self.campos_dataset.get('resumo_tokens', '')
+        self._col_avaliacao = self.campos_dataset.get('avaliacao', '')
+        self._col_erro = self.campos_dataset.get('erro', '')
 
         self._df = None  # Carregado sob demanda
 
     def _carregar_df(self):
-        """Carrega o DataFrame do parquet se ainda não carregado."""
+        """Carrega o DataFrame do dataset se ainda não carregado."""
         if self._df is None:
-            if not os.path.exists(self.arquivo_parquet):
-                raise FileNotFoundError(f"Arquivo parquet não encontrado: {self.arquivo_parquet}")
-            self._df = pd.read_parquet(self.arquivo_parquet)
+            if not os.path.exists(self.arquivo_dataset):
+                raise FileNotFoundError(f"Arquivo dataset não encontrado: {self.arquivo_dataset}")
+            from util_pandas import ler_dataset
+            self._df = ler_dataset(self.arquivo_dataset)
         return self._df
 
     def validar_colunas(self) -> list:
         """
-        Valida se as colunas mapeadas em campos_parquet existem no DataFrame.
+        Valida se as colunas mapeadas em campos_dataset existem no DataFrame.
 
         Returns:
             list: Lista de mensagens de erro. Vazia se tudo OK.
@@ -108,9 +110,9 @@ class ExtracaoParquet:
         # Campos obrigatórios
         for campo_nome, col_nome in [('id', self._col_id), ('resposta', self._col_resposta)]:
             if not col_nome:
-                erros.append(f"Campo obrigatório '{campo_nome}' não definido em campos_parquet")
+                erros.append(f"Campo obrigatório '{campo_nome}' não definido em campos_dataset")
             elif col_nome not in colunas_df:
-                erros.append(f"Coluna '{col_nome}' (campo '{campo_nome}') não encontrada no parquet. "
+                erros.append(f"Coluna '{col_nome}' (campo '{campo_nome}') não encontrada no dataset. "
                              f"Colunas disponíveis: {sorted(colunas_df)}")
 
         # Campos opcionais (só valida se definidos)
@@ -118,7 +120,7 @@ class ExtracaoParquet:
                                       ('avaliacao', self._col_avaliacao),
                                       ('erro', self._col_erro)]:
             if col_nome and col_nome not in colunas_df:
-                erros.append(f"Coluna '{col_nome}' (campo '{campo_nome}') não encontrada no parquet. "
+                erros.append(f"Coluna '{col_nome}' (campo '{campo_nome}') não encontrada no dataset. "
                              f"Colunas disponíveis: {sorted(colunas_df)}")
 
         return erros
@@ -129,13 +131,13 @@ class ExtracaoParquet:
         if not os.path.isfile(caminho_controle):
             return False
             
-        if os.path.isfile(self.arquivo_parquet):
-            return os.path.getmtime(caminho_controle) >= os.path.getmtime(self.arquivo_parquet)
+        if os.path.isfile(self.arquivo_dataset):
+            return os.path.getmtime(caminho_controle) >= os.path.getmtime(self.arquivo_dataset)
         return True
 
     def extrair(self, forcar: bool = False) -> str:
         """
-        Executa a extração do parquet para diretório de JSONs.
+        Executa a extração do dataset para diretório de JSONs.
 
         Se a extração já foi feita (arquivo de controle existe) e forcar=False,
         retorna o caminho da pasta sem re-extrair.
@@ -156,7 +158,7 @@ class ExtracaoParquet:
         desatualizado = os.path.isfile(caminho_controle)
 
         if desatualizado:
-            print(f"🔄 Arquivo parquet foi modificado após a última extração. Atualizando JSONs...")
+            print(f"🔄 Arquivo dataset foi modificado após a última extração. Atualizando JSONs...")
             # Remove o controle temporariamente para que em caso de interrupção não fique sujo
             os.remove(caminho_controle)
             print(f"   🗑️  Limpando pasta anterior para evitar arquivos órfãos (garantindo consistência)...")
@@ -189,8 +191,8 @@ class ExtracaoParquet:
         # Cria pasta de destino
         os.makedirs(self.pasta_destino, exist_ok=True)
 
-        print(f"\n📦 Extraindo parquet para JSONs...")
-        print(f"   Fonte: {self.arquivo_parquet}")
+        print(f"\n📦 Extraindo dataset para JSONs...")
+        print(f"   Fonte: {self.arquivo_dataset}")
         print(f"   Destino: {self.pasta_destino}")
         print(f"   Total de registros: {total}")
 
@@ -219,18 +221,20 @@ class ExtracaoParquet:
             if self._col_erro and self._col_erro in row.index:
                 erro_msg = str(row[self._col_erro]).strip() if pd.notna(row[self._col_erro]) else ''
 
-            # --- Extração da resposta (JSON principal) ---
+            # --- Extração da resposta (JSON principal ou Texto Livre) ---
             resposta_raw = row[self._col_resposta] if pd.notna(row[self._col_resposta]) else ''
             resposta_raw = str(resposta_raw).strip() if resposta_raw else ''
 
             json_resposta = None
             if resposta_raw:
-                try:
-                    json_resposta = json.loads(resposta_raw)
-                except (json.JSONDecodeError, ValueError):
-                    # Opção A: gerar JSON com chave "erro" para rastreabilidade
-                    json_resposta = {'erro': f'JSON inválido na resposta: {resposta_raw[:200]}...'}
-                    stats['json_invalido'] += 1
+                if self.saida_json:
+                    try:
+                        json_resposta = json.loads(resposta_raw)
+                    except (json.JSONDecodeError, ValueError):
+                        json_resposta = {'erro': f'JSON inválido na resposta: {resposta_raw[:200]}...'}
+                        stats['json_invalido'] += 1
+                else:
+                    json_resposta = {'resposta': resposta_raw}
 
             if json_resposta is None:
                 json_resposta = {'erro': 'Resposta vazia'}
@@ -356,9 +360,9 @@ class ExtracaoParquet:
         if self._col_avaliacao: campos_info.append(f"avaliacao={self._col_avaliacao}")
         if self._col_erro: campos_info.append(f"erro={self._col_erro}")
 
-        conteudo = f"""# Extração de Parquet Finalizada
+        conteudo = f"""# Extração de Dataset Finalizada
 
-- **Arquivo fonte:** {self.arquivo_parquet}
+- **Arquivo fonte:** {self.arquivo_dataset}
 - **Data da extração:** {agora}
 - **Total de registros:** {stats['total']}
 - **Registros filtrados:** {stats['filtrados']}
@@ -376,18 +380,18 @@ class ExtracaoParquet:
             f.write(conteudo)
 
 
-def resolver_pasta_parquet(arquivo_parquet: str, pasta_parquet_base: str) -> str:
+def resolver_pasta_dataset(arquivo_dataset: str, pasta_base: str) -> str:
     """
-    Calcula a pasta de destino para extração de um parquet.
+    Calcula a pasta de destino para extração de um dataset.
 
-    A pasta é: pasta_parquet_base / nome_do_arquivo_sem_extensão
+    A pasta é: pasta_base / nome_do_arquivo_sem_extensão
 
     Args:
-        arquivo_parquet: Caminho do arquivo .parquet
-        pasta_parquet_base: Pasta base definida em saida.pasta_parquet
+        arquivo_dataset: Caminho do arquivo
+        pasta_base: Pasta base definida em saida.pasta_parquet (ou similar)
 
     Returns:
         str: Caminho da pasta de destino
     """
-    nome_base = os.path.splitext(os.path.basename(arquivo_parquet))[0]
-    return os.path.join(pasta_parquet_base, nome_base)
+    nome_base = os.path.splitext(os.path.basename(arquivo_dataset))[0]
+    return os.path.join(pasta_base, nome_base)

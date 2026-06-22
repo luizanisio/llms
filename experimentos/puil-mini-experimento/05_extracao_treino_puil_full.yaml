@@ -1,0 +1,48 @@
+# ==========================================================================
+# Configuração para extração com vLLM do modelo treinado (Full)
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_full.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/puil-mini-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+
+# --- Modelo ---
+modelo:
+  caminho: "treinos_local/Qwen2.5-1.5B-Instruct(puil_full)"
+  lora: ""
+
+# --- Configuração do vLLM ---
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 16384
+  tensor_parallel_size: 1
+  dtype: "auto"
+  enforce_eager: true
+
+# --- Parâmetros de Geração ---
+geracao:
+  max_tokens: 1024
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+  batch_size: 16
+
+# --- Entrada ---
+entrada:
+  arquivo: "dados/entrada_puil.csv"
+  campo_chave: "id"
+  campo_texto: "prompt"
+  prompt_template: "dados/prompt_puil.txt"
+  variavel_texto: "<<--TEXTO-->>"
+  system_prompt: "" # Nenhum system prompt, pois Qwen já foi treinado no prompt direto
+
+# --- Saída ---
+saida:
+  arquivo: "saidas/saida_puil_full.parquet"
+  tipo_saida: "str"
