@@ -67,32 +67,24 @@ curriculum:
     tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-    max_seq_length: 4096
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-    max_seq_length: 4096
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-    max_seq_length: 4096
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
       #dataset_filtro: {"dificuldade": "medio"}
     alias: "completo"
     tipo: "lora"
       #| Número de vezes que o modelo verá o dataset (epochs)
     pace_epochs: 2
-      #| Limite de tokens da janela de contexto para este dataset
-    max_seq_length: 4096
 
 
 #| =========================================================================
@@ -127,7 +119,7 @@ treinamento:
 
   #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
-  max_seq_length: 4096
+  max_seq_length: 8192
   validar_max_seq_length: true
 
   #| Taxa de aprendizado base, otimizada para full finetuning
