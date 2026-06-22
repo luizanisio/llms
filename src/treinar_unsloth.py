@@ -433,7 +433,7 @@ class MetricsLoggerCallback(TrainerCallback):
                 if not getattr(self, "_alerta_colapso_emitido", False):
                     self._alerta_colapso_emitido = True
                     msg_console = (
-                        f"\n<fundo_vermelho><branco> ⚠️ ALERTA CRÍTICO: Possível colapso no treinamento detectado! </branco></fundo_vermelho>\n"
+                        f"\n<amarelo> ⚠️ ALERTA CRÍTICO: Possível colapso no treinamento detectado! </amarelo>\n"
                         f"<vermelho>   O loss relatado pelo modelo é {val} no step {state.global_step}.\n"
                         f"   Isso significa que o modelo parou de aprender. Valores NaN/Inf costumam ser limpos para 0.0.\n\n"
                         f"   Recomendações para corrigir isso (altere o YAML):\n"
