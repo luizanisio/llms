@@ -1828,15 +1828,17 @@ class LLMsTrainer:
             packing=False,
             per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
             eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
-            # Se flash_attention_2 estiver desativado OU houver múltiplas GPUs (device_map='auto'),
-            # o ModelLoader desativa o fused cross entropy do Liger para evitar NaN / Erro de device.
-            # Portanto, o modelo retornará logits normalmente, e o TRL deve computá-los.
-            use_liger_kernel=(
-                treino_cfg.liger_kernel 
-                and _LIGER_DISPONIVEL 
-                and getattr(treino_cfg, 'flash_attention_2', True)
-                and (torch.cuda.device_count() <= 1)
-            ),
+            # ATENÇÃO: use_liger_kernel no SFTConfig re-aplica patches do Liger (incluindo
+            # fused cross-entropy) via TRL. Quando o model loader já carregou o modelo com
+            # AutoLigerKernelForCausalLM (que aplica RoPE/RMSNorm mas desativa fused CE
+            # quando flash_attention_2 real não está disponível), ativar use_liger_kernel
+            # aqui causa "double patching" — o TRL re-habilita fused CE que foi
+            # propositalmente desativada, gerando NaN no loss imediatamente.
+            #
+            # A condição correta deve verificar _FLASH_ATTN_PACOTE_DISPONIVEL (o estado real
+            # do runtime) e não treino_cfg.flash_attention_2 (a intenção do YAML, que pode
+            # fazer fallback para SDPA quando o pacote flash-attn não está instalado).
+            use_liger_kernel=False,  # Desativado: o model loader já aplica Liger no modelo via AutoLigerKernelForCausalLM
         )
         
         if use_max_length:
