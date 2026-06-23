@@ -361,4 +361,8 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
     log_separador(caractere="=", largura=80)
     logger.info("<verde>✅ TREINAMENTO COMPLETO</verde>")
     log_separador(caractere="=", largura=80)
+    
+    from util_sysinfo import MemoryLogger
+    MemoryLogger.set_nome_etapa("FIM DA EXECUÇÃO")
+    MemoryLogger.finalizar()
 

@@ -32,27 +32,19 @@ curriculum:
   divisao:
   - arquivo: divisoes/divisao_puil_50.csv
     alias: "completo"
+    tipo: "full"
+    pace_epochs: 1
+    batch_size: 1
+    max_seq_length: 256
+    learning_rate: 5e-06
+
+  - arquivo: divisoes/divisao_puil_50.csv
+    alias: "completo"
     tipo: "lora"
     pace_epochs: 1
     batch_size: 1
     max_seq_length: 256
     learning_rate: 2e-05
-
-  - arquivo: divisoes/divisao_puil_50.csv
-    alias: "completo"
-    tipo: "full"
-    pace_epochs: 1
-    batch_size: 1
-    max_seq_length: 256
-    learning_rate: 5e-06
-
-  - arquivo: divisoes/divisao_puil.csv
-    alias: "completo"
-    tipo: "full"
-    pace_epochs: 1
-    batch_size: 1
-    max_seq_length: 256
-    learning_rate: 5e-06
 
   - arquivo: divisoes/divisao_puil.csv
     alias: "completo"

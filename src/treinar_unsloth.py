@@ -371,6 +371,8 @@ class MetricsLoggerCallback(TrainerCallback):
     
     def on_train_begin(self, args, state, control, **kwargs):
         """Marca início do treinamento e calcula batch efetivo para contagem de instâncias."""
+        from util_sysinfo import MemoryLogger
+        MemoryLogger.set_nome_etapa(f"Treino Etapa {self._etapa_index} ('{self._etapa_alias}') - Iniciando", registrar_log=True)
         self._train_start_time = time.time()
         # Batch efetivo = per_device * grad_accum * n_gpus (para cálculo de instâncias)
         n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
@@ -395,6 +397,12 @@ class MetricsLoggerCallback(TrainerCallback):
             "tokens_previos": self._tokens_previos,
         })
     
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        """Atualiza a etapa no log contínuo de recursos."""
+        from util_sysinfo import MemoryLogger
+        epoch_idx = int(state.epoch) if state.epoch else 0
+        MemoryLogger.set_nome_etapa(f"Treino Etapa {self._etapa_index} ('{self._etapa_alias}') - Época {epoch_idx+1}", registrar_log=True)
+
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Registra métricas de treinamento a cada log, incluindo etapa e instâncias acumuladas."""
         if not logs:
@@ -1076,6 +1084,12 @@ class LLMsTrainer:
         # Cria a pasta de saída se não existir
         os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
         
+        # Inicializa log contínuo de recursos do sistema
+        from util_sysinfo import MemoryLogger
+        arq_log_memoria = os.path.join(self._yaml_config.modelo.saida, "treinamento", "uso_hardware.csv")
+        MemoryLogger.set_log_file(arq_log_memoria, tempo_atualizacao=30)
+        MemoryLogger.set_nome_etapa("Inicialização e Configuração")
+        
         # Pipeline Universal: etapas e rastreamento unificado
         # Usa apenas etapas treináveis (tipo não-vazio); etapas com tipo vazio
         # são usadas apenas pelo predict para cópia de predições por etapa.
@@ -1129,6 +1143,8 @@ class LLMsTrainer:
             logger.info(f"🔍 Filtro de divisão aplicado para etapa inicial '{primeira_etapa.alias}': {primeira_etapa.dataset_filtro}")
         
         # Carrega datasets a partir do curriculum (pastas/dataframes + divisão)
+        from util_sysinfo import MemoryLogger
+        MemoryLogger.set_nome_etapa("Carregando e Tokenizando Dataset")
         self.train_ds = self._load_from_pastas(alvo="treino")
         self.eval_ds = self._load_from_pastas(alvo="validacao")
         
@@ -2506,6 +2522,8 @@ class LLMsTrainer:
             
             if is_curriculum:
                 logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa(f"Preparando Etapa {step_index} ({etapa_atual.tipo})")
             self._aplicar_etapa_curriculum(step_index, etapa_atual)
             if is_curriculum:
                 # Conta parâmetros treináveis após alternância full/lora
@@ -2857,6 +2875,8 @@ class LLMsTrainer:
         
         if _salvar_como_full:
             # Merge reversível: incorpora LoRA nos pesos base para salvar modelo completo
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Merge LoRA→base")
             logger.info("💾 Merge LoRA→base para salvar modelo full (pesos base atualizados)...")
             self.model.merge_adapter()
             self.model.save_pretrained(out_dir, safe_serialization=True)
@@ -2871,6 +2891,8 @@ class LLMsTrainer:
             print_cores(f"<verde>✅ Modelo full salvo (merge LoRA→base): {out_dir}</verde>", color_auto=False)
         else:
             # Salva o modelo como está (LoRA: adapters; Full sem LoRA: modelo completo)
+            from util_sysinfo import MemoryLogger
+            MemoryLogger.set_nome_etapa("Salvamento do Modelo Final")
             self.model.save_pretrained(out_dir)
             self.tokenizer.save_pretrained(out_dir)
             # Log do que foi salvo
