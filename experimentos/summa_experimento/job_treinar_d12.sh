@@ -10,7 +10,7 @@
 #SBATCH --partition=gpu
 
 # Recurso de GPU:
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 
 # CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
 #SBATCH --cpus-per-task=32
