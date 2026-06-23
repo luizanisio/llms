@@ -121,7 +121,61 @@ Todos os gráficos de treinamento se adaptam automaticamente à densidade dos da
 
 ---
 
-## �🔥 Decisões de Implementação: Liger Kernel e Flash Attention 2
+## 🔄 Transições Curriculum: LoRA ↔ Full (Preservação de Pesos)
+
+### Contexto
+
+Quando o curriculum combina etapas `lora` e `full`, os pesos base do modelo são atualizados durante etapas `full`. Porém, `PeftModel.save_pretrained()` do PEFT salva **apenas os adaptadores LoRA**, descartando silenciosamente os pesos base treinados. Sem tratamento especial, transições `full→lora` perderiam todo o treinamento de pesos base.
+
+### Regras
+
+1. **Full sempre em 16 bits**: Etapas `full` forçam `nbits=16` automaticamente (pesos int4/int8 não suportam gradientes).
+2. **Merge obrigatório após etapas full**: Ao final de uma etapa `full`, os adaptadores LoRA são mesclados nos pesos base (`merge_adapter()`) e o modelo completo é salvo. Isso preserva os pesos base treinados.
+3. **Adapters leves após etapas lora**: Em pipelines mistos, etapas `lora` salvam apenas os adaptadores (~50MB), pois o modelo full do último merge já está no disco.
+4. **Modelo full local como base no resume**: Ao retomar treinamento, se existir modelo full local na pasta de saída E adapter files, o sistema usa o modelo local como base (não o HuggingFace), preservando pesos full.
+
+### Fluxo Visual
+
+```
+Pipeline: lora → full → lora
+
+lora (etapa 1)
+  │
+  └─ save: adapters apenas (~50MB)
+     disco: adapter_config.json + adapter_model.safetensors
+
+full (etapa 2)
+  │
+  └─ save: MERGE LoRA→base + save full (~3GB) + remove adapter files
+     disco: model.safetensors (modelo completo com pesos atualizados)
+
+lora (etapa 3)
+  │
+  └─ save: adapters apenas (~50MB)
+     disco: model.safetensors (full da etapa 2) + adapter_config.json + adapter_model.safetensors
+
+Pipeline end: merge final → save full → remove adapter files
+```
+
+### Comportamento de Transição
+
+| Transição | Recarga? | Ação |
+|---|---|---|
+| lora→lora | Não | Mantém modelo em memória, apenas reconfigura `requires_grad` |
+| full→full | Não | Mantém modelo em memória, apenas reconfigura `requires_grad` |
+| lora→full | Sim (se attn muda) | Merge + salva full antes de descartar; recarrega como full |
+| full→lora | Sim (se attn muda) | Merge + salva full antes de descartar; recarrega e aplica LoRA fresco |
+
+**Nota sobre LoRA fresco:** Após merge, os adaptadores LoRA são inicializados do zero na próxima etapa `lora`. Isso é normal — é uma nova fase de treinamento sobre uma base melhorada. Em caso de resume via checkpoint, os pesos dos adaptadores são restaurados do checkpoint.
+
+### Arquivos
+
+- `treinar_unsloth.py` → `_save_model()` (merge condicional), `_load_model()` (detecção de full local), `_aplicar_etapa_curriculum()` (merge antes de descarte)
+- `treinar_unsloth_actions.py` → `_detectar_tipo_modelo_saida()` (detecção lora/full na pasta de saída)
+
+---
+
+## 🔥 Decisões de Implementação: Liger Kernel e Flash Attention 2
 
 ### Contexto
 
@@ -143,7 +197,8 @@ Ambas são habilitadas por padrão (`true`) e validadas no carregamento: se ativ
 
 **Detecção:** Usa `transformers.utils.is_flash_attn_2_available()` no nível do módulo (`treinar_model_loader.py`). A detecção via `import flash_attn` diretamente não é confiável — a função do Transformers verifica a mesma coisa que é checada internamente quando se passa `attn_implementation="flash_attention_2"`.
 
-**Fallback:** Se o modelo não suportar Flash Attention 2 (ex: arquitetura incompatível), o carregamento captura a exceção e retenta automaticamente com `attn_implementation="eager"` (atenção padrão do PyTorch). **Nota:** O fallback anterior era `"sdpa"` (Scaled Dot Product Attention), mas o kernel SDPA fused do PyTorch causa overflow e NaN loss no step 0 quando combinado com LoRA em bfloat16 em GPUs Hopper (H100). Por isso o fallback foi alterado para `"eager"`, que é numericamente estável em todos os cenários.
+**Fallback:** Se o modelo não suportar Flash Attention 2 (ex: arquitetura incompatível) ou o pacote não estiver instalado, o fallback padrão é para `attn_implementation="eager"` (atenção padrão do PyTorch). **Nota:** O kernel SDPA fused do PyTorch (fallback anterior) causa overflow e NaN loss no step 0 quando combinado com LoRA em bfloat16 em GPUs Hopper (H100). Por isso o fallback é `"eager"`, que é numericamente estável em todos os cenários. 
+Se você estiver rodando **Full FT** e precisar contornar a limitação de VRAM sem poder instalar o `flash-attn`, você pode adicionar `full_com_sdpa: true` na chave `treinamento` do YAML. Isso forçará o fallback para SDPA, assumindo que para Full FT o SDPA não apresentará os erros de NaN vistos no LoRA. Como camada extra de segurança, mesmo com a flag ativa, o sistema verificará o currículo: se houver **qualquer etapa LoRA**, o SDPA será bloqueado e o `eager` será mantido para evitar falha catastrófica.
 
 **Arquivo:** `treinar_model_loader.py` → `ModelLoader.load_base_model()`.
 

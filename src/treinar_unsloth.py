@@ -1101,6 +1101,12 @@ class LLMsTrainer:
         # Rastreia quantização atual na memória
         self._nbits_atual = self._yaml_config.treinamento.nbits
         
+        # Rastreia o tipo da etapa atual na memória (full ou lora) para fallback de atenção dinâmico
+        self._tipo_etapa_atual = self._etapas[0].tipo.lower() if self._etapas else "full"
+        
+        # Flag: pipeline contém pelo menos uma etapa full → salvar modelo merged (pesos base atualizados)
+        self._pipeline_tem_full = any(e.tipo.lower() == "full" for e in self._etapas)
+        
         # Carrega modelo e tokenizer
         # Nota: O modelo é carregado com seu max_position_embeddings nativo
         # (ex: Qwen2.5 = 32768 com rope_theta=1e6 suportando até 131072).
@@ -1356,17 +1362,21 @@ class LLMsTrainer:
         #   quando combinado com adaptadores LoRA em bfloat16! (Isso não acontecia com o unsloth porque ele
         #   tinha seus próprios kernels triton).
         if use_flash_attn:
-            attn_impl = "flash_attention_2" if _FLASH_ATTN_PACOTE_DISPONIVEL else "eager"
+            if _FLASH_ATTN_PACOTE_DISPONIVEL:
+                attn_impl = "flash_attention_2"
+                _flash_status = "✅ ativo (pacote flash-attn)"
+            else:
+                # Fallback: O usuário solicitou explícito o SDPA. Podemos usar se a etapa ATUAL for full.
+                tipo_atual = getattr(self, "_tipo_etapa_atual", self._etapas[0].tipo.lower() if self._etapas else "full")
+                if self._yaml_config.treinamento.full_com_sdpa and tipo_atual == "full":
+                    attn_impl = "sdpa"
+                    _flash_status = "⚠️ desativado (usando SDPA pois etapa atual é Full FT e full_com_sdpa=true)"
+                else:
+                    attn_impl = "eager"
+                    _motivo = "evitar NaN no SDPA com LoRA" if tipo_atual == "lora" else "evitar NaN no SDPA"
+                    _flash_status = f"❌ desativado (usando EAGER padrão para {_motivo})"
         else:
             attn_impl = "eager"
-
-        # Log das otimizações ativas
-        if use_flash_attn:
-            _flash_status = (
-                "✅ ativo (pacote flash-attn)" if _FLASH_ATTN_PACOTE_DISPONIVEL
-                else "❌ desativado (usando EAGER padrão para evitar NaN no SDPA)"
-            )
-        else:
             _flash_status = "❌ desativado (usando EAGER padrão)"
         print_cores(f"<cinza>   🛠️  Otimizações de memória GPU:</cinza>", color_auto=False)
         print_cores(f"<cinza>      - Flash Attention: {_flash_status}</cinza>", color_auto=False)
@@ -1396,9 +1406,22 @@ class LLMsTrainer:
 
         # Tentativa 1: Carregar modelo LoRA já treinado (para retomada de treinamento)
         if not self.force_base and tipo_saida == 'lora':
+            # Verifica se há modelo full local (pesos base treinados de etapa full anterior).
+            # Em pipelines mistos (lora+full), o merge após etapas full salva o modelo completo
+            # na pasta de saída. Se uma etapa lora subsequente salvou adapters por cima,
+            # a pasta tem AMBOS: full safetensors + adapter files. Nesse caso, usa o
+            # modelo full local como base (preservando pesos treinados) em vez do HF.
+            _tem_full_local = any(
+                f.endswith('.safetensors') and not f.startswith('adapter')
+                for f in os.listdir(lora_model_path)
+            )
+            _base_para_carregar = lora_model_path if _tem_full_local else base_model_name
+            if _tem_full_local:
+                print_cores(f'<azul>📦 Modelo full local detectado em: {lora_model_path}</azul>', color_auto=False)
+                print_cores(f'<cinza>   ↳ Usando como base para aplicar adaptadores LoRA (preserva pesos full)</cinza>', color_auto=False)
             try:
                 model, tokenizer = ModelLoader.load_lora_model(
-                    base_model_name=base_model_name,
+                    base_model_name=_base_para_carregar,
                     lora_model_path=lora_model_path,
                     max_seq_length=max_seq_length,
                     quant_config=quant_config,
@@ -2186,12 +2209,49 @@ class LLMsTrainer:
         # Se for um novo treinamento, o _load_model() original foi executado, caso contrário temos que recarregar.
         # Usa getattr em precaução para evitar erros em inicializações.
         nbits_memoria = getattr(self, "_nbits_atual", self._yaml_config.treinamento.nbits)
+        tipo_memoria = getattr(self, "_tipo_etapa_atual", self._etapas[0].tipo.lower() if self._etapas else "full")
+        novo_tipo = etapa.tipo.lower()
         
-        if alvo_nbits != nbits_memoria:
-            logger.info(f"🔄 Etapa '{etapa.alias}' exige quantização nbits={alvo_nbits} (atual: {nbits_memoria}). Descarregando e recarregando o modelo para ajustar configuração...")
+        precisa_recarregar = alvo_nbits != nbits_memoria
+        
+        # Verifica se precisamos recarregar por conta da mudança de attn_impl (ex: eager <-> sdpa)
+        # Isso ocorre se o usuário ativou full_com_sdpa e a etapa muda de LoRA para Full ou vice-versa
+        use_flash_attn = self._yaml_config.treinamento.flash_attention_2
+        if use_flash_attn and not _FLASH_ATTN_PACOTE_DISPONIVEL and self._yaml_config.treinamento.full_com_sdpa:
+            if tipo_memoria != novo_tipo:
+                precisa_recarregar = True
+                
+        if precisa_recarregar:
+            if alvo_nbits != nbits_memoria:
+                logger.info(f"🔄 Etapa '{etapa.alias}' exige quantização nbits={alvo_nbits} (atual: {nbits_memoria}). Descarregando e recarregando o modelo...")
+            elif tipo_memoria != novo_tipo:
+                logger.info(f"🔄 Etapa '{etapa.alias}' exige troca de atenção (tipo mudou de {tipo_memoria} para {novo_tipo}). Descarregando e recarregando o modelo...")
+                
             import gc
             
+            # Se pipeline tem etapas full e LoRA está aplicado, merge antes de descartar
+            # para preservar pesos base treinados na etapa full
+            if self._pipeline_tem_full and self._lora_applied and hasattr(self, "model"):
+                out_dir = self._yaml_config.modelo.saida
+                logger.info("💾 Merge LoRA→base antes de recarregar (preservando pesos full)...")
+                self.model.merge_adapter()
+                self.model.save_pretrained(out_dir, safe_serialization=True)
+                self.tokenizer.save_pretrained(out_dir)
+                self.model.unmerge_adapter()
+                # Remove adapter files para que _detectar_tipo_modelo_saida retorne 'full'
+                for _f_name in ["adapter_config.json", "adapter_model.safetensors", "adapter_model.bin"]:
+                    _f_path = os.path.join(out_dir, _f_name)
+                    if os.path.exists(_f_path):
+                        os.remove(_f_path)
+                self._lora_applied = False
+                logger.info("✅ Modelo full salvo com pesos base atualizados")
+            
             # Limpeza completa de memória
+            if hasattr(self, "_global_eval_callback"):
+                self._global_eval_callback = None
+            if hasattr(self, "trainer") and self.trainer is not None:
+                del self.trainer
+                self.trainer = None
             if hasattr(self, "model"):
                 del self.model
             if hasattr(self, "tokenizer"):
@@ -2204,6 +2264,9 @@ class LLMsTrainer:
             _nbits_global_original = self._yaml_config.treinamento.nbits
             self._yaml_config.treinamento.nbits = alvo_nbits
             
+            # Atualiza tipo da etapa ANTES do _load_model (usado para selecionar attn_implementation)
+            self._tipo_etapa_atual = novo_tipo
+            
             # Recarrega o modelo base / adaptadores persistidos na saída
             self.model, self.tokenizer = self._load_model()
             
@@ -2214,6 +2277,9 @@ class LLMsTrainer:
             # Restaura global no YAML e avança status de memória
             self._yaml_config.treinamento.nbits = _nbits_global_original
             self._nbits_atual = alvo_nbits
+
+        # Atualiza tracking do tipo de etapa (independente de reload — para o caso sem recarga)
+        self._tipo_etapa_atual = novo_tipo
 
         # === Alterna modo de treinamento conforme tipo da etapa ===
         if etapa.tipo == "full":
@@ -2773,22 +2839,47 @@ class LLMsTrainer:
         _tipo_modelo = "melhor (menor eval_loss)" if _is_best else "último step"
         print_cores(f"<azul>[6/6] Salvando modelo ({_tipo_modelo}) em {out_dir}…</azul>", color_auto=False)
         
-        # Salva o modelo (LoRA ou modelo completo)
-        self.model.save_pretrained(out_dir)
-        self.tokenizer.save_pretrained(out_dir)
+        # === Estratégia de salvamento para pipelines com etapas full ===
+        # Quando o pipeline tem etapas full, pesos base são atualizados durante treinamento.
+        # PeftModel.save_pretrained() salva APENAS adaptadores LoRA, perdendo os pesos base.
+        # Solução: merge_adapter() (reversível) → salva modelo completo → unmerge_adapter()
+        #
+        # Após etapa full: merge obrigatório (pesos base mudaram)
+        # Após etapa lora (pipeline misto): salva apenas adapters (~50MB, full já no disco)
+        # Após etapa lora (pipeline puro): adapters apenas (sem mudança)
         
-        # Verifica se o modelo foi salvo corretamente
-        adapter_config = os.path.join(out_dir, 'adapter_config.json')
-        adapter_model = os.path.join(out_dir, 'adapter_model.safetensors')
+        _tipo_etapa = getattr(self, '_tipo_etapa_atual', 'lora')
+        _salvar_como_full = (
+            self._pipeline_tem_full 
+            and self._lora_applied 
+            and _tipo_etapa == 'full'
+        )
         
-        if os.path.exists(adapter_config):
-            print_cores(f"<verde>✅ Arquivo de configuração LoRA salvo: {adapter_config}</verde>", color_auto=False)
-            
-        if os.path.exists(adapter_model):
-            print_cores(f"<verde>✅ Modelo LoRA salvo: {adapter_model}</verde>", color_auto=False)
-        elif os.path.exists(os.path.join(out_dir, 'pytorch_model.bin')):
-            print_cores(f"<verde>✅ Modelo PyTorch salvo: pytorch_model.bin</verde>", color_auto=False)
-        
+        if _salvar_como_full:
+            # Merge reversível: incorpora LoRA nos pesos base para salvar modelo completo
+            logger.info("💾 Merge LoRA→base para salvar modelo full (pesos base atualizados)...")
+            self.model.merge_adapter()
+            self.model.save_pretrained(out_dir, safe_serialization=True)
+            self.tokenizer.save_pretrained(out_dir)
+            self.model.unmerge_adapter()
+            # Remove adapter files para marcar como 'full' no disco
+            for _f_name in ["adapter_config.json", "adapter_model.safetensors", "adapter_model.bin"]:
+                _f_path = os.path.join(out_dir, _f_name)
+                if os.path.exists(_f_path):
+                    os.remove(_f_path)
+            self._lora_applied = False
+            print_cores(f"<verde>✅ Modelo full salvo (merge LoRA→base): {out_dir}</verde>", color_auto=False)
+        else:
+            # Salva o modelo como está (LoRA: adapters; Full sem LoRA: modelo completo)
+            self.model.save_pretrained(out_dir)
+            self.tokenizer.save_pretrained(out_dir)
+            # Log do que foi salvo
+            _adapter_cfg = os.path.join(out_dir, "adapter_config.json")
+            _adapter_st = os.path.join(out_dir, "adapter_model.safetensors")
+            if os.path.exists(_adapter_cfg):
+                print_cores(f"<verde>✅ Modelo LoRA salvo: {_adapter_st}</verde>", color_auto=False)
+            elif os.path.exists(os.path.join(out_dir, "pytorch_model.bin")):
+                print_cores(f"<verde>✅ Modelo PyTorch salvo: pytorch_model.bin</verde>", color_auto=False)
         # Log detalhado do que foi salvo
         files_saved = []
         for file in os.listdir(out_dir):

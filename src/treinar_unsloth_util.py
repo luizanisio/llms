@@ -206,6 +206,10 @@ class ConfigTreinamento:
     #   Se True e não instalado, o treinamento será interrompido com sugestão de instalação.
     #   Se False, usa 'eager' (atenção padrão) como fallback seguro — SDPA causa NaN com LoRA bfloat16 no H100.
     flash_attention_2: bool = True
+    # full_com_sdpa: permite fallback para SDPA nativo do PyTorch se o pacote flash_attn não estiver instalado, 
+    #   MAS APENAS quando for explicitamente solicitado. Ideal para contornar limite de VRAM em Full FT,
+    #   assumindo o risco (SDPA é estável para Full FT no H100, mas buga com LoRA em bfloat16).
+    full_com_sdpa: bool = True
     # liger_kernel: usa Liger Kernel fused cross-entropy + RoPE + RMSNorm (~40% menos VRAM no pico).
     #   Evita materializar tensor de logits completo (batch × seq × vocab × 4B).
     #   Requer: pip install liger-kernel
@@ -852,6 +856,7 @@ class YamlTreinamento:
             lr_scheduler_type=str(treino_raw.get("lr_scheduler_type", "linear")),
             max_grad_norm=float(treino_raw.get("max_grad_norm", 1.0)),
             flash_attention_2=treino_raw.get("flash_attention_2", True) in {True, "true", "True", 1, "1", "sim"},
+            full_com_sdpa=treino_raw.get("full_com_sdpa", False) in {True, "true", "True", 1, "1", "sim"},
             liger_kernel=treino_raw.get("liger_kernel", True) in {True, "true", "True", 1, "1", "sim"},
         )
 

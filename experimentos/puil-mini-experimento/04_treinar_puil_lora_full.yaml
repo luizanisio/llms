@@ -1,4 +1,4 @@
-# python ../../src/treinar_unsloth.py --treinar treinar_puil_lora.yaml --reset
+# python ../../src/treinar_unsloth.py --treinar 04_treinar_puil_lora_full.yaml --reset
 
 misc:
   pastas_base:
@@ -30,18 +30,42 @@ curriculum:
     exigir_ids_pareados: false
 
   divisao:
+  - arquivo: divisoes/divisao_puil_50.csv
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 1
+    batch_size: 1
+    max_seq_length: 256
+    learning_rate: 2e-05
+
+  - arquivo: divisoes/divisao_puil_50.csv
+    alias: "completo"
+    tipo: "full"
+    pace_epochs: 1
+    batch_size: 1
+    max_seq_length: 256
+    learning_rate: 5e-06
+
+  - arquivo: divisoes/divisao_puil.csv
+    alias: "completo"
+    tipo: "full"
+    pace_epochs: 1
+    batch_size: 1
+    max_seq_length: 256
+    learning_rate: 5e-06
+
   - arquivo: divisoes/divisao_puil.csv
     alias: "completo"
     tipo: "lora"
     pace_epochs: 1
     batch_size: 1
-    max_seq_length: 1024
-    learning_rate: 2e-04
+    max_seq_length: 256
+    learning_rate: 2e-05
 
 modelo:
   base_model_name: Qwen2.5-1.5B-Instruct
-  saida: treinos_local/Qwen2.5-1.5B-Instruct(puil_lora)
-  ollama: Qwen2.5-1.5B-Instruct(puil_lora):latest
+  saida: treinos_local/Qwen2.5-1.5B-Instruct(puil_lora_full)
+  ollama: Qwen2.5-1.5B-Instruct(puil_lora_full):latest
   ollama_base: qwen2.5:1.5b
   ollama_url:
 
@@ -49,7 +73,7 @@ treinamento:
   flash_attention_2: true
   liger_kernel: true
   full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
-
+    
   eval_steps: 20%
   batch_size:
     efetivo: 16

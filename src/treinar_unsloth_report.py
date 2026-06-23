@@ -333,7 +333,12 @@ class GeradorRelatorio:
         conteudo.append(f"| Seed | {cfg.treinamento.seed} |")
         
         # --- Otimizações de memória GPU ---
-        conteudo.append(f"| **Flash Attention 2** | {'✅ ativo' if cfg.treinamento.flash_attention_2 else '❌ desativado (usando eager)'} |")
+        flash_status = '✅ ativo' if cfg.treinamento.flash_attention_2 else '❌ desativado (usando eager)'
+        tem_lora_report = any(etapa.tipo.lower() == "lora" for etapa in cfg.curriculum)
+        if cfg.treinamento.flash_attention_2 and getattr(cfg.treinamento, 'full_com_sdpa', False) and not tem_lora_report:
+             flash_status = '⚠️ fallback para SDPA ativo (full_com_sdpa = true e 100% Full FT)'
+             
+        conteudo.append(f"| **Flash Attention 2** | {flash_status} |")
         conteudo.append(f"| **Liger Kernel** | {'✅ ativo (fused CE + RoPE + RMSNorm)' if cfg.treinamento.liger_kernel else '❌ desativado'} |")
         
         # --- Modo de treinamento usado ---

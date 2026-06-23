@@ -93,6 +93,7 @@ modelo:
 treinamento:
   flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
   liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
 
   eval_steps: 20%
 

@@ -1,4 +1,4 @@
-# python ../../src/treinar_unsloth.py --treinar treinar_puil_full.yaml --reset
+# python ../../src/treinar_unsloth.py --treinar 04_treinar_puil_full.yaml --reset
 
 misc:
   pastas_base:
@@ -48,6 +48,8 @@ modelo:
 treinamento:
   flash_attention_2: true
   liger_kernel: true
+  full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
+    
   eval_steps: 20%
   batch_size:
     efetivo: 16

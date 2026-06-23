@@ -202,7 +202,8 @@ class ModelLoader:
                 # Não deveria chegar aqui (validação é feita antes), mas por segurança
                 logger.warning("Liger Kernel solicitado mas não disponível. Usando AutoModelForCausalLM.")
 
-        # Tenta usar flash_attention_2 se disponível, senão fallback para eager
+        # Tenta usar a attn_implementation solicitada (flash_attention_2, sdpa ou eager)
+        # Se falhar, faz o fallback definitivo para eager
         try:
             model = _model_cls.from_pretrained(
                 model_name,
