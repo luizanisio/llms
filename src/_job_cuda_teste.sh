@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=treinar_pytorch
+#SBATCH --job-name=treinar_teste_env_pytorch
 
 # Partição de execução:
 #SBATCH --partition=gpu
