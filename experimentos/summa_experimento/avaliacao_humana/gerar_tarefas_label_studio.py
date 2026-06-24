@@ -13,12 +13,15 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 QTD_ITENS = 70
 
+PROJETOS = ['Teste', 'Rafael','Amilar','Monty']    
+
+
 # Caminhos dos arquivos
 # ARQUIVO_DIVISOES_QWEN: CSV gerado na fase de curadoria/avaliação, que contém o ID do documento ('id' ou 'seq_documento_acordao')
 # e a coluna 'dificuldade' calculada previamente a partir das extrações do modelo qwen 7b (ex: percentis P30/P70 do score S_i).
 ARQUIVO_DIVISOES_QWEN = '../compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv'
 ARQUIVO_DIVISAO_AMOSTRA = './arquivo_avaliacao.csv'
-ARQUIVO_TAREFAS = './tarefas_avaliacao_label_studio.json'
+ARQUIVO_TAREFAS = './tarefas_avaliacao_label_studio_<PROJETO>.json'
 
 # ARQUIVO_INTEGRAS: Parquet contendo os metadados brutos e o texto original de cada acórdão.
 # Utilizado para extrair o 'fold' de cada documento, a íntegra e informações como 'sg_classe' e 'dt_publicacao'.
@@ -186,13 +189,13 @@ def criar_arquivo_divisao():
     return df_final
 
 
-def gerar_tarefas_label_studio(divisao):
+def gerar_tarefas_label_studio(divisao, arquivo_projeto_tarefas, random_seed_r):
     if divisao is None or divisao.empty:
         logging.error("Nenhuma divisão fornecida.")
         return
 
-    if os.path.exists(ARQUIVO_TAREFAS):
-        resp = input(f"O arquivo {ARQUIVO_TAREFAS} já existe. Deseja recriá-lo? (s/n): ")
+    if os.path.exists(arquivo_projeto_tarefas):
+        resp = input(f"O arquivo {arquivo_projeto_tarefas} já existe. Deseja recriá-lo? (s/n): ")
         if resp.lower() != 's':
             logging.info("Operação cancelada pelo usuário.")
             return
@@ -208,6 +211,12 @@ def gerar_tarefas_label_studio(divisao):
             logging.warning(f"Arquivo de modelo não encontrado: {caminho}")
 
     tarefas = []
+    
+    # Embaralhar a ordem das tarefas
+    divisao = divisao.sample(frac=1, random_state=random_seed_r).reset_index(drop=True)
+    
+    # Inicializar gerador de números aleatórios para as colunas
+    rng = random.Random(random_seed_r)
     
     # Processar cada documento da divisão
     for idx, row in divisao.iterrows():
@@ -238,9 +247,9 @@ def gerar_tarefas_label_studio(divisao):
         # O teste é cego (blind test), portanto a ordem dos modelos apresentados ao avaliador (col1, col2, col3)
         # deve ser sorteada aleatoriamente a cada tarefa para evitar viés de posição na Label Studio.
         modelos_disponiveis = list(MODELOS_ARQUIVOS.keys())
-        seed_rand = random.randint(1, 10000)
-        random.seed(seed_rand) # Nova seed por documento para garantir embaralhamento independente
-        random.shuffle(modelos_disponiveis)
+        seed_rand = rng.randint(1, 10000)
+        doc_rng = random.Random(seed_rand) # Nova seed por documento para garantir embaralhamento independente
+        doc_rng.shuffle(modelos_disponiveis)
         
         # Guardamos a seed e o rastro da coluna para auditoria futura e conferência do gabarito
         data['seed_randomizacao'] = seed_rand
@@ -263,10 +272,10 @@ def gerar_tarefas_label_studio(divisao):
 
         tarefas.append({"data": data})
         
-    with open(ARQUIVO_TAREFAS, 'w', encoding='utf-8') as f:
+    with open(arquivo_projeto_tarefas, 'w', encoding='utf-8') as f:
         json.dump(tarefas, f, ensure_ascii=False, indent=2)
         
-    logging.info(f"Arquivo gerado com sucesso: {ARQUIVO_TAREFAS} ({len(tarefas)} tarefas)")
+    logging.info(f"Arquivo gerado com sucesso: {arquivo_projeto_tarefas} ({len(tarefas)} tarefas)")
 
 
 if __name__ == '__main__':
@@ -274,10 +283,14 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1].lower() == '--reset':
         if os.path.exists(ARQUIVO_DIVISAO_AMOSTRA):
             os.remove(ARQUIVO_DIVISAO_AMOSTRA)
-        if os.path.exists(ARQUIVO_TAREFAS):
-            os.remove(ARQUIVO_TAREFAS)  
+        for arquivo_projeto in PROJETOS:
+            arquivo_projeto_tarefas = ARQUIVO_TAREFAS.replace('<PROJETO>', arquivo_projeto)
+            if os.path.exists(arquivo_projeto_tarefas):
+                os.remove(arquivo_projeto_tarefas)
         print_cores('<verde>Arquivos de saída removidos.</verde>')
     
     divisao = criar_arquivo_divisao()
     if divisao is not None:
-        gerar_tarefas_label_studio(divisao)
+        for i, arquivo_projeto in enumerate(PROJETOS, 1):
+            arquivo_projeto_tarefas = ARQUIVO_TAREFAS.replace('<PROJETO>', arquivo_projeto)
+            gerar_tarefas_label_studio(divisao, arquivo_projeto_tarefas = arquivo_projeto_tarefas, random_seed_r=42+i)

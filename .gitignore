@@ -229,4 +229,5 @@ experimentos/pubmed-experimento/treinos**
 experimentos/summa_experimento/treinos**
 experimentos/puil-mini-experimento/treinos_local**
 experimentos/puil-mini-experimento/compara**
-experimentos/summa_experimento/avaliacao_humana/tarefas_avaliacao_label_studio.json
+experimentos/summa_experimento/avaliacao_humana/tarefas_avaliacao_label_studio_*.json
+

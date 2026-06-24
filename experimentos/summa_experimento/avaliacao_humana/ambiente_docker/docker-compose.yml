@@ -1,0 +1,46 @@
+# ─────────────────────────────────────────────────────────────
+#  Label Studio — instância isolada por avaliador
+#
+#  Fluxo de uso:
+#  1. docker compose up -d
+#  2. Acesse http://localhost:8080 e crie sua conta
+#  3. Vá em Account & Settings → Access Token → copie o token
+#  5. O projeto já estará criado com as tasks importadas
+#
+#  Logs
+#     docker compose logs -f label-studio
+#
+#  Baixar
+#  x. docker compose down
+#
+#  Reiniciar tudo e apagar o volume
+#  x. docker compose down -v
+# ─────────────────────────────────────────────────────────────
+
+services:
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: label-studio-anot01      # renomeie por avaliador
+    ports:
+      - "8080:8080"                           # mude a porta para cada instância
+    volumes:
+      - ls-data:/label-studio/data
+    environment:
+      - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
+      - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
+
+      # ── Conta admin (criada automaticamente no 1º boot) ──
+      - LABEL_STUDIO_USERNAME=${LS_ADMIN_EMAIL}
+      - LABEL_STUDIO_PASSWORD=${LS_ADMIN_PASSWORD}
+
+      # ── Segurança ────────────────────────────────────────
+      # Bloqueia signup público; novos usuários só via convite
+      - LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK=true
+
+      # ── Opcional: CORS para acesso externo ───────────────
+      # LABEL_STUDIO_HOST: https://seu-dominio.up.railway.app
+    restart: unless-stopped
+
+
+volumes:
+  ls-data:
