@@ -40,6 +40,35 @@
     .instrucao-titulo { font-weight:bold; color:#7a5a00; font-size:0.9em;
                         text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
     .instrucao-texto  { font-size:0.88em; color:#4a3800; line-height:1.55; }
+
+    /* ═══════════════════════════════════════════════════════════
+       CSS PURO para controlar checkboxes de conclusão.
+       Toda a lógica abaixo usa apenas :has(input:checked),
+       sem nenhum visibleWhen — zero risco de crash React.
+       ═══════════════════════════════════════════════════════════ */
+
+    /* 1) Esconder conclusão por padrão (fora da tela) */
+    .wrapper-conc1,
+    .wrapper-conc2,
+    .wrapper-conc3 {
+      position: absolute !important;
+      left: -9999px !important;
+      width: 1px !important;
+      height: 1px !important;
+      overflow: hidden !important;
+    }
+
+    /* 2) Mostrar conclusão SOMENTE quando uma nota foi selecionada
+          E a própria conclusão ainda NÃO foi marcada */
+    .extracao-bloco:has(.nota-gate-1 input:checked) .wrapper-conc1:not(:has(input:checked)),
+    .extracao-bloco:has(.nota-gate-2 input:checked) .wrapper-conc2:not(:has(input:checked)),
+    .extracao-bloco:has(.nota-gate-3 input:checked) .wrapper-conc3:not(:has(input:checked)) {
+      position: static !important;
+      left: auto !important;
+      width: auto !important;
+      height: auto !important;
+      overflow: visible !important;
+    }
   </Style>
 
   <!-- ══════════════════════════════════════════
@@ -70,7 +99,7 @@
     </View>
     <View className="instrucao-texto">
       <Text name="instr_criterio" value="Você verá três extrações em sequência. Avalie cada uma de forma independente, confrontando-a com o acórdão acima. O critério é sempre fidelidade ao texto-fonte."/>
-      <Text name="instr_escala"   value="Use a escala 1 a 4. Ao finalizar a avaliação, marque 'Extração concluída' para avançar. Atenção: ao concluir, o conteúdo e formulário da extração serão ocultados (simulando um fechamento de acordeão). As três podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
+      <Text name="instr_escala"   value="Use a escala 1 a 4. Ao finalizar a avaliação, marque 'Extração concluída' para avançar. Atenção: o botão de conclusão só aparece após selecionar uma nota, e será travado permanentemente após marcado. As três podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
       <Text name="instr_problemas" value="Se identificar problemas (alucinação, omissão, erro factual), marque as opções correspondentes. Campos de problema são obrigatórios para notas 1 e 2; opcionais para notas 3 e 4."/>
     </View>
   </View>
@@ -89,8 +118,7 @@
           <HyperText name="bloco1" value="$bloco_html_col1" inline="true"/>
         </View>
         <View className="extr-avaliacao">
-          
-          <View className="extr-nota">
+          <View className="extr-nota nota-gate-1">
             <View className="label-sm"><Text name="l_nota1" value="Avaliação (obrigatória)"/></View>
             <Choices name="nota_col1" toName="bloco1" choice="single" required="true">
               <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
@@ -99,7 +127,6 @@
               <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
             </Choices>
           </View>
-          
           <View className="extr-prob">
             <View className="label-sm"><Text name="l_prob1" value="Problemas identificados"/></View>
             <Choices name="problemas_col1" toName="bloco1" choice="multiple">
@@ -110,18 +137,20 @@
               <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
             </Choices>
           </View>
-
         </View>
       </View>
     </View>
 
-    <!-- O botão de conclusão fica fora da área que some, assim não causa erro no React.
-         Quando marcado, o extr-body acima some, simulando um acordeão que fechou,
-         e apenas este botão marcado e o título da extração sobram. -->
-    <View className="extr-nota" style="margin-top: 10px;">
+    <!-- Conclusão: controlada 100% por CSS, sem visibleWhen -->
+    <View className="wrapper-conc1" style="margin-top: 5px;">
       <Choices name="conclusao_col1" toName="bloco1" choice="single">
-        <Choice value="Extração 1 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado permanentemente."/>
+        <Choice value="Extração 1 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
       </Choices>
+    </View>
+    <View visibleWhen="choice-selected" whenTagName="conclusao_col1">
+      <View className="progresso">
+        <Text name="prog2" value="✓ Extração I concluída — prossiga para a Extração II"/>
+      </View>
     </View>
   </View>
 
@@ -129,11 +158,6 @@
        EXTRAÇÃO II
        ══════════════════════════════════════════ -->
   <View visibleWhen="choice-selected" whenTagName="conclusao_col1">
-    
-    <View className="progresso">
-      <Text name="prog2" value="✓ Extração I concluída — prossiga para a Extração II"/>
-    </View>
-
     <View className="extracao-bloco">
       <View className="extr-header">
         <Text name="h2" value="Extração II  (2 de 3)"/>
@@ -145,8 +169,7 @@
             <HyperText name="bloco2" value="$bloco_html_col2" inline="true"/>
           </View>
           <View className="extr-avaliacao">
-            
-            <View className="extr-nota">
+            <View className="extr-nota nota-gate-2">
               <View className="label-sm"><Text name="l_nota2" value="Avaliação (obrigatória)"/></View>
               <Choices name="nota_col2" toName="bloco2" choice="single" required="true">
                 <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
@@ -155,7 +178,6 @@
                 <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
               </Choices>
             </View>
-            
             <View className="extr-prob">
               <View className="label-sm"><Text name="l_prob2" value="Problemas identificados"/></View>
               <Choices name="problemas_col2" toName="bloco2" choice="multiple">
@@ -166,15 +188,19 @@
                 <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
               </Choices>
             </View>
-
           </View>
         </View>
       </View>
 
-      <View className="extr-nota" style="margin-top: 10px;">
+      <View className="wrapper-conc2" style="margin-top: 5px;">
         <Choices name="conclusao_col2" toName="bloco2" choice="single">
-          <Choice value="Extração 2 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado permanentemente."/>
+          <Choice value="Extração 2 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
         </Choices>
+      </View>
+      <View visibleWhen="choice-selected" whenTagName="conclusao_col2">
+        <View className="progresso">
+          <Text name="prog3" value="✓ Extração II concluída — prossiga para a Extração III"/>
+        </View>
       </View>
     </View>
   </View>
@@ -183,11 +209,6 @@
        EXTRAÇÃO III
        ══════════════════════════════════════════ -->
   <View visibleWhen="choice-selected" whenTagName="conclusao_col2">
-    
-    <View className="progresso">
-      <Text name="prog3" value="✓ Extração II concluída — prossiga para a Extração III"/>
-    </View>
-
     <View className="extracao-bloco">
       <View className="extr-header">
         <Text name="h3" value="Extração III  (3 de 3)"/>
@@ -199,8 +220,7 @@
             <HyperText name="bloco3" value="$bloco_html_col3" inline="true"/>
           </View>
           <View className="extr-avaliacao">
-            
-            <View className="extr-nota">
+            <View className="extr-nota nota-gate-3">
               <View className="label-sm"><Text name="l_nota3" value="Avaliação (obrigatória)"/></View>
               <Choices name="nota_col3" toName="bloco3" choice="single" required="true">
                 <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
@@ -209,7 +229,6 @@
                 <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
               </Choices>
             </View>
-            
             <View className="extr-prob">
               <View className="label-sm"><Text name="l_prob3" value="Problemas identificados"/></View>
               <Choices name="problemas_col3" toName="bloco3" choice="multiple">
@@ -220,26 +239,21 @@
                 <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
               </Choices>
             </View>
-
           </View>
         </View>
       </View>
 
-      <View className="extr-nota" style="margin-top: 10px;">
+      <View className="wrapper-conc3" style="margin-top: 5px;">
         <Choices name="conclusao_col3" toName="bloco3" choice="single">
-          <Choice value="Extração 3 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado permanentemente."/>
+          <Choice value="Extração 3 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
         </Choices>
       </View>
+      <View visibleWhen="choice-selected" whenTagName="conclusao_col3">
+        <View className="progresso">
+          <Text name="prog_fim" value="✓ Todas as extrações concluídas — pode submeter."/>
+        </View>
+      </View>
     </View>
-  </View>
-
-  <!-- ══════════════════════════════════════════
-       INDICADOR FINAL
-       ══════════════════════════════════════════ -->
-  <View className="progresso"
-        visibleWhen="choice-selected"
-        whenTagName="conclusao_col3">
-    <Text name="prog_fim" value="✓ Todas as extrações concluídas — pode submeter."/>
   </View>
 
 </View>
