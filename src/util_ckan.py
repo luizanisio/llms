@@ -81,6 +81,7 @@ Parâmetros adicionais de UtilCkan:
 
 import json
 import re
+import os
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -798,10 +799,17 @@ class UtilCkanBase:
                         seq = str(item.get('seq_documento', ''))
                         txt_path = item.get('arquivo_txt', '')
                         # Tenta: 1) caminho exato, 2) busca por seq no lookup
+                        texto = None
                         if txt_path and txt_path in zf.namelist():
-                            integras[item['id_mapa']] = self._normalizar_texto(zf.read(txt_path).decode('utf-8', errors='replace'))
+                            texto = zf.read(txt_path).decode('utf-8', errors='replace')
                         elif seq in txt_por_seq:
-                            integras[item['id_mapa']] = self._normalizar_texto(zf.read(txt_por_seq[seq]).decode('utf-8', errors='replace'))
+                            texto = zf.read(txt_por_seq[seq]).decode('utf-8', errors='replace')
+                            
+                        if texto is not None:
+                            if texto.lstrip().startswith('#ERRO'):
+                                print(f"  ⚠️  Íntegra com erro de carga (ignorado): {item.get('id_mapa', seq)}")
+                            else:
+                                integras[item['id_mapa']] = self._normalizar_texto(texto)
             except Exception as e:
                 print(f'  ⚠️  Erro ao ler {nome_zip}: {e}')
 
@@ -2169,13 +2177,18 @@ def executar_ckan_batch(yaml_path: str):
         arq_origem = filtros_brutos.get("arquivo_origem", "")
         df_filtro = None
         if arq_origem:
-            import os
             arq_origem = os.path.abspath(arq_origem)
             
             if os.path.isfile(arq_origem):
                 print(f"   📥 Carregando filtros dinâmicos de: {arq_origem}")
                 import pandas as pd
-                df_filtro = pd.read_parquet(arq_origem)
+                if arq_origem.lower().endswith('.csv'):
+                    df_filtro = pd.read_csv(arq_origem)
+                elif arq_origem.lower().endswith('.feather'):
+                    df_filtro = pd.read_feather(arq_origem)
+                else:
+                    df_filtro = pd.read_parquet(arq_origem)
+                
                 df_filtro = _aplicar_tipos_padrao_ckan(df_filtro)
                 
                 col_anos = filtros_brutos.get("coluna_anos")
