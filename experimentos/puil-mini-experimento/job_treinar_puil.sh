@@ -44,7 +44,7 @@ echo "Configurando variáveis de ambiente..."
 export CUDA_HOME=$CONDA_PREFIX
 export PATH=$CUDA_HOME/bin:$PATH
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+#export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
