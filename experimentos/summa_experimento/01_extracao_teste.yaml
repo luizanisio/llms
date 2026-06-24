@@ -1,0 +1,112 @@
+# ==========================================================================
+# Configuração de Extração de Dados do CKAN
+# Executar com: python ../../src/util_ckan.py --config 01_extracao_teste.yaml
+# Visualizar com: python ../../src/util_ckan.py --config 01_extracao_teste.yaml --view
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+
+# --- Configuração Geral ---
+config:
+  download_dir: "./downloads_stj"
+  atualizar_cache_e_mapas: true
+
+# --- Saída ---
+saida:
+  # Caminho do arquivo de saída. O formato de exportação será deduzido automaticamente
+  # da extensão utilizada (suporta: .parquet, .feather, .csv).
+  # Além do arquivo de dados, será gerado automaticamente um arquivo .md com o
+  # mesmo nome, contendo um resumo (EDA) das colunas passíveis de agrupamento.
+  arquivo: "./dados/teste_integra_processos.parquet"
+  
+  # Mapeia colunas diretamente geradas pelo processo do CKAN
+  # Colunas disponíveis na extração de Íntegras: 
+  #   id_mapa, numero_registro, data_publicacao, data_publicacao_iso, tipo_decisao, 
+  #   seq_documento, processo, ministro, arquivo_integra, arquivo_metadados, integra
+  # Colunas disponíveis na extração de Espelhos: 
+  #   id, numeroRegistro, siglaClasse, descricaoClasse, nomeOrgaoJulgador, ministroRelator, 
+  #   tipoDeDecisao, dataPublicacao, dataDecisao, teseJuridica, tema, referenciasLegislativas, 
+  #   jurisprudenciaCitada, notas, termosAuxiliares, informacoesComplementares, acordaosSimilares, 
+  #   id_mapa, orgao, data_publicacao_iso, seq_documento_acordao, tem_integra, ementa, decisao, integra
+  # Colunas auto-padronizadas pelo script:
+  #   dt_publicacao, ano, sg_classe, num_registro, seq_documento_acordao
+  colunas_ckan:
+    processo: processo
+    ministro: ministro
+    dt_publicacao: dt_publicacao
+    orgao_julgador: orgao_julgador
+    sg_classe: sg_classe
+    integra: integra
+    num_registro: num_registro
+    seq_documento_acordao: seq_documento_acordao
+    ano: ano
+    tipo_decisao: tipo_decisao
+    ementa: ementa
+  
+  # Preserva colunas (faz merge via left-join) advindas do arquivo_origem configurado nas extrações
+  colunas_origem:
+    sg_ramo_direito: sg_ramo_direito
+    pasta: pasta
+    fold: fold
+
+# --- Sequência de Extrações ---
+# Esperados nas duas extrações 22237 - mas 202 do grupo 1 são decisões e não acórdãos
+# - 1089 sem íntegra
+extracoes:
+  #Grupo 1: Extração dinâmica a partir de um parquet/csv anterior e preservando do merge
+  - tipo: "integras"
+    incluir_texto: true
+    filtros:
+      arquivo_origem: "./dados/filtro_documentos_experimento_summa.csv"
+      coluna_documentos: "seq_documento_acordao"
+      #tipo_decisao: acordao
+    colunas_fixas:
+      - extracao: "$hoje"
+        
+  # Grupo 2: Extração manual com injeção de colunas fixas
+  # - esperado 468
+  - tipo: "integras"
+    incluir_texto: true
+    filtros:
+      anos: ["2026"]
+      datas: ["2026-05-25"]
+      classes: ["AREsp", "REsp", "HC", "RHC"]
+      tipo_decisao: acordao
+    colunas_fixas:
+      - fold: 12
+      - pasta: './saidas/<<tipo>>_novos'
+      - extracao: "$hoje"
+
+  # Grupo 3: Extração de processos específicos
+  # - tipo: "integras"
+  #   incluir_texto: true
+  #   filtros:
+  #     # busca pela chave processo (case insensitive) ou numero_registro (12 números string) ou tuplas [registro, data_publicacao] ou [registro, data_publicacao, tipo_decisao]
+  #     processos: ["REsp 2046214", "AREsp 2831077", ["202403674719", "2025-01-03"], ["REsp 2045705", "20230320", "DECISÃO"]]
+  #     documentos: [289154352, 289154346]
+  #   colunas_fixas:
+  #     - fold: 13
+  #     - pasta: "./saidas/<<tipo>>_especificos"
+
+# Grupo 4: Extração de espelhos de uma data
+  # - tipo: "espelhos"
+  #   incluir_integras: true
+  #   filtros:
+  #     anos: ["2026"]
+  #     datas: ["2026-04-30","2026-03-31"]
+  #     classes: ["AREsp", "REsp", "HC", "RHC"]
+  #     tipo_decisao: acordao
+  #   colunas_fixas:
+  #     - fold: 12
+  #     - pasta: './saidas/<<tipo>>_novos'
+  #     - extracao: "$hoje"

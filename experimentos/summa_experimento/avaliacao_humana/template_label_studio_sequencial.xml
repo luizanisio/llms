@@ -1,0 +1,245 @@
+<View>
+  <Style>
+    /* ── Cabeçalho ── */
+    .ctx { background:#f0f4f8; padding:10px 16px; border-radius:6px;
+           margin-bottom:14px; font-family:Arial,sans-serif; font-size:0.9em; }
+    .ctx-title { font-size:1.05em; font-weight:bold; color:#1a3a5c; margin-bottom:6px; }
+
+    /* ── Acórdão (referência) - sticky para consulta contínua ── */
+    .acordao-wrapper { position:sticky; top:0; z-index:10; background:#fff;
+                       padding-bottom:8px; border-bottom:2px solid #3a7abf; }
+    .acordao-box { max-height:300px; overflow-y:auto; border:1px solid #bbb;
+                   padding:10px 14px; border-radius:4px; background:#fafafa;
+                   font-size:0.82em; white-space:pre-wrap; font-family:monospace;
+                   margin-top:6px; }
+
+    /* ── Blocos de extração — layout 2 colunas ── */
+    .extracao-bloco  { border:1px solid #ddd; border-radius:6px;
+                       padding:14px; background:#fff; margin-top:18px;
+                       width:100%; box-sizing:border-box; }
+    .extr-header     { font-weight:bold; font-size:1em; color:#1a3a5c;
+                       border-bottom:2px solid #3a7abf; margin-bottom:10px;
+                       padding-bottom:4px; }
+    .extr-body       { display:flex; gap:20px; align-items:flex-start; }
+    .extr-conteudo   { flex:1; min-width:0; }
+    .extr-avaliacao  { flex:0 0 300px; display:flex; flex-direction:column; gap:10px; }
+    .extr-nota   { background:#f8f8ff; border-radius:4px; padding:8px 10px; }
+    .extr-prob   { background:#fffaf0; border-radius:4px; padding:8px 10px; }
+    .label-sm    { font-size:0.8em; font-weight:bold; color:#555;
+                   text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+
+    /* ── Indicador de progresso ── */
+    .progresso { background:#e8f5e9; border:1px solid #81c784; border-radius:5px;
+                 padding:8px 14px; margin-top:14px; font-family:Arial,sans-serif;
+                 font-size:0.85em; color:#2e7d32; font-weight:bold; }
+
+    /* ── Instrução metodológica ── */
+    .instrucao { background:#fffbe6; border:1px solid #f0c040; border-left:4px solid #e6a800;
+                 border-radius:5px; padding:12px 16px; margin-top:16px;
+                 font-family:Arial,sans-serif; }
+    .instrucao-titulo { font-weight:bold; color:#7a5a00; font-size:0.9em;
+                        text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
+    .instrucao-texto  { font-size:0.88em; color:#4a3800; line-height:1.55; }
+  </Style>
+
+  <!-- ══════════════════════════════════════════
+       CABEÇALHO DO DOCUMENTO
+       ══════════════════════════════════════════ -->
+  <View className="ctx">
+    <View className="ctx-title">
+      <Text name="titulo" value="Documento : $doc_id  ·  Classe: $metadados_doc_classe  ·  Ramo: $metadados_doc_ramo"/>
+    </View>
+  </View>
+
+  <!-- ══════════════════════════════════════════
+       ACÓRDÃO FONTE (sticky - sempre visível)
+       ══════════════════════════════════════════ -->
+  <View className="acordao-wrapper">
+    <Header value="Texto integral do acórdão — consulte durante toda a avaliação"/>
+    <View className="acordao-box">
+      <Text name="acordao" value="$texto_acordao_fonte"/>
+    </View>
+  </View>
+
+  <!-- ══════════════════════════════════════════
+       INSTRUÇÃO METODOLÓGICA
+       ══════════════════════════════════════════ -->
+  <View className="instrucao">
+    <View className="instrucao-titulo">
+      <Text name="instr_titulo" value="Como avaliar"/>
+    </View>
+    <View className="instrucao-texto">
+      <Text name="instr_criterio" value="Você verá três extrações em sequência. Avalie cada uma de forma independente, confrontando-a com o acórdão acima. O critério é sempre fidelidade ao texto-fonte."/>
+      <Text name="instr_escala"   value="Use a escala 1 a 4. Ao finalizar a avaliação, marque 'Extração concluída' para avançar. Atenção: ao concluir, o conteúdo e formulário da extração serão ocultados (simulando um fechamento de acordeão). As três podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
+      <Text name="instr_problemas" value="Se identificar problemas (alucinação, omissão, erro factual), marque as opções correspondentes. Campos de problema são obrigatórios para notas 1 e 2; opcionais para notas 3 e 4."/>
+    </View>
+  </View>
+
+  <!-- ══════════════════════════════════════════
+       EXTRAÇÃO I
+       ══════════════════════════════════════════ -->
+  <View className="extracao-bloco">
+    <View className="extr-header">
+      <Text name="h1" value="Extração I  (1 de 3)"/>
+    </View>
+    
+    <View visibleWhen="choice-unselected" whenTagName="conclusao_col1">
+      <View className="extr-body">
+        <View className="extr-conteudo">
+          <HyperText name="bloco1" value="$bloco_html_col1" inline="true"/>
+        </View>
+        <View className="extr-avaliacao">
+          
+          <View className="extr-nota">
+            <View className="label-sm"><Text name="l_nota1" value="Avaliação (obrigatória)"/></View>
+            <Choices name="nota_col1" toName="bloco1" choice="single" required="true">
+              <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
+              <Choice value="3 - Adequado"  hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
+              <Choice value="2 - Ruim"      hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
+              <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
+            </Choices>
+          </View>
+          
+          <View className="extr-prob">
+            <View className="label-sm"><Text name="l_prob1" value="Problemas identificados"/></View>
+            <Choices name="problemas_col1" toName="bloco1" choice="multiple">
+              <Choice value="alucinacao"        hint="Informação inventada, ausente no acórdão"/>
+              <Choice value="omissao"           hint="Campo ausente sendo que existe no acórdão"/>
+              <Choice value="erro_factual"      hint="Data, parte, valor ou norma incorretos"/>
+              <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
+              <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
+            </Choices>
+          </View>
+
+        </View>
+      </View>
+    </View>
+
+    <!-- O botão de conclusão fica fora da área que some, assim não causa erro no React.
+         Quando marcado, o extr-body acima some, simulando um acordeão que fechou,
+         e apenas este botão marcado e o título da extração sobram. -->
+    <View className="extr-nota" style="margin-top: 10px;">
+      <Choices name="conclusao_col1" toName="bloco1" choice="single">
+        <Choice value="Extração 1 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado permanentemente."/>
+      </Choices>
+    </View>
+  </View>
+
+  <!-- ══════════════════════════════════════════
+       EXTRAÇÃO II
+       ══════════════════════════════════════════ -->
+  <View visibleWhen="choice-selected" whenTagName="conclusao_col1">
+    
+    <View className="progresso">
+      <Text name="prog2" value="✓ Extração I concluída — prossiga para a Extração II"/>
+    </View>
+
+    <View className="extracao-bloco">
+      <View className="extr-header">
+        <Text name="h2" value="Extração II  (2 de 3)"/>
+      </View>
+      
+      <View visibleWhen="choice-unselected" whenTagName="conclusao_col2">
+        <View className="extr-body">
+          <View className="extr-conteudo">
+            <HyperText name="bloco2" value="$bloco_html_col2" inline="true"/>
+          </View>
+          <View className="extr-avaliacao">
+            
+            <View className="extr-nota">
+              <View className="label-sm"><Text name="l_nota2" value="Avaliação (obrigatória)"/></View>
+              <Choices name="nota_col2" toName="bloco2" choice="single" required="true">
+                <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
+                <Choice value="3 - Adequado"  hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
+                <Choice value="2 - Ruim"      hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
+                <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
+              </Choices>
+            </View>
+            
+            <View className="extr-prob">
+              <View className="label-sm"><Text name="l_prob2" value="Problemas identificados"/></View>
+              <Choices name="problemas_col2" toName="bloco2" choice="multiple">
+                <Choice value="alucinacao"        hint="Informação inventada, ausente no acórdão"/>
+                <Choice value="omissao"           hint="Campo ausente sendo que existe no acórdão"/>
+                <Choice value="erro_factual"      hint="Data, parte, valor ou norma incorretos"/>
+                <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
+                <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
+              </Choices>
+            </View>
+
+          </View>
+        </View>
+      </View>
+
+      <View className="extr-nota" style="margin-top: 10px;">
+        <Choices name="conclusao_col2" toName="bloco2" choice="single">
+          <Choice value="Extração 2 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado permanentemente."/>
+        </Choices>
+      </View>
+    </View>
+  </View>
+
+  <!-- ══════════════════════════════════════════
+       EXTRAÇÃO III
+       ══════════════════════════════════════════ -->
+  <View visibleWhen="choice-selected" whenTagName="conclusao_col2">
+    
+    <View className="progresso">
+      <Text name="prog3" value="✓ Extração II concluída — prossiga para a Extração III"/>
+    </View>
+
+    <View className="extracao-bloco">
+      <View className="extr-header">
+        <Text name="h3" value="Extração III  (3 de 3)"/>
+      </View>
+      
+      <View visibleWhen="choice-unselected" whenTagName="conclusao_col3">
+        <View className="extr-body">
+          <View className="extr-conteudo">
+            <HyperText name="bloco3" value="$bloco_html_col3" inline="true"/>
+          </View>
+          <View className="extr-avaliacao">
+            
+            <View className="extr-nota">
+              <View className="label-sm"><Text name="l_nota3" value="Avaliação (obrigatória)"/></View>
+              <Choices name="nota_col3" toName="bloco3" choice="single" required="true">
+                <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
+                <Choice value="3 - Adequado"  hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
+                <Choice value="2 - Ruim"      hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
+                <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
+              </Choices>
+            </View>
+            
+            <View className="extr-prob">
+              <View className="label-sm"><Text name="l_prob3" value="Problemas identificados"/></View>
+              <Choices name="problemas_col3" toName="bloco3" choice="multiple">
+                <Choice value="alucinacao"        hint="Informação inventada, ausente no acórdão"/>
+                <Choice value="omissao"           hint="Campo ausente sendo que existe no acórdão"/>
+                <Choice value="erro_factual"      hint="Data, parte, valor ou norma incorretos"/>
+                <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
+                <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
+              </Choices>
+            </View>
+
+          </View>
+        </View>
+      </View>
+
+      <View className="extr-nota" style="margin-top: 10px;">
+        <Choices name="conclusao_col3" toName="bloco3" choice="single">
+          <Choice value="Extração 3 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado permanentemente."/>
+        </Choices>
+      </View>
+    </View>
+  </View>
+
+  <!-- ══════════════════════════════════════════
+       INDICADOR FINAL
+       ══════════════════════════════════════════ -->
+  <View className="progresso"
+        visibleWhen="choice-selected"
+        whenTagName="conclusao_col3">
+    <Text name="prog_fim" value="✓ Todas as extrações concluídas — pode submeter."/>
+  </View>
+
+</View>
