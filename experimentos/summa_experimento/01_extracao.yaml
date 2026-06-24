@@ -61,15 +61,13 @@ saida:
 
 # --- Sequência de Extrações ---
 # Esperados nas duas extrações 22237 - mas 202 do grupo 1 são decisões e não acórdãos
-# - 1089 sem íntegra
+# - 1090 sem íntegra
 extracoes:
   # Grupo 1: Extração dinâmica a partir de um parquet anterior e preservando do merge
   - tipo: "integras"
     incluir_texto: true
     filtros:
-      arquivo_origem: "./dados/pecas_exportadas_textos.parquet"
-      #coluna_anos: "ano"
-      #anos: [2021, 2022, 2023, 2024, 2025, 2026]
+      arquivo_origem: "./dados/filtro_documentos_experimento_summa.csv"
       coluna_documentos: "seq_documento_acordao"
       #tipo_decisao: acordao
     colunas_fixas:
