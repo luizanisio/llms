@@ -46,7 +46,7 @@ export PATH=$CUDA_HOME/bin:$PATH
 
 # Permite que o alocador CUDA expanda segmentos existentes em vez de exigir blocos
 # contíguos — elimina OOM por fragmentação (reservado-mas-não-alocado ~10 GB)
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+#export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -56,7 +56,7 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_d_mini_ff_lora.yaml
+#python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_d_mini_ff_lora.yaml
 
 python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/04_treinar_b.yaml
 
