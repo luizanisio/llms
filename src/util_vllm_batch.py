@@ -71,8 +71,13 @@ _YAML_EXEMPLO = """\
 
 # --- Miscelânea ---
 # pasta_base: diretório base (opcional) que será concatenado com os caminhos relativos de arquivos e pastas.
+# pastas_modelos: lista de pastas alternativas (opcional) onde o modelo base e o LoRA serão buscados de forma independente.
+#   A ordem de busca é: 1) Caminho exato/fornecido, 2) Relativo ao diretório deste YAML, 3) Pastas nesta lista, 4) pasta_base.
 misc:
   pasta_base: ""
+  pastas_modelos:
+    # - "/caminho/alternativo/modelos_base"
+    # - "/caminho/alternativo/loras_treinados"
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
