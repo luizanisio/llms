@@ -16,9 +16,11 @@ misc:
   pastas_base: 
     - /students/luiz.abatitucci/llms/experimentos/summa_experimento
     - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
+    - /opt/app-root/src/llms/experimentos/summa_experimento
   pastas_modelos:  
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/llms/_models
 #   log_level: DEBUG
 #   env_chave_criptografia: CHAVE_CRIPT
 
