@@ -13,13 +13,12 @@
 #
 # ==============================================================================
 
-# 🐍 conda create -n treina python=3.13.9
-# 🐍 conda create -n treina python=3.12.11
 # 🐍 conda create -n treina python=3.13.14
+# 🐍 conda create -n luizbat01 python=3.13.14
 
 # Primeiro passo é instalar o pytorch de acordo com o CUDA da máquina
 # H100
-# pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu130
+# pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu128
 # RTX 3060
 # pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 
