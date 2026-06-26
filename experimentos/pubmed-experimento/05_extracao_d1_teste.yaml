@@ -15,6 +15,7 @@ misc:
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento/treinos
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento/treinos
+    - /opt/app-root/src/luiz/llms/_models
 
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
