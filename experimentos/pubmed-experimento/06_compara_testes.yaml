@@ -6,6 +6,7 @@ misc:
   pastas_base: 
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
 
 # Configuração Global de Saída
 saida:
