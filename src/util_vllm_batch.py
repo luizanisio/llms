@@ -228,44 +228,24 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     if isinstance(pastas_modelos, str):
         pastas_modelos = [pastas_modelos] if pastas_modelos else []
         
-    pasta_modelos_ativa = pasta_base_ativa
-    if pastas_modelos:
-        for pm in pastas_modelos:
-            pm_abs = pm if os.path.isabs(pm) else os.path.normpath(os.path.join(pasta_base_ativa or base_dir, pm))
-            if os.path.isdir(pm_abs):
-                pasta_modelos_ativa = pm_abs
-                break
-
     # --- Modelo (obrigatório) ---
     modelo = config.get("modelo", {}) or {}
     caminho_modelo = modelo.get("caminho", "")
     if not caminho_modelo:
         raise ValueError("modelo.caminho é obrigatório no YAML")
+        
     # Para modelos de API remota (or:, tg:, vl:, oa:), preserva o prefixo
     if eh_modelo_api_remota(caminho_modelo):
         modelo["caminho"] = caminho_modelo.strip()
     else:
-        # Se não é absoluto nem URL de HF, tenta resolver
-        if not os.path.isabs(caminho_modelo) and not caminho_modelo.startswith(("hf://", "huggingface://")):
-            cm_resolvido = _resolver_caminho(caminho_modelo, base_dir, pasta_modelos_ativa)
-            if os.path.exists(cm_resolvido):
-                modelo["caminho"] = cm_resolvido
+        # Busca dinâmica para o caminho do modelo
+        modelo["caminho"] = Util.buscar_caminho_modelo(caminho_modelo, base_dir, pastas_modelos, pasta_base_ativa)
     
     lora = modelo.get("lora", "")
     if lora:
-        if not os.path.isabs(lora):
-            lora_resolvido = _resolver_caminho(lora, base_dir, pasta_base_ativa)
-            if os.path.exists(lora_resolvido):
-                modelo["lora"] = lora_resolvido
-            else:
-                lora_resolvido_modelos = _resolver_caminho(lora, base_dir, pasta_modelos_ativa)
-                if os.path.exists(lora_resolvido_modelos):
-                    modelo["lora"] = lora_resolvido_modelos
-                else:
-                    # Se não existe em nenhum lugar, deixa como estava ou passa o absoluto da pasta base
-                    modelo["lora"] = _resolver_caminho(lora, base_dir, pasta_base_ativa)
-        else:
-            modelo["lora"] = lora
+        # Busca dinâmica para o caminho do LoRA
+        modelo["lora"] = Util.buscar_caminho_modelo(lora, base_dir, pastas_modelos, pasta_base_ativa)
+        
     config["modelo"] = modelo
 
     # --- vLLM (defaults) ---

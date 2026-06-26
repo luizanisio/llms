@@ -22,6 +22,7 @@ import shutil
 import threading
 import time
 import regex as re
+from util_print import print_cores
 
 try:
     import psutil 
@@ -273,16 +274,80 @@ class Util():
                 
             caminho_com_base = os.path.normpath(os.path.join(pasta_base, caminho))
             if os.path.exists(caminho_com_base):
+                print_cores(f"   <verde>✓</verde> Caminho resolvido em pasta_base: <navy>{caminho_com_base}</navy>")
                 return caminho_com_base
             # Fallback se o caminho absoluto já existir
             if os.path.isabs(caminho) and os.path.exists(caminho):
+                print_cores(f"   <verde>✓</verde> Caminho resolvido (absoluto): <navy>{caminho}</navy>")
                 return caminho
             # Se não encontrou, retorna o concatenado para estourar erro apontando a tentativa correta
+            print_cores(f"   <vermelho>✗</vermelho> Caminho não encontrado (fallback via pasta_base): <navy>{caminho_com_base}</navy>")
             return caminho_com_base
 
         if os.path.isabs(caminho):
+            print_cores(f"   <verde>✓</verde> Caminho resolvido (absoluto): <navy>{caminho}</navy>")
             return caminho
-        return os.path.normpath(os.path.join(base_dir, caminho))
+            
+        caminho_base_dir = os.path.normpath(os.path.join(base_dir, caminho))
+        if os.path.exists(caminho_base_dir):
+            print_cores(f"   <verde>✓</verde> Caminho resolvido em base_dir: <navy>{caminho_base_dir}</navy>")
+        else:
+            print_cores(f"   <vermelho>✗</vermelho> Caminho não encontrado (fallback via base_dir): <navy>{caminho_base_dir}</navy>")
+        return caminho_base_dir
+
+    @classmethod
+    def buscar_caminho_modelo(cls, caminho: str, base_dir: str, pastas_modelos: list, pasta_base: str = "") -> str:
+        """
+        Busca o caminho para um modelo ou LoRA, permitindo múltiplas pastas configuráveis.
+        
+        Ordem de resolução:
+        0. Se for explicitamente um link do HF (hf://, huggingface://), retorna direto.
+        1. Caminho real/exato (absoluto ou relativo ao CWD).
+        2. Caminho relativo à pasta do projeto (base_dir).
+        3. Caminhos na lista `pastas_modelos`.
+        4. Caminho na `pasta_base`.
+        
+        Args:
+            caminho (str): O caminho ou nome do modelo.
+            base_dir (str): O diretório base do projeto (geralmente onde está o arquivo YAML).
+            pastas_modelos (list): Lista de diretórios alternativos para buscar o modelo.
+            pasta_base (str): Um diretório raiz opcional (fallback).
+            
+        Returns:
+            str: O caminho final resolvido, ou o caminho original se não for encontrado localmente.
+        """
+        if not caminho:
+            return caminho
+            
+        if caminho.startswith(("hf://", "huggingface://")):
+            print_cores(f"   <amarelo>ℹ</amarelo> Modelo/LoRA usa prefixo do Hub: <navy>{caminho}</navy>")
+            return caminho
+
+        if os.path.exists(caminho):
+            print_cores(f"   <verde>✓</verde> Modelo/LoRA exato encontrado: <navy>{caminho}</navy>")
+            return caminho
+
+        caminho_projeto = os.path.normpath(os.path.join(base_dir, caminho))
+        if os.path.exists(caminho_projeto):
+            print_cores(f"   <verde>✓</verde> Modelo/LoRA encontrado no projeto: <navy>{caminho_projeto}</navy>")
+            return caminho_projeto
+
+        if pastas_modelos:
+            for pm in pastas_modelos:
+                pm_abs = pm if os.path.isabs(pm) else os.path.normpath(os.path.join(pasta_base or base_dir, pm))
+                caminho_pm = os.path.normpath(os.path.join(pm_abs, caminho))
+                if os.path.exists(caminho_pm):
+                    print_cores(f"   <verde>✓</verde> Modelo/LoRA encontrado em '{pm}': <navy>{caminho_pm}</navy>")
+                    return caminho_pm
+
+        if pasta_base:
+            caminho_pb = os.path.normpath(os.path.join(pasta_base, caminho))
+            if os.path.exists(caminho_pb):
+                print_cores(f"   <verde>✓</verde> Modelo/LoRA encontrado em pasta_base: <navy>{caminho_pb}</navy>")
+                return caminho_pb
+        
+        print_cores(f"   <vermelho>✗</vermelho> Modelo/LoRA não encontrado localmente (fallback para o valor original): <navy>{caminho}</navy>")
+        return caminho
 
     @classmethod
     def hash_string_sha1(cls, texto):

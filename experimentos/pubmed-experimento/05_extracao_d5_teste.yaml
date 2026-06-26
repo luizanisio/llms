@@ -10,6 +10,8 @@ misc:
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
   pastas_modelos:  
     - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento/treinos
     - /mnt/d/wsl_ollama/hf-models
 
 # --- Modelo ---
