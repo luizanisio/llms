@@ -244,6 +244,7 @@ openai
 # ==============================================================================
 #
 #   pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+#   pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 #
 # ==============================================================================
 # 📦 PASSO 3 — Instalar os demais pacotes (sem --index-url do PyTorch!)
