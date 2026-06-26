@@ -187,7 +187,10 @@ experimentos/agentes-esp-acordao/log_openai_resposta_bruta.txt
 experimentos/agentes-esp-acordao/_bertmodels*
 experimentos/agentes-esp-acordao (preprint)**
 **_bertmodels*
-**_models*
+# Ignorar pasta _models em qualquer lugar, exceto arquivos soltos .py 
+**/_models/*
+!**/_models/*.py
+# 
 analises_json*
 **my_cache*
 **relatorio_teste_validacao.md
