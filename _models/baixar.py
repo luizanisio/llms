@@ -1,7 +1,12 @@
 import argparse
 import shutil
 import os
-from huggingface_hub import snapshot_download
+try:
+  from huggingface_hub import snapshot_download
+except ImportError:
+  print("Erro: O pacote 'huggingface_hub' não foi instalado.")
+  print("Instale com: pip install huggingface_hub")
+  sys.exit(1)  
 
 def zip_reduzido(nome_pasta, nome_arquivo):
     print(f'Compactando {nome_pasta}...', flush=True)
@@ -12,7 +17,7 @@ if __name__ == '__main__':
     desc = '''Baixar modelo do Hugging Face e opcionalmente zipar.
 
 Exemplos de uso:
-  python baixar.py --modelo Qwen/Qwen2.5-VL-7B-Instruct
+  python baixar.py --modelo Qwen/Qwen2.5-7B-Instruct
   python baixar.py --modelo Qwen/Qwen2.5-1.5B-Instruct
   python baixar.py --modelo Qwen/Qwen3.6-35B-A3B'''
 
