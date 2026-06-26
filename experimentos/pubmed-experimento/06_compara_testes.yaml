@@ -9,7 +9,7 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "compara/analises_comparacao_pubmed(bc)_teste"
+  pasta: "compara/analises_comparacao_pubmed_testes"
   pasta_parquet: "compara/"
   arquivo_base: "comparacao_pubmed(teste)"
   regerar_planilha_base: true
@@ -23,7 +23,7 @@ execucao:
   llm_as_a_judge: false
   analise_estatistica: true
   ignorar_erro_extracao: true
-  # divisão omitida pois já filtramos apenas os casos de teste através do 'filtro'
+  # Filtro global adicionado em configuracao_comparacao para garantir que modelos com dataset full (ex: Professor, Qwen1.5B base) comparem apenas o conjunto de teste
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
@@ -42,12 +42,35 @@ modelos_comparacao:
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
     familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
+    rotulo: "Qwen1.5B(d1)"
+    familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
+    rotulo: "Qwen1.5B(d2)"
+    familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
+    rotulo: "Qwen1.5B(d3)"
+    familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
+    rotulo: "Qwen1.5B(d4)"
+    familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
+    rotulo: "Qwen1.5B(d5)"
+    familia: "Qwen-1.5B"
+  - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
+    rotulo: "Qwen1.5B(d6)"
+    familia: "Qwen-1.5B"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   padronizar_simbolos: true
   rouge_stemmer: true
   
+  filtro:
+    arquivo: "dados/pubmed-rct-20k.parquet"
+    campo_id: "pmid"
+    dataset_filtro: {"split": "test"}
+
   # Configuração do campo ID
   nome_campo_id: "id"  # Nome interno do campo de ID (usado em DataFrames, gráficos, etc)
   rotulo_campo_id: "ID"  # Rótulo de exibição do campo ID (usado em relatórios)
@@ -59,7 +82,6 @@ configuracao_comparacao:
     resumo_tokens: "resumo" # coluna com o JSON de tokens (será salvo como {id}.tokens.json)
     avaliacao: ""           # coluna com avaliação LLM (se disponível, salvo como {id}.avaliacao.json)
     erro: "erro"            # coluna com mensagem de erro (se disponível)
-  
 
   # Modelos customizados (Opcional)
   modelos:

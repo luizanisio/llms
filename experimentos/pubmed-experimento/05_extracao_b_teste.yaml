@@ -1,6 +1,6 @@
 # ==========================================================================
 # Configuração para extração com vLLM do modelo treinado (Test Cases)
-# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_teste.yaml
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_b_teste.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -22,7 +22,7 @@ modelo:
 # --- Configuração do vLLM ---
 vllm:
   gpu_memory_utilization: 0.90
-  max_model_len: 16384
+  max_model_len: 8192
   tensor_parallel_size: 1
   dtype: "auto"
   enforce_eager: true

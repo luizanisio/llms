@@ -1,6 +1,6 @@
 # ==========================================================================
 # Configuração para extração com vLLM do modelo treinado (Test Cases)
-# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_c_teste.yaml
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_d5_teste.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -16,8 +16,8 @@ misc:
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
-  caminho: "Qwen2.5-1.5B-Instruct(c)"
-  lora: ""
+  caminho: "Qwen2.5-1.5B-Instruct(d5)"
+  lora: "Qwen2.5-1.5B-Instruct(d5)"
 
 # --- Configuração do vLLM ---
 vllm:
@@ -48,5 +48,5 @@ entrada:
 
 # --- Saída ---
 saida:
-  arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
+  arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
   tipo_saida: "json"
