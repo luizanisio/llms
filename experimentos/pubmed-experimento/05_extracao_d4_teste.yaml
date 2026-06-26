@@ -8,6 +8,7 @@ misc:
   pastas_base: 
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
   pastas_modelos:  
     - /students/luiz.abatitucci/models
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/treinos
