@@ -1,0 +1,46 @@
+setuptools
+torch
+torchvision
+transformers
+accelerate
+bitsandbytes
+trl
+peft
+datasets
+sentence-transformers
+vllm
+liger-kernel
+
+# ==============================================================================
+# 🔧 UTILITÁRIOS
+# ==============================================================================
+tqdm
+regex
+PyYAML
+# similar ao htop só que para GPU
+nvitop
+
+ipywidgets
+matplotlib
+#deepdiff
+fuzzywuzzy
+tensorboardX
+tiktoken
+xlsxwriter
+pandas
+openpyxl
+seaborn
+
+# JsonAnalise
+bert_score
+rouge-score
+python-Levenshtein
+
+# Util
+cryptography
+python-dotenv
+
+# Apis
+openrouter
+openai
+
