@@ -31,7 +31,8 @@ def main():
             },
             "vllm": {
                 "max_model_len": 512,
-                "gpu_memory_utilization": 0.90
+                "gpu_memory_utilization": 0.90,
+                "device": "cuda"
             },
             "geracao": {
                 "max_tokens": 256,

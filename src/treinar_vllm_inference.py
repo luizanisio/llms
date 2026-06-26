@@ -120,6 +120,19 @@ class VLLMInferenceEngine:
         # Permite contextos acima de max_position_embeddings (RoPE scaling)
         # em ambiente controlado de experimento com valores conhecidos
         os.environ.setdefault("VLLM_ALLOW_LONG_MAX_MODEL_LEN", "1")
+        
+        # --- WORKAROUND H200 ---
+        # Força o device_type do vLLM caso a detecção do current_platform falhe
+        try:
+            import vllm.platforms
+            if hasattr(vllm.platforms, 'current_platform'):
+                if not vllm.platforms.current_platform.device_type:
+                    vllm.platforms.current_platform.device_type = "cuda"
+        except Exception as e:
+            # Apenas avisa se falhar ao aplicar o workaround (ex: versão do vLLM não tem esse módulo)
+            print(f"⚠️  Aviso: Não foi possível aplicar o workaround de device do H200: {e}")
+        # -----------------------
+
         try:
             kwargs = {
                 "model": model_path,
