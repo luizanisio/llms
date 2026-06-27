@@ -1,10 +1,31 @@
-# 🐍 conda create -n treina python=3.12.11
-# 🐍 conda create -n luizbat02 python=3.12.11
-
-# para evitar problemas se algum desses pacotes der erro
-# pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu128
-# TMPDIR=/var/tmp MAX_JOBS=4 pip install vllm flash-attn --no-build-isolation --force-reinstall
-
+# ==============================================================================
+# ⚠️  INSTRUÇÕES PARA RECRIAR O AMBIENTE (RECOMENDADO)
+# ==============================================================================
+# Para evitar conflitos crônicos entre versões de bibliotecas em C++ (CUDA, 
+# FlashInfer, vLLM e PyTorch), é altamente recomendado recriar o env do zero.
+#
+# Remover ambiente antigo se necessário: 
+#   conda remove -n luizbat01 --all  
+#
+# PASSO 1: Criar o ambiente e instalar dependências base do sistema
+#   conda create -n luizbat01 python=3.12.11 -y
+#   conda activate luizbat01
+#   
+#   Teste com gcc --version  e  nvcc --version
+#   (Opcional) Se precisar do nvcc no conda e não tiver no sistema: conda install -c nvidia cuda-nvcc -y
+#
+# PASSO 2: Instalar PyTorch (fixado para CUDA 12.8)
+#   pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
+#
+# PASSO 3: Instalar o vLLM testado (versão 0.18.1 evita quebra no CUDA 13 e FlashInfer)
+#   pip install vllm==0.18.1 triton==3.6.0
+#
+# PASSO 4: Instalar os demais pacotes via requirements
+#   TMPDIR=/var/tmp pip install -r requirements_sem_versao.txt
+#
+# PASSO 5: (Opcional) Flash Attention otimizado
+#   TMPDIR=/var/tmp MAX_JOBS=4 pip install flash-attn --no-build-isolation --force-reinstall
+# ==============================================================================
 setuptools
 torch
 torchvision
