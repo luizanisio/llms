@@ -1,13 +1,63 @@
 # PubMed 20k RCT — Instanciação Secundária do Framework CL+PT
 
-Experimento de validação de portabilidade do framework de Curriculum Learning com
-escalonamento de capacidade (CL+PT), focado na extração de informações de textos.
+Experimento de validação de portabilidade do framework de Curriculum Learning com escalonamento de capacidade (CL+PT), focado na extração de informações de textos.
 
-Diferente do SUMMA, o prompt desse experimento é mais simples, com menos detalhes do que o modelo deve fazer e como deve fazer, então espera-se que as saídas do modelos sem fine tuning sejam mais distantes do esperado.
+Diferente do SUMMA, o prompt desse experimento é mais simples, com menos detalhes do que o modelo deve fazer e como deve fazer, então espera-se que as saídas dos modelos sem fine-tuning sejam mais distantes do esperado.
 
 ---
 
-## Fontes dos dados
+## 🚀 Roteiro de Replicação (Passo a Passo)
+
+Para replicar o experimento (exemplo para o protocolo D1 / treinamento do modelo 1.5B), siga os seguintes passos:
+
+### 1. Configuração do Ambiente
+> ⚠️ **Antes de começar:** Certifique-se de que o ambiente Conda e as dependências (PyTorch, vLLM, Flash-Attention, Liger-Kernel) estão configurados corretamente.  
+👉 **Leia as instruções completas no arquivo central: [experimentos/README.md](../README.md)**
+
+### 2. Preparação do Dataset
+Certifique-se de ter baixado o dataset `PubMed_20k_RCT` (ver seção "Fontes dos dados" mais abaixo). O script `util_pubmed.py` processa os originais, enriquece os metadados faltantes (buscando via API do NCBI) e gera os parquets consolidados para o treinamento.
+```bash
+python util_pubmed.py
+```
+Isso gerará os arquivos prontos na pasta `dados/` (ex: `pubmed-rct-20k.parquet`).
+
+### 3. Extração de Dados com Modelos Base (Baseline)
+Antes de treinar, extraímos os dados usando o modelo original (zero-shot, Protocolo A) para gerar o baseline de comparação. O script de job submete a inferência no HPC utilizando a configuração do arquivo YAML.
+```bash
+sbatch job_export_1_5b.sh
+# Internamente chama o util_vllm_batch.py com a config 02_pubmed_rct_1_5b.yaml
+```
+Também é possível rodar diretamente pela linha de comando em uma máquina com GPU. Ajuste os caminhos no arquivo yaml se necessário.
+
+### 4. Treinamento
+Os diferentes protocolos de treinamento (B, C, D1, D2, etc.) estão mapeados em arquivos YAML específicos. Submeta o job de treinamento desejado para o gerenciador Slurm.
+*Exemplo para treinar o modelo do protocolo D1 (que internamente aponta para `04_treinar_d1.yaml`):*
+```bash
+sbatch job_treinar_d12.sh
+```
+*Dica: O script `job_treinar_*.sh` aloca a GPU e inicia o processo `treinar_unsloth.py`. Os logs podem ser acompanhados na pasta `saidas/`.*
+
+### 5. Extração de Dados com Modelos Treinados
+Após a conclusão do treinamento, os modelos ajustados (LoRA) estarão salvos em `treinos/`. Para extrair as informações do conjunto de teste com esses pesos treinados, usamos as configurações `05_extracao_*_teste.yaml`.
+```bash
+# Para enviar a fila do cluster Slurm:
+sbatch job_export_1_5b_testes.sh
+
+# Ou para execução manual interativa (ex: usando tmux ou diretamente na linha de comando):
+bash manual_export_1_5b_testes.sh
+```
+
+### 6. Geração das Comparações dos Resultados
+Por fim, comparamos as extrações geradas contra o gabarito. O processo lê os arquivos parquet de saída, aplica métricas automáticas (ROUGE-L, BERTScore, Exact Match, etc.) e compila as tabelas de resultados através do `06_compara_testes.yaml`.
+```bash
+sbatch job_compara_testes.sh
+```
+
+---
+
+## 📚 Contexto Teórico e Metodologia
+
+### Fontes dos dados
 
 | Fonte | URL |
 |---|---|
@@ -22,9 +72,7 @@ Utilizar a versão **PubMed_20k_RCT** (sem substituição de números) para o ex
 A versão `_numbers_replaced_with_at_sign` foi criada para experimentos de robustez
 e não é relevante para este contexto.
 
----
-
-## Formato nativo do dataset
+### Formato nativo do dataset
 
 O repositório GitHub distribui arquivos `.txt` (não CSV). O formato bruto é:
 
@@ -40,11 +88,9 @@ O Kaggle disponibiliza uma conversão em CSV com as colunas:
 `abstract_id | line_id | abstract_text | line_number | total_lines | target`
 
 O `abstract_id` é o PMID do artigo no PubMed. **Título não existe no dataset** —
-deve ser buscado via API do NCBI pelo PMID (ver seção de extração abaixo).
+deve ser buscado via API do NCBI pelo PMID.
 
----
-
-## Enriquecimento via API do NCBI (Biopython)
+### Enriquecimento via API do NCBI (Biopython)
 
 O pacote `biopython` fornece acesso à API E-utilities do NCBI via `Bio.Entrez`.
 
@@ -63,9 +109,7 @@ def enrich_abstract(pmid: str) -> dict:
     article = record["MedlineCitation"]["Article"]
 
     titulo = str(article.get("ArticleTitle", ""))
-
     journal = article.get("Journal", {}).get("Title", "")
-
     pub_date = article.get("Journal", {}) \
                       .get("JournalIssue", {}) \
                       .get("PubDate", {})
@@ -92,9 +136,7 @@ os ~20k abstracts, usar chave e adicionar `time.sleep(0.15)` entre chamadas.
 Recomendado fazer o enriquecimento em lote e salvar em cache local (JSON ou Parquet)
 para evitar re-consultas.
 
----
-
-## Reconstrução do documento de entrada
+### Reconstrução do documento de entrada
 
 O abstract reconstituído para o prompt segue estrutura padronizada — análoga ao
 cabeçalho + corpo + rodapé dos acórdãos do STJ:
@@ -111,9 +153,7 @@ Keywords: {palavras_chave separadas por vírgula}
 Esta reconstrução é inteiramente determinística — não envolve geração sintética.
 Todos os campos vêm de anotações humanas (autores do artigo e indexadores do PubMed).
 
----
-
-## Esquema JSON de saída (gabarito)
+### Esquema JSON de saída (gabarito)
 
 ```json
 {
@@ -129,7 +169,7 @@ Todos os campos vêm de anotações humanas (autores do artigo e indexadores do 
 }
 ```
 
-### Heterogeneidade dos campos
+#### Heterogeneidade dos campos
 
 | Campo | Tipo de tarefa | Análogo no SUMMA |
 |---|---|---|
@@ -143,9 +183,7 @@ Todos os campos vêm de anotações humanas (autores do artigo e indexadores do 
 A heterogeneidade dos campos justifica o Princípio 4 do framework (extração
 simultânea de múltiplos campos em uma única inferência via saída estruturada).
 
----
-
-## Filtragem do corpus
+### Filtragem do corpus
 
 Aplicar os filtros abaixo antes de montar os splits de treino/validação/teste:
 
@@ -160,23 +198,7 @@ Aplicar os filtros abaixo antes de montar os splits de treino/validação/teste:
 Após filtragem, o corpus esperado é de aproximadamente **15–17k abstracts**
 para treino, com splits de dev e test já definidos oficialmente no dataset.
 
----
-
-## Processamento e Geração do Parquet
-
-O script `util_pubmed.py` realiza o processamento do dataset original para o formato necessário para validação do framework. O processo envolve as seguintes etapas:
-
-1. **Leitura dos CSVs originais**: Carrega as divisões oficiais do PubMed (`train`, `dev`, `test`).
-2. **Enriquecimento (API NCBI)**: Busca em lote os metadados bibliográficos faltantes (`titulo`, `journal`, `data_publicacao`, `palavras_chave`) usando a API e-utilities, com cache local na pasta `.cache_pubmed` para evitar repetições.
-3. **Reconstrução do Artigo**: Agrupa as sentenças por `abstract_id`, concatenando o texto e integrando os metadados (título no topo, texto corrido formatado, jornal, data e palavras-chave).
-4. **Geração do Gabarito (JSON)**: Constrói a estrutura de dicionário de `response` com os campos extraídos deterministicamente, baseando-se nas marcações (target) do CSV.
-5. **Exportação**: Gera o arquivo final `./dados/pubmed-rct-20k.parquet` contendo as colunas essenciais para treinamento e avaliação: `pmid`, `article`, `split` e `response`. Também gera listas de metadados (`lista_treino.csv`, `lista_validacao.csv`, `lista_teste.csv`) auxiliares para processamento de grupos de complexidade.
-
-Este arquivo parquet padronizado servirá como base de dados validada consumida diretamente pelos scripts de Curriculum Learning.
-
----
-
-## Estratificação de dificuldade (proxy $S_i$)
+### Estratificação de dificuldade (proxy $S_i$)
 
 Mesma fórmula da instanciação principal (cap. 5 da dissertação), adaptada:
 
@@ -198,9 +220,7 @@ Proxies de complexidade estrutural disponíveis nativamente:
 Partição por percentil idêntica à instanciação principal:
 $P_{30}$ (Difícil, 30%) / $P_{30}$–$P_{70}$ (Médio, 40%) / $P_{70}$ (Fácil, 30%).
 
----
-
-## Protocolos e modelo-alvo
+### Protocolos e modelo-alvo
 
 Para a validação de portabilidade, rodar apenas os protocolos:
 
@@ -213,9 +233,7 @@ O modelo 1.5B foi escolhido porque o domínio biomédico em inglês é genuiname
 difícil para modelos pequenos sem fine-tuning — garantindo espaço real de ganho
 para o CL demonstrar efeito.
 
----
-
-## Métricas de avaliação
+### Métricas de avaliação
 
 Sem LLM-as-a-Judge nesta instanciação (gabarito determinístico, sem necessidade
 de âncora humana). Métricas automáticas aplicadas campo a campo:
@@ -228,37 +246,13 @@ de âncora humana). Métricas automáticas aplicadas campo a campo:
 Análise estatística: Wilcoxon signed-rank bilateral A vs. B, A vs. D-best,
 B vs. D-best. Tamanho de efeito $r = |z| / \sqrt{n}$.
 
-
-## Passo a passo para replicação
-
-Para replicar o experimento do protocolo D01 (treinamento direto do modelo 1.5B), siga os seguintes passos no ambiente HPC (Slurm):
-
-1. **Preparação dos dados**: 
-   Certifique-se de ter baixado o dataset `PubMed_20k_RCT` e executado o script `util_pubmed.py` para gerar o parquet principal e o gold dataset:
-   ```bash
-   python util_pubmed.py
-   ```
-
-2. **Treinamento do modelo (D01)**:
-   Submeta o job de treinamento para o gerenciador Slurm. O arquivo `04_treinar_D01.yaml` já está configurado com os caminhos corretos do servidor e parâmetros otimizados para treino do modelo Qwen 2.5 1.5B.
-   ```bash
-   sbatch jon_treinar_d1.sh
-   ```
-   *Nota: O script `jon_treinar_d1.sh` aloca uma GPU e inicia o processo `treinar_unsloth.py`. Os logs podem ser acompanhados na pasta `saidas/`.*
-
-3. **Inferência e Extração**:
-   Após o treinamento ser concluído, o modelo ajustado estará salvo em `models/Qwen2.5-1.5B-Instruct(direto)`. Para extrair as informações do conjunto de teste, atualize o caminho do `lora` na configuração de inferência (`02_pubmed_rct_1_5b.yaml`) e execute:
-   ```bash
-   python ../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
-   ```
-
-## Alguns datasets considerados para um experimento com o framework
+### Alguns datasets considerados para um experimento com o framework
 
 - **RAMS v1.0 (Ebner et al., 2020)**: Principal candidato para validação externa. Possui ~9.6k instâncias, 139 tipos de evento e 65 papéis, com gabarito 100% humano e argumentos *cross-sentence*.
 - **PHEE (Sun et al., 2022)**: Excelente candidato complementar por apresentar um *schema* hierárquico em 2 níveis, que é estruturalmente muito análogo ao SUMMA.
 - **CASIE (Satyapanich et al., 2020)**: Candidato secundário com foco no domínio de cibersegurança, descartado como validação principal devido ao volume menor que o RAMS.
 
-## Alguns datasets analisados mas descartados e o motivo por não se adequarem ao framework
+### Alguns datasets analisados mas descartados e o motivo por não se adequarem ao framework
 
 - **CoNLL-2003 (NER), BBC News Summary e Greene/UCD**: Descartados por possuírem um teto de desempenho já muito alto (*baseline* zero-shot muito forte), deixando pouco espaço para demonstrar o ganho diferencial do aprendizado curricular.
 - **NestedClinBr, MLEE e WikiEvents**: Volume insuficiente de dados de treino para viabilizar os estágios curriculares e garantir testes estatísticos com poder adequado. (O *NestedClinBr* foi mantido apenas para estudos qualitativos).
