@@ -13,8 +13,8 @@
 #
 # ==============================================================================
 
-# 🐍 conda create -n treina python=3.13.14
-# 🐍 conda create -n luizbat01 python=3.13.14
+# 🐍 conda create -n treina python=3.12.11
+# 🐍 conda create -n luizbat02 python=3.12.11
 
 # Primeiro passo é instalar o pytorch de acordo com o CUDA da máquina
 # H100

@@ -1,3 +1,10 @@
+# 🐍 conda create -n treina python=3.12.11
+# 🐍 conda create -n luizbat02 python=3.12.11
+
+# para evitar problemas se algum desses pacotes der erro
+# pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu128
+# TMPDIR=/var/tmp MAX_JOBS=4 pip install vllm flash-attn --no-build-isolation --force-reinstall
+
 setuptools
 torch
 torchvision

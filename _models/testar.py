@@ -20,9 +20,9 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_path, 
-            device_map="auto", 
+            device_map="cuda:0", 
             torch_dtype=torch.bfloat16,
-            trust_remote_code=True
+            attn_implementation="sdpa"
         )
         
         messages = [
