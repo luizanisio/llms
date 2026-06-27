@@ -49,9 +49,13 @@ Exemplos de uso:
         arquivo_zip = os.path.join(drive, model_name)
         print(f' - zipando ao final para {arquivo_zip}.zip e removendo pasta original')
 
+    # Habilita suporte ao hf_transfer (download extremamente rápido em Rust) se o pacote estiver instalado
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
     snapshot_download(
         repo_id=repo_id,
-        local_dir=local_dir
+        local_dir=local_dir,
+        max_workers=16  # Aumenta a quantidade de conexões simultâneas (o padrão é bem menor)
     )
 
     if args.zip:

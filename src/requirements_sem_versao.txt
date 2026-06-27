@@ -15,6 +15,7 @@ trl
 peft
 datasets
 sentence-transformers
+hf_transfer
 vllm
 liger-kernel
 

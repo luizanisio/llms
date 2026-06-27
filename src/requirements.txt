@@ -38,6 +38,7 @@ trl==1.0.0
 peft==0.18.1
 datasets>=2.18.0
 sentence-transformers>=5.3.0
+hf_transfer
 # PyTorch >= 2.0 com CUDA é OBRIGATÓRIO para flash attention nativo via SDPA.
 # (torch.backends.cuda.flash_sdp — disponível sem instalação extra desde PyTorch 2.0)
 # Ver Passo 2 para o comando de instalação do PyTorch cu128.
