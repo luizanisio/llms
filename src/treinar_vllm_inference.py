@@ -39,7 +39,8 @@ try:
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
     VLLM_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    print(f"⚠️  Falha interna ao carregar módulos do vLLM (pode ser versão incompatível): {e}")
     VLLM_AVAILABLE = False
     LLM = None
     SamplingParams = None
