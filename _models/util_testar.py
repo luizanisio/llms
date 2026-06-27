@@ -31,3 +31,39 @@ def escolher_modelo(base_dir):
         return None
         
     return os.path.join(base_dir, models[idx])
+
+def imprimir_versoes():
+    print("=" * 60)
+    print("INFORMAÇÕES DE AMBIENTE E PACOTES:")
+    print("-" * 60)
+    try:
+        import torch
+        print(f"- PyTorch: {torch.__version__}")
+        cuda_avail = torch.cuda.is_available()
+        print(f"- CUDA Available: {cuda_avail}")
+        if cuda_avail:
+            print(f"- CUDA Version (built with): {torch.version.cuda}")
+            print(f"- GPUs detectadas: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                print(f"  [{i}] {torch.cuda.get_device_name(i)}")
+    except ImportError:
+        print("- PyTorch: não instalado")
+
+    try:
+        import transformers
+        print(f"- Transformers: {transformers.__version__}")
+    except ImportError:
+        print("- Transformers: não instalado")
+
+    try:
+        import vllm
+        print(f"- vLLM: {vllm.__version__}")
+    except ImportError:
+        print("- vLLM: não instalado")
+        
+    try:
+        import triton
+        print(f"- Triton: {triton.__version__}")
+    except ImportError:
+        print("- Triton: não instalado")
+    print("=" * 40 + "\n")

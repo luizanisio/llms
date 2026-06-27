@@ -3,9 +3,10 @@ import sys
 import tempfile
 import subprocess
 import yaml
-from util_testar import escolher_modelo
+from util_testar import escolher_modelo, imprimir_versoes
 
 def main():
+    imprimir_versoes()
     base_dir = os.path.abspath(os.path.dirname(__file__))
     model_path = escolher_modelo(base_dir)
     

@@ -19,6 +19,7 @@ if __name__ == '__main__':
 Exemplos de uso:
   python baixar.py --modelo Qwen/Qwen2.5-7B-Instruct
   python baixar.py --modelo Qwen/Qwen2.5-1.5B-Instruct
+  python baixar.py --modelo Qwen/Qwen2.5-0.5B-Instruct
   python baixar.py --modelo Qwen/Qwen3.6-35B-A3B'''
 
     parser = argparse.ArgumentParser(
