@@ -31,6 +31,8 @@ done
 echo "=== Job finalizado: $(date) ==="
 
 # Se necessário
+# Derruba o script
+#   pkill -f manual_export_1_5b_testes.sh
 # Derruba os scripts python
 #   pkill -f util_vllm_batch.py
 # Derruba os processos do vLLM atrelados a eles
