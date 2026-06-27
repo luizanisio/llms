@@ -1,36 +1,20 @@
 # ==============================================================================
-# ⚠️  LEIA ANTES DE INSTALAR
+# ⚠️ LEIA ANTES DE INSTALAR
 # ==============================================================================
+# Para evitar erros de compatibilidade e conflitos de dependências (PyTorch, 
+# CUDA, Flash-Attention, Liger-Kernel, etc.), leia atentamente o documento:
+# 
+# 👉 ../experimentos/README.md
 #
-# 1. O PyTorch com CUDA NÃO está no PyPI padrão — instale MANUALMENTE primeiro
-#    (ver Passo 2 ao final). Instalar sem isso resultará na versão CPU do torch,
-#    sem suporte a GPU, CUDA ou flash attention nativo.
-#
-# 2. Após instalar, verifique o ambiente completo com:
-#       python src/teste_ambiente.py
-#    O script verifica pacotes, versões, CUDA, GPU e flash attention,
-#    e exibe dicas de instalação para o que estiver faltando.
-#
+# Lá você encontrará instruções completas sobre:
+# 1. Criação do ambiente limpo.
+# 2. Instalação correta do PyTorch com CUDA.
+# 3. Solução de problemas comuns.
 # ==============================================================================
-
-# 🐍 conda create -n treina python=3.12.11
-# 🐍 conda create -n luizbat02 python=3.12.11
-
-# Primeiro passo é instalar o pytorch de acordo com o CUDA da máquina
-# H100
-# pip install "torch>=2.12.0" torchvision --index-url https://download.pytorch.org/whl/cu128
-# RTX 3060
-# pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
-
-# ⚠️  erro de espaço para instalar os pacotes (vllm principalmente)
-# TMPDIR=/var/tmp pip install -r requirements.txt
 
 # ==============================================================================
 # 🤖 TREINAMENTO DE MODELOS (HuggingFace Transformers + PEFT)
 # ==============================================================================
-# ℹ️  Nota: Unsloth foi removido do pipeline de treinamento!
-# Agora usamos HF Transformers + PEFT para melhor compatibilidade com múltiplas GPUs
-
 transformers==4.57.6
 accelerate==1.13.0
 bitsandbytes==0.49.2
@@ -40,23 +24,8 @@ datasets>=2.18.0
 sentence-transformers>=5.3.0
 hf_transfer
 huggingface_hub
-# PyTorch >= 2.0 com CUDA é OBRIGATÓRIO para flash attention nativo via SDPA.
-# (torch.backends.cuda.flash_sdp — disponível sem instalação extra desde PyTorch 2.0)
-# Ver Passo 2 para o comando de instalação do PyTorch cu128.
-# torch>=2.0.0  # instalado manualmente via --index-url (ver Passo 2 abaixo)
-# Opcional: vLLM para inferência de alta performance
 vllm
-# ------------------------
-# Opcional - Otimizadores
-# ver dicas de uso e limitações mais abaixo
 liger-kernel==0.7.0
-# flash-attn é OPCIONAL desde PyTorch >= 2.0 (SDPA nativo oferece a mesma economia de VRAM).
-# Instale apenas se precisar de features avançadas (sliding window, paged attention, FA-3 no H100).
-# Ver instruções de instalação manual (Passo 4) mais abaixo.
-# ------------------------
-
-# Opcional: DeepSpeed para treinamento distribuído (ZeRO)
-# deepspeed>=0.14.0
 
 # ==============================================================================
 # 🔧 UTILITÁRIOS
@@ -64,15 +33,9 @@ liger-kernel==0.7.0
 tqdm
 regex==2026.2.28
 PyYAML==6.0.3
-# similar ao htop só que para GPU
 nvitop==1.7.0
-
-# 💡 Para exportação GGUF (opcional), instale:
-#   pip install -r requirements-gguf.txt
-# Isso instalará o Unsloth APENAS para exportação GGUF
 ipywidgets==8.1.7
 matplotlib==3.10.3
-#deepdiff
 fuzzywuzzy==0.18.0
 tensorboardX==2.6.2.2
 tiktoken==0.9.0
@@ -81,255 +44,21 @@ pandas==2.3.3
 openpyxl==3.1.5
 seaborn==0.13.2
 
-# JsonAnalise
+# ==============================================================================
+# 📊 COMPARAÇÕES E ANÁLISE (JsonAnalise)
+# ==============================================================================
 bert_score==0.3.13
 rouge-score==0.1.2
 python-Levenshtein==0.27.3
 
-# Util
+# ==============================================================================
+# ⚙️ UTIL
+# ==============================================================================
 cryptography
 python-dotenv
 
-# Apis
+# ==============================================================================
+# 🌐 APIs
+# ==============================================================================
 openrouter
 openai
-
-# ==============================================================================
-# ⚡ REDUÇÃO DE USO DE VRAM — flash attention + liger-kernel
-# ==============================================================================
-# São COMPLEMENTARES: flash attention atua no bloco de atenção;
-# liger-kernel atua no restante (RMSNorm, RoPE, Cross-Entropy).
-#
-# ------------------------------------------------------------------------------
-# 🔥 flash attention — atenção O(n) VRAM vs O(n²) (nunca materializa matriz NxN)
-# ------------------------------------------------------------------------------
-#
-# OPÇÃO 1 — SDPA nativo do PyTorch >= 2.0 (RECOMENDADA, sem instalação extra)
-#   Ative com: flash_attention_2: true  no YAML de treinamento.
-#   O código detecta torch.backends.cuda.flash_sdp automaticamente.
-#   Economia de VRAM equivalente ao pacote pip para LoRA/QLoRA fine-tuning.
-#   Requisito: PyTorch >= 2.0 com CUDA (Ampere+, inclusive RTX 3060 sm_86).
-#
-# OPÇÃO 2 — Pacote pip flash-attn (opcional, apenas para features avançadas)
-#   Kernels customizados (Tri Dao) — marginalmente mais rápido em seq. longas.
-#   Necessário apenas para: sliding window attention, paged attention, FA-3 no H100.
-#   ⚠️  DEVE ser compilado do source contra o PyTorch instalado (ver Passo 4).
-#   ❌ NÃO instalar via requirements.txt nem usar wheels pré-compilados
-#      (geram erro "undefined symbol" por incompatibilidade de ABI).
-#   Hardware: requer Ampere+ (sm_80+). T4/Turing: não suportado.
-#   ABI rígida: upgrade do torch invalida o binário — recompilar após qualquer update.
-#
-# flash-attn   # <-- OPCIONAL; ver Passo 4 ao final
-#
-# ------------------------------------------------------------------------------
-# 🦁 liger-kernel — Triton kernels para LLM training (LinkedIn)
-# ------------------------------------------------------------------------------
-# Patcheia camadas não-atenção com kernels Triton fundidos (RMSNorm, RoPE,
-# SwiGLU, FusedLinearCrossEntropy). Instala via pip em segundos, sem compilação.
-#
-# Benefícios principais:
-#   • FusedLinearCrossEntropy: NUNCA materializa o tensor de logits [B, T, V].
-#     Em Gemma (V=256K) com seq=4K e batch=8: economia de ~16 GB em bfloat16.
-#   • +20% throughput, -60% VRAM em multi-GPU (benchmark LinkedIn, LLaMA-3 8B).
-#   • Habilita contextos 4–8x maiores na mesma GPU.
-#
-# Caveats importantes:
-#   • ❌ device_map="auto": NÃO FUNCIONA (kernels assumem mesma GPU para entrada e pesos).
-#   • ⚠️  FSDP + PEFT com modules_to_save: desabilitar fused_linear_cross_entropy=False.
-#   • ⚠️  Tensor/Sequence Parallel: desabilitar patches que tocam linear sharded.
-#   • Cobertura limitada por arquitetura — modelos novos dependem de PR no repo.
-#
-# 📊 QUANDO USAR:
-#   ┌────────────────────────────────┬──────────────┬──────────────┐
-#   │ Cenário                        │ flash-attn   │ liger-kernel │
-#   ├────────────────────────────────┼──────────────┼──────────────┤
-#   │ Single-GPU SFT/LoRA            │ ✅ SDPA/pip  │ ✅ Sim       │
-#   │ Multi-GPU FSDP/DDP             │ ✅ Sim       │ ✅ Sim       │
-#   │ Multi-GPU + LoRA + embeddings  │ ✅ Sim       │ ⚠️  Cuidado* │
-#   │ DeepSpeed ZeRO-3               │ ✅ Sim       │ ✅ Sim       │
-#   │ Tensor / Sequence Parallel     │ ⚠️  Verificar│ ❌ Desligar  │
-#   │ device_map="auto"              │ ✅ Sim       │ ❌ Quebra    │
-#   │ H100 / Hopper                  │ ✅ FA-3 FP8  │ ✅ Sim       │
-#   │ RTX 3060 / Ampere consumer     │ ✅ SDPA/FA-2 │ ✅ Sim       │
-#   │ T4 / Turing                    │ ❌ pip N/A   │ ✅ Sim       │
-#   └────────────────────────────────┴──────────────┴──────────────┘
-#   * Desabilitar fused_linear_cross_entropy quando lm_head sharded em FSDP + PEFT.
-#
-# liger-kernel
-
-# ==============================================================================
-# 📋 INSTALAÇÃO MANUAL — ORDEM E VERSÕES CORRETAS (funcional em 03/2026)
-# ==============================================================================
-#
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ 🔬 MÁQUINA A — Laboratório: H100 80GB · CUDA 12.8 · Linux nativo       │
-# │ 🏠 MÁQUINA B — Pessoal:     RTX 3060 12GB · CUDA 13.x · WSL2/Debian 13│
-# └─────────────────────────────────────────────────────────────────────────┘
-#
-# Versões testadas e compatíveis (Junho/2026, Python 3.13.9):
-#
-#   [A] torch==2.11.0+cu128   [B] torch==2.10.0+cu128  (mesmo wheel, diferente toolkit)
-#   flash-attn==2.8.3         liger-kernel==0.7.0
-#   transformers==4.57.6      accelerate==1.13.0        trl==1.0.0
-#   vllm==0.18.1              bitsandbytes==0.49.2       peft==0.18.1
-#   datasets==4.8.4           triton==3.6.0              sentence-transformers==5.3.0
-#
-# ⚠️  ATENÇÃO: transformers 5.x e trl>=1.6.0 quebram o treinamento all-LoRA com
-#   Liger Kernel (eval_loss=NaN, train_loss=0.0). Manter versões fixadas acima.
-#
-# 💡 NOTA SOBRE FA-3: No H100, considere instalar a branch hopper de flash-attn
-#    para habilitar FA-3 (TMA + WGMMA + FP8). Em RTX 3060 não há ganho — fique
-#    em FA-2 (a versão 2.8.3 acima).
-#
-# ==============================================================================
-# 🛠️  PASSO 0 — Instalar o CUDA Toolkit no Linux (somente se nvcc não for encontrado)
-# ==============================================================================
-#
-#   🔍 Verificar: which nvcc
-#
-#   🔬 [A] H100 / Linux nativo — toolkit CUDA 12.8:
-#       wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-#       sudo dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb
-#       sudo apt update && sudo apt install -y cuda-toolkit-12-8
-#       echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
-#
-#       💡NO SEU AMBIENTE(Lab): instalar no próprio ambiente conda, se for assim, criar o ambiente antes
-#       - Instala o GCC e G++ locais no ambiente conda (CUDA 12.8 exige GCC < 14.0)
-#           conda install -c conda-forge "gcc<14.0" "gxx<14.0"
-#
-#       - Garante que o compilador CUDA (nvcc) compatível esteja instalado
-#           conda install -c nvidia cuda-nvcc
-#         OU com o cuda específico
-#           python -c "import torch; print(torch.version.cuda)"
-#           conda install -c nvidia cuda-nvcc=12.8 -y
-#           export CUDA_HOME=$CONDA_PREFIX
-#
-#         Versão do pacote de desenvolvimento: 
-#           nvcc --version
-#           gcc --version
-#
-#       ↘️ vá para o PASSO 5 para testar a instalação
-#
-#   🏠 [B] RTX 3060 / WSL2 Debian 13 — instala o toolkit mais recente (13.x),
-#       mas aponta CUDA_HOME para a versão 12.8 compatível com o PyTorch:
-#       sudo apt update && sudo apt install -y wget gnupg ca-certificates
-#       wget https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb
-#       sudo dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb
-#       sudo apt update
-#     --> tentativa com apt install 
-#       sudo apt install -y cuda-toolkit-12-8   # instala 12.8 mesmo no Debian 13
-#       echo 'export CUDA_HOME=/usr/local/cuda-12.8' >> ~/.bashrc
-#     --> se erro: 
-#       conda install -c nvidia/label/cuda-12.8.0 cuda-toolkit -y
-#       export CUDA_HOME=$CONDA_PREFIX
-#       export PATH=$CUDA_HOME/bin:$PATH
-#       export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
-#       nvcc --version
-#       TMPDIR=/var/tmp MAX_JOBS=4 pip install flash-attn --no-build-isolation --force-reinstall
-#
-#   💾 Após instalar (ambas as máquinas), persistir variáveis no ~/.bashrc:
-#       echo 'export PATH=$CUDA_HOME/bin:$PATH' >> ~/.bashrc
-#       echo 'export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}' >> ~/.bashrc
-#       source ~/.bashrc
-#       nvcc --version   # ✅ deve mostrar release 12.8
-#
-# ==============================================================================
-# 🐍 PASSO 1 — Criar o ambiente conda
-# ==============================================================================
-#
-#   conda create -n treina python=3.13.9 -y
-#   conda activate treina
-#
-# ==============================================================================
-# 🔥 PASSO 2 — Instalar o PyTorch (cu128 exigido pelo driver da máquina)
-# ==============================================================================
-#
-#   pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
-#   pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
-#
-# ==============================================================================
-# 📦 PASSO 3 — Instalar os demais pacotes (sem --index-url do PyTorch!)
-# ==============================================================================
-#
-#   TMPDIR=/var/tmp pip install -r requirements.txt
-#   # Alinhar pacotes caso haja conflitos do PIP devido ao cuda-python ou numpy:
-#   pip install "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "cuda-pathfinder>=1.4.2"
-#
-# ==============================================================================
-# ⚡ PASSO 4 — Compilar o flash-attn do source (OPCIONAL — só se precisar de
-#             sliding window / FA-3 no H100; PyTorch >= 2.0 já cobre o resto)
-# ==============================================================================
-#
-#   ⚠️  Garantir que o shell enxerga o toolkit antes de compilar:
-#       export CUDA_HOME=/usr/local/cuda-12.8
-#       export PATH=$CUDA_HOME/bin:$PATH
-#       export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}
-#       nvcc --version   # deve mostrar 12.8
-#
-#   🔬 [A] H100 / servidor (128+ CPUs):
-#       TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --force-reinstall
-#       # ⏱️  ~20 minutos com MAX_JOBS=8
-#
-#   🏠 [B] RTX 3060 / WSL2 (menos CPUs disponíveis):
-#       TORCH_CUDA_ARCH_LIST="8.6" MAX_JOBS=1 pip install flash-attn --no-build-isolation --force-reinstall
-#       # ⏱️  ~60-90 minutos com MAX_JOBS=1
-#       # ⚠️  TORCH_CUDA_ARCH_LIST="8.6" compila apenas para a RTX 3060 (Ampere sm_86),
-#       #     reduzindo de 4 para 1 os processos cicc simultâneos (~3 GB RAM vs ~12 GB)
-#       # ⚠️  MAX_JOBS=1 evita pico de memória que derruba o WSL2 durante a compilação
-#       # 💡 Alternativa sem compilação: PyTorch >= 2.0 já inclui SDPA com flash attention
-#
-#   🔑 Flags importantes:
-#   - --no-build-isolation  usa o PyTorch já instalado no env (garante ABI correta)
-#   - --force-reinstall     substitui qualquer versão pré-compilada incompatível
-#
-# ==============================================================================
-# ✅ PASSO 5 — Verificar se tudo funciona
-# ==============================================================================
-#
-#   💡 python src/teste_ambiente.py
-#
-#   O script verifica todos os pacotes, versões, CUDA, GPU, SDPA backends e
-#   flash attention, exibindo dicas de instalação para o que estiver faltando.
-#
-#   Verificações manuais rápidas (se preferir):
-#   python -c "import torch; print(torch.__version__, '| CUDA:', torch.cuda.is_available())"
-#   python -c "import torch; print('flash_sdp:', torch.backends.cuda.flash_sdp_enabled())"
-#   python -c "import vllm; print('vllm', vllm.__version__)"
-#   python -c "from liger_kernel.transformers import AutoLigerKernelForCausalLM; print('liger OK')"
-#   python -c "from flash_attn import flash_attn_func; print('flash-attn OK')"  # se instalado
-#
-# ==============================================================================
-# 🆘 SOLUÇÃO DE PROBLEMAS
-# ==============================================================================
-#
-# ❌ "CUDA_HOME environment variable is not set" (ao compilar flash-attn):
-#   → nvcc não está no PATH. Verificar: which nvcc
-#   → Exportar antes do pip: export CUDA_HOME=...; export PATH=$CUDA_HOME/bin:$PATH
-#
-# ❌ "undefined symbol: _ZN3c104cuda..." (ao importar flash-attn):
-#   → flash-attn compilado contra CUDA diferente do PyTorch.
-#   → Garantir CUDA_HOME casado com torch.version.cuda e recompilar (Passo 4).
-#
-# ❌ "No space left on device":
-#   → Usar TMPDIR=/var/tmp antes do pip.
-#
-# ❌ Liger + FSDP: "Output 0 of ViewBackward0 is a view... modified inplace":
-#   → Conflito FLCE + FSDP-sharded lm_head + PEFT modules_to_save.
-#   → Desabilitar apenas o FLCE: fused_linear_cross_entropy=False no patcher.
-#   → Alternativa: fsdp_use_orig_params=True ou migrar para DeepSpeed ZeRO-3.
-#
-# ❌ Liger + device_map="auto": ValueError em forward:
-#   → Liger não suporta model parallel. Migrar para FSDP/DeepSpeed ou desativar Liger.
-#
-# ❌ FA-2 lento no H100 (<40% utilização):
-#   → FA-2 não usa TMA/WGMMA do Hopper. Compilar branch hopper do flash-attn (FA-3).
-#
-# ⚠️  pip atualizou o torch e quebrou dependências:
-#   → Reverter: pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
-#   → Realinhar: pip install "setuptools==80.0.0" "numpy<2.4.0" "cuda-python<13" "cuda-bindings<13" "fsspec<=2026.2.0"
-#   → Qualquer troca de versão do torch invalida o flash-attn compilado — recompilar.
-#
-# 🏠 RTX 3060 / WSL2 — WSL trava durante compilação do flash-attn:
-#   → Usar TORCH_CUDA_ARCH_LIST="8.6" MAX_JOBS=1 (ver Passo 4).
-#   → Alternativa: PyTorch >= 2.0 já inclui SDPA equivalente, sem compilação.
-# ==============================================================================
