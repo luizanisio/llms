@@ -1,6 +1,7 @@
 import argparse
 import shutil
 import os
+import sys
 try:
   from huggingface_hub import snapshot_download
 except ImportError:

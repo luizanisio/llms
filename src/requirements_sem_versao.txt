@@ -16,6 +16,7 @@ peft
 datasets
 sentence-transformers
 hf_transfer
+huggingface_hub
 vllm
 liger-kernel
 
