@@ -22,8 +22,8 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(
             model_path, 
             device_map="cuda:0", 
-            torch_dtype=torch.bfloat16,
-            attn_implementation="sdpa"
+            dtype=torch.bfloat16,
+            attn_implementation="eager"
         )
         
         messages = [
