@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Interrompe o script inteiramente caso o usuário aperte Ctrl+C,
+# evitando que o loop inicie o próximo job.
+trap "echo 'Script interrompido pelo usuário (Ctrl+C)!'; exit 130" INT
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -26,3 +29,9 @@ done
 
 
 echo "=== Job finalizado: $(date) ==="
+
+# Se necessário
+# Derruba os scripts python
+#   pkill -f util_vllm_batch.py
+# Derruba os processos do vLLM atrelados a eles
+#   pkill -f VLLM::EngineCore
