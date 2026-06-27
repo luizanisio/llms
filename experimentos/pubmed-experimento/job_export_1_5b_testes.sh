@@ -49,6 +49,11 @@ conda activate luizbat02
 #export CUDA_HOME=$CONDA_PREFIX
 #export PATH=$CUDA_HOME/bin:$PATH
 
+# === Correção para PyTorch + CUDA 13 via pip ===
+# Exporta o caminho dos headers do CUDA (como curand.h) para o compilador do flashinfer encontrar.
+export CPATH="$(python -c 'import sys, glob; print(":".join(glob.glob(f"{sys.prefix}/lib/python*/site-packages/nvidia/*/include")))'):$CPATH"
+# ===============================================
+
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"

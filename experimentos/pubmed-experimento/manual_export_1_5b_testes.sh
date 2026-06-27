@@ -4,6 +4,11 @@
 # evitando que o loop inicie o próximo job.
 trap "echo 'Script interrompido pelo usuário (Ctrl+C)!'; exit 130" INT
 
+# === Correção para PyTorch + CUDA 13 via pip ===
+# Exporta o caminho dos headers do CUDA (como curand.h) para o compilador do flashinfer encontrar.
+export CPATH="$(python -c 'import sys, glob; print(":".join(glob.glob(f"{sys.prefix}/lib/python*/site-packages/nvidia/*/include")))'):$CPATH"
+# ===============================================
+
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
@@ -37,3 +42,5 @@ echo "=== Job finalizado: $(date) ==="
 #   pkill -f util_vllm_batch.py
 # Derruba os processos do vLLM atrelados a eles
 #   pkill -f VLLM::EngineCore
+#
+# zip -r saidas_vnnnnn ./saidas
