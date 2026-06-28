@@ -50,10 +50,13 @@ echo "==============================="
 
 
 echo "1. Instalando pytorch"
-pip install "torch>=2.11" torchvision --index-url https://download.pytorch.org/whl/cu128
 
-echo "1. Instalando requirements"
-pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
+TMPDIR=/var/tmp TORCH_CUDA_ARCH_LIST="9.0" MAX_JOBS=4 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
+
+# pip install "torch>=2.11" torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# echo "1. Instalando requirements"
+# pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
 
 python /students/luiz.abatitucci/llms/src/teste_ambiente.py
 
