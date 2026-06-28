@@ -66,13 +66,19 @@ TMPDIR=/var/tmp pip install -r ../src/requirements.txt
 ### Passo 5: Compilar o Flash-Attn (Opcional)
 Desde o PyTorch 2.0, o SDPA nativo já cobre economia de memória para atenção na maioria dos casos (só ativar `flash_attention_2: true` no YAML de treinamento). Use este passo apenas se precisar de features avançadas como sliding window, paged attention ou FA-3 na H100.
 
-**H100 / Servidor:**
+**H100 ou H200/ Servidor:**
 ```bash
-TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --force-reinstall
+TMPDIR=/var/tmp TORCH_CUDA_ARCH_LIST="9.0" MAX_JOBS=4 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
 ```
-**RTX 3060 / WSL2:**
+
+**RTX 3060 em ambiente WSL2:** já que o instalador pode não identificar corretamente a GPU
 ```bash
-TORCH_CUDA_ARCH_LIST="8.6" MAX_JOBS=1 pip install flash-attn --no-build-isolation --force-reinstall
+TORCH_CUDA_ARCH_LIST="8.6" MAX_JOBS=1 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
+```
+
+**Outras GPUs**
+```bash
+TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
 ```
 
 ### Passo 6: Validar o Ambiente

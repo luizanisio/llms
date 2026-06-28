@@ -192,10 +192,10 @@ conda activate luizbat02
 	#conda install -c nvidia cuda-nvcc=13.0 -y
 	#export CUDA_HOME=$CONDA_PREFIX
 	#export PATH=$CUDA_HOME/bin:$PATH
-# 3. Baixa o GCC < 14.0 (Muito bem lembrado! O código do Flash Attention às vezes briga com o GCC 14, então é mais seguro usar o 13)
+# 3. Baixa o GCC < 14.0 
 conda install -c conda-forge "gcc<14.0" "gxx<14.0" -y
-# 4. Força a âncora do PyTorch no CUDA 13.0 PRIMEIRO (Evita que o pip baixe a versão errada)
-pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu130
+# 4. Força a âncora do PyTorch no CUDA 12.8
+pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
 # 5. Instala todo o resto 
 #(verifique o path)
 pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
