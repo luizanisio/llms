@@ -183,20 +183,15 @@ O framework suporta tanto treinamento via adaptadores quantizados (QLoRA) quanto
 
 
 ## Instalação rápida do ambiente
+> Mais detalhes em experimentos/README.md
+
 ```bash
 # 1. Cria e ativa o ambiente
 conda create -n luizbat02 python=3.12.11 -y
 conda activate luizbat02
-# desnecessário se ele já consegue acessar o nvcc --version
-	# 2. Garante o compilador NVCC 13.0 dentro do Conda (segurança)
-	#conda install -c nvidia cuda-nvcc=13.0 -y
-	#export CUDA_HOME=$CONDA_PREFIX
-	#export PATH=$CUDA_HOME/bin:$PATH
-# 3. Baixa o GCC < 14.0 
-conda install -c conda-forge "gcc<14.0" "gxx<14.0" -y
-# 4. Força a âncora do PyTorch no CUDA 12.8
+# 2. Força a âncora do PyTorch no CUDA 12.8
 pip install "torch==2.11.0" torchvision --index-url https://download.pytorch.org/whl/cu128
-# 5. Instala todo o resto 
+# 3. Instala todo o resto 
 #(verifique o path)
 pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
 # ou (verifique o path)

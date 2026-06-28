@@ -49,7 +49,7 @@ pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" 
 ```
 *(Nota: Para H100 ou RTX 3060 as versões testadas foram as mesmas de dependências, garantindo `torch==2.11.0+cu128` ou `torch==2.10.0+cu128`).*
 
-### Passo 3: Instalar o vLLM (Evita quebra no CUDA 13 e FlashInfer)
+### Passo 3: Instalar o vLLM (Evita quebra no CUDA 12.8 e FlashInfer)
 ```bash
 pip install vllm==0.18.1 triton==3.6.0
 ```
@@ -113,8 +113,8 @@ Triton kernels focados em partes que *não* são atenção (RMSNorm, RoPE, SwiGL
   Seu pacote `flash-attn` compilou contra um CUDA diferente do PyTorch. Garanta que o `CUDA_HOME` reflete o mesmo CUDA do PyTorch e recompile (Passo 5).
 - **"No space left on device":**
   Sempre passe a flag de sistema `TMPDIR=/var/tmp` antes do comando pip.
-- **VLLM ou FlashInfer sem achar `curand.h` no CUDA 13:**
-  As versões instaladas via pip perdem o sufixo `-cu13`. Ajuste os scripts para repassar o diretório para o compilador:
+- **VLLM ou FlashInfer sem achar `curand.h` no CUDA 12.8:**
+  As versões instaladas via pip perdem o sufixo `-cu12`. Ajuste os scripts para repassar o diretório para o compilador:
   `export CPATH="$(python -c 'import sys, glob; print(":".join(glob.glob(f"{sys.prefix}/lib/python*/site-packages/nvidia/*/include")))'):$CPATH"`
 
 ---
