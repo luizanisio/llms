@@ -13,14 +13,15 @@
 #| =========================================================================
 #| Configurações diversas (logs, variáveis de ambiente).
 misc:
-  pastas_base:
-  - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
-  - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
-  pastas_modelos:
-  - /students/luiz.abatitucci/models
-  - /mnt/d/wsl_ollama/hf-models
-#   log_level: DEBUG
-#   env_chave_criptografia: CHAVE_CRIPT
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
 
 #| =========================================================================
 #| CURRICULUM
