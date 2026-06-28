@@ -319,12 +319,12 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
     logger.info("<azul>>> MODO TREINAR - EXECUTANDO TREINAMENTO</azul>")
     log_separador(caractere="=", largura=80)
     
-    # Executa reset se solicitado
+    # Executa reset se solicitado (sem confirmação: já foi explícito via CLI/código)
     if reset:
-        if not executar_reset(yaml_path, confirmar=True):
-            # Se cancelou o reset ou não havia nada para limpar, continua
+        if not executar_reset(yaml_path, confirmar=False):
+            # Não havia nada para limpar, continua
             pass
-            
+
     # Gera relatório de datasets estrutural silenciosamente para histórico
     try:
         from treinar_unsloth_datasets_relatorio import gerar_relatorio_datasets
@@ -337,13 +337,20 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
     trainer = LLMsTrainer(yaml_path)
     trainer.train()
     
-    # Gera gráficos e relatório estatístico automaticamente pós-treinamento
+    # Libera memória do modelo antes de gerar gráficos
+    _yaml_config = trainer._yaml_config
+    del trainer
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Gera gráficos e relatório estatístico pós-treinamento
     logger.info("\n")
     log_separador(caractere="-", largura=80)
     logger.info("<azul>📊 Gerando gráficos estatísticos pós-treinamento...</azul>")
     try:
         from treinar_unsloth_avaliar import gerar_graficos_estatisticos
-        report_path = gerar_graficos_estatisticos(trainer._yaml_config, silencioso=True)
+        report_path = gerar_graficos_estatisticos(_yaml_config, silencioso=True)
         if report_path:
             logger.info(f"<verde>✅ Relatório estatístico gerado automaticamente: {report_path}</verde>")
         else:
@@ -352,12 +359,6 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
         logger.warning(f"<amarelo>⚠️ Não foi possível gerar gráficos pós-treinamento: {e}</amarelo>")
     log_separador(caractere="-", largura=80)
     
-    # Libera memória para permitir execução subsequente (ex: predict)
-    del trainer
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
     log_separador(caractere="=", largura=80)
     logger.info("<verde>✅ TREINAMENTO COMPLETO</verde>")
     log_separador(caractere="=", largura=80)
@@ -365,4 +366,3 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
     from util_sysinfo import MemoryLogger
     MemoryLogger.set_nome_etapa("FIM DA EXECUÇÃO")
     MemoryLogger.finalizar()
-

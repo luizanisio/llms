@@ -1,6 +1,6 @@
 # ==========================================================================
-# Configuração para extração com vLLM do modelo treinado (Full)
-# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_full.yaml
+# Configuração para extração com vLLM do modelo treinado (LoRA)
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_lora.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -17,8 +17,8 @@ misc:
 
 # --- Modelo ---
 modelo:
-  caminho: "treinos_local/Qwen2.5-1.5B-Instruct(puil_full)"
-  lora: ""
+  caminho: "Qwen2.5-1.5B-Instruct"
+  lora: "treinos_local/Qwen2.5-1.5B-Instruct(puil_lora_full)"
 
 # --- Configuração do vLLM ---
 vllm:
@@ -47,5 +47,5 @@ entrada:
 
 # --- Saída ---
 saida:
-  arquivo: "saidas/saida_puil_full.parquet"
+  arquivo: "saidas/saida_puil_lora_full.parquet"
   tipo_saida: "str"

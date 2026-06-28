@@ -2884,7 +2884,10 @@ class LLMsTrainer:
                 _f_path = os.path.join(out_dir, _f_name)
                 if os.path.exists(_f_path):
                     os.remove(_f_path)
-            self._lora_applied = False
+            # NÃO alterar _lora_applied: o modelo na memória ainda é PeftModel
+            # (unmerge_adapter restaurou os adapters). Alterar o flag causava bug quando
+            # _save_model era chamado 2x na mesma etapa: a 2ª chamada caía no else e
+            # PeftModel.save_pretrained recriava adapter files, desfazendo o merge.
             print_cores(f"<verde>✅ 💾 MERGE+SAVE: Modelo full salvo (merge LoRA→base, auto-contido): {out_dir}</verde>", color_auto=False)
         else:
             # Salva o modelo como está (LoRA: adapters; Full sem LoRA: modelo completo)
@@ -4008,7 +4011,7 @@ Exemplos:
         if args.treinar:
             executar_treinar(cfg_path, reset=args.reset)
         elif args.reset:
-            executar_reset(cfg_path, confirmar=True)
+            executar_reset(cfg_path, confirmar=False)
 
 
 

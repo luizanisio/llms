@@ -33,7 +33,7 @@ curriculum:
 
   divisao:
   - arquivo: divisoes/divisao_puil_50.csv
-    alias: "completo"
+    alias: "completo-FF"
     tipo: "full"
     pace_epochs: 1
     batch_size: 1
