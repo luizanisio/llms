@@ -2857,27 +2857,24 @@ class LLMsTrainer:
         _tipo_modelo = "melhor (menor eval_loss)" if _is_best else "último step"
         print_cores(f"<azul>[6/6] Salvando modelo ({_tipo_modelo}) em {out_dir}…</azul>", color_auto=False)
         
-        # === Estratégia de salvamento para pipelines com etapas full ===
-        # Quando o pipeline tem etapas full, pesos base são atualizados durante treinamento.
-        # PeftModel.save_pretrained() salva APENAS adaptadores LoRA, perdendo os pesos base.
-        # Solução: merge_adapter() (reversível) → salva modelo completo → unmerge_adapter()
-        #
-        # Após etapa full: merge obrigatório (pesos base mudaram)
-        # Após etapa lora (pipeline misto): salva apenas adapters (~50MB, full já no disco)
-        # Após etapa lora (pipeline puro): adapters apenas (sem mudança)
+        # === Estratégia de salvamento ===
+        # Pipeline misto (full + LoRA):
+        #   - Sempre faz merge LoRA→base, independente de qual etapa terminou por último.
+        #   - Resultado: modelo full auto-contido (apenas model.safetensors, sem adapter files).
+        #   - Adapter files são removidos para evitar conflito com vLLM/HF ao carregar.
+        # Pipeline LoRA puro (sem etapas full):
+        #   - Salva apenas adapter files (~50MB). Requer modelo base separado para inferência.
         
-        _tipo_etapa = getattr(self, '_tipo_etapa_atual', 'lora')
         _salvar_como_full = (
             self._pipeline_tem_full 
-            and self._lora_applied 
-            and _tipo_etapa == 'full'
+            and self._lora_applied
         )
         
         if _salvar_como_full:
             # Merge reversível: incorpora LoRA nos pesos base para salvar modelo completo
             from util_sysinfo import MemoryLogger
             MemoryLogger.set_nome_etapa("Merge LoRA→base")
-            logger.info("💾 Merge LoRA→base para salvar modelo full (pesos base atualizados)...")
+            logger.info("💾 MERGE+SAVE: Incorporando LoRA nos pesos base para salvar modelo full auto-contido...")
             self.model.merge_adapter()
             self.model.save_pretrained(out_dir, safe_serialization=True)
             self.tokenizer.save_pretrained(out_dir)
@@ -2888,7 +2885,7 @@ class LLMsTrainer:
                 if os.path.exists(_f_path):
                     os.remove(_f_path)
             self._lora_applied = False
-            print_cores(f"<verde>✅ Modelo full salvo (merge LoRA→base): {out_dir}</verde>", color_auto=False)
+            print_cores(f"<verde>✅ 💾 MERGE+SAVE: Modelo full salvo (merge LoRA→base, auto-contido): {out_dir}</verde>", color_auto=False)
         else:
             # Salva o modelo como está (LoRA: adapters; Full sem LoRA: modelo completo)
             from util_sysinfo import MemoryLogger
@@ -2899,7 +2896,7 @@ class LLMsTrainer:
             _adapter_cfg = os.path.join(out_dir, "adapter_config.json")
             _adapter_st = os.path.join(out_dir, "adapter_model.safetensors")
             if os.path.exists(_adapter_cfg):
-                print_cores(f"<verde>✅ Modelo LoRA salvo: {_adapter_st}</verde>", color_auto=False)
+                print_cores(f"<verde>✅ 💾 LORA SAVE: Adaptador LoRA salvo: {_adapter_st}</verde>", color_auto=False)
             elif os.path.exists(os.path.join(out_dir, "pytorch_model.bin")):
                 print_cores(f"<verde>✅ Modelo PyTorch salvo: pytorch_model.bin</verde>", color_auto=False)
         # Log detalhado do que foi salvo
@@ -2949,6 +2946,14 @@ class LLMsTrainer:
             
             linhas.append(f"| Quantização (nbits) | {self._yaml_config.treinamento.nbits} |")
             linhas.append(f"| max_seq_length | {self._yaml_config.treinamento.max_seq_length} |")
+            
+            # Determina tipo do artefato salvo (verificação baseada em arquivos no disco)
+            _adapter_existe = os.path.exists(os.path.join(out_dir, "adapter_config.json"))
+            if _adapter_existe:
+                _tipo_artefato = "LoRA adapter (requer modelo base separado para inferência)"
+            else:
+                _tipo_artefato = "Modelo completo (auto-contido, carregável diretamente)"
+            linhas.append(f"| Artefato salvo | {_tipo_artefato} |")
             linhas.append("")
             
             # --- Qual versão foi salva ---
