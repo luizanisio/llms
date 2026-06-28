@@ -364,6 +364,11 @@ class FallbackDataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
             self.response_token_ids = response_template
 
     def torch_call(self, examples):
+        # Em versões recentes do TRL (SFTTrainer), o dataset pode já vir com 'labels' pré-gerados
+        # (mas sem padding correto pelo tokenizer.pad). Como o DataCollatorForLanguageModeling
+        # precisa gerar os próprios labels, removemos qualquer label existente nos exemplos.
+        examples = [{k: v for k, v in ex.items() if k != "labels"} for ex in examples]
+        
         batch = super().torch_call(examples)
         
         for i in range(len(examples)):

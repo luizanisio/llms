@@ -1940,16 +1940,23 @@ class LLMsTrainer:
                 else:
                     # Labels existem mas sem mascaramento adequado — aplica normalmente
                     trainer = self.chat_handler.aplicar_train_on_responses_only(trainer)
+                    _remover_labels_residuais = True
             else:
                 trainer = self.chat_handler.aplicar_train_on_responses_only(trainer)
+                _remover_labels_residuais = True
             
             # Verificação pós-aplicação: garante que ao menos alguns labels sejam válidos
             self._verificar_labels_dataset(trainer)
+        else:
+            _remover_labels_residuais = False
         
         # Remove colunas string residuais dos datasets internos do trainer.
         # O SFTTrainer tokeniza 'text' → input_ids/labels, mas mantém a coluna original.
         # Com remove_unused_columns=False, o collator recebe 'text' (string) e falha.
         _str_cols = {"text", "id", "messages", "prompt", "completion"}
+        if _remover_labels_residuais:
+            _str_cols.add("labels")
+            
         if trainer.train_dataset is not None:
             for col in _str_cols & set(trainer.train_dataset.column_names):
                 trainer.train_dataset = trainer.train_dataset.remove_columns(col)
