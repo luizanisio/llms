@@ -22,7 +22,7 @@ misc:
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
   caminho: "Qwen2.5-1.5B-Instruct(d1)"
-  lora: "Qwen2.5-1.5B-Instruct(d1)"
+  lora: ""
 
 # --- Configuração do vLLM ---
 vllm:
