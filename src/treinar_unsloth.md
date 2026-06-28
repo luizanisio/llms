@@ -130,48 +130,49 @@ Quando o curriculum combina etapas `lora` e `full`, os pesos base do modelo são
 ### Regras
 
 1. **Full sempre em 16 bits**: Etapas `full` forçam `nbits=16` automaticamente (pesos int4/int8 não suportam gradientes).
-2. **Merge obrigatório após etapas full**: Ao final de uma etapa `full`, os adaptadores LoRA são mesclados nos pesos base (`merge_adapter()`) e o modelo completo é salvo. Isso preserva os pesos base treinados.
-3. **Adapters leves após etapas lora**: Em pipelines mistos, etapas `lora` salvam apenas os adaptadores (~50MB), pois o modelo full do último merge já está no disco.
-4. **Modelo full local como base no resume**: Ao retomar treinamento, se existir modelo full local na pasta de saída E adapter files, o sistema usa o modelo local como base (não o HuggingFace), preservando pesos full.
+2. **Merge ao recarregar ou finalizar**: Em pipelines mistos (`lora` + `full`), o modelo é SEMPRE salvo como **full auto-contido** ao final do treinamento (`_save_model()`). Além disso, durante as transições de etapa que exigem recarregamento (ex: muda a quantização de `nbits=4` para `nbits=16` ou a atenção), o sistema faz o merge (`merge_adapter()`) e salva o modelo full no disco antes de limpar a memória.
+3. **Remoção de adapters**: Após qualquer merge+save para a pasta de saída, os arquivos de adaptadores (`adapter_config.json`, `adapter_model.safetensors`, etc.) são excluídos do diretório final para não gerar conflito no carregamento e garantir que o modelo foi efetivado como *full*.
+4. **Modelo full local como base no resume**: Ao retomar treinamento, se existir modelo full local na pasta de saída, o sistema usa o modelo local como base (não o HuggingFace), preservando os pesos da etapa anterior. Os checkpoints do HF Trainer (`chkpt/`) guardam o estado do otimizador e pesos intermediários.
 
-### Fluxo Visual
+### Fluxo Visual (Exemplo: LoRA int4 → Full 16 bits → LoRA int4)
 
 ```
-Pipeline: lora → full → lora
+Pipeline: lora (4-bit) → full (16-bit) → lora (4-bit)
 
-lora (etapa 1)
+lora (etapa 1, 4-bit)
   │
-  └─ save: adapters apenas (~50MB)
-     disco: adapter_config.json + adapter_model.safetensors
+  └─ Fim da etapa: Transição para 16-bit exige recarregamento da memória
+     Ação: MERGE LoRA→base + save full (~3GB) + remove adapter files da saída
+     Disco (saída): model.safetensors (modelo completo com pesos atualizados)
 
-full (etapa 2)
+full (etapa 2, 16-bit)
   │
-  └─ save: MERGE LoRA→base + save full (~3GB) + remove adapter files
-     disco: model.safetensors (modelo completo com pesos atualizados)
+  └─ Fim da etapa: Transição para 4-bit exige recarregamento da memória
+     Ação: MERGE LoRA→base (se houver LoRA ativo) + save full + remove adapter files
+     Disco (saída): model.safetensors (pesos atualizados com o treino full)
 
-lora (etapa 3)
+lora (etapa 3, 4-bit)
   │
-  └─ save: adapters apenas (~50MB)
-     disco: model.safetensors (full da etapa 2) + adapter_config.json + adapter_model.safetensors
-
-Pipeline end: merge final → save full → remove adapter files
+  └─ Fim do pipeline: Chamada final ao _save_model()
+     Ação: MERGE LoRA→base (pois é um pipeline misto) + save full + remove adapter files
+     Disco (saída final): model.safetensors (modelo pronto, auto-contido)
 ```
 
-### Comportamento de Transição
+### Comportamento de Transição (em Memória)
 
-| Transição | Recarga? | Ação |
+| Transição | Recarga? | Ação na Transição |
 |---|---|---|
-| lora→lora | Não | Mantém modelo em memória, apenas reconfigura `requires_grad` |
-| full→full | Não | Mantém modelo em memória, apenas reconfigura `requires_grad` |
-| lora→full | Sim (se attn muda) | Merge + salva full antes de descartar; recarrega como full |
-| full→lora | Sim (se attn muda) | Merge + salva full antes de descartar; recarrega e aplica LoRA fresco |
+| lora→lora | Não (se nbits e attn iguais) | Mantém modelo na VRAM, apenas reconfigura `requires_grad` (se o target_modules não mudar) |
+| full→full | Não (se attn igual) | Mantém modelo na VRAM, apenas reconfigura `requires_grad` |
+| lora→full | Sim (se nbits muda de 4 para 16) | Merge + salva full na saída antes de descartar; recarrega em 16-bit e libera base |
+| full→lora | Sim (se nbits muda de 16 para 4) | Salva full na saída antes de descartar; recarrega em 4-bit e reaplica LoRA (fresco) |
 
-**Nota sobre LoRA fresco:** Após merge, os adaptadores LoRA são inicializados do zero na próxima etapa `lora`. Isso é normal — é uma nova fase de treinamento sobre uma base melhorada. Em caso de resume via checkpoint, os pesos dos adaptadores são restaurados do checkpoint.
+**Nota sobre LoRA fresco:** Quando ocorre uma transição que recarrega o modelo (ou quando entra num LoRA após um Full sem recarregar), os adaptadores LoRA são inicializados do zero. Isso é o comportamento correto do curriculum — a cada etapa `lora` inicia-se uma nova fase sobre os pesos base já consolidados. No caso de *resume* via checkpoint no meio da etapa, os pesos do adaptador são restaurados a partir do checkpoint respectivo (`chkpt/`).
 
-### Arquivos
+### Arquivos Chave
 
-- `treinar_unsloth.py` → `_save_model()` (merge condicional), `_load_model()` (detecção de full local), `_aplicar_etapa_curriculum()` (merge antes de descarte)
-- `treinar_unsloth_actions.py` → `_detectar_tipo_modelo_saida()` (detecção lora/full na pasta de saída)
+- `treinar_unsloth.py` → `_save_model()` (merge incondicional para mistos), `_load_model()` (uso do full local), `_aplicar_etapa_curriculum()` (merge preventivo antes de descarte da memória).
+- `treinar_unsloth_actions.py` → `_detectar_tipo_modelo_saida()` (identifica se a saída é Lora puro ou Full auto-contido).
 
 ---
 
