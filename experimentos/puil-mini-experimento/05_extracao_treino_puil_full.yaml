@@ -12,6 +12,8 @@ misc:
   pastas_modelos:  
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
+    - /mnt/d/wsl_dev/llms/experimentos/puil-mini-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/puil-mini-experimento/treinos_local
     - /opt/app-root/src/luiz/llms/experimentos/puil-mini-experimento/treinos
     - /opt/app-root/src/luiz/llms/experimentos/puil-mini-experimento/treinos_local
     - /opt/app-root/src/luiz/llms/_models

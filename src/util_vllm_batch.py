@@ -182,9 +182,9 @@ saida:
 # Funções de Configuração
 # ---------------------------------------------------------------------------
 
-def _resolver_caminho(caminho: str, base_dir: str, pasta_base: str = "") -> str:
+def _resolver_caminho(caminho: str, base_dir: str, pasta_base: str = "", obrigatorio: bool = True) -> str:
     """Resolve caminho relativo em relação ao diretório base ou pasta_base."""
-    return Util.resolver_caminho(caminho, base_dir, pasta_base)
+    return Util.resolver_caminho(caminho, base_dir, pasta_base, obrigatorio=obrigatorio)
 
 
 def carregar_config(yaml_path: str) -> Dict[str, Any]:
@@ -305,7 +305,7 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     caminho_saida = saida.get("arquivo", "")
     if not caminho_saida:
         raise ValueError("saida.arquivo é obrigatório no YAML")
-    saida["arquivo"] = _resolver_caminho(caminho_saida, base_dir, pasta_base_ativa)
+    saida["arquivo"] = _resolver_caminho(caminho_saida, base_dir, pasta_base_ativa, obrigatorio=False)
     # tipo_saida: "str" (padrão) ou "json"/"dict"
     tipo_saida = str(saida.get("tipo_saida", "str")).strip().lower()
     if tipo_saida in ("json", "dict"):

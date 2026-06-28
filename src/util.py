@@ -243,7 +243,7 @@ class Util():
         return padrao
 
     @classmethod
-    def resolver_caminho(cls, caminho: str, base_dir: str, pasta_base: str = "") -> str:
+    def resolver_caminho(cls, caminho: str, base_dir: str, pasta_base: str = "", obrigatorio: bool = True) -> str:
         """
         Resolve um caminho de arquivo de forma dinâmica, permitindo uma pasta_base configurável.
         
@@ -260,12 +260,21 @@ class Util():
             caminho (str): O caminho relativo ou absoluto a ser resolvido.
             base_dir (str): O diretório base para resolver caminhos relativos (ex: local do arquivo de configuração).
             pasta_base (str): Um diretório raiz opcional para sobrepor a busca.
+            obrigatorio (bool): Se True, exibe erro (✗) quando o caminho não existe.
+                Se False, exibe info (ℹ️) indicando que será criado. Default: True.
             
         Returns:
             str: O caminho final resolvido.
         """
         if not caminho:
             return caminho
+        
+        # Mensagem para caminhos não encontrados depende de obrigatorio
+        def _msg_nao_encontrado(caminho_resolvido: str):
+            if obrigatorio:
+                print_cores(f"   <vermelho>✗</vermelho> Caminho não encontrado: <navy>{caminho_resolvido}</navy>")
+            else:
+                print_cores(f"   <azul>ℹ️</azul> Caminho será criado (não existe ainda): <navy>{caminho_resolvido}</navy>")
             
         if pasta_base:
             # Resolve pasta_base relativa em relação ao base_dir
@@ -281,7 +290,7 @@ class Util():
                 print_cores(f"   <verde>✓</verde> Caminho resolvido (absoluto): <navy>{caminho}</navy>")
                 return caminho
             # Se não encontrou, retorna o concatenado para estourar erro apontando a tentativa correta
-            print_cores(f"   <vermelho>✗</vermelho> Caminho não encontrado (fallback via pasta_base): <navy>{caminho_com_base}</navy>")
+            _msg_nao_encontrado(caminho_com_base)
             return caminho_com_base
 
         if os.path.isabs(caminho):
@@ -292,7 +301,7 @@ class Util():
         if os.path.exists(caminho_base_dir):
             print_cores(f"   <verde>✓</verde> Caminho resolvido em base_dir: <navy>{caminho_base_dir}</navy>")
         else:
-            print_cores(f"   <vermelho>✗</vermelho> Caminho não encontrado (fallback via base_dir): <navy>{caminho_base_dir}</navy>")
+            _msg_nao_encontrado(caminho_base_dir)
         return caminho_base_dir
 
     @classmethod
