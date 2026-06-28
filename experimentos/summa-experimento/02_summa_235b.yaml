@@ -3,19 +3,18 @@
 # Executar com: python util_vllm_batch.py --config config_batch.yaml
 # ==========================================================================
 
-# pip: pip install -r ../../src/requirements_mini.txt
-# chamada: python ../../src/util_vllm_batch.py --config 02_summa_gpt5.yaml 
-# visualizar: python ../../src/util_vllm_batch.py --config 02_summa_gpt5.yaml --view
+# chamada: python ../../src/util_vllm_batch.py --config 02_summa_235b.yaml
+# visualizar: python ../../src/util_vllm_batch.py --config 02_summa_235b.yaml --view
 
-#| =========================================================================
-#| MISCELÂNEA
-#| =========================================================================
-#| Configurações diversas (logs, variáveis de ambiente).
+# =========================================================================
+# MISCELÂNEA
+# =========================================================================
+# Configurações diversas (logs, variáveis de ambiente).
 misc:
   pastas_base: 
-    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
-    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
-    - /opt/app-root/src/luiz/llms/experimentos/summa_experimento
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
   pastas_modelos:  
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
@@ -26,7 +25,7 @@ misc:
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
   #caminho: "or:qwen/qwen3.5-35b-a3b"
-  caminho: "oa:gpt5:m:l"
+  caminho: "or:qwen/qwen3-235b-a22b-2507:poor"
   #caminho: "/mnt/d/wsl_ollama/hf-models/Qwen2.5-7B-Instruct"
   lora: ""
 
@@ -56,7 +55,7 @@ geracao:
   temperature: 0.01
   top_k: 2
   top_p: 0.9
-  batch_size: 20 # na api, é o número de threads
+  batch_size: 30 # na api, é o número de threads
   #max_itens: 20 # para limitar a saída no caso de testes
 
 # --- Entrada ---
@@ -92,5 +91,5 @@ entrada:
 # Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
 #   Itens com erro ou ausentes são reprocessados automaticamente.
 saida:
-  arquivo: "./saida/saida_oa_gpt5.parquet"
+  arquivo: "./saida/saida_or_235b.parquet"
   tipo_saida: "json"

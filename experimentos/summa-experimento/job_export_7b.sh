@@ -27,10 +27,10 @@
 #SBATCH --time=48:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/summa_experimento/jobs_logs/%x_%j.out
+#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/summa-experimento/jobs_logs/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/summa_experimento/jobs_logs/%x_%j.err
+#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/summa-experimento/jobs_logs/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -59,15 +59,15 @@ echo "==============================="
 
 
 #python baixar-qwen7b.py
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
 
 # Mais rodadas para repescagem do que deu erro
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa_experimento/config_batch.yaml
+python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
 
 echo "=== Job finalizado: $(date) ==="

@@ -4,9 +4,8 @@
 # ==========================================================================
 
 # pip: pip install -r ../../src/requirements_mini.txt
-# chamada: python ../../src/util_vllm_batch.py --config 02_summa_sabia4.yaml
-# visualizar: python ../../src/util_vllm_batch.py --config 02_summa_sabia4.yaml --view
-
+# chamada: python ../../src/util_vllm_batch.py --config 02_summa_gpt5.yaml 
+# visualizar: python ../../src/util_vllm_batch.py --config 02_summa_gpt5.yaml --view
 
 #| =========================================================================
 #| MISCELÂNEA
@@ -14,9 +13,9 @@
 #| Configurações diversas (logs, variáveis de ambiente).
 misc:
   pastas_base: 
-    - /students/luiz.abatitucci/llms/experimentos/summa_experimento
-    - /mnt/d/wsl_dev/llms/experimentos/summa_experimento
-    - /opt/app-root/src/luiz/llms/experimentos/summa_experimento
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
   pastas_modelos:  
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
@@ -26,7 +25,9 @@ misc:
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
-  caminho: "mt:sabia-4:flex"
+  #caminho: "or:qwen/qwen3.5-35b-a3b"
+  caminho: "oa:gpt5:m:l"
+  #caminho: "/mnt/d/wsl_ollama/hf-models/Qwen2.5-7B-Instruct"
   lora: ""
 
 # --- Configuração do vLLM ---
@@ -35,14 +36,14 @@ modelo:
 # tensor_parallel_size: número de GPUs para paralelismo de tensor (1 = single GPU)
 # dtype: tipo de dado ("auto", "float16", "bfloat16"). "auto" detecta automaticamente.
 # enforce_eager: True desabilita CUDA graphs (mais lento, menos memória). Recomendado para 7B.
-vllm:
-  gpu_memory_utilization: 0.90
-  max_model_len: 38912
-  tensor_parallel_size: 1
-  dtype: "auto"
-  #enforce_eager: true
-  quantization: bitsandbytes
-  load_format: bitsandbytes
+# vllm:
+#   gpu_memory_utilization: 0.90
+#   max_model_len: 38912
+#   tensor_parallel_size: 1
+#   dtype: "auto"
+#   #enforce_eager: true
+#   quantization: bitsandbytes
+#   load_format: bitsandbytes
 
 # --- Parâmetros de Geração ---
 # max_tokens: máximo de tokens na resposta gerada
@@ -55,8 +56,8 @@ geracao:
   temperature: 0.01
   top_k: 2
   top_p: 0.9
-  # batch_size: 64
-  #max_itens: 2 # para limitar a saída no caso de testes
+  batch_size: 20 # na api, é o número de threads
+  #max_itens: 20 # para limitar a saída no caso de testes
 
 # --- Entrada ---
 # arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
@@ -79,12 +80,6 @@ entrada:
   variavel_texto: "<<--TEXTO-->>"
   system_prompt: ""
 
-  # carrega a lista de campo_id e filtra o parquet ou os ids das pastas antes de fazer a extração
-  # serve para análises de subconjuntos da base ou testes
-  filtro: 
-    arquivo: "./saida/filtro_teste_fold_12.csv"
-    campo_id: "seq_documento_acordao" 
-
 # --- Saída ---
 # arquivo: caminho para arquivo .parquet OU pasta para arquivos .txt/.json
 #   Se termina com .parquet: gera parquet com colunas [chave, resumo, resposta, erro]
@@ -97,5 +92,5 @@ entrada:
 # Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
 #   Itens com erro ou ausentes são reprocessados automaticamente.
 saida:
-  arquivo: "./saida/saida_sabia4.parquet"
+  arquivo: "./saida/saida_oa_gpt5.parquet"
   tipo_saida: "json"

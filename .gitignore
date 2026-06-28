@@ -213,24 +213,25 @@ experimentos/summa_qualifica/treino_grupo1**
 experimentos/summa_qualifica/treino_grupo2**
 experimentos/summa_qualifica/dados_experimento**
 experimentos/summa_qualifica/summa_data/eda_output**
-experimentos/summa_experimento/**.parquet
-experimentos/summa_experimento/dados**
-experimentos/summa_experimento/saida**
+experimentos/summa-experimento/**.parquet
+experimentos/summa-experimento/dados**
+experimentos/summa-experimento/saida**
 **log_openai_resposta_bruta.txt
 **downloads_stj**
 
 *.lnk
 *.lock
 .vscode/settings.json
-experimentos/summa_experimento/compara**
+experimentos/summa-experimento/compara**
 
 experimentos/pubmed-experimento/.cache_pubmed**
 experimentos/pubmed-experimento/README_ANOTACOES.md
 experimentos/pubmed-experimento/models**
 experimentos/pubmed-experimento/compara**
 experimentos/pubmed-experimento/treinos**
-experimentos/summa_experimento/treinos**
+experimentos/summa-experimento/treinos**
 experimentos/puil-mini-experimento/treinos_local**
 experimentos/puil-mini-experimento/compara**
-experimentos/summa_experimento/avaliacao_humana/tarefas_avaliacao_label_studio_*.json
+experimentos/summa-experimento/avaliacao_humana/tarefas_avaliacao_label_studio_*.json
+
 

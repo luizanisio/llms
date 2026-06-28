@@ -17,7 +17,7 @@ def get_download_dir():
     with lock_download_dir:
         if DOWNLOAD_DIR: return DOWNLOAD_DIR
         if DOWNLOAD_DIR is None:
-            busca = ['../experimentos/summa_experimento/downloads_stj',
+            busca = ['../experimentos/summa-experimento/downloads_stj',
                     '../downloads_stj', '../experimentos/downloads_stj',
                     './downloads_stj']
         for b in busca:

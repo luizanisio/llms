@@ -3,12 +3,30 @@
 # Executar com: python util_vllm_batch.py --config config_batch.yaml
 # ==========================================================================
 
+# pip: pip install -r ../../src/requirements_mini.txt
+# chamada: python ../../src/util_vllm_batch.py --config 02_summa_sabia4.yaml
+# visualizar: python ../../src/util_vllm_batch.py --config 02_summa_sabia4.yaml --view
+
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
 # --- Modelo ---
 # caminho: caminho para modelo HuggingFace (local ou hub)
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
-  caminho: "/mnt/d/wsl_pucdev/slurm/models/Qwen2.5-1.5B-Instruct"
-  #caminho: "/mnt/d/wsl_ollama/hf-models/Qwen2.5-7B-Instruct"
+  caminho: "mt:sabia-4:flex"
   lora: ""
 
 # --- Configuração do vLLM ---
@@ -38,7 +56,7 @@ geracao:
   top_k: 2
   top_p: 0.9
   # batch_size: 64
-  max_itens: 64 # para limitar a saída no caso de testes
+  #max_itens: 2 # para limitar a saída no caso de testes
 
 # --- Entrada ---
 # arquivo: caminho para arquivo .parquet OU pasta com arquivos .txt
@@ -61,6 +79,12 @@ entrada:
   variavel_texto: "<<--TEXTO-->>"
   system_prompt: ""
 
+  # carrega a lista de campo_id e filtra o parquet ou os ids das pastas antes de fazer a extração
+  # serve para análises de subconjuntos da base ou testes
+  filtro: 
+    arquivo: "./saida/filtro_teste_fold_12.csv"
+    campo_id: "seq_documento_acordao" 
+
 # --- Saída ---
 # arquivo: caminho para arquivo .parquet OU pasta para arquivos .txt/.json
 #   Se termina com .parquet: gera parquet com colunas [chave, resumo, resposta, erro]
@@ -73,5 +97,5 @@ entrada:
 # Retomada: ao reiniciar, itens já processados com sucesso são ignorados.
 #   Itens com erro ou ausentes são reprocessados automaticamente.
 saida:
-  arquivo: "./saida/saida_1.5b.parquet"
+  arquivo: "./saida/saida_sabia4.parquet"
   tipo_saida: "json"
