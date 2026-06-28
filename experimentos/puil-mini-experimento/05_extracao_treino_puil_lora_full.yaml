@@ -1,6 +1,6 @@
 # ==========================================================================
 # Configuração para extração com vLLM do modelo treinado (LoRA)
-# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_lora.yaml
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_lora_full.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -13,12 +13,13 @@ misc:
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/experimentos/puil-mini-experimento/treinos
+    - /opt/app-root/src/luiz/llms/experimentos/puil-mini-experimento/treinos_locais
     - /opt/app-root/src/luiz/llms/_models
 
 # --- Modelo ---
 modelo:
-  caminho: "Qwen2.5-1.5B-Instruct"
-  lora: "treinos_local/Qwen2.5-1.5B-Instruct(puil_lora_full)"
+  caminho: "Qwen2.5-1.5B-Instruct(puil_lora_full)"
+  lora: ""
 
 # --- Configuração do vLLM ---
 vllm:
