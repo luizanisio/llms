@@ -18,7 +18,7 @@ misc:
 
 # --- Modelo ---
 modelo:
-  caminho: "treinos_local/Qwen2.5-1.5B-Instruct(puil_full)"
+  caminho: "Qwen2.5-1.5B-Instruct(puil_full)"
   lora: ""
 
 # --- Configuração do vLLM ---
