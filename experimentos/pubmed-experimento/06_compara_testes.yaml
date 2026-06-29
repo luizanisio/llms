@@ -23,8 +23,7 @@ execucao:
   gerar_graficos: true 
   llm_as_a_judge: false
   analise_estatistica: true
-  ignorar_erro_extracao: true
-  # Filtro global adicionado em configuracao_comparacao para garantir que modelos com dataset full (ex: Professor, Qwen1.5B base) comparem apenas o conjunto de teste
+  ignorar_erro_extracao: false
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
@@ -33,6 +32,7 @@ modelo_base:
   familia: "PubMed-Gold"
 
 # Modelos Comparados
+# Protocolos c, d1 e d5 precisam ser treinados e extraídos novamente
 modelos_comparacao:
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
@@ -40,12 +40,12 @@ modelos_comparacao:
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     familia: "Qwen-1.5B"
-  - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
-    rotulo: "Qwen1.5B(c)"
-    familia: "Qwen-1.5B"
-  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
-    rotulo: "Qwen1.5B(d1)"
-    familia: "Qwen-1.5B"
+  #- arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
+  #  rotulo: "Qwen1.5B(c)"
+  #  familia: "Qwen-1.5B"
+  # - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
+  #   rotulo: "Qwen1.5B(d1)"
+  #   familia: "Qwen-1.5B"
   - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
     rotulo: "Qwen1.5B(d2)"
     familia: "Qwen-1.5B"
@@ -55,9 +55,9 @@ modelos_comparacao:
   - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
     rotulo: "Qwen1.5B(d4)"
     familia: "Qwen-1.5B"
-  - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
-    rotulo: "Qwen1.5B(d5)"
-    familia: "Qwen-1.5B"
+  # - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
+  #   rotulo: "Qwen1.5B(d5)"
+  #   familia: "Qwen-1.5B"
   - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
     rotulo: "Qwen1.5B(d6)"
     familia: "Qwen-1.5B"
@@ -92,7 +92,7 @@ configuracao_comparacao:
 
   # Máscaras de arquivos (Regex ou Sufixo)
   mascaras:
-    extracao: "^(.+)\\.json$"
+    extracao: "^(\\d+)\\.json$"
     tokens: ".tokens.json" 
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
