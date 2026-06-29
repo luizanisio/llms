@@ -45,7 +45,7 @@ conda activate luizbat01
 ### Passo 2: Instalar PyTorch (fixado para CUDA 12.8)
 É crucial que seja instalado a partir do index da NVIDIA/PyTorch:
 ```bash
-pip install "torch==2.11.0" torchvision "setuptools==80.0.0" "fsspec<=2026.2.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+pip install "torch==2.10.0" torchvision "setuptools==80.10.2" "fsspec<=2026.4.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 *(Nota: Para H100 ou RTX 3060 as versões testadas foram as mesmas de dependências, garantindo `torch==2.11.0+cu128` ou `torch==2.10.0+cu128`).*
 
