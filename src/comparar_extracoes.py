@@ -569,6 +569,9 @@ def main():
         Resolve a entrada de um modelo: se for .parquet, extrai para pasta.
         Retorna o caminho da PASTA com os JSONs (seja direta ou extraída do parquet).
         """
+        rotulo = modelo_config.get('rotulo', 'Desconhecido')
+        print(f"\n--- Preparando modelo: {rotulo} ---")
+        
         nonlocal houve_reextracao
         arquivo = modelo_config.get('arquivo', '')
         pasta = modelo_config.get('pasta', '')
