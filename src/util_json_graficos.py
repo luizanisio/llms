@@ -2214,7 +2214,7 @@ class JsonAnaliseGraficos:
                                 break
                         
                         # Se encontrou, adiciona à lista ordenada
-                        if col_modelo is not None:
+                        if col_modelo is not None and col_modelo not in colunas_por_modelo:
                             colunas_por_modelo.append(col_modelo)
                             aliases_ordenados.append(modelo)
                     
