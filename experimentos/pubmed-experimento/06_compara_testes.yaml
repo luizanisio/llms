@@ -12,7 +12,7 @@ misc:
 saida:
   pasta: "compara/analises_comparacao_pubmed_testes"
   pasta_parquet: "compara/"
-  arquivo_base: "comparacao_pubmed(teste)"
+  arquivo_base: "comparacao_pubmed(testes)"
   regerar_planilha_base: true
   linguagem_graficos: "en"
 
