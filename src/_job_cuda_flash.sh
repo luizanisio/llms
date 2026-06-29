@@ -38,7 +38,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate luizbat01
+conda activate luizbat03
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -50,14 +50,16 @@ echo "==============================="
 
 
 echo "1. Instalando pytorch"
+pip install "torch==2.10.0" torchvision "fsspec<=2026.4.0" --index-url https://download.pytorch.org/whl/cu128 --force-reinstall 
 
-TMPDIR=/var/tmp TORCH_CUDA_ARCH_LIST="9.0" MAX_JOBS=4 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
+echo "1. Instalando requirements"
+pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
 
-# pip install "torch>=2.11" torchvision --index-url https://download.pytorch.org/whl/cu128
+echo "2. Flash"
+# muitos jobs causam erro de memória
+TMPDIR=/var/tmp TORCH_CUDA_ARCH_LIST="9.0" MAX_JOBS=2 pip install flash-attn --no-build-isolation --no-deps --force-reinstall
 
-# echo "1. Instalando requirements"
-# pip install -r /students/luiz.abatitucci/llms/src/requirements.txt
-
+echo "3. Teste"
 python /students/luiz.abatitucci/llms/src/teste_ambiente.py
 
 echo "=== Job de Instalação Finalizado: $(date) ==="
