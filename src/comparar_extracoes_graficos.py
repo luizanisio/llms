@@ -152,6 +152,11 @@ class CompararExtracoesGraficos:
             except Exception as e:
                 print(f"   ⚠️ Erro ao ler {arquivo_metricas}: {e}")
                 continue
+            
+            # Fallback: se o modelo não tem eval_loss_global (sem divisões de currículo),
+            # usa eval_loss como eval_loss_global, pois sem currículo o eval loss já é global
+            if not eval_loss_global_by_step and eval_loss_by_step:
+                eval_loss_global_by_step = dict(eval_loss_by_step)
     
             def extrair_series(dict_steps):
                 steps = sorted(dict_steps.keys())
@@ -185,6 +190,39 @@ class CompararExtracoesGraficos:
     
         if not algum_modelo_tem_metricas:
             return
+    
+        def _adicionar_melhor_loss(series_dict):
+            """Adiciona marcador de diamante no melhor (menor) loss e renomeia legenda com o valor."""
+            series_final = {}
+            for nome, config in series_dict.items():
+                x_vals = config['x']
+                y_vals = config['y']
+                cor = config['cor']
+                
+                # Encontra índice do menor loss
+                melhor_idx = min(range(len(y_vals)), key=lambda i: y_vals[i])
+                melhor_loss = y_vals[melhor_idx]
+                melhor_x = x_vals[melhor_idx]
+                
+                # Renomeia legenda com o valor do melhor loss
+                nome_com_loss = f"{nome} ({melhor_loss:.4f})"
+                series_final[nome_com_loss] = {
+                    'x': x_vals, 'y': y_vals, 'cor': cor, 'estilo': config.get('estilo', '-')
+                }
+                
+                # Adiciona série invisível apenas com o marcador diamante no melhor ponto
+                series_final[f"_best_{nome}"] = {
+                    'x': [melhor_x], 'y': [melhor_loss], 'cor': cor,
+                    'estilo': 'None', 'marcador': 'D', 'tamanho_marcador': 10,
+                    'alpha': 1.0, 'largura': 0
+                }
+            return series_final
+    
+        # Adiciona marcadores de melhor loss em todas as séries
+        series_eval_loss_tokens = _adicionar_melhor_loss(series_eval_loss_tokens) if series_eval_loss_tokens else {}
+        series_eval_loss_inst = _adicionar_melhor_loss(series_eval_loss_inst) if series_eval_loss_inst else {}
+        series_eval_loss_global_tokens = _adicionar_melhor_loss(series_eval_loss_global_tokens) if series_eval_loss_global_tokens else {}
+        series_eval_loss_global_inst = _adicionar_melhor_loss(series_eval_loss_global_inst) if series_eval_loss_global_inst else {}
     
         pasta_graficos = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_graficos, exist_ok=True)
@@ -222,3 +260,4 @@ class CompararExtracoesGraficos:
                 ylabel="Eval Loss Global", xlabel="Instâncias Acumuladas",
                 arquivo_saida=arquivo)
             print(f"   ✓ Gráfico salvo: {os.path.basename(arquivo)}")
+
