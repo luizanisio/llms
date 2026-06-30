@@ -108,6 +108,12 @@ class CompararExtracoesGraficos:
             pasta_treinamento = util.Util.resolver_caminho(pasta_treinamento_raw, base_dir_yaml, pasta_base_ativa)
             arquivo_metricas = os.path.join(pasta_treinamento, 'training_metrics.jsonl')
             
+            # Fallback: verifica subpasta "treinamento" dentro da pasta do modelo
+            if not os.path.isfile(arquivo_metricas):
+                arquivo_metricas_alt = os.path.join(pasta_treinamento, 'treinamento', 'training_metrics.jsonl')
+                if os.path.isfile(arquivo_metricas_alt):
+                    arquivo_metricas = arquivo_metricas_alt
+            
             if not os.path.isfile(arquivo_metricas):
                 continue
                 
