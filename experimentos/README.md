@@ -1,5 +1,7 @@
 # 🧪 Dicas e Configurações de Ambiente para Experimentos
 
+> 📖 **Para detalhes sobre o design conceitual, os objetivos de pesquisa (Summa, PubMed, Puil) e as ablações (d1 a d8), consulte o [README_protocolos.md](./README_protocolos.md).**
+
 Este guia centraliza as práticas recomendadas para execução de experimentos, configuração do ambiente e resolução de problemas comuns.
 
 ---
