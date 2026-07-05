@@ -5,6 +5,10 @@
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Curriculum d1)
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d1: facil-ff, medio, dificil, completo, nbits=4 global)
+# Objetivo: CL ascendente com etapa FF no início.
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (d1q: facil-ff, medio, dificil, completo)
 # ==========================================================================
 

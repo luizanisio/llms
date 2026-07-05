@@ -2,7 +2,11 @@
 # Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d4.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d4)
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d4: LoRA-only, anti-currículo: completo, dificil, medio, facil, nbits=4 global)
+# Objetivo: Ablação — testar se a ordem inversa (difícil→fácil) prejudica o treino
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (etapa única, treino direto)

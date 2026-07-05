@@ -1,7 +1,11 @@
 # Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d2.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d2)
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d2: facil, medio, dificil, completo-ff, nbits=4 global)
+# Objetivo: CL ascendente com etapa FF no final.
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (etapa única, treino direto)

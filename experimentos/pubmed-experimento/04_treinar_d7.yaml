@@ -5,6 +5,10 @@
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d7)
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d7: LoRA-only, CL puro: facil, medio, dificil — sem etapa completo, nbits=4 global)
+# Objetivo: Ablação — testar se o CL progressivo sozinho (sem consolidação) gera ganho
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (d7: LoRA-only, CL puro: facil, medio, dificil — sem etapa completo)
 # Objetivo: Ablação — testar se o CL progressivo sozinho (sem consolidação) gera ganho
 # ==========================================================================

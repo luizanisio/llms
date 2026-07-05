@@ -1,5 +1,13 @@
 # python ../../src/treinar_unsloth.py --treinar 04_treinar_puil_full.yaml --reset
 
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (PUIL Full FT)
+# ==========================================================================
+# Ambiente: RTX 3060 (12Gb VRAM)
+# Modo: etapa única, full fine-tuning
+# Objetivo: Baseline Full FT puro para a tarefa PUIL (Mini-experimento).
+# ==========================================================================
+
 misc:
   pastas_base:
   - /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento

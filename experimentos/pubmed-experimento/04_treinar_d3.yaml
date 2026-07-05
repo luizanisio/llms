@@ -1,7 +1,11 @@
 # Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d3.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d3)
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d3: LoRA-only, CL ascendente: facil, medio, dificil, completo, nbits=4 global)
+# Objetivo: Ablação — isolar o efeito do curriculum learning sem FF
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (etapa única, treino direto)

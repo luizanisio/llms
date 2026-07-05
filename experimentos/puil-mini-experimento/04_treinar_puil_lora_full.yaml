@@ -1,5 +1,13 @@
 # python ../../src/treinar_unsloth.py --treinar 04_treinar_puil_lora_full.yaml --reset
 
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (PUIL LoRA -> Full)
+# ==========================================================================
+# Ambiente: RTX 3060 (12Gb VRAM)
+# Modo: curriculum (LoRA-completo → FF-completo, nbits=4 global)
+# Objetivo: Protocolo d6 em miniatura para validar a transição LoRA->FF.
+# ==========================================================================
+
 misc:
   pastas_base:
   - /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento

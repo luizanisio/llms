@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=treinar_d12_pubmed
+#SBATCH --job-name=treinar_d58_pubmed
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -38,11 +38,11 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate luizbat02
+conda activate luizbat01
 
-echo "Configurando variáveis de ambiente..."
-export CUDA_HOME=$CONDA_PREFIX
-export PATH=$CUDA_HOME/bin:$PATH
+# echo "Configurando variáveis de ambiente..."
+# export CUDA_HOME=$CONDA_PREFIX
+# export PATH=$CUDA_HOME/bin:$PATH
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -53,8 +53,10 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 CONFIGS=(
-  "04_treinar_d1.yaml"
-  "04_treinar_d2.yaml"
+  "04_treinar_d5.yaml"
+  "04_treinar_d6.yaml"
+  "04_treinar_d7.yaml"
+  "04_treinar_d8.yaml"
 )
 
 OUT_BASE="/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/treinos"

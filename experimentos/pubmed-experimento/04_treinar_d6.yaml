@@ -1,7 +1,11 @@
 # Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d5.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (PT inverso)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d6)
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d6: LoRA-completo → FF-completo, sem currículo, nbits=4 global)
+# Objetivo: Baseline sem CL — LoRA primeiro, depois FF. Complemento do d5.
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
 # Modo: curriculum (etapa única, treino direto)

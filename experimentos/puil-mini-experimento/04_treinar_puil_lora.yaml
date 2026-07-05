@@ -1,5 +1,13 @@
 # python ../../src/treinar_unsloth.py --treinar treinar_puil_lora.yaml --reset
 
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (PUIL LoRA)
+# ==========================================================================
+# Ambiente: RTX 3060 (12Gb VRAM)
+# Modo: etapa única, LoRA-only, nbits=4 global
+# Objetivo: Treino LoRA padrão para a tarefa PUIL (Mini-experimento).
+# ==========================================================================
+
 misc:
   pastas_base:
   - /students/luiz.abatitucci/llms/experimentos/puil-mini-experimento
