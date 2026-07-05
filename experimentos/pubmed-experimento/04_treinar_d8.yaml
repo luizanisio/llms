@@ -5,12 +5,8 @@
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d8)
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d8: LoRA-only, etapa única com dataset completo, nbits=4 global)
-# Objetivo: Baseline LoRA puro — treino direto sem currículo nem FF
-# ==========================================================================
-# Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d8: LoRA-only, etapa única com dataset completo)
-# Objetivo: Baseline LoRA puro — treino direto sem currículo nem FF
+# Modo: curriculum (d8: FF-only, CL puro: facil, medio, dificil — sem etapa completo)
+# Objetivo: Baseline FF puro com currículo progressivo, similar ao d7 para comparação com protocolo c (FF completo).
 # ==========================================================================
 
 #| =========================================================================
@@ -55,12 +51,29 @@ curriculum:
     exigir_ids_pareados: false
 
   #| Divisao: Define as etapas do treinamento (o currículo em si)
-  #| Etapa única LoRA: dataset completo (baseline sem currículo)
+  #| CL puro FF-only: fácil → médio → difícil (sem etapa "completo")
   divisao:
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    alias: "completo"
-    tipo: "lora"
-    pace_epochs: 2
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-FF"
+    tipo: "full"
+    learning_rate: 5e-06
+    bits: 16
+    pace_epochs: 4
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-FF"
+    tipo: "full"
+    learning_rate: 5e-06
+    bits: 16
+    pace_epochs: 4
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-FF"
+    tipo: "full"
+    learning_rate: 5e-06
+    bits: 16
+    pace_epochs: 4
 
 #| =========================================================================
 #| MODELO

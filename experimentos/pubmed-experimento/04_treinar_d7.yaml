@@ -8,10 +8,6 @@
 # Modo: curriculum (d7: LoRA-only, CL puro: facil, medio, dificil — sem etapa completo, nbits=4 global)
 # Objetivo: Ablação — testar se o CL progressivo sozinho (sem consolidação) gera ganho
 # ==========================================================================
-# Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d7: LoRA-only, CL puro: facil, medio, dificil — sem etapa completo)
-# Objetivo: Ablação — testar se o CL progressivo sozinho (sem consolidação) gera ganho
-# ==========================================================================
 
 #| =========================================================================
 #| MISCELÂNEA
@@ -61,17 +57,17 @@ curriculum:
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil"
     tipo: "lora"
-    pace_epochs: 2
+    pace_epochs: 4
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
-    pace_epochs: 2
+    pace_epochs: 4
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
-    pace_epochs: 2
+    pace_epochs: 4
 
 #| =========================================================================
 #| MODELO

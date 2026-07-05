@@ -45,12 +45,12 @@ A série `d1` a `d8` desenha o controle experimental para isolar três variávei
 | **d5** | FF-completo → LoRA-completo | **Baseline FF Primeiro**: Sem curriculum learning (ambas as fases veem dados não filtrados). **Testa:** Se d1 superar d5, confirma-se o valor da progressão curricular precoce. |
 | **d6** | LoRA-completo → FF-completo | **Baseline FF Último**: Sem curriculum learning. Análogo ao d2 em fases, mas sem fracionamento de dificuldade. **Testa:** Se d2 superar d6, confirma-se o valor da progressão curricular tardia. |
 | **d7** | LoRA-fácil → LoRA-médio → LoRA-difícil | **CL Fragmentado**: Curriculum sem a etapa de consolidação mista final. **Testa:** Aprender partes separadas por si só ensina o conjunto inteiro (comparação com d3)? |
-| **d8** | LoRA-completo *(etapa única)* | **O Grande Baseline**: Treinamento clássico. Os dados estão todos embaralhados do início ao fim em LoRA. **O Teste Final:** Qualquer modelo d1-d7 que não superar significativamente o d8 indica que a estruturação (currículo ou FF misto) não compensou o aumento de complexidade no treino. |
+| **d8** | FF-fácil → FF-médio → FF-difícil | **CL Fragmentado (FF-only)**: Curriculum puramente progressivo sem etapa de consolidação final, operando 100% em Full Fine-Tuning. **Testa:** Análogo direto do d7 (que é LoRA), permitindo avaliar se a transição de dificuldade isolada gera ganho equivalente ou superior ao treinamento direto FF (protocolo c). |
 
 ### Diagrama de Testes Essenciais
 
 Para interpretar os resultados, os cruzamentos mais relevantes a se observar são:
-1. **O Curriculum Funciona?** Compare `d3` (CL) x `d8` (Baseline misto).
+1. **O Curriculum Funciona?** Compare `d3` (CL) x `Protocolo B` (Baseline LoRA misto).
 2. **A Ordem Importa?** Compare `d3` (Crescente) x `d4` (Decrescente).
 3. **Vale a pena consolidar no final?** Compare `d3` (CL com resumo final) x `d7` (CL sem etapa completa).
 4. **O Full FT compensa o custo extra?** Compare `d1/d2` (CL+FF) x `d3` (CL LoRA only).
