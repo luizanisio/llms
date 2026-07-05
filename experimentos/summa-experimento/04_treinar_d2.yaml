@@ -9,7 +9,7 @@
 # Objetivo: CL ascendente com etapa FF no final.
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d2q: facil, medio, dificil, completo-ff)
+# Modo: curriculum (d2: facil, medio, dificil, completo-ff)
 # ==========================================================================
 
 #| =========================================================================
@@ -83,8 +83,8 @@ curriculum:
 #| =========================================================================
 modelo:
   base_model_name: Qwen2.5-7B-Instruct
-  saida: treinos/Qwen2.5-7B-Instruct(d2q)
-  ollama: Qwen2.5-7B-Instruct(d2q):latest
+  saida: treinos/Qwen2.5-7B-Instruct(d2)
+  ollama: Qwen2.5-7B-Instruct(d2):latest
   ollama_base: qwen2.5:7b
   ollama_url:
 
