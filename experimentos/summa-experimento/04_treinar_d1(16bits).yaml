@@ -1,11 +1,11 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d2.yaml
-# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d2.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d1.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d1.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Curriculum d2)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Curriculum d1)
 # ==========================================================================
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d2q: facil, medio, dificil, completo-ff)
+# Modo: curriculum (d1: facil-ff, medio, dificil, completo)
 # ==========================================================================
 
 #| =========================================================================
@@ -54,8 +54,9 @@ curriculum:
   divisao:
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "facil"}
-    alias: "fácil"
-    tipo: "lora"
+    alias: "fácil-FF"
+    tipo: "full"
+    learning_rate: 5e-06
     pace_epochs: 2
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "medio"}
@@ -68,19 +69,17 @@ curriculum:
     tipo: "lora"
     pace_epochs: 2
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    alias: "completo-FF"
-    tipo: "full"
-    learning_rate: 5e-06
+    alias: "completo"
+    tipo: "lora"
     pace_epochs: 2
-    bits: 16 # sempre considera 16 no FF
 
 #| =========================================================================
 #| MODELO
 #| =========================================================================
 modelo:
   base_model_name: Qwen2.5-7B-Instruct
-  saida: treinos/Qwen2.5-7B-Instruct(d2q)
-  ollama: Qwen2.5-7B-Instruct(d2q):latest
+  saida: treinos/Qwen2.5-7B-Instruct(d1)
+  ollama: Qwen2.5-7B-Instruct(d1):latest
   ollama_base: qwen2.5:7b
   ollama_url:
 
@@ -114,6 +113,6 @@ treinamento:
   lr_scheduler_type: cosine
   seed: 3407
 
-  nbits: 4
+  nbits: 16
 
   train_on_responses_only: true
