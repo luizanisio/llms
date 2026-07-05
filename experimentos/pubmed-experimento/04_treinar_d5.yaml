@@ -69,6 +69,7 @@ curriculum:
     pace_epochs: 2
     #| learning_rate local para sobrescrever o valor global apenas nesta etapa. Útil para separar FF de LoRA.
     learning_rate: 5e-06 # Padrão para Full FT
+    bits: 16 # sempre considera 16 no FF
     batch_size: 1
 
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
@@ -129,8 +130,8 @@ treinamento:
   lr_scheduler_type: cosine
   seed: 3407
 
-  #| Realiza o treinamento em 16-bits (Full)
-  nbits: 16
+  #| Realiza o treinamento em 4-bits (LoRA)
+  nbits: 4
 
   #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
   train_on_responses_only: true

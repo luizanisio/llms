@@ -98,6 +98,6 @@ treinamento:
   lr_scheduler_type: cosine
   seed: 3407
 
-  nbits: 16
+  nbits: 4
 
   train_on_responses_only: true

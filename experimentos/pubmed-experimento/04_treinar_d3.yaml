@@ -136,8 +136,8 @@ treinamento:
   lr_scheduler_type: cosine
   seed: 3407
 
-  #| Realiza o treinamento em 16-bits (Full)
-  nbits: 16
+  #| Realiza o treinamento em 4-bits (LoRA)
+  nbits: 4
 
   #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
   train_on_responses_only: true
