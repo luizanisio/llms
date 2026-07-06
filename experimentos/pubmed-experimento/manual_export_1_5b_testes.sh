@@ -19,7 +19,7 @@ echo "==============================="
 
 
 #python baixar-qwen1.5b.py
-PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6")
+PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8")
 
 for PROTOCOL in "${PROTOCOLS[@]}"; do
     CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"

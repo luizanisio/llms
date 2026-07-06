@@ -1,0 +1,57 @@
+# ==========================================================================
+# Configuração para extração com vLLM do modelo treinado (Test Cases)
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_d7_teste.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento/treinos
+    - /opt/app-root/src/luiz/llms/_models
+
+# --- Modelo ---
+# caminho: caminho para modelo HuggingFace (local ou hub)
+# lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
+modelo:
+  caminho: "Qwen2.5-1.5B-Instruct"
+  lora: "Qwen2.5-1.5B-Instruct(d7)"
+
+# --- Configuração do vLLM ---
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  tensor_parallel_size: 1
+  dtype: "auto"
+  enforce_eager: true
+
+# --- Parâmetros de Geração ---
+geracao:
+  max_tokens: 4096
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+  batch_size: 30
+
+# --- Entrada ---
+entrada:
+  arquivo: "dados/pubmed-rct-20k.parquet"
+  campo_chave: "pmid"
+  campo_texto: "article"
+  prompt_template: "dados/prompt_pubmed_rct.txt"
+  variavel_texto: "<<--TEXTO-->>"
+  system_prompt: "You are an expert biomedical data extractor."
+  filtro:
+    dataset_filtro: {"split": "test"}
+
+# --- Saída ---
+saida:
+  arquivo: "saidas/saida_pubmed_1_5b(d7)_teste.parquet"
+  tipo_saida: "json"
