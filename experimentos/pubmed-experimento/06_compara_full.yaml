@@ -10,9 +10,9 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "compara/analises_comparacao_pubmed_full"
+  pasta: "compara/analises_comparacao_pubmed(todos)"
   pasta_parquet: "compara/"
-  arquivo_base: "comparacao_pubmed(full)"
+  arquivo_base: "comparacao_pubmed(todos)"
   regerar_planilha_base: true
   linguagem_graficos: "en"
 
