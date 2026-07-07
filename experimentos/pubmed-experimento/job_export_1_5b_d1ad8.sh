@@ -62,6 +62,13 @@ PROTOCOLS=("d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8")
 
 for PROTOCOL in "${PROTOCOLS[@]}"; do
     CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
+    ARQUIVO_SAIDA="saidas/saida_pubmed_1_5b(${PROTOCOL})_teste.parquet"
+    
+    if [ -f "$ARQUIVO_SAIDA" ]; then
+        echo "=== Arquivo $ARQUIVO_SAIDA já existe. Pulando extração do protocolo $PROTOCOL. ==="
+        continue
+    fi
+
     echo ""
     echo "============================================================"
     echo "=== Iniciando extração do protocolo: $PROTOCOL ==="

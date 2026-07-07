@@ -10,9 +10,9 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "compara/analises_comparacao_pubmed_testes"
+  pasta: "compara/analises_comparacao_pubmed_efeito_cl"
   pasta_parquet: "compara/"
-  arquivo_base: "comparacao_pubmed(testes)"
+  arquivo_base: "comparacao_pubmed(efeito_cl)"
   regerar_planilha_base: true
   linguagem_graficos: "en"
 
@@ -45,14 +45,6 @@ modelos_comparacao:
     rotulo: "Qwen1.5B(c)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
-  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
-    rotulo: "Qwen1.5B(d1)"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
-  - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
-    rotulo: "Qwen1.5B(d2)"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d2)"
   - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
     rotulo: "Qwen1.5B(d3)"
     familia: "Qwen-1.5B"
@@ -61,16 +53,6 @@ modelos_comparacao:
     rotulo: "Qwen1.5B(d4)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
-  - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
-    rotulo: "Qwen1.5B(d5)"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d5)"
-  - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
-    rotulo: "Qwen1.5B(d6)"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d6)"
-    familia: "Qwen-1.5B"
-
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   padronizar_simbolos: true

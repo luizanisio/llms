@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=compara_full_pubmed
+#SBATCH --job-name=compara_ablacoes_pubmed
 
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
@@ -45,10 +45,6 @@ cd "$SCRIPT_DIR"
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat01
 
-# echo "Configurando variáveis de ambiente..."
-# export CUDA_HOME=$CONDA_PREFIX
-# export PATH=$CUDA_HOME/bin:$PATH
-
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
@@ -58,7 +54,19 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 
-#python baixar-qwen7b.py
+echo "1/5 - Executando 06_compara_testes.yaml..."
 python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/06_compara_testes.yaml
+
+echo "2/5 - Executando 06_compara_efeito_cl.yaml..."
+python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/06_compara_efeito_cl.yaml
+
+echo "3/5 - Executando 06_compara_hibridos_ff_lora.yaml..."
+python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/06_compara_hibridos_ff_lora.yaml
+
+echo "4/5 - Executando 06_compara_cl_puro.yaml..."
+python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/06_compara_cl_puro.yaml
+
+echo "5/5 - Executando 06_compara_full.yaml..."
+python /students/luiz.abatitucci/llms/src/comparar_extracoes.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/06_compara_full.yaml
 
 echo "=== Job finalizado: $(date) ==="
