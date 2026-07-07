@@ -37,7 +37,7 @@ modelos_comparacao:
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     familia: "Qwen-1.5B"
-  - arquivo: "saidas/saida_pubmed_1_5b(b).parquet"
+  - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
