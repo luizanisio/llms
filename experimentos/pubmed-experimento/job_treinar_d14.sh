@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=treinar_d14_pubmed
+#SBATCH --job-name=pubmed-treinar-d14
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -22,10 +22,10 @@
 #SBATCH --time=48:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.out
+#SBATCH --output=jobs_logs/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.err
+#SBATCH --error=jobs_logs/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -36,6 +36,10 @@
 # pasta do próprio script (funciona independente de onde o sbatch for chamado)
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
+
+# Constante de diretório base para facilitar portabilidade
+BASE_DIR="/students/luiz.abatitucci/llms/experimentos/pubmed-experimento"
+SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
 
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat01
@@ -59,7 +63,7 @@ CONFIGS=(
   "04_treinar_d4.yaml"
 )
 
-OUT_BASE="/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/treinos"
+OUT_BASE="$BASE_DIR/treinos"
 
 for CONFIG in "${CONFIGS[@]}"; do
   SUFFIX=$(echo "$CONFIG" | sed 's/04_treinar_//' | sed 's/\.yaml//')
@@ -73,7 +77,7 @@ for CONFIG in "${CONFIGS[@]}"; do
     echo "=> Já treinado. Arquivo $LOSS_FILE encontrado. Pulando."
   else
     echo "=> Arquivo $LOSS_FILE não encontrado. Iniciando treinamento..."
-    python /students/luiz.abatitucci/llms/src/treinar_unsloth.py --treinar "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/$CONFIG"
+    python $SRC_DIR/treinar_unsloth.py --treinar "$BASE_DIR/$CONFIG"
   fi
 done
 

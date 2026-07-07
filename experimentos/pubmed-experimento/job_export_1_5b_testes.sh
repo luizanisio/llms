@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=pubmed-qwen1.5b-extracao-testes
+#SBATCH --job-name=pubmed-extracao-testes
 
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
@@ -23,14 +23,14 @@
 #SBATCH --mem=64G
 
 # Tempo máximo de execução (HH:MM:SS). Job é cancelado ao atingir o limite.
-# 20 k prompts × ~32 k tokens @ ~750 tok/s estimado ≈ 30-40 h no caso médio.
-#SBATCH --time=48:00:00
+# 8 protocolos × 20 rodadas × ~2-4 h por protocolo ≈ estimativa conservadora
+#SBATCH --time=72:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.out
+#SBATCH --output=jobs_logs/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.err
+#SBATCH --error=jobs_logs/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -42,17 +42,16 @@
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
+# Constante de diretório base para facilitar portabilidade
+BASE_DIR="/students/luiz.abatitucci/llms/experimentos/pubmed-experimento"
+SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
+
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat02
 
-#echo "Configurando variáveis de ambiente..."
-#export CUDA_HOME=$CONDA_PREFIX
-#export PATH=$CUDA_HOME/bin:$PATH
-
-# === Correção para PyTorch + CUDA 13 via pip ===
-# Exporta o caminho dos headers do CUDA (como curand.h) para o compilador do flashinfer encontrar.
-export CPATH="$(python -c 'import sys, glob; print(":".join(glob.glob(f"{sys.prefix}/lib/python*/site-packages/nvidia/*/include")))'):$CPATH"
-# ===============================================
+# echo "Configurando variáveis de ambiente..."
+# export CUDA_HOME=$CONDA_PREFIX
+# export PATH=$CUDA_HOME/bin:$PATH
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -63,18 +62,31 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 
-#python baixar-qwen1.5b.py
-PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6")
+PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8")
 
 for PROTOCOL in "${PROTOCOLS[@]}"; do
-    CONFIG_FILE="/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/05_extracao_${PROTOCOL}_teste.yaml"
+    CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
+    ARQUIVO_SAIDA="$BASE_DIR/saidas/saida_pubmed_1_5b(${PROTOCOL})_teste.parquet"
+                          
+    if [ -f "$ARQUIVO_SAIDA" ]; then
+        echo "=== Arquivo $ARQUIVO_SAIDA já existe. Pulando extração do protocolo $PROTOCOL. ==="
+        continue
+    fi
+
+    echo ""
+    echo "============================================================"
     echo "=== Iniciando extração do protocolo: $PROTOCOL ==="
-    
-    # Roda a extração 10 vezes (útil para repescagem de erros)
-    for i in {1..10}; do
-        echo "Rodada $i/10 para o protocolo $PROTOCOL..."
-        python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config "$CONFIG_FILE"
+    echo "=== Config: $CONFIG_FILE ==="
+    echo "=== Hora: $(date) ==="
+    echo "============================================================"
+
+    # Roda a extração 20 vezes (útil para repescagem de erros)
+    for i in $(seq 1 20); do
+        echo "--- Rodada $i/20 para o protocolo $PROTOCOL --- $(date)"
+        python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
     done
+
+    echo "=== Protocolo $PROTOCOL finalizado: $(date) ==="
 done
 
 
