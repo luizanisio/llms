@@ -27,10 +27,10 @@
 #SBATCH --time=72:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.out
+#SBATCH --output=jobs_logs/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/jobs_logs/%x_%j.err
+#SBATCH --error=jobs_logs/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -41,6 +41,10 @@
 # pasta do próprio script (funciona independente de onde o sbatch for chamado)
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
+
+# Constante de diretório base para facilitar portabilidade
+BASE_DIR="/students/luiz.abatitucci/llms/experimentos/pubmed-experimento"
+SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
 
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat02
@@ -62,8 +66,8 @@ PROTOCOLS=("d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8")
 
 for PROTOCOL in "${PROTOCOLS[@]}"; do
     CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
-    ARQUIVO_SAIDA="saidas/saida_pubmed_1_5b(${PROTOCOL})_teste.parquet"
-    
+    ARQUIVO_SAIDA="$BASE_DIR/saidas/saida_pubmed_1_5b(${PROTOCOL})_teste.parquet"
+                          
     if [ -f "$ARQUIVO_SAIDA" ]; then
         echo "=== Arquivo $ARQUIVO_SAIDA já existe. Pulando extração do protocolo $PROTOCOL. ==="
         continue
@@ -79,7 +83,7 @@ for PROTOCOL in "${PROTOCOLS[@]}"; do
     # Roda a extração 20 vezes (útil para repescagem de erros)
     for i in $(seq 1 20); do
         echo "--- Rodada $i/20 para o protocolo $PROTOCOL --- $(date)"
-        python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/pubmed-experimento/$CONFIG_FILE
+        python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
     done
 
     echo "=== Protocolo $PROTOCOL finalizado: $(date) ==="
