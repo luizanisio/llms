@@ -70,7 +70,7 @@ python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_hibridos_
 echo "4/5 - Executando 06_compara_cl_puro.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_cl_puro.yaml"
 
-echo "5/5 - Executando 06_compara_full.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_full.yaml"
+echo "5/5 - Executando 06_compara_todos.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_todos.yaml"
 
 echo "=== Job finalizado: $(date) ==="
