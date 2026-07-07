@@ -58,19 +58,16 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 
-echo "1/5 - Executando 06_compara_testes.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_testes.yaml"
-
-echo "2/5 - Executando 06_compara_efeito_cl.yaml..."
+echo "1/4 - Executando 06_compara_efeito_cl.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_efeito_cl.yaml"
 
-echo "3/5 - Executando 06_compara_hibridos_ff_lora.yaml..."
+echo "2/4 - Executando 06_compara_hibridos_ff_lora.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_hibridos_ff_lora.yaml"
 
-echo "4/5 - Executando 06_compara_cl_puro.yaml..."
+echo "3/4 - Executando 06_compara_cl_puro.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_cl_puro.yaml"
 
-echo "5/5 - Executando 06_compara_todos.yaml..."
+echo "4/4 - Executando 06_compara_todos.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_todos.yaml"
 
 echo "=== Job finalizado: $(date) ==="
