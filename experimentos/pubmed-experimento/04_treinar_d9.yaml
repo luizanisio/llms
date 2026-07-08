@@ -1,0 +1,114 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d9.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d9.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d9)
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (d9: LoRA-only, CL acumulado: fácil → fácil+médio → tudo, nbits=4 global)
+# Objetivo: Ablação — testar se o CL acumulado (replay) evita esquecimento catastrófico vs d7 (CL puro)
+# Comparação: d9 (acumulado) vs d7 (puro) — ambos LoRA-only
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  #| Entrada: Especifica os dados que o modelo vai receber como prompt
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL acumulado LoRA-only: fácil → fácil+médio → tudo (dados acumulados a cada etapa)
+  divisao:
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "fácil"
+    tipo: "lora"
+    pace_epochs: 4
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "médio-ac"
+    tipo: "lora"
+    pace_epochs: 4
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 4
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  saida: treinos/Qwen2.5-1.5B-Instruct(d9)
+  ollama: Qwen2.5-1.5B-Instruct(d9):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  eval_steps: 20%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 2
+  grad_batch_size: 8
+
+  num_train_epochs: 4
+  max_seq_length: 8192
+  validar_max_seq_length: true
+
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 4
+
+  train_on_responses_only: true
