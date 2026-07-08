@@ -1,5 +1,5 @@
 # Configuração para comparação de extrações dos Casos de Teste - Experimento PubMed 
-# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_testes.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_efeito_cl.yaml
 
 # --- Miscelânea ---
 misc:
@@ -7,6 +7,7 @@ misc:
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
     - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl/llms/experimentos/pubmed-experimento
 
 # Configuração Global de Saída
 saida:

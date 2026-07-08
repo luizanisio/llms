@@ -838,7 +838,7 @@ class JsonAnaliseGraficos:
                     
                     for col in colunas_score_campos:
                         # Técnicas conhecidas (ordem importa: sbert_* antes de sbert para match correto)
-                        for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein', 
+                        for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'rougel', 'levenshtein', 
                                   'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']:
                             # Verifica se coluna termina com _{tecnica}_{sufixo}
                             # Ex: _bertscore_F1 ou _levenshtein_SIM
@@ -1807,7 +1807,7 @@ class JsonAnaliseGraficos:
         # Precisamos identificar todos os modelos únicos
         modelos_unicos = []
         # Técnicas conhecidas (ordem importa: sbert_grande antes de sbert para match correto)
-        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein', 
+        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein', 
                                'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
         metricas_validas = ['F1', 'P', 'R', 'LS', 'SIM']
         

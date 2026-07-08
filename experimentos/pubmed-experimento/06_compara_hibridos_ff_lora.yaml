@@ -1,5 +1,5 @@
 # Configuração para comparação de extrações dos Casos de Teste - Experimento PubMed 
-# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_testes.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_hibridos_ff_lora.yaml
 
 # --- Miscelânea ---
 misc:
