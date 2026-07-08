@@ -2,11 +2,17 @@
 # Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d7.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d7)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D7)
 # ==========================================================================
+# Papel:   Ablação (CL sem escalonamento)
+# Modo:    CL por etapas, LoRA-only (sem escalonamento de capacidade)
+# Etapas:  LoRA-fácil → LoRA-médio → LoRA-difícil → LoRA-completo
+# Objetivo: Isolar o efeito do curriculum learning sem escalonamento de
+#           capacidade. Todas as etapas usam LoRA, removendo a variável
+#           FF→LoRA / LoRA→FF para medir o CL puro.
+# Pergunta: Q2 (CL melhora o FT? — ablação para isolar CL do escalonamento)
+# Comparar: d7 vs b (CL puro ajuda?), d7 vs d1/d2 (escalonamento adiciona?)
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d7: LoRA-only, CL puro: facil, medio, dificil — sem etapa completo, nbits=4 global)
-# Objetivo: Ablação — testar se o CL progressivo sozinho (sem consolidação) gera ganho
 # ==========================================================================
 
 #| =========================================================================
@@ -27,6 +33,8 @@ misc:
 #| =========================================================================
 #| CURRICULUM
 #| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
 curriculum:
   #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
   saida:
@@ -51,23 +59,27 @@ curriculum:
     exigir_ids_pareados: false
 
   #| Divisao: Define as etapas do treinamento (o currículo em si)
-  #| CL puro LoRA-only: fácil → médio → difícil (sem etapa "completo")
+  #| CL por etapas LoRA-only: fácil → médio → difícil → completo
   divisao:
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 2
 
 #| =========================================================================
 #| MODELO

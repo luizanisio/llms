@@ -1,5 +1,13 @@
-# Configuração para comparação de extrações dos Casos de Teste - Experimento PubMed 
-# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_efeito_cl.yaml
+# ==========================================================================
+# Comparação: Experimento Principal (Q1 + Q2 + Q3)
+# ==========================================================================
+# Propósito: Responder as 3 perguntas de pesquisa com os protocolos centrais.
+#   Q1 — Efeito do ajuste fino: A vs {b, c, d1, d2}
+#   Q2 — Efeito do CL: {b, c} vs {d1, d2, d3, d4}
+#   Q3 — Direção do escalonamento: d1 vs d2, d3 vs d4
+# Modelos: A (baseline), b (LoRA), c (FF), d1-d4 (experimentais)
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_experimentais.yaml
+# ==========================================================================
 
 # --- Miscelânea ---
 misc:
@@ -11,9 +19,9 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "compara/analises_comparacao_pubmed_efeito_cl"
+  pasta: "compara/analises_comparacao_pubmed_experimentais"
   pasta_parquet: "compara/"
-  arquivo_base: "comparacao_pubmed(efeito_cl)"
+  arquivo_base: "comparacao_pubmed(experimentais)"
   regerar_planilha_base: true
   linguagem_graficos: "en"
 
@@ -33,27 +41,42 @@ modelo_base:
   familia: "PubMed-Gold"
 
 # Modelos Comparados
-# Protocolos c, d1 e d5 precisam ser treinados e extraídos novamente
 modelos_comparacao:
+  # --- Baseline A: zero-shot ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     familia: "Qwen-1.5B"
+  # --- Baseline B: LoRA direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
+  # --- Baseline C: FF direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
+  # --- Experimental D1: CL por etapas, FF→LoRA ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
+    rotulo: "Qwen1.5B(d1)"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
+  # --- Experimental D2: CL por etapas, LoRA→FF ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
+    rotulo: "Qwen1.5B(d2)"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d2)"
+  # --- Experimental D3: CL acumulado, FF→LoRA ---
   - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
     rotulo: "Qwen1.5B(d3)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d3)"
+  # --- Experimental D4: CL acumulado, LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
     rotulo: "Qwen1.5B(d4)"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
+
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   padronizar_simbolos: true
@@ -65,20 +88,19 @@ configuracao_comparacao:
     dataset_filtro: {"split": "test"}
 
   # Configuração do campo ID
-  nome_campo_id: "id"  # Nome interno do campo de ID (usado em DataFrames, gráficos, etc)
-  rotulo_campo_id: "ID"  # Rótulo de exibição do campo ID (usado em relatórios)
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
   
-  # Configuração dos campos do parquet (quando a entrada for .parquet)
+  # Configuração dos campos do parquet
   campos_parquet:
-    id: "chave"             # coluna com o ID do documento
-    resposta: "resposta"    # coluna com o JSON da extração (será salvo como {id}.json)
-    resumo_tokens: "resumo" # coluna com o JSON de tokens (será salvo como {id}.tokens.json)
-    avaliacao: ""           # coluna com avaliação LLM (se disponível, salvo como {id}.avaliacao.json)
-    erro: "erro"            # coluna com mensagem de erro (se disponível)
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
 
   # Modelos customizados (Opcional)
   modelos:
-    # Tamanhos de mini-batch para otimização de memória no pré-cálculo (Padrão: 256)
     bertscore_batch_size: 1024
     sbert_batch_size: 1024
 

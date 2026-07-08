@@ -1,5 +1,6 @@
 # ==========================================================================
 # Configuração para extração com vLLM do modelo treinado (Test Cases)
+# Protocolo D4: CL acumulado + Escalonamento LoRA→FF
 # Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_d4_teste.yaml
 # ==========================================================================
 
@@ -18,11 +19,10 @@ misc:
     - /opt/app-root/src/luiz/llms/_models
 
 # --- Modelo ---
-# caminho: caminho para modelo HuggingFace (local ou hub)
-# lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
+# Protocolo D4 termina com FF → modelo merged
 modelo:
-  caminho: "Qwen2.5-1.5B-Instruct"
-  lora: "Qwen2.5-1.5B-Instruct(d4)"
+  caminho: "Qwen2.5-1.5B-Instruct(d4)"
+  lora: ""
 
 # --- Configuração do vLLM ---
 vllm:

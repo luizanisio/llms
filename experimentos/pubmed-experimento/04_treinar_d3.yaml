@@ -1,14 +1,18 @@
 # Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d3.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d3.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d3)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D3)
 # ==========================================================================
+# Papel:   Experimental (variante acumulada de D1)
+# Modo:    CL acumulado + Escalonamento FF→LoRA
+# Etapas:  FF-fácil → LoRA-(fácil+médio) → LoRA-tudo
+# Objetivo: CL com acúmulo de dados entre etapas e escalonamento crescente.
+#           Cada etapa inclui os dados das anteriores (replay), eliminando
+#           a necessidade de consolidação separada. Direção FF→LoRA.
+# Pergunta: Q2 (CL melhora o FT?) + Q3 (direção do escalonamento)
+# Comparar: d3 vs d4 (Q3), d3 vs d1 (etapas vs acumulado), d3 vs d8 (escalonamento)
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d3: LoRA-only, CL ascendente: facil, medio, dificil, completo, nbits=4 global)
-# Objetivo: Ablação — isolar o efeito do curriculum learning sem FF
-# ==========================================================================
-# Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (etapa única, treino direto)
 # ==========================================================================
 
 #| =========================================================================
@@ -24,6 +28,7 @@ misc:
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
+
 
 #| =========================================================================
 #| CURRICULUM
@@ -59,37 +64,30 @@ curriculum:
 
   validacao:
     exigir_json_valido: true
-    #| exigir_ids_pareados: Validação estrita de pares. Se `true`, o treinamento será interrompido com erro se houver IDs na entrada sem correspondente na saída (gold dataset) ou se existirem dados pareados ausentes no arquivo de divisão (CSV). Se `false`, o sistema ignora as sobras e treina apenas com os itens em comum (interseção), útil quando a entrada possui itens extras que ainda não têm gabarito na saída.
     exigir_ids_pareados: false
 
   #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL acumulado FF→LoRA: FF-fácil → LoRA-(fácil+médio) → LoRA-tudo
   divisao:
-    #| Divisão principal, pois é um treinamento direto de etapa única
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "facil"}
-    alias: "fácil"
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "fácil-FF"
+    tipo: "full"
+    learning_rate: 5e-06
+    bits: 16
+    pace_epochs: 2
+    batch_size: 1
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "médio-ac"
     tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
+    learning_rate: 2e-05
     pace_epochs: 2
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "medio"}
-    alias: "médio"
-    tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "dificil"}
-    alias: "difícil"
-    tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-      #dataset_filtro: {"dificuldade": "medio"}
     alias: "completo"
     tipo: "lora"
-      #| Número de vezes que o modelo verá o dataset (epochs)
+    learning_rate: 2e-05
     pace_epochs: 2
-
 
 #| =========================================================================
 #| MODELO
@@ -98,7 +96,7 @@ curriculum:
 modelo:
   #| Caminho do modelo pré-treinado usado como fundação
   base_model_name: Qwen2.5-1.5B-Instruct
-  #| Diretório final onde os pesos atualizados (modelo com full finetuning) serão salvos
+  #| Diretório final onde os pesos atualizados serão salvos
   saida: treinos/Qwen2.5-1.5B-Instruct(d3)
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
   ollama: Qwen2.5-1.5B-Instruct(d3):latest
@@ -110,7 +108,7 @@ modelo:
 #| =========================================================================
 #| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: True   # Atenção O(n) em VRAM em vez de O(n²)
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
   liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
   full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
 

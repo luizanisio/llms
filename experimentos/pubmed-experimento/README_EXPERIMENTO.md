@@ -222,16 +222,130 @@ $P_{30}$ (Difícil, 30%) / $P_{30}$–$P_{70}$ (Médio, 40%) / $P_{70}$ (Fácil,
 
 ### Protocolos e modelo-alvo
 
-Para a validação de portabilidade, rodar apenas os protocolos:
+O modelo-alvo é o **Qwen 2.5 1.5B Instruct**, escolhido porque o domínio biomédico
+em inglês é genuinamente difícil para modelos pequenos sem fine-tuning — garantindo
+espaço real de ganho para o CL demonstrar efeito.
 
-- **Protocolo A** — Qwen 2.5 1.5B Instruct, zero-shot (baseline sem treino)
-- **Protocolo B** — Qwen 2.5 1.5B Instruct, QLoRA direto (sem currículo)
-- **Protocolo D-best** — Qwen 2.5 1.5B Instruct, CL+PT na direção eleita como
-  melhor na instanciação principal
+O experimento conta com **11 protocolos** organizados em 4 camadas:
 
-O modelo 1.5B foi escolhido porque o domínio biomédico em inglês é genuinamente
-difícil para modelos pequenos sem fine-tuning — garantindo espaço real de ganho
-para o CL demonstrar efeito.
+#### Perguntas de pesquisa
+
+| Pergunta | Descrição |
+|---|---|
+| **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? |
+| **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto? |
+| **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos? |
+
+#### Camada 1 — Baselines (sem CL, sem escalonamento)
+
+| Proto | Modo | Etapas | Arquivo treino |
+|---|---|---|---|
+| **A** | Zero-shot (sem treino) | — | — |
+| **b** | LoRA direto (dataset completo) | LoRA-completo | `04_treinar_b.yaml` |
+| **c** | FF direto (dataset completo) | FF-completo | `04_treinar_c.yaml` |
+
+#### Camada 2 — Experimentais (CL + escalonamento de capacidade)
+
+| Proto | Pace | Direção | Etapas | Arquivo treino |
+|---|---|---|---|---|
+| **D1** | etapas | FF→LoRA | FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | `04_treinar_d1.yaml` |
+| **D2** | etapas | LoRA→FF | LoRA-fácil → LoRA-médio → LoRA-difícil → FF-completo | `04_treinar_d2.yaml` |
+| **D3** | acumulado | FF→LoRA | FF-fácil → LoRA-(fácil+médio) → LoRA-tudo | `04_treinar_d3.yaml` |
+| **D4** | acumulado | LoRA→FF | LoRA-fácil → LoRA-(fácil+médio) → FF-tudo | `04_treinar_d4.yaml` |
+
+#### Camada 3 — Ablação: escalonamento sem CL
+
+| Proto | Modo | Etapas | Arquivo treino |
+|---|---|---|---|
+| **D5** | FF→LoRA, sem progressão | FF-completo → LoRA-completo | `04_treinar_d5.yaml` |
+| **D6** | LoRA→FF, sem progressão | LoRA-completo → FF-completo | `04_treinar_d6.yaml` |
+
+#### Camada 4 — Ablação: CL sem escalonamento (LoRA-only)
+
+| Proto | Pace | Etapas | Arquivo treino |
+|---|---|---|---|
+| **D7** | etapas | LoRA-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | `04_treinar_d7.yaml` |
+| **D8** | acumulado | LoRA-fácil → LoRA-(fácil+médio) → LoRA-tudo | `04_treinar_d8.yaml` |
+
+#### Design fatorial
+
+O design forma um fatorial quase completo em 3 dimensões:
+
+|  | Sem escal. | FF→LoRA | LoRA→FF |
+|---|---|---|---|
+| **Sem CL** | b, c | D5 | D6 |
+| **CL por etapas** | D7 | D1 | D2 |
+| **CL acumulado** | D8 | D3 | D4 |
+
+#### Matriz de comparações por pergunta
+
+**Q1 — Efeito do ajuste fino:**
+
+| Comparação | Interpretação |
+|---|---|
+| A vs b | Efeito do LoRA direto |
+| A vs c | Efeito do FF direto |
+| A vs D1/D2 | Efeito do melhor protocolo CL |
+
+**Q2 — Efeito do CL (decomposição):**
+
+| Comparação | O que isola | Interpretação |
+|---|---|---|
+| b vs D7 | CL por etapas (LoRA) | CL puro melhora sobre FT direto? |
+| b vs D8 | CL acumulado (LoRA) | CL acumulado melhora sobre FT direto? |
+| b vs D1 | CL + escalonamento | Pacote completo vs FT direto |
+| D7 vs D1 | Escalonamento sobre CL | O escalonamento adiciona valor ao CL? |
+| D7 vs D8 | Pace por etapas vs acumulado | Qual pace funciona melhor? |
+
+**Q3 — Direção do escalonamento:**
+
+| Comparação | Contexto |
+|---|---|
+| D1 vs D2 | Com CL por etapas |
+| D3 vs D4 | Com CL acumulado |
+| D5 vs D6 | Sem CL (controle) |
+
+#### Arquivos de comparação
+
+| Arquivo | Modelos incluídos | Propósito |
+|---|---|---|
+| `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4 | Q1 + Q2 + Q3 (experimento principal) |
+| `06_compara_ablacoes.yaml` | A, b, c, D5, D6, D7, D8 | Decomposição CL vs escalonamento |
+| `06_compara_todos.yaml` | A, b, c, D1–D8 | Panorama completo |
+
+#### Controle de volume de treinamento entre estratégias de pacing
+
+Todos os protocolos utilizam `pace_epochs=2` por estágio, resultando em volume total
+de treinamento equivalente entre as duas estratégias de pacing:
+
+| Protocolo | Estágios | Cálculo (% dataset × epochs) | Total |
+|---|---|---|---|
+| **b** (baseline) | 1 | 100% × 4ep | **4.0** dataset-eq |
+| **D1** (etapas) | 4 | 30%×2 + 40%×2 + 30%×2 + 100%×2 | **4.0** dataset-eq |
+| **D3** (acumulado) | 3 | 30%×2 + 70%×2 + 100%×2 | **4.0** dataset-eq |
+
+Embora o volume total de tokens seja idêntico (4.0 dataset-equivalentes), a
+**exposição por item** difere entre as estratégias:
+
+| Dificuldade | Baseline b | Etapas (D1) | Acumulado (D3) |
+|---|---|---|---|
+| Fácil (30%) | 4 épocas | 4 épocas (2+2) | 6 épocas (2+2+2) |
+| Médio (40%) | 4 épocas | 4 épocas (2+2) | 4 épocas (2+2) |
+| Difícil (30%) | 4 épocas | 4 épocas (2+2) | 2 épocas (2) |
+
+Na estratégia por etapas, a fase de consolidação (estágio "completo") garante que
+todos os itens recebam exposição uniforme. Na estratégia acumulada, a exposição é
+naturalmente decrescente com a dificuldade: itens fáceis são revisitados em todos
+os estágios (replay), enquanto itens difíceis aparecem apenas no estágio final.
+
+Esta distribuição diferenciada é uma propriedade intrínseca do pacing acumulado,
+análoga ao *spaced repetition* — onde itens já dominados recebem mais reforço ao
+longo do treinamento. Equalizar artificialmente a exposição por item entre as
+estratégias exigiria alterar os epochs por estágio, o que confundiria o efeito
+do tipo de pacing com o efeito de mais treinamento. A decisão de manter
+`pace_epochs=2` uniforme preserva a comparabilidade em volume total de tokens
+e permite que qualquer diferença de desempenho entre D1 e D3 (ou D7 e D8) seja
+atribuída exclusivamente à estratégia de pacing.
 
 ### Métricas de avaliação
 
@@ -243,8 +357,9 @@ de âncora humana). Métricas automáticas aplicadas campo a campo:
 - **Exact Match** — `data_publicacao`, `journal`
 - **F1 de lista** — `palavras_chave` (comparação de conjuntos)
 
-Análise estatística: Wilcoxon signed-rank bilateral A vs. B, A vs. D-best,
-B vs. D-best. Tamanho de efeito $r = |z| / \sqrt{n}$.
+Análise estatística: Wilcoxon signed-rank bilateral para todos os pares de
+protocolos relevantes (A vs B, A vs D-best, B vs D1, D1 vs D2, etc.).
+Tamanho de efeito $r = |z| / \sqrt{n}$.
 
 ### Alguns datasets considerados para um experimento com o framework
 

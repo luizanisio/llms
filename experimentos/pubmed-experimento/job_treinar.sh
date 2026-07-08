@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=pubmed-treinar-d90
+#SBATCH --job-name=pubmed-treinar
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -19,7 +19,7 @@
 #SBATCH --mem=64G
 
 # Tempo máximo de execução (HH:MM:SS)
-#SBATCH --time=48:00:00
+#SBATCH --time=120:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
 #SBATCH --output=jobs_logs/%x_%j.out
@@ -57,8 +57,16 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 CONFIGS=(
-  "04_treinar_d9.yaml"
-  "04_treinar_d10.yaml"
+  "04_treinar_b.yaml"
+  "04_treinar_c.yaml"
+  "04_treinar_d1.yaml"
+  "04_treinar_d2.yaml"
+  "04_treinar_d3.yaml"
+  "04_treinar_d4.yaml"
+  "04_treinar_d5.yaml"
+  "04_treinar_d6.yaml"
+  "04_treinar_d7.yaml"
+  "04_treinar_d8.yaml"
 )
 
 OUT_BASE="$BASE_DIR/treinos"

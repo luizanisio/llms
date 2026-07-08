@@ -1,14 +1,18 @@
 # Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d2.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d2.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d2)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D2)
 # ==========================================================================
+# Papel:   Experimental
+# Modo:    CL por etapas + Escalonamento LoRA→FF
+# Etapas:  LoRA-fácil → LoRA-médio → LoRA-difícil → FF-completo
+# Objetivo: CL ascendente com escalonamento de capacidade decrescente (LoRA→FF).
+#           O modelo inicia com LoRA nos dados fáceis e consolida com full
+#           fine-tuning na etapa final com o dataset completo.
+# Pergunta: Q2 (CL melhora o FT?) + Q3 (direção do escalonamento)
+# Comparar: d2 vs d1 (Q3), d2 vs b (Q2), d2 vs d7 (contribuição do escalonamento)
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d2: facil, medio, dificil, completo-ff, nbits=4 global)
-# Objetivo: CL ascendente com etapa FF no final.
-# ==========================================================================
-# Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (etapa única, treino direto)
 # ==========================================================================
 
 #| =========================================================================

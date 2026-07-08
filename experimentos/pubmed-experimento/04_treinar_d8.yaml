@@ -2,11 +2,18 @@
 # Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d8.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Curriculum d8)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D8)
 # ==========================================================================
+# Papel:   Ablação (CL sem escalonamento)
+# Modo:    CL acumulado, LoRA-only (sem escalonamento de capacidade)
+# Etapas:  LoRA-fácil → LoRA-(fácil+médio) → LoRA-tudo
+# Objetivo: Isolar o efeito do curriculum learning acumulado sem escalonamento
+#           de capacidade. Cada etapa inclui os dados das anteriores (replay).
+#           Todas as etapas usam LoRA puro.
+# Pergunta: Q2 (CL melhora o FT? — ablação para isolar CL do escalonamento)
+# Comparar: d8 vs b (CL acumulado ajuda?), d8 vs d7 (etapas vs acumulado)
+#           d8 vs d3/d4 (escalonamento adiciona ao CL acumulado?)
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d8: FF-only, CL puro: facil, medio, dificil — sem etapa completo)
-# Objetivo: Baseline FF puro com currículo progressivo, similar ao d7 para comparação com protocolo c (FF completo).
 # ==========================================================================
 
 #| =========================================================================
@@ -51,29 +58,22 @@ curriculum:
     exigir_ids_pareados: false
 
   #| Divisao: Define as etapas do treinamento (o currículo em si)
-  #| CL puro FF-only: fácil → médio → difícil (sem etapa "completo")
+  #| CL acumulado LoRA-only: fácil → fácil+médio → tudo (dados acumulados)
   divisao:
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "facil"}
-    alias: "fácil-FF"
-    tipo: "full"
-    learning_rate: 5e-06
-    bits: 16
-    pace_epochs: 4
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "fácil"
+    tipo: "lora"
+    pace_epochs: 2
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "medio"}
-    alias: "médio-FF"
-    tipo: "full"
-    learning_rate: 5e-06
-    bits: 16
-    pace_epochs: 4
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "médio-ac"
+    tipo: "lora"
+    pace_epochs: 2
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "dificil"}
-    alias: "difícil-FF"
-    tipo: "full"
-    learning_rate: 5e-06
-    bits: 16
-    pace_epochs: 4
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 2
 
 #| =========================================================================
 #| MODELO

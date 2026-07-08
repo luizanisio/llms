@@ -1,5 +1,6 @@
 # ==========================================================================
 # Configuração para extração com vLLM do modelo treinado (Test Cases)
+# Protocolo D7: CL por etapas, LoRA-only (ablação CL sem escalonamento)
 # Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_d7_teste.yaml
 # ==========================================================================
 
@@ -18,8 +19,7 @@ misc:
     - /opt/app-root/src/luiz/llms/_models
 
 # --- Modelo ---
-# caminho: caminho para modelo HuggingFace (local ou hub)
-# lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
+# Protocolo D7 é LoRA-only → base + adaptador LoRA
 modelo:
   caminho: "Qwen2.5-1.5B-Instruct"
   lora: "Qwen2.5-1.5B-Instruct(d7)"
