@@ -2,20 +2,19 @@
 # Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d1.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Curriculum d1)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D1)
 # ==========================================================================
+# Papel:   Experimental (CL + escalonamento de capacidade)
+# Modo:    CL por etapas, FF→LoRA
+# Etapas:  FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo
+# Pergunta: Q2 (efeito do CL) + Q3 (direção do escalonamento)
+# Comparar: d1 vs b (Q2), d1 vs d2 (Q3), d1 vs d7 (escalonamento sobre CL)
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d1: facil-ff, medio, dificil, completo, nbits=4 global)
-# Objetivo: CL ascendente com etapa FF no início.
-# ==========================================================================
-# Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d1: facil-ff, medio, dificil, completo)
 # ==========================================================================
 
 #| =========================================================================
 #| MISCELÂNEA
 #| =========================================================================
-#| Configurações diversas (logs, variáveis de ambiente).
 misc:
   pastas_base: 
     - /students/luiz.abatitucci/llms/experimentos/summa-experimento
@@ -26,12 +25,10 @@ misc:
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
 
-
 #| =========================================================================
 #| CURRICULUM
 #| =========================================================================
 curriculum:
-  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
   saida:
     dataframe: saida/saida_or_235b.parquet
     dataframe_col: resposta
@@ -39,7 +36,6 @@ curriculum:
     formato: json
     texto_criptografado: false
 
-  #| Entrada: Especifica os dados que o modelo vai receber como prompt
   entrada:
     dataframe: dados/integras_experimento_summa_novos.parquet
     dataset_filtro: {"fold": "<=10"}
@@ -54,19 +50,21 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
 
-  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL por etapas FF→LoRA: FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo
   divisao:
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-FF"
     tipo: "full"
     learning_rate: 5e-06
+    bits: 16
     pace_epochs: 2
-    bits: 16 # sempre considera 16 no FF
+    batch_size: 1
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
+    learning_rate: 2e-05
     pace_epochs: 2
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "dificil"}
@@ -101,7 +99,7 @@ treinamento:
   batch_size:
     efetivo: 16
     batch_size: 1
-  grad_batch_size: 16
+  grad_batch_size: 8
 
   num_train_epochs: 4
   max_seq_length: 32768
@@ -121,3 +119,24 @@ treinamento:
   nbits: 4
 
   train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

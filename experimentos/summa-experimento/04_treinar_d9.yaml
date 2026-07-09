@@ -1,21 +1,17 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d2.yaml
-# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d2.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d9.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d9.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Curriculum d2 16-bits)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D9)
 # ==========================================================================
+# Papel:   Ablação (efeito da ordem do currículo)
+# Modo:    Anti-CL por etapas, LoRA-only
+# Etapas:  LoRA-completo → LoRA-difícil → LoRA-médio → LoRA-fácil
+# Pergunta: Q4 (a direção do currículo importa?)
+# Comparar: d9 vs d7 (Q4 por etapas), d9 vs b (anti-CL vs baseline)
 # Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d2 16-bits: facil, medio, dificil, completo-ff, nbits=16 global)
-# Objetivo: CL ascendente com etapa FF no final.
-# ==========================================================================
-# Ambiente: H100 80GB (1 GPU via Slurm)
-# Modo: curriculum (d2: facil, medio, dificil, completo-ff)
 # ==========================================================================
 
-#| =========================================================================
-#| MISCELÂNEA
-#| =========================================================================
-#| Configurações diversas (logs, variáveis de ambiente).
 misc:
   pastas_base: 
     - /students/luiz.abatitucci/llms/experimentos/summa-experimento
@@ -26,12 +22,7 @@ misc:
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
 
-
-#| =========================================================================
-#| CURRICULUM
-#| =========================================================================
 curriculum:
-  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
   saida:
     dataframe: saida/saida_or_235b.parquet
     dataframe_col: resposta
@@ -39,7 +30,6 @@ curriculum:
     formato: json
     texto_criptografado: false
 
-  #| Entrada: Especifica os dados que o modelo vai receber como prompt
   entrada:
     dataframe: dados/integras_experimento_summa_novos.parquet
     dataset_filtro: {"fold": "<=10"}
@@ -54,69 +44,76 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
 
-  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| Anti-CL por etapas LoRA-only: completo → difícil → médio → fácil
   divisao:
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade": "facil"}
-    alias: "fácil"
+    alias: "completo"
     tipo: "lora"
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade": "medio"}
-    alias: "médio"
-    tipo: "lora"
-    pace_epochs: 2
+    pace_epochs: 4
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
-    pace_epochs: 2
+    pace_epochs: 4
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    alias: "completo-FF"
-    tipo: "full"
-    learning_rate: 5e-06
-    pace_epochs: 2
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio"
+    tipo: "lora"
+    pace_epochs: 4
+  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil"
+    tipo: "lora"
+    pace_epochs: 4
 
-#| =========================================================================
-#| MODELO
-#| =========================================================================
 modelo:
   base_model_name: Qwen2.5-7B-Instruct
-  saida: treinos/Qwen2.5-7B-Instruct(d2)
-  ollama: Qwen2.5-7B-Instruct(d2):latest
+  saida: treinos/Qwen2.5-7B-Instruct(d9)
+  ollama: Qwen2.5-7B-Instruct(d9):latest
   ollama_base: qwen2.5:7b
   ollama_url:
 
-#| =========================================================================
-#| TREINAMENTO
-#| =========================================================================
 treinamento:
   flash_attention_2: true
   full_com_sdpa: true
   liger_kernel: true
-
   eval_steps: 20%
-
   batch_size:
     efetivo: 16
     batch_size: 1
-  grad_batch_size: 16
-
+  grad_batch_size: 8
   num_train_epochs: 4
   max_seq_length: 32768
   validar_max_seq_length: true
   filtrar_max_seq_length: true
-
   learning_rate: 2e-05
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
-
   lr_scheduler_type: cosine
   seed: 3407
-
-  nbits: 16
-
+  nbits: 4
   train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

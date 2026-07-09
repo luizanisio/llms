@@ -1,0 +1,218 @@
+# ==========================================================================
+# Comparação: Panorama Completo (todos os protocolos)
+# ==========================================================================
+# Propósito: Visão global de todos os protocolos em um único relatório.
+#   Inclui baselines (A, b, c), experimentais (d1-d4), ablações (d5-d8) e anti-CL (d9-d10).
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+    - /mnt/d/wsl/llms/experimentos/summa-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_summa_todos"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_summa(todos)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 40
+  teste_rapido: false
+  gerar_graficos: true 
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saida/saida_or_235b.parquet"
+  rotulo: "Qwen235b"
+  familia: "Qwen-235B"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- Baseline A: zero-shot ---
+  - arquivo: "saida/saida_qwen7b.parquet"
+    rotulo: "Qwen7B"
+    familia: "Qwen-7B"
+  # --- Baseline B: LoRA direto ---
+  - arquivo: "saida/saida_qwen7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- Baseline C: FF direto ---
+  - arquivo: "saida/saida_qwen7b(c)_teste.parquet"
+    rotulo: "Qwen7B(c)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
+  # --- Experimental D1: CL etapas FF→LoRA ---
+  - arquivo: "saida/saida_qwen7b(d1)_teste.parquet"
+    rotulo: "Qwen7B(d1)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d1)"
+  # --- Experimental D2: CL etapas LoRA→FF ---
+  - arquivo: "saida/saida_qwen7b(d2)_teste.parquet"
+    rotulo: "Qwen7B(d2)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d2)"
+  # --- Experimental D3: CL acum FF→LoRA ---
+  - arquivo: "saida/saida_qwen7b(d3)_teste.parquet"
+    rotulo: "Qwen7B(d3)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d3)"
+  # --- Experimental D4: CL acum LoRA→FF ---
+  - arquivo: "saida/saida_qwen7b(d4)_teste.parquet"
+    rotulo: "Qwen7B(d4)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d4)"
+  # --- Ablação D5: Escal FF→LoRA, sem CL ---
+  - arquivo: "saida/saida_qwen7b(d5)_teste.parquet"
+    rotulo: "Qwen7B(d5)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
+  # --- Ablação D6: Escal LoRA→FF, sem CL ---
+  - arquivo: "saida/saida_qwen7b(d6)_teste.parquet"
+    rotulo: "Qwen7B(d6)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
+  # --- Ablação D7: CL etapas, LoRA-only ---
+  - arquivo: "saida/saida_qwen7b(d7)_teste.parquet"
+    rotulo: "Qwen7B(d7)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d7)"
+  # --- Ablação D8: CL acum, LoRA-only ---
+  - arquivo: "saida/saida_qwen7b(d8)_teste.parquet"
+    rotulo: "Qwen7B(d8)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d8)"
+  # --- Ablação D9: Anti-CL etapas, LoRA-only ---
+  - arquivo: "saida/saida_qwen7b(d9)_teste.parquet"
+    rotulo: "Qwen7B(d9)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d9)"
+  # --- Ablação D10: Anti-CL acum, LoRA-only ---
+  - arquivo: "saida/saida_qwen7b(d10)_teste.parquet"
+    rotulo: "Qwen7B(d10)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d10)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+  
+  filtro:
+    arquivo: "compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv"
+    campo_id: "id"
+    dataset_filtro: {"alvo": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+  
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  modelos:
+    sbert:
+      medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+    bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json" 
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  campos:
+    bertscore:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    rouge_1:
+
+    rouge_2:
+      - "Partes"
+      - "Partes.Tipo"
+      - "Partes.Nome"
+
+    rouge_l:
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    levenshtein:
+      - "Tipo"
+      - "DataJulgamento"
+
+    sbert_medio:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    sbert_grande:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+campos_virtuais:
+  Likert:
+    - Materia
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Doutrina
+    - Temas.Conceitos
+    - Resumo
+  MetaDados:
+    - Partes.Tipo
+    - Partes.Nome
+    - Temas.Normas
+    - Temas.Jurisprudencia

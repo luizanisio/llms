@@ -226,7 +226,7 @@ O modelo-alvo é o **Qwen 2.5 1.5B Instruct**, escolhido porque o domínio biom�
 em inglês é genuinamente difícil para modelos pequenos sem fine-tuning — garantindo
 espaço real de ganho para o CL demonstrar efeito.
 
-O experimento conta com **11 protocolos** organizados em 4 camadas:
+O experimento conta com **13 protocolos** organizados em 5 camadas:
 
 #### Perguntas de pesquisa
 
@@ -235,6 +235,7 @@ O experimento conta com **11 protocolos** organizados em 4 camadas:
 | **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? |
 | **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto? |
 | **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos? |
+| **Q4** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? |
 
 #### Camada 1 — Baselines (sem CL, sem escalonamento)
 
@@ -267,6 +268,13 @@ O experimento conta com **11 protocolos** organizados em 4 camadas:
 | **D7** | etapas | LoRA-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | `04_treinar_d7.yaml` |
 | **D8** | acumulado | LoRA-fácil → LoRA-(fácil+médio) → LoRA-tudo | `04_treinar_d8.yaml` |
 
+#### Camada 5 — Ablação: anti-currículo (direção inversa, LoRA-only)
+
+| Proto | Pace | Etapas | Arquivo treino |
+|---|---|---|---|
+| **D9** | etapas | LoRA-completo → LoRA-difícil → LoRA-médio → LoRA-fácil | `04_treinar_d9.yaml` |
+| **D10** | acumulado | LoRA-(>7) → LoRA-(>3) → LoRA-tudo | `04_treinar_d10.yaml` |
+
 #### Design fatorial
 
 O design forma um fatorial quase completo em 3 dimensões:
@@ -276,6 +284,8 @@ O design forma um fatorial quase completo em 3 dimensões:
 | **Sem CL** | b, c | D5 | D6 |
 | **CL por etapas** | D7 | D1 | D2 |
 | **CL acumulado** | D8 | D3 | D4 |
+| **Anti-CL etapas** | D9 | — | — |
+| **Anti-CL acumulado** | D10 | — | — |
 
 #### Matriz de comparações por pergunta
 
@@ -305,13 +315,24 @@ O design forma um fatorial quase completo em 3 dimensões:
 | D3 vs D4 | Com CL acumulado |
 | D5 vs D6 | Sem CL (controle) |
 
+**Q4 — Direção do currículo (anti-CL):**
+
+| Comparação | O que isola | Interpretação |
+|---|---|---|
+| D7 vs D9 | Ordem no pacing por etapas | Fácil→difícil vs difícil→fácil |
+| D8 vs D10 | Ordem no pacing acumulado | Fácil→difícil vs difícil→fácil |
+| D9 vs b | Anti-CL vs baseline | Anti-CL pelo menos melhora sobre FT direto? |
+| D10 vs b | Anti-CL acum vs baseline | Anti-CL acum melhora sobre FT direto? |
+
 #### Arquivos de comparação
 
 | Arquivo | Modelos incluídos | Propósito |
 |---|---|---|
 | `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4 | Q1 + Q2 + Q3 (experimento principal) |
 | `06_compara_ablacoes.yaml` | A, b, c, D5, D6, D7, D8 | Decomposição CL vs escalonamento |
-| `06_compara_todos.yaml` | A, b, c, D1–D8 | Panorama completo |
+| `06_compara_ordem_cl.yaml` | A, b, D7, D8, D9, D10 | Q4 (efeito da direção do currículo) |
+| `06_compara_ordem_pt.yaml` | A, b, c, D5, D6 | Q3 (efeito da direção do escalonamento) |
+| `06_compara_todos.yaml` | A, b, c, D1–D10 | Panorama completo |
 
 #### Controle de volume de treinamento entre estratégias de pacing
 

@@ -1,0 +1,184 @@
+# ==========================================================================
+# Comparação: Efeito do Progressive Training / Escalonamento (Q3)
+# ==========================================================================
+# Propósito: Isolar o efeito do escalonamento de capacidade (PT) sem CL.
+#   Comparações-chave:
+#     c vs d5 → FF→LoRA melhora sobre FF direto?
+#     c vs d6 → LoRA→FF melhora sobre FF direto?
+#     b vs d5 → FF→LoRA melhora sobre LoRA direto?
+#     b vs d6 → LoRA→FF melhora sobre LoRA direto?
+#     d5 vs d6 → Qual direção de escalonamento é melhor?
+# Modelos: A (zero-shot), b (LoRA), c (FF), d5 (FF→LoRA), d6 (LoRA→FF)
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ordem_pt.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+    - /mnt/d/wsl/llms/experimentos/summa-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_summa_ordem_pt"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_summa(ordem_pt)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 40
+  teste_rapido: false
+  gerar_graficos: true 
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saida/saida_or_235b.parquet"
+  rotulo: "Qwen235b"
+  familia: "Qwen-235B"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- Baseline A: zero-shot ---
+  - arquivo: "saida/saida_qwen7b.parquet"
+    rotulo: "Qwen7B"
+    familia: "Qwen-7B"
+  # --- Baseline B: LoRA direto ---
+  - arquivo: "saida/saida_qwen7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- Baseline C: FF direto ---
+  - arquivo: "saida/saida_qwen7b(c)_teste.parquet"
+    rotulo: "Qwen7B(c)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
+  # --- D5: Escalonamento FF→LoRA, sem CL ---
+  - arquivo: "saida/saida_qwen7b(d5)_teste.parquet"
+    rotulo: "Qwen7B(d5)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
+  # --- D6: Escalonamento LoRA→FF, sem CL ---
+  - arquivo: "saida/saida_qwen7b(d6)_teste.parquet"
+    rotulo: "Qwen7B(d6)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+  
+  filtro:
+    arquivo: "compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv"
+    campo_id: "id"
+    dataset_filtro: {"alvo": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+  
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  modelos:
+    sbert:
+      medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+    bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json" 
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  campos:
+    bertscore:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    rouge_1:
+
+    rouge_2:
+      - "Partes"
+      - "Partes.Tipo"
+      - "Partes.Nome"
+
+    rouge_l:
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    levenshtein:
+      - "Tipo"
+      - "DataJulgamento"
+
+    sbert_medio:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    sbert_grande:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"      
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"      
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+campos_virtuais:
+  Likert:
+    - Materia
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Doutrina
+    - Temas.Conceitos
+    - Resumo
+  MetaDados:
+    - Partes.Tipo
+    - Partes.Nome
+    - Temas.Normas
+    - Temas.Jurisprudencia

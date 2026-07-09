@@ -1,0 +1,60 @@
+# ==========================================================================
+# Configuração para extração com vLLM do modelo treinado (Test Cases)
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_d1_teste.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento/treinos
+    - /opt/app-root/src/luiz/llms/_models
+
+# --- Modelo ---
+# Protocolo D1: CL etapas FF→LoRA — usa modelo merged
+modelo:
+  caminho: "Qwen2.5-7B-Instruct(d1)"
+  lora: ""
+
+# --- Configuração do vLLM ---
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 38912
+  tensor_parallel_size: 1
+  dtype: "auto"
+  quantization: bitsandbytes
+  load_format: bitsandbytes
+
+# --- Parâmetros de Geração ---
+geracao:
+  max_tokens: 8192
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+
+# --- Entrada ---
+entrada:
+  arquivo: "dados/integras_experimento_summa_novos.parquet"
+  campo_chave: "seq_documento_acordao"
+  campo_texto: "integra"
+  prompt_template: "dados/prompt_summa_raw.txt"
+  variavel_texto: "<<--TEXTO-->>"
+  system_prompt: ""
+  filtro:
+    dataset_filtro: {"fold": "<=10"}
+    filtro_externo:
+      arquivo: "compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv"
+      campo_id: "id"
+      dataset_filtro: {"alvo": "teste"}
+
+# --- Saída ---
+saida:
+  arquivo: "saida/saida_qwen7b(d1)_teste.parquet"
+  tipo_saida: "json"

@@ -81,6 +81,105 @@ A realização da comparação gera um arquivo de divisão de treino, teste e va
 Outro resultado da comparação é o nível de dificuldade de cada instância de acordo com a performance do modelo base e da quantidade de chaves do item.
 Esse arquivo pode ser usado diretamente para o arquivo yaml de treinamento para configuração dos níveis de dificuldade e alvo (treino, teste e avaliação)
 
+---
+
+# Passo 04 - Treinamento
+
+O modelo-alvo é o **Qwen 2.5 7B Instruct**, que permite validar o framework CL+PT em um modelo de maior capacidade que o experimento PubMed (1.5B), testando escalabilidade.
+
+O experimento conta com **13 protocolos** organizados em 5 camadas:
+
+## Perguntas de pesquisa
+
+| Pergunta | Descrição |
+|---|---|
+| **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? |
+| **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto? |
+| **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos? |
+| **Q4** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? |
+
+## Camada 1 — Baselines (sem CL, sem escalonamento)
+
+| Proto | Modo | Etapas | Arquivo treino |
+|---|---|---|---|
+| **A** | Zero-shot (sem treino) | — | — |
+| **b** | LoRA direto (dataset completo) | LoRA-completo | `04_treinar_b.yaml` |
+| **c** | FF direto (dataset completo) | FF-completo | `04_treinar_c.yaml` |
+
+## Camada 2 — Experimentais (CL + escalonamento de capacidade)
+
+| Proto | Pace | Direção | Etapas | Arquivo treino |
+|---|---|---|---|---|
+| **D1** | etapas | FF→LoRA | FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | `04_treinar_d1.yaml` |
+| **D2** | etapas | LoRA→FF | LoRA-fácil → LoRA-médio → LoRA-difícil → FF-completo | `04_treinar_d2.yaml` |
+| **D3** | acumulado | FF→LoRA | FF-(≤3) → LoRA-(≤7) → LoRA-tudo | `04_treinar_d3.yaml` |
+| **D4** | acumulado | LoRA→FF | LoRA-(≤3) → LoRA-(≤7) → FF-tudo | `04_treinar_d4.yaml` |
+
+## Camada 3 — Ablação: escalonamento sem CL
+
+| Proto | Modo | Etapas | Arquivo treino |
+|---|---|---|---|
+| **D5** | FF→LoRA, sem progressão | FF-completo → LoRA-completo | `04_treinar_d5.yaml` |
+| **D6** | LoRA→FF, sem progressão | LoRA-completo → FF-completo | `04_treinar_d6.yaml` |
+
+## Camada 4 — Ablação: CL sem escalonamento (LoRA-only)
+
+| Proto | Pace | Etapas | Arquivo treino |
+|---|---|---|---|
+| **D7** | etapas | LoRA-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | `04_treinar_d7.yaml` |
+| **D8** | acumulado | LoRA-(≤3) → LoRA-(≤7) → LoRA-tudo | `04_treinar_d8.yaml` |
+
+## Camada 5 — Ablação: anti-currículo (direção inversa, LoRA-only)
+
+| Proto | Pace | Etapas | Arquivo treino |
+|---|---|---|---|
+| **D9** | etapas | LoRA-completo → LoRA-difícil → LoRA-médio → LoRA-fácil | `04_treinar_d9.yaml` |
+| **D10** | acumulado | LoRA-(>7) → LoRA-(>3) → LoRA-tudo | `04_treinar_d10.yaml` |
+
+## Design fatorial
+
+|  | Sem escal. | FF→LoRA | LoRA→FF |
+|---|---|---|---|
+| **Sem CL** | b, c | D5 | D6 |
+| **CL por etapas** | D7 | D1 | D2 |
+| **CL acumulado** | D8 | D3 | D4 |
+| **Anti-CL etapas** | D9 | — | — |
+| **Anti-CL acumulado** | D10 | — | — |
+
+## Arquivos de comparação
+
+| Arquivo | Modelos incluídos | Propósito |
+|---|---|---|
+| `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4 | Q1 + Q2 + Q3 (experimento principal) |
+| `06_compara_ablacoes.yaml` | A, b, c, D5, D6, D7, D8 | Decomposição CL vs escalonamento |
+| `06_compara_ordem_cl.yaml` | A, b, D7, D8, D9, D10 | Q4 (efeito da direção do currículo) |
+| `06_compara_ordem_pt.yaml` | A, b, c, D5, D6 | Q3 (efeito da direção do escalonamento) |
+| `06_compara_todos.yaml` | A, b, c, D1–D10 | Panorama completo |
+
+---
+
+# Passo 05 - Extração com Modelos Treinados
+
+Após a conclusão do treinamento, os modelos ajustados estão salvos em `treinos/`. Para extrair as informações do conjunto de teste com esses pesos treinados, usamos as configurações `05_extracao_*_teste.yaml`.
+
+```bash
+# Exemplo para protocolo D1:
+python ../../src/util_vllm_batch.py --config 05_extracao_d1_teste.yaml
+```
+
+---
+
+# Passo 06 - Comparação dos Resultados
+
+Comparamos as extrações geradas contra o gabarito do professor (Qwen3-235B). O processo lê os parquets de saída, aplica métricas automáticas (BERTScore, ROUGE-L, Levenshtein, SBERT) e compila as tabelas de resultados.
+
+```bash
+# Exemplo:
+python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
+```
+
+---
+
 # Observações Importantes (Dicas de Treinamento)
 
 - **Comparação de Extrações**: Para gerar divisões completas e consistentes, configure `ignorar_erro_extracao: false`. Se estiver como `true`, arquivos com erro de extração pelo modelo base serão ignorados. Ao manter `false`, eles são contabilizados e classificados (geralmente como "difíceis"), o que é o comportamento desejado para garantir que o modelo aprenda com seus erros de formato.
