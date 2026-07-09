@@ -22,9 +22,10 @@
                        padding-bottom:4px; }
     .extr-body       { display:flex; gap:20px; align-items:flex-start; }
     .extr-conteudo   { flex:1; min-width:0; }
-    .extr-avaliacao  { flex:0 0 300px; display:flex; flex-direction:column; gap:10px; }
+    .extr-avaliacao  { flex:0 0 320px; display:flex; flex-direction:column; gap:10px; }
     .extr-nota   { background:#f8f8ff; border-radius:4px; padding:8px 10px; }
     .extr-prob   { background:#fffaf0; border-radius:4px; padding:8px 10px; }
+    .extr-justif { background:#f0f8ff; border-radius:4px; padding:8px 10px; }
     .label-sm    { font-size:0.8em; font-weight:bold; color:#555;
                    text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
 
@@ -33,13 +34,35 @@
                  padding:8px 14px; margin-top:14px; font-family:Arial,sans-serif;
                  font-size:0.85em; color:#2e7d32; font-weight:bold; }
 
-    /* ── Instrução metodológica ── */
-    .instrucao { background:#fffbe6; border:1px solid #f0c040; border-left:4px solid #e6a800;
-                 border-radius:5px; padding:12px 16px; margin-top:16px;
-                 font-family:Arial,sans-serif; }
-    .instrucao-titulo { font-weight:bold; color:#7a5a00; font-size:0.9em;
-                        text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
-    .instrucao-texto  { font-size:0.88em; color:#4a3800; line-height:1.55; }
+    /* ═══════════════════════════════════════════════════════════
+       Instrução colapsável — compacta por padrão, expande ao hover.
+       ═══════════════════════════════════════════════════════════ */
+    .instrucao {
+      background:#fffbe6; border:1px solid #f0c040; border-left:4px solid #e6a800;
+      border-radius:5px; padding:0; margin-top:16px;
+      font-family:Arial,sans-serif;
+      max-height:44px; overflow:hidden;
+      transition: max-height 0.35s ease-in-out, padding 0.2s ease;
+      position:relative; cursor:pointer;
+    }
+    .instrucao::after {
+      content:''; position:absolute; bottom:0; left:0; right:0; height:18px;
+      background:linear-gradient(transparent, #fffbe6); pointer-events:none;
+    }
+    .instrucao:hover {
+      max-height:3000px; padding-bottom:12px; overflow-y:auto;
+    }
+    .instrucao:hover::after { display:none; }
+
+    .instrucao-titulo {
+      font-weight:bold; color:#7a5a00; font-size:0.9em;
+      text-transform:uppercase; letter-spacing:.5px;
+      padding:12px 16px 6px 16px;
+    }
+    .instrucao-texto  {
+      font-size:0.84em; color:#4a3800; line-height:1.55;
+      padding:0 16px 4px 16px;
+    }
 
     /* ═══════════════════════════════════════════════════════════
        CSS PURO para controlar checkboxes de conclusão.
@@ -91,16 +114,26 @@
   </View>
 
   <!-- ══════════════════════════════════════════
-       INSTRUÇÃO METODOLÓGICA
+       INSTRUÇÃO METODOLÓGICA (colapsável)
        ══════════════════════════════════════════ -->
   <View className="instrucao">
     <View className="instrucao-titulo">
-      <Text name="instr_titulo" value="Como avaliar"/>
+      <Text name="instr_titulo" value="▸ Orientações de avaliação  —  passe o mouse para expandir"/>
     </View>
     <View className="instrucao-texto">
-      <Text name="instr_criterio" value="Você verá três extrações em sequência. Avalie cada uma de forma independente, confrontando-a com o acórdão acima. O critério é sempre fidelidade ao texto-fonte."/>
-      <Text name="instr_escala"   value="Use a escala 1 a 4. Ao finalizar a avaliação, marque 'Extração concluída' para avançar. Atenção: o botão de conclusão só aparece após selecionar uma nota, e será travado permanentemente após marcado. As três podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
-      <Text name="instr_problemas" value="Se identificar problemas (alucinação, omissão, erro factual), marque as opções correspondentes. Campos de problema são obrigatórios para notas 1 e 2; opcionais para notas 3 e 4."/>
+
+      <Text name="instr_criterio" value="CRITÉRIO ÚNICO — FIDELIDADE AO TEXTO-FONTE: você verá três extrações em sequência. Avalie cada uma de forma independente, confrontando cada campo exclusivamente com o texto integral do acórdão acima. Considere apenas as opiniões, posicionamentos e decisões do relator (voto); afirmações de terceiros ou de citações não devem ter sido extraídas como se fossem do relator. Não use conhecimento jurídico externo para 'completar' a extração: se a informação não está no acórdão, ela não deveria estar na extração."/>
+
+      <Text name="instr_campos" value="CAMPOS AVALIADOS: • Matéria: uma frase com a questão de fundo discutida no processo, nas palavras do relator. • Ponto (título de cada tema): o tema jurídico tratado pelo relator, nomeado com as palavras do próprio relator; questões de ordem pública tratadas no voto (competência absoluta, legitimidade das partes, condições da ação, prescrição/decadência, honorários, nulidades absolutas, coisa julgada etc.) devem sempre aparecer como temas. • Argumentos (por tema): transcrições das frases do relator que fundamentam sua posição no tema — interpretação/negativa de vigência de leis, princípios, precedentes, Súmulas e Temas do STF/STJ; não incluem afirmações de terceiros nem trechos de citações. • Doutrina (por tema): obras e autores citados pelo relator como base doutrinária do tema (normalmente entre aspas ou em citações). • Conceitos (por tema): definições apresentadas pelo relator relevantes para a análise do tema (ex.: definição de um princípio ou instituto jurídico). • Resumo: texto fluido que agrega todos os temas, relatando as decisões, as normas efetivamente aplicadas, os argumentos do relator e as referências de páginas (fls.); no Resumo, nomes de partes NÃO devem aparecer — o correto é o papel processual ('apelante', 'recorrido' etc.); não penalize o uso do papel no lugar do nome, penalize o inverso."/>
+
+      <Text name="instr_escala" value="ESCALA (1 a 4): • 4 - Excelente: campos precisos, completos e fiéis ao acórdão; sem alucinação e sem omissão relevante; viabiliza plenamente a recuperação semântica. • 3 - Adequado: correto e útil; apenas pequenas imprecisões (redação, granularidade, página aproximada) que não distorcem o conteúdo. • 2 - Ruim: erros relevantes, omissões importantes (ex.: tema tratado pelo relator ausente; argumento central faltando) ou trechos alucinados; utilidade comprometida. • 1 - Inaceitável: factualmente errado, extensivamente alucinado ou lacunoso; inviabiliza a recuperação. Avalie o conjunto dos campos: um único erro grave (ex.: tema inventado, matéria que não corresponde à questão de fundo, resumo que contradiz o decidido) já limita a nota a 2 ou 1. 'Não consta' é CORRETO quando a informação de fato não existe no acórdão (ex.: voto sem doutrina) — não penalize."/>
+
+      <Text name="instr_problemas" value="PROBLEMAS (marque todos os aplicáveis; obrigatório para notas 1 e 2, opcional para 3 e 4): • alucinacao: informação inventada, ausente no acórdão. • omissao: campo vazio ou incompleto quando a informação existe no acórdão. • erro_factual: conteúdo divergente do acórdão — dado, valor ou entendimento distorcidos. • atribuicao_errada: conteúdo real mas vinculado ao tema errado ou atribuído ao relator quando é de terceiro/citação. • nao_consta_indev: 'Não consta' ou campo vazio onde a informação claramente existe."/>
+
+      <Text name="instr_justif" value="JUSTIFICATIVA (opcional): campo de texto livre para registrar observações que fundamentem sua nota. Útil especialmente para notas 1 e 2 — indique onde está o problema no acórdão."/>
+
+      <Text name="instr_fluxo" value="FLUXO: ao finalizar cada avaliação, marque 'Extração concluída' para avançar. O botão só aparece após selecionar a nota e trava permanentemente. As três extrações podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
+
     </View>
   </View>
 
@@ -136,6 +169,12 @@
               <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
               <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
             </Choices>
+          </View>
+          <View className="extr-justif">
+            <View className="label-sm"><Text name="l_just1" value="Justificativa (opcional)"/></View>
+            <TextArea name="justificativa_col1" toName="bloco1"
+                      placeholder="Opcionalmente, descreva brevemente o que motivou sua nota..."
+                      rows="3" maxSubmissions="1"/>
           </View>
         </View>
       </View>
@@ -188,6 +227,12 @@
                 <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
               </Choices>
             </View>
+            <View className="extr-justif">
+              <View className="label-sm"><Text name="l_just2" value="Justificativa (opcional)"/></View>
+              <TextArea name="justificativa_col2" toName="bloco2"
+                        placeholder="Opcionalmente, descreva brevemente o que motivou sua nota..."
+                        rows="3" maxSubmissions="1"/>
+            </View>
           </View>
         </View>
       </View>
@@ -238,6 +283,12 @@
                 <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
                 <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
               </Choices>
+            </View>
+            <View className="extr-justif">
+              <View className="label-sm"><Text name="l_just3" value="Justificativa (opcional)"/></View>
+              <TextArea name="justificativa_col3" toName="bloco3"
+                        placeholder="Opcionalmente, descreva brevemente o que motivou sua nota..."
+                        rows="3" maxSubmissions="1"/>
             </View>
           </View>
         </View>

@@ -21,6 +21,12 @@ CAMPOS AVALIADOS:
 - Conceitos (por tema): definições apresentadas pelo relator relevantes para a análise do tema (ex.: definição de um princípio ou instituto jurídico).
 - Resumo: texto fluido que agrega todos os temas, relatando as decisões, as normas efetivamente aplicadas, os argumentos do relator e as referências de páginas (fls.); no Resumo, nomes de partes NÃO devem aparecer — o correto é o papel processual ('apelante', 'recorrido' etc.); não penalize o uso do papel no lugar do nome, penalize o inverso.
 
+CONVENÇÕES DA EXTRAÇÃO (não penalize): a extração foi gerada sob instruções que você deve conhecer para não descontar pontos indevidamente.
+- Estilo: o texto segue redação jurídica formal e detalhista; avalie o conteúdo, não o estilo.
+- Siglas de normas: ao mencionar uma norma, a extração acrescenta a sigla após o nome (ex.: 'Código de Defesa do Consumidor (CDC)'), ainda que a sigla apareça em outro trecho do acórdão — não é alucinação.
+- Colegialidade: a extração deliberadamente NÃO registra que o relator mudou de entendimento em razão do princípio da colegialidade — não marque omissão por isso.
+- Páginas: as referências de páginas (fls.) seguem a paginação estrutural interna do documento, que pode divergir da numeração impressa no texto do acórdão — divergências de paginação não são erro factual.
+
 ESCALA (1 a 4):
 - 4 - Excelente: campos precisos, completos e fiéis ao acórdão; sem alucinação e sem omissão relevante; viabiliza plenamente a recuperação semântica.
 - 3 - Adequado: correto e útil; apenas pequenas imprecisões (redação, granularidade, página aproximada) que não distorcem o conteúdo.
