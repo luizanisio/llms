@@ -126,6 +126,8 @@
 
       <Text name="instr_campos" value="CAMPOS AVALIADOS: • Matéria: uma frase com a questão de fundo discutida no processo, nas palavras do relator. • Ponto (título de cada tema): o tema jurídico tratado pelo relator, nomeado com as palavras do próprio relator; questões de ordem pública tratadas no voto (competência absoluta, legitimidade das partes, condições da ação, prescrição/decadência, honorários, nulidades absolutas, coisa julgada etc.) devem sempre aparecer como temas. • Argumentos (por tema): transcrições das frases do relator que fundamentam sua posição no tema — interpretação/negativa de vigência de leis, princípios, precedentes, Súmulas e Temas do STF/STJ; não incluem afirmações de terceiros nem trechos de citações. • Doutrina (por tema): obras e autores citados pelo relator como base doutrinária do tema (normalmente entre aspas ou em citações). • Conceitos (por tema): definições apresentadas pelo relator relevantes para a análise do tema (ex.: definição de um princípio ou instituto jurídico). • Resumo: texto fluido que agrega todos os temas, relatando as decisões, as normas efetivamente aplicadas, os argumentos do relator e as referências de páginas (fls.); no Resumo, nomes de partes NÃO devem aparecer — o correto é o papel processual ('apelante', 'recorrido' etc.); não penalize o uso do papel no lugar do nome, penalize o inverso."/>
 
+      <Text name="instr_convencoes" value="CONVENÇÕES DA EXTRAÇÃO (não penalize): a extração foi gerada sob instruções que você deve conhecer para não descontar pontos indevidamente. • Estilo: o texto segue redação jurídica formal e detalhista; avalie o conteúdo, não o estilo. • Siglas de normas: ao mencionar uma norma, a extração acrescenta a sigla após o nome (ex.: 'Código de Defesa do Consumidor (CDC)'), ainda que a sigla apareça em outro trecho do acórdão — não é alucinação. • Colegialidade: a extração deliberadamente NÃO registra que o relator mudou de entendimento em razão do princípio da colegialidade — não marque omissão por isso. • Páginas: as referências de páginas (fls.) seguem a paginação estrutural interna do documento, que pode divergir da numeração impressa no texto do acórdão — divergências de paginação não são erro factual."/>
+
       <Text name="instr_escala" value="ESCALA (1 a 4): • 4 - Excelente: campos precisos, completos e fiéis ao acórdão; sem alucinação e sem omissão relevante; viabiliza plenamente a recuperação semântica. • 3 - Adequado: correto e útil; apenas pequenas imprecisões (redação, granularidade, página aproximada) que não distorcem o conteúdo. • 2 - Ruim: erros relevantes, omissões importantes (ex.: tema tratado pelo relator ausente; argumento central faltando) ou trechos alucinados; utilidade comprometida. • 1 - Inaceitável: factualmente errado, extensivamente alucinado ou lacunoso; inviabiliza a recuperação. Avalie o conjunto dos campos: um único erro grave (ex.: tema inventado, matéria que não corresponde à questão de fundo, resumo que contradiz o decidido) já limita a nota a 2 ou 1. 'Não consta' é CORRETO quando a informação de fato não existe no acórdão (ex.: voto sem doutrina) — não penalize."/>
 
       <Text name="instr_problemas" value="PROBLEMAS (marque todos os aplicáveis; obrigatório para notas 1 e 2, opcional para 3 e 4): • alucinacao: informação inventada, ausente no acórdão. • omissao: campo vazio ou incompleto quando a informação existe no acórdão. • erro_factual: conteúdo divergente do acórdão — dado, valor ou entendimento distorcidos. • atribuicao_errada: conteúdo real mas vinculado ao tema errado ou atribuído ao relator quando é de terceiro/citação. • nao_consta_indev: 'Não consta' ou campo vazio onde a informação claramente existe."/>
@@ -173,7 +175,7 @@
           <View className="extr-justif">
             <View className="label-sm"><Text name="l_just1" value="Justificativa (opcional)"/></View>
             <TextArea name="justificativa_col1" toName="bloco1"
-                      placeholder="Opcionalmente, descreva brevemente o que motivou sua nota..."
+                      placeholder="Descreva brevemente o que motivou sua nota..."
                       rows="3" maxSubmissions="1"/>
           </View>
         </View>
@@ -230,7 +232,7 @@
             <View className="extr-justif">
               <View className="label-sm"><Text name="l_just2" value="Justificativa (opcional)"/></View>
               <TextArea name="justificativa_col2" toName="bloco2"
-                        placeholder="Opcionalmente, descreva brevemente o que motivou sua nota..."
+                        placeholder="Descreva brevemente o que motivou sua nota..."
                         rows="3" maxSubmissions="1"/>
             </View>
           </View>
@@ -287,7 +289,7 @@
             <View className="extr-justif">
               <View className="label-sm"><Text name="l_just3" value="Justificativa (opcional)"/></View>
               <TextArea name="justificativa_col3" toName="bloco3"
-                        placeholder="Opcionalmente, descreva brevemente o que motivou sua nota..."
+                        placeholder="Descreva brevemente o que motivou sua nota..."
                         rows="3" maxSubmissions="1"/>
             </View>
           </View>
