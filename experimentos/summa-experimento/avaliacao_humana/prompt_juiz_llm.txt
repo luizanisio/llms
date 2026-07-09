@@ -1,0 +1,50 @@
+Atue como um avaliador (juiz) da qualidade de uma extração de metadados jurídicos gerada por um modelo de linguagem a partir do voto do relator de um acórdão do STJ. Sua tarefa é IDÊNTICA à dos avaliadores humanos: confrontar a extração apresentada com o texto-fonte e atribuir uma nota na escala 1 a 4, marcando os problemas identificados.
+
+<TextoFonte>
+<<--TEXTO_ACORDAO-->>
+</TextoFonte>
+
+<Extracao>
+A extração é apresentada como texto plano, com títulos e subtítulos identificando os campos, no mesmo formato exibido aos avaliadores humanos:
+
+<<--TEXTO_EXTRACAO-->>
+</Extracao>
+
+<Orientacoes>
+CRITÉRIO ÚNICO — FIDELIDADE AO TEXTO-FONTE: avalie a extração confrontando cada campo exclusivamente com o texto integral do acórdão em <TextoFonte>. Considere apenas as opiniões, posicionamentos e decisões do relator (voto); afirmações de terceiros ou de citações não devem ter sido extraídas como se fossem do relator. Não use conhecimento jurídico externo para 'completar' a extração: se a informação não está no acórdão, ela não deveria estar na extração.
+
+CAMPOS AVALIADOS:
+- Matéria: uma frase com a questão de fundo discutida no processo, nas palavras do relator.
+- Ponto (título de cada tema): o tema jurídico tratado pelo relator, nomeado com as palavras do próprio relator; questões de ordem pública tratadas no voto (competência absoluta, legitimidade das partes, condições da ação, prescrição/decadência, honorários, nulidades absolutas, coisa julgada etc.) devem sempre aparecer como temas.
+- Argumentos (por tema): transcrições das frases do relator que fundamentam sua posição no tema — interpretação/negativa de vigência de leis, princípios, precedentes, Súmulas e Temas do STF/STJ; não incluem afirmações de terceiros nem trechos de citações.
+- Doutrina (por tema): obras e autores citados pelo relator como base doutrinária do tema (normalmente entre aspas ou em citações).
+- Conceitos (por tema): definições apresentadas pelo relator relevantes para a análise do tema (ex.: definição de um princípio ou instituto jurídico).
+- Resumo: texto fluido que agrega todos os temas, relatando as decisões, as normas efetivamente aplicadas, os argumentos do relator e as referências de páginas (fls.); no Resumo, nomes de partes NÃO devem aparecer — o correto é o papel processual ('apelante', 'recorrido' etc.); não penalize o uso do papel no lugar do nome, penalize o inverso.
+
+ESCALA (1 a 4):
+- 4 - Excelente: campos precisos, completos e fiéis ao acórdão; sem alucinação e sem omissão relevante; viabiliza plenamente a recuperação semântica.
+- 3 - Adequado: correto e útil; apenas pequenas imprecisões (redação, granularidade, página aproximada) que não distorcem o conteúdo.
+- 2 - Ruim: erros relevantes, omissões importantes (ex.: tema tratado pelo relator ausente; argumento central faltando) ou trechos alucinados; utilidade comprometida.
+- 1 - Inaceitável: factualmente errado, extensivamente alucinado ou lacunoso; inviabiliza a recuperação.
+Avalie o conjunto dos campos: um único erro grave (ex.: tema inventado, matéria que não corresponde à questão de fundo, resumo que contradiz o decidido) já limita a nota a 2 ou 1. 'Não consta' é CORRETO quando a informação de fato não existe no acórdão (ex.: voto sem doutrina) — não penalize.
+
+PROBLEMAS (marque todos os aplicáveis; obrigatório indicar ao menos um para notas 1 e 2, opcional para 3 e 4):
+- alucinacao: informação inventada, ausente no acórdão (tema, argumento, doutrina, conceito ou fato que não existe no texto).
+- omissao: campo vazio ou incompleto quando a informação existe no acórdão (ex.: tema tratado e não listado; argumento ou doutrina presente no voto e ausente da extração).
+- erro_factual: conteúdo divergente do acórdão — dado, valor, entendimento ou definição distorcidos em relação ao que o relator afirmou.
+- atribuicao_errada: conteúdo real do acórdão, mas vinculado ao tema errado (ex.: argumento de um tema listado em outro) ou atribuído ao relator quando é de terceiro/citação.
+- nao_consta_indev: 'Não consta' (ou campo vazio) onde a informação claramente existe no acórdão.
+</Orientacoes>
+
+<Procedimento>
+1. Leia integralmente <TextoFonte>.
+2. Verifique campo a campo a <Extracao> conforme <Orientacoes>, na ordem em que os títulos aparecem: Matéria, depois cada tema (Ponto, Argumentos, Doutrina, Conceitos) e, por fim, o Resumo. Ignore campos eventualmente exibidos que não constem de <Orientacoes>.
+3. Identifique os problemas aplicáveis (lista de PROBLEMAS).
+4. Atribua UMA nota inteira de 1 a 4 para a extração como um todo, seguindo estritamente a ESCALA.
+5. Revise: se atribuiu nota 1 ou 2, a lista de problemas não pode estar vazia; se atribuiu 3 ou 4, confirme que não há erro grave não considerado.
+</Procedimento>
+
+<FormatoResposta>
+Apresente como resposta APENAS uma string JSON, NÃO IDENTADA, sem qualquer texto adicional, com a estrutura:
+{"nota": inteiro de 1 a 4, "problemas": lista com zero ou mais valores dentre ["alucinacao","omissao","erro_factual","atribuicao_errada","nao_consta_indev"]}
+</FormatoResposta>
