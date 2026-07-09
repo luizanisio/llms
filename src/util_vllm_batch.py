@@ -150,6 +150,11 @@ geracao:
 # filtro: configuração opcional para processar apenas um subconjunto de IDs
 #   arquivo: caminho para arquivo CSV com os IDs a serem processados
 #   campo_id: nome da coluna com os IDs no arquivo CSV
+#   dataset_filtro: filtro aplicado ao parquet de entrada (ex: {"split": "test"})
+#   filtro_externo: filtro via arquivo externo (CSV/parquet) com dataset_filtro próprio
+#     arquivo: caminho para o arquivo externo (CSV ou parquet)
+#     campo_id: coluna com os IDs no arquivo externo
+#     dataset_filtro: filtro aplicado ao arquivo externo antes de extrair IDs
 entrada:
   arquivo: "./entrada.parquet"
   campo_chave: "id"
@@ -296,6 +301,13 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
         arquivo_filtro = filtro.get("arquivo", "")
         if arquivo_filtro:
             filtro["arquivo"] = _resolver_caminho(arquivo_filtro, base_dir, pasta_base_ativa)
+        # Resolve caminho do filtro_externo
+        filtro_externo = filtro.get("filtro_externo", {})
+        if filtro_externo and isinstance(filtro_externo, dict):
+            arquivo_ext = filtro_externo.get("arquivo", "")
+            if arquivo_ext:
+                filtro_externo["arquivo"] = _resolver_caminho(arquivo_ext, base_dir, pasta_base_ativa)
+            filtro["filtro_externo"] = filtro_externo
         entrada["filtro"] = filtro
 
     config["entrada"] = entrada
@@ -475,6 +487,40 @@ def carregar_entrada(config: Dict[str, Any]) -> List[Dict[str, str]]:
                     print(f"⚠️  Aviso: Erro ao ler arquivo de filtro '{arquivo_filtro}': {e}")
             else:
                 print(f"⚠️  Aviso: Arquivo de filtro não encontrado: {arquivo_filtro}")
+
+        # Lê filtro_externo: carrega CSV/parquet externo, aplica dataset_filtro e extrai IDs
+        filtro_externo = filtro_config.get("filtro_externo", {})
+        if filtro_externo and isinstance(filtro_externo, dict):
+            arq_ext = filtro_externo.get("arquivo", "")
+            campo_id_ext = filtro_externo.get("campo_id", "")
+            ds_filtro_ext = filtro_externo.get("dataset_filtro", {})
+            if arq_ext and campo_id_ext:
+                if os.path.exists(arq_ext):
+                    try:
+                        if arq_ext.lower().endswith(".parquet"):
+                            df_ext = pd.read_parquet(arq_ext)
+                        else:
+                            df_ext = pd.read_csv(arq_ext)
+                        # Aplica dataset_filtro sobre o arquivo externo
+                        if ds_filtro_ext and isinstance(ds_filtro_ext, dict):
+                            from util_pandas import aplicar_filtro_dataset
+                            df_ext = aplicar_filtro_dataset(df_ext, ds_filtro_ext)
+                        if campo_id_ext in df_ext.columns:
+                            ids_ext = set(df_ext[campo_id_ext].astype(str).str.strip())
+                            print(f"🔍 Filtro externo: {len(ids_ext)} IDs de '{os.path.basename(arq_ext)}' "
+                                  f"(campo '{campo_id_ext}', filtro={ds_filtro_ext})")
+                            # Interseciona com ids_filtro existente ou define como novo filtro
+                            if ids_filtro is not None:
+                                ids_filtro = ids_filtro & ids_ext
+                                print(f"   → Interseção com filtro anterior: {len(ids_filtro)} IDs")
+                            else:
+                                ids_filtro = ids_ext
+                        else:
+                            print(f"⚠️  Aviso: Coluna '{campo_id_ext}' não encontrada no filtro externo '{arq_ext}'.")
+                    except Exception as e:
+                        print(f"⚠️  Aviso: Erro ao processar filtro externo '{arq_ext}': {e}")
+                else:
+                    print(f"⚠️  Aviso: Arquivo de filtro externo não encontrado: {arq_ext}")
 
     if arquivo.lower().endswith((".parquet", ".csv")):
         return _carregar_entrada_parquet(arquivo, cfg_entrada, ids_filtro)
