@@ -13,7 +13,7 @@ python ../../src/util_ckan.py --config config_extracao.yaml
 - **Grupo 1:** Dados selecionados para o experimento com 22k documentos estratificados com distância do cosseno de no mínimo `0.15` usando o modelo Athos do STJ.
 - **Grupo 2:** Novos documentos posteriores ao treinamento de qualquer um dos modelos utilizados. Conjunto escolhido: acórdãos publicados em `25/05/2026`.
 
-> TODO: Avaliar se a extração pode considerar distância do cosseno e qtd de itens para extrair.
+> TODO: Implementar na extração a opção de considerar a distância do cosseno e qtd de itens para extrair, permitindo reprodutibilidade de diversidade diretamente no script de extração.
 
 ---
 
@@ -185,13 +185,13 @@ python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
 - **Comparação de Extrações**: Para gerar divisões completas e consistentes, configure `ignorar_erro_extracao: false`. Se estiver como `true`, arquivos com erro de extração pelo modelo base serão ignorados. Ao manter `false`, eles são contabilizados e classificados (geralmente como "difíceis"), o que é o comportamento desejado para garantir que o modelo aprenda com seus erros de formato.
 - **Full Finetuning (Ex: Protocolo C)**: 
   - **Precisão Automática:** O treinamento exige que o modelo seja carregado em pesos nativos e destravados de meia precisão (bfloat16). Para facilitar, ao definir `tipo: "full"` na divisão de currículo do YAML, o framework tem inteligência de **automaticamente forçar `nbits=16`** e recarregar o modelo da VRAM na precisão correta para você, desativando a quantização.
-  - **Learning Rate (CRÍTICO):** A taxa de aprendizado para Full FT deve ser rigorosamente menor que a de LoRA. Enquanto LoRA funciona perfeitamente com `2e-4`, um Full FT explodirá os gradientes (Loss NaN ou Inf) se usar essa taxa. **Sempre use `5e-6` ou no máximo `1e-5`** para treinamentos Full (protocolos C e D).
+  - **Learning Rate (CRÍTICO):** A taxa de aprendizado para Full FT deve ser rigorosamente menor que a de LoRA. Enquanto LoRA funciona perfeitamente com `2e-4`, um Full FT explodirá os gradientes (Loss NaN ou Inf) se usar essa taxa. **Sugestão: use `5e-6` ou no máximo `1e-5`** para treinamentos Full (protocolos C e D).
   - **Contexto (max_seq_length):** Em sequências muito longas (ex: 8192, 16384), a instabilidade numérica é amplificada. Certifique-se de que a `learning_rate` está correta na divisão do YAML, pois ela sobrescreve a global. Opcionalmente, pode configurar `max_grad_norm: 0.3` na seção `treinamento` para clipar os gradientes se a instabilidade persistir.
 - **Liger Kernel Inteligente (Múltiplas GPUs e SDPA)**:
   - O framework possui uma inteligência embarcada para garantir que o **Liger Kernel** calcule a perda corretamente e sem erros (como os problemas de `NaN` no `eval_loss` ou travamentos por *device mismatch*).
-  - **Uso sem Flash Attention 2:** Se o `flash_attention_2` não estiver disponível no servidor, a atenção padrão (SDPA) será usada. O sistema desativará automaticamente a *Fused Cross Entropy* do Liger, evitando o bug de `NaN` em 16-bits.
+  - **Uso sem Flash Attention 2:** Se o `flash_attention_2` não estiver disponível no servidor, a atenção padrão (SDPA) será usada. O sistema desativará automaticamente a *Fused Cross Entropy* do Liger, evitando o bug de `NaN` em 16-bits. É recomendado instalar o flash attention 2 para reduzir consideravelmente o uso de VRAM.
   - **Uso com Múltiplas GPUs:** Ao treinar em 2 ou mais GPUs (`device_map="auto"`), a *Fused Cross Entropy* também é desligada automaticamente para permitir que os parâmetros fluam de forma segura e paralela.
-  - Nas duas situações de adaptação, você continua se beneficiando da **economia de VRAM** nas outras operações do Liger (RMSNorm, RoPE, SwiGLU) sem precisar mexer em nada!
+  - Nas duas situações de adaptação, você continua se beneficiando da **economia de VRAM** nas outras operações do Liger (RMSNorm, RoPE, SwiGLU) sem precisar mexer em nada, mas o flash attention 2 combinado com o liger kernel vão economizar VRAM e permitir o treino FF do Qwen 7b em uma H200.
 
   ## Anotações e Decisões de Projeto
   Apesar de ser possível ultrapassar o limite de 32k no treinamento, foram apenas 22 instâncias de treino e 4 de validação removidas por excederem o tamanho em função dos tokens especiais de formatação.
@@ -200,7 +200,7 @@ python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
   > também serão avaliados como os exemplos de baixa similaridade com o GPT5 se comportam nos testes.
 
   **Decisões e Parâmetros Extraídos para a Dissertação:**
-  - **Estratégia de Amostragem:** O Grupo 1 foi estratificado utilizando distância do cosseno (mínimo de 0.15 via modelo Athos) para garantir diversidade. O Grupo 2 adotou um corte temporal posterior (acórdãos de 25/05/2026) para evitar *data leakage* durante a avaliação.
+  - **Estratégia de Amostragem:** O Grupo 1 foi estratificado utilizando distância do cosseno (mínimo de 0.15 via modelo Athos/STJ) para garantir diversidade. O Grupo 2 adotou um corte temporal posterior (acórdãos de 25/05/2026) para evitar *data leakage* durante a avaliação.
   - **Destilação Segura:** A escolha da API do OpenRouter com diretrizes de *Zero Data Retention* garantiu a não retenção de dados e a manutenção da propriedade intelectual. Aceitou-se intencionalmente um trade-off de tempo de resposta via sufixo `:poor` para viabilizar custos do projeto.
   - **Aprendizado por Erro de Formato:** Manter `ignorar_erro_extracao: false` foi uma decisão consciente para incluir falhas prévias de formatação do modelo base como casos "difíceis", forçando o aprendizado corretivo dessa estrutura no fine-tuning.
   - **Estabilidade do Full Finetuning:** Foi diagnosticado que taxas comuns de LoRA explodem o gradiente no Full FT. Firmou-se o uso de *learning rates* reduzidas (`5e-6` a `1e-5`) e o clip de gradientes (`max_grad_norm: 0.3`) como requisitos para estabilizar sequências longas.
