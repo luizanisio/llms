@@ -135,6 +135,7 @@ class ModelLoader:
         attn_implementation: str = "flash_attention_2",
         use_cache: bool = False,
         use_liger_kernel: bool = False,
+        low_cpu_mem_usage: bool = True,
     ) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
         """Carrega modelo base usando AutoModelForCausalLM ou AutoLigerKernelForCausalLM.
 
@@ -148,6 +149,10 @@ class ModelLoader:
             use_cache: Ativar cache KV (desabilitar durante treinamento)
             use_liger_kernel: Usar Liger Kernel (fused cross-entropy, RoPE, RMSNorm).
                 Reduz pico de VRAM ~40% ao evitar materializar tensor de logits completo.
+            low_cpu_mem_usage: Carrega pesos shard a shard via Accelerate, evitando
+                duplicação temporária de pesos na RAM durante from_pretrained().
+                Crítico para transições de quantização (4-bit → 16-bit) em ambientes
+                com RAM limitada (pods Kubernetes). Padrão: True.
 
         Returns:
             Tupla (model, tokenizer)
@@ -213,6 +218,7 @@ class ModelLoader:
                 trust_remote_code=trust_remote_code,
                 attn_implementation=attn_implementation,
                 use_cache=use_cache,
+                low_cpu_mem_usage=low_cpu_mem_usage,
                 **liger_kwargs
             )
         except Exception as e:
@@ -226,6 +232,7 @@ class ModelLoader:
                 trust_remote_code=trust_remote_code,
                 attn_implementation="eager",
                 use_cache=use_cache,
+                low_cpu_mem_usage=low_cpu_mem_usage,
                 **({"cross_entropy": False, "fused_linear_cross_entropy": False} if (use_liger_kernel and _LIGER_DISPONIVEL) else {})
             )
 
@@ -351,6 +358,7 @@ class ModelLoader:
         device_map: str = "auto",
         attn_implementation: str = "flash_attention_2",
         use_liger_kernel: bool = False,
+        low_cpu_mem_usage: bool = True,
     ) -> Tuple[PeftModel, PreTrainedTokenizer]:
         """Carrega modelo LoRA já treinado (base + adaptadores).
 
@@ -362,6 +370,7 @@ class ModelLoader:
             device_map: Estratégia de distribuição
             attn_implementation: Implementação de atenção ("flash_attention_2", "eager")
             use_liger_kernel: Usar Liger Kernel para otimização de memória
+            low_cpu_mem_usage: Carrega pesos shard a shard para reduzir pico de RAM
 
         Returns:
             Tupla (model, tokenizer)
@@ -376,6 +385,7 @@ class ModelLoader:
             device_map=device_map,
             attn_implementation=attn_implementation,
             use_liger_kernel=use_liger_kernel,
+            low_cpu_mem_usage=low_cpu_mem_usage,
         )
 
         # Carrega adaptadores LoRA

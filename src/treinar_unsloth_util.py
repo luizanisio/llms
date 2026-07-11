@@ -215,6 +215,13 @@ class ConfigTreinamento:
     #   Requer: pip install liger-kernel
     #   Se True e não instalado, o treinamento será interrompido com sugestão de instalação.
     liger_kernel: bool = True
+    # low_cpu_mem_usage: carrega pesos do modelo shard a shard (HuggingFace Accelerate).
+    #   Evita duplicação temporária de pesos na RAM durante from_pretrained().
+    #   Sem esta flag, o HF instancia o modelo com pesos aleatórios (~tamanho do modelo em RAM)
+    #   ANTES de carregar os pesos reais, criando um pico de ~2× o tamanho do modelo.
+    #   Crítico para transições de quantização (4-bit → 16-bit) em ambientes com RAM limitada.
+    #   Padrão: True. Desativar apenas se causar problemas de compatibilidade.
+    low_cpu_mem_usage: bool = True
     
     def __post_init__(self):
         # Validações de valores
@@ -858,6 +865,7 @@ class YamlTreinamento:
             flash_attention_2=treino_raw.get("flash_attention_2", True) in {True, "true", "True", 1, "1", "sim"},
             full_com_sdpa=treino_raw.get("full_com_sdpa", False) in {True, "true", "True", 1, "1", "sim"},
             liger_kernel=treino_raw.get("liger_kernel", True) in {True, "true", "True", 1, "1", "sim"},
+            low_cpu_mem_usage=treino_raw.get("low_cpu_mem_usage", True) in {True, "true", "True", 1, "1", "sim"},
         )
 
     def _processar_lora(self) -> ConfigLora:

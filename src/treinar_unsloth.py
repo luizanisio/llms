@@ -50,6 +50,9 @@ dataset_eval_path: ""     # opcional
 # Se ativados e não instalados, o treinamento será interrompido com sugestão de instalação.
 flash_attention_2: true
 liger_kernel: true
+# low_cpu_mem_usage: evita duplicação de pesos na RAM ao carregar modelo (padrão: true)
+# Crítico para transições LoRA→Full em pods com RAM limitada.
+low_cpu_mem_usage: true
 ```
 """
 
@@ -1444,6 +1447,7 @@ class LLMsTrainer:
                     device_map="auto",  # Agora funciona sem problemas!
                     attn_implementation=attn_impl,
                     use_liger_kernel=use_liger,
+                    low_cpu_mem_usage=self._yaml_config.treinamento.low_cpu_mem_usage,
                 )
                 lora_ok = True
             except Exception as e:
@@ -1463,6 +1467,7 @@ class LLMsTrainer:
                     device_map="auto",
                     attn_implementation=attn_impl,
                     use_liger_kernel=use_liger,
+                    low_cpu_mem_usage=self._yaml_config.treinamento.low_cpu_mem_usage,
                 )
                 full_ok = True
                 print_cores(f'<verde>✅ Modelo FULL carregado de: {lora_model_path}</verde>', color_auto=False)
@@ -1484,6 +1489,7 @@ class LLMsTrainer:
                 device_map="auto",  # Múltiplas GPUs agora suportadas!
                 attn_implementation=attn_impl,
                 use_liger_kernel=use_liger,
+                low_cpu_mem_usage=self._yaml_config.treinamento.low_cpu_mem_usage,
             )
 
             if self.force_base:
@@ -2282,6 +2288,16 @@ class LLMsTrainer:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            # Força o glibc a devolver memória livre ao SO (reduz fragmentação)
+            # Sem isso, o alocador do Python pode manter arenas de memória
+            # reservadas mesmo após gc.collect(), causando OOMKill quando
+            # _load_model() tenta alocar o modelo em 16 bits.
+            try:
+                import ctypes
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                print_cores("⚠️ Erro ao liberar memória com malloc_trim(0) para SO, mas continuando.")
+                pass  # Ignora em plataformas sem glibc (macOS, Windows)
             
             # Sobrescreve YAML temporariamente para _load_model ler
             _nbits_global_original = self._yaml_config.treinamento.nbits
