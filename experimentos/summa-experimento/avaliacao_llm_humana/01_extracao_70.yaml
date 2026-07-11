@@ -1,0 +1,58 @@
+# ==========================================================================
+# Configuração do Juiz LLM — Avaliação de Extrações SUMMA
+# Executar com: python ../../../src/util_vllm_batch.py --config 01_extracao_70.yaml
+# Visualizar com: python ../../../src/util_vllm_batch.py --config 01_extracao_70.yaml --view
+# ==========================================================================
+#
+# IMPORTANTE: Antes de executar este YAML, gere o parquet de entrada com:
+#   python gerar_entrada_juiz_llm.py
+#
+# O script gera 210 linhas (70 docs × 3 modelos), onde cada linha já contém
+# o prompt completo do juiz LLM (template + acórdão + extração formatada).
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento/avaliacao_llm_humana
+    - /mnt/d/wsl/llms/experimentos/summa-experimento/avaliacao_llm_humana
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento/avaliacao_llm_humana
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento/avaliacao_llm_humana
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+# --- Modelo ---
+modelo:
+  caminho: "oa:gpt5:h:l"
+  lora: ""
+
+# --- Parâmetros de Geração ---
+# Resposta esperada: JSON compacto {"nota": int, "problemas": [...]}
+# temperature baixa para avaliação determinística/consistente
+geracao:
+  max_tokens: 512
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+  batch_size: 20
+
+# --- Entrada ---
+# O parquet de entrada já contém o prompt completo na coluna 'texto'.
+# Não é necessário prompt_template nem system_prompt.
+entrada:
+  arquivo: "./dados/entrada_juiz_llm.parquet"
+  campo_chave: "chave"
+  campo_texto: "texto"
+  prompt_template: ""
+  variavel_texto: ""
+  system_prompt: ""
+
+# --- Saída ---
+# tipo_saida: json — parseia automaticamente a resposta como JSON
+saida:
+  arquivo: "./saida/saida_juiz_llm.parquet"
+  tipo_saida: "json"
