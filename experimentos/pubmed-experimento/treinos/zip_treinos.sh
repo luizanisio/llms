@@ -4,6 +4,16 @@
 # Exemplo zip -r "Qwen2.5-1.5B-Instruct(d8).zip" "Qwen2.5-1.5B-Instruct(d8)"
 # cria uma lista e varre a lista verificando a falta do arquivo zip para poder compactar a pasta
 
+# Rodar com screen
+# Colinha screen
+# - ctrl + A + D (detached
+# - screen -r     (reattach)
+# - screen -D -r nnnn (força reconectar)
+# - screen -x nnnn (conecta sem derrubar)
+# - screen -list  (lista as sessões)
+# - screen -S <nome>  (nomeia a sessão atual)
+# - echo $STY    (nome da sessão atual)
+
 echo "Iniciando verificação no diretório: $(pwd)"
 
 # Cria uma lista de pastas no diretório atual
