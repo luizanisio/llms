@@ -228,16 +228,25 @@ experimentos/pubmed-experimento/.cache_pubmed**
 experimentos/pubmed-experimento/README_ANOTACOES.md
 experimentos/pubmed-experimento/models**
 experimentos/pubmed-experimento/compara**
+
+# treinos
 experimentos/pubmed-experimento/treinos/*
 !experimentos/pubmed-experimento/treinos/zip_treinos.sh
+!experimentos/pubmed-experimento/treinos/zip_treinos_lite.sh
+
 experimentos/summa-experimento/treinos/*
 !experimentos/summa-experimento/treinos/zip_treinos.sh
+!experimentos/summa-experimento/treinos_local/zip_treinos_lite.sh
+
 experimentos/puil-mini-experimento/treinos_local/*
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos.sh
+!experimentos/puil-mini-experimento/treinos_local/zip_treinos_lite.sh
+
+# comparações
 experimentos/puil-mini-experimento/compara**
 experimentos/summa-experimento/avaliacao_humana/tarefas_avaliacao_label_studio_*.json
 
-
+# extrações
 experimentos/pubmed-experimento/test_extracao**
 experimentos/summa-experimento/treinos_local/**
 experimentos/pubmed-experimento/treinos_local/**
