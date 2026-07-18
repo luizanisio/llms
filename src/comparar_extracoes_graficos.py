@@ -318,19 +318,20 @@ class CompararExtracoesGraficos:
     def gerar_graficos_custo_eficiencia(config, base_dir_yaml, pasta_base_ativa, 
                                          dados_analise, pasta_saida, arquivo_excel=None, lang='pt'):
         """
-        Gera gráficos scatter de custo-eficiência: tokens/instâncias (até melhor eval loss) vs F1 Score.
+        Gera gráficos scatter de custo-eficiência: tokens/instâncias (até melhor eval loss) vs Score.
         
-        Para cada combinação campo × técnica, gera 2 gráficos:
-        - custo_tk_f1_<técnica>_<campo>.png (eixo X = tokens)
-        - custo_inst_f1_<técnica>_<campo>.png (eixo X = instâncias)
+        Para cada combinação campo × técnica × sufixo, gera 2 gráficos:
+        - custo_tk_f1_<técnica>_<campo>.png (eixo X = tokens, Y = F1)
+        - custo_tk_sim_<técnica>_<campo>.png (eixo X = tokens, Y = SIM)
+        - custo_inst_f1_<técnica>_<campo>.png (eixo X = instâncias, Y = F1)
+        - custo_inst_sim_<técnica>_<campo>.png (eixo X = instâncias, Y = SIM)
         
         Modelos com 'baseline: true' são plotados como linhas horizontais.
         O modelo com melhor (menor) eval_loss recebe marcador estrela (★).
         O modelo com pior (maior) eval_loss recebe marcador triângulo (▲).
         
-        TODO: Incluir métricas _SIM (sbert_grande, levenshtein) nos gráficos de custo.
-              Atualmente apenas métricas com sufixo _F1 são geradas. Para suportar _SIM,
-              será necessário estender a detecção de sufixos e ajustar rótulos do eixo Y.
+        Suporta métricas _F1 (BERTScore, ROUGE, SBERT) e _SIM (Levenshtein).
+        SBERT é diferenciado por tamanho: SBERTp (pequeno), SBERTm (médio), SBERTg (grande).
         """
         import util
         
@@ -455,25 +456,31 @@ class CompararExtracoesGraficos:
         if df_consolidado is None or df_consolidado.empty:
             return
         
-        # --- PASSO 3: Identificar pares (campo, técnica) com colunas _F1 ---
-        # Formato: modelo_campo_tecnica_F1
-        # Precisamos agrupar por (campo, técnica) e mapear para modelos
+        # --- PASSO 3: Identificar pares (campo, técnica, sufixo) com colunas _F1 e _SIM ---
+        # Formato: modelo_campo_tecnica_F1 ou modelo_campo_tecnica_SIM
+        # Precisamos agrupar por (campo, técnica, sufixo) e mapear para modelos
         
         # Todos os rótulos conhecidos (para parsing das colunas)
         known_models = list(dados_analise.rotulos)
         
-        # Identifica colunas F1 e agrupa por (campo, técnica)
-        # TODO: Estender para incluir colunas _SIM (sbert_grande, levenshtein)
-        #       quando solicitado. Requer ajustar sufixo de busca e ylabel do gráfico.
-        sufixos_alvo = ['_F1']
+        # Mapeamento de técnica para nome curto (para nomes de arquivo)
+        _tecnica_nome_arquivo = {
+            'sbert': 'SBERTp',
+            'sbert_pequeno': 'SBERTp',
+            'sbert_medio': 'SBERTm',
+            'sbert_grande': 'SBERTg',
+        }
         
-        # Estrutura: {(campo, técnica): {modelo: media_f1}}
+        # Identifica colunas F1 e SIM e agrupa por (campo, técnica, sufixo)
+        sufixos_alvo = ['_F1', '_SIM']
+        
+        # Estrutura: {(campo, técnica, sufixo): {modelo: media_score}}
         campo_tecnica_dados = {}
         
-        colunas_f1 = [c for c in df_consolidado.columns 
-                      if any(c.endswith(s) for s in sufixos_alvo) and c != col_id_nome]
+        colunas_alvo = [c for c in df_consolidado.columns 
+                        if any(c.endswith(s) for s in sufixos_alvo) and c != col_id_nome]
         
-        for col in colunas_f1:
+        for col in colunas_alvo:
             # Identifica o sufixo
             sufixo = next((s for s in sufixos_alvo if col.endswith(s)), None)
             if not sufixo:
@@ -511,12 +518,12 @@ class CompararExtracoesGraficos:
             if not campo:
                 continue
             
-            chave = (campo, tecnica_match)
+            chave = (campo, tecnica_match, sufixo)
             if chave not in campo_tecnica_dados:
                 campo_tecnica_dados[chave] = {}
             
-            media_f1 = df_consolidado[col].mean()
-            campo_tecnica_dados[chave][modelo_match] = media_f1
+            media_score = df_consolidado[col].mean()
+            campo_tecnica_dados[chave][modelo_match] = media_score
         
         if not campo_tecnica_dados:
             return
@@ -548,16 +555,26 @@ class CompararExtracoesGraficos:
         pasta_graficos = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_graficos, exist_ok=True)
         
-        print("\n📊 Gerando gráficos de custo-eficiência (tokens/instâncias vs F1)...")
+        print("\n📊 Gerando gráficos de custo-eficiência (tokens/instâncias vs Score)...")
         
         total_gerados = 0
         
-        for (campo, tecnica), modelos_f1 in sorted(campo_tecnica_dados.items()):
+        for (campo, tecnica, sufixo), modelos_score in sorted(campo_tecnica_dados.items()):
+            # Determina label Y e sufixo para título/arquivo baseado na métrica
+            sufixo_limpo = sufixo.lstrip('_')  # 'F1' ou 'SIM'
+            if sufixo == '_SIM':
+                ylabel = 'Similarity (SIM)' if lang == 'en' else 'Similaridade (SIM)'
+            else:
+                ylabel = 'F1 Score'
+            
             # Nome da técnica para título (com alias se disponível)
             tecnica_display = tecnica.upper().replace('_', ' ')
             alias_tecnica = modelos_aliases.get(tecnica, '')
             if alias_tecnica:
                 tecnica_display = f"{tecnica_display} ({alias_tecnica})"
+            
+            # Nome da técnica para arquivo (usa SBERTp/m/g)
+            tecnica_arquivo = _tecnica_nome_arquivo.get(tecnica, tecnica)
             
             # Gera para tokens e instâncias
             for eixo, campo_custo, label_eixo, prefixo in [
@@ -569,10 +586,10 @@ class CompararExtracoesGraficos:
                 
                 # Modelos treinados (pontos no scatter)
                 for rotulo, info in dados_custo.items():
-                    if rotulo not in modelos_f1:
+                    if rotulo not in modelos_score:
                         continue
                     
-                    f1_val = modelos_f1[rotulo]
+                    score_val = modelos_score[rotulo]
                     x_val = info[campo_custo]
                     
                     if x_val is None or x_val <= 0:
@@ -592,7 +609,7 @@ class CompararExtracoesGraficos:
                     pontos.append({
                         'label': info['alias'],
                         'x': x_val,
-                        'y': f1_val,
+                        'y': score_val,
                         'cor': info['cor'],
                         'marcador': marcador,
                         'tamanho': tamanho
@@ -600,29 +617,29 @@ class CompararExtracoesGraficos:
                 
                 # Modelos baseline (linhas horizontais)
                 for rotulo, info in dados_baseline.items():
-                    if rotulo not in modelos_f1:
+                    if rotulo not in modelos_score:
                         continue
                     
                     baselines_plot.append({
                         'label': info['alias'],
-                        'y': modelos_f1[rotulo],
+                        'y': modelos_score[rotulo],
                         'cor': info['cor']
                     })
                 
                 if not pontos:
                     continue
                 
-                titulo = f"Training Cost-Efficiency — {tecnica_display} F1 — {campo}" if lang == 'en' else \
-                         f"Custo-Eficiência de Treinamento — {tecnica_display} F1 — {campo}"
+                titulo = f"Training Cost-Efficiency — {tecnica_display} {sufixo_limpo} — {campo}" if lang == 'en' else \
+                         f"Custo-Eficiência de Treinamento — {tecnica_display} {sufixo_limpo} — {campo}"
                 
-                nome_arquivo = f"{prefixo}_f1_{tecnica}_{campo}.png"
+                nome_arquivo = f"{prefixo}_{sufixo_limpo.lower()}_{tecnica_arquivo}_{campo}.png"
                 arquivo = os.path.join(pasta_graficos, nome_arquivo)
                 
                 UtilGraficos.gerar_scatter_custo(
                     pontos=pontos,
                     baselines=baselines_plot,
                     titulo=titulo,
-                    ylabel='F1 Score',
+                    ylabel=ylabel,
                     xlabel=label_eixo,
                     arquivo_saida=arquivo,
                     lang=lang

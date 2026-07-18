@@ -1945,25 +1945,23 @@ class JsonAnaliseGraficos:
             if metrica not in metricas_validas:
                 continue
             
-            # Detecta se há técnica (penúltima ou antes da métrica)
+            # Detecta se há técnica composta (ex: sbert_pequeno, sbert_grande)
+            # Busca como substring no texto reconstruído (sem métrica) para
+            # evitar que split('_') quebre técnicas compostas como sbert_pequeno
+            base_sem_metrica = '_'.join(partes[:-1])
             tecnica_encontrada = None
-            idx_tecnica = -1
             
-            for i, parte in enumerate(partes[:-1]):  # Não inclui métrica
-                if parte in tecnicas_conhecidas:
-                    tecnica_encontrada = parte
-                    idx_tecnica = i
+            for t in tecnicas_conhecidas:  # sbert_grande, sbert_medio, sbert_pequeno antes de sbert
+                padrao = f'_{t}'
+                if base_sem_metrica.endswith(padrao):
+                    tecnica_encontrada = t
+                    # Remove técnica do final para obter modelo_campo
+                    base_modelo_campo = base_sem_metrica[:-len(padrao)]
+                    # Campo é a última parte
+                    partes_mc = base_modelo_campo.rsplit('_', 1)
+                    campo = partes_mc[-1] if len(partes_mc) > 1 else base_modelo_campo
+                    tecnica = tecnica_encontrada
                     break
-            
-            if tecnica_encontrada:
-                # Formato: Modelo_..._campo_tecnica_metrica
-                # Campo está entre início e técnica
-                # Modelo é a primeira parte que não é campo nem técnica
-                # Simplificação: campo é a parte imediatamente antes da técnica
-                campo = partes[idx_tecnica - 1] if idx_tecnica > 0 else ''
-                # Modelo é tudo antes do campo
-                modelo = '_'.join(partes[:idx_tecnica-1]) if idx_tecnica > 1 else partes[0]
-                tecnica = tecnica_encontrada
             else:
                 # Formato: Modelo_..._campo_metrica (sem técnica)
                 # Campo é a penúltima parte
@@ -2029,6 +2027,10 @@ class JsonAnaliseGraficos:
                         'rouge1': 'ROUGE1',
                         'rouge': 'ROUGEL',
                         'levenshtein': 'Levenshtein',
+                        'sbert': 'SBERTp',
+                        'sbert_pequeno': 'SBERTp',
+                        'sbert_medio': 'SBERTm',
+                        'sbert_grande': 'SBERTg',
                         'geral': 'Geral'
                     }.get(tecnica, tecnica.upper())
                     
@@ -2192,6 +2194,10 @@ class JsonAnaliseGraficos:
                         'rouge1': 'ROUGE1',
                         'rouge': 'ROUGEL',
                         'levenshtein': 'Levenshtein',
+                        'sbert': 'SBERTp',
+                        'sbert_pequeno': 'SBERTp',
+                        'sbert_medio': 'SBERTm',
+                        'sbert_grande': 'SBERTg',
                         'geral': 'Geral'
                     }.get(tecnica, tecnica_aba if tecnica_aba else tecnica.upper())
                     

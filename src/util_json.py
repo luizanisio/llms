@@ -3108,7 +3108,7 @@ class JsonAnaliseDataFrame():
             'rouge1': 'ROUGE-1',
             'rouge': 'ROUGE-L',
             'levenshtein': 'Levenshtein',
-            'sbert': 'SBERT',
+            'sbert': 'SBERT-Pequeno',
             'sbert_pequeno': 'SBERT-Pequeno',
             'sbert_medio': 'SBERT-Medio',
             'sbert_grande': 'SBERT-Grande'
@@ -3118,12 +3118,14 @@ class JsonAnaliseDataFrame():
         for tecnica in sorted(tecnicas_encontradas):
             nome_aba = f'Resultados_{nomes_tecnicas.get(tecnica, tecnica)}'
             
-            # Filtra colunas dessa técnica
+            # Filtra colunas dessa técnica (usa regex delimitada para evitar
+            # que 'sbert' case com 'sbert_pequeno', 'sbert_medio' etc.)
             colunas_tecnica = [col_id]  # Sempre inclui ID
             for col in df_exportar.columns:
                 if col == col_id:
                     continue
-                if f'_{tecnica}_' in col:
+                match_col = re.search(r'_(bertscore|rouge2|rouge1|rouge|levenshtein|sbert_grande|sbert_medio|sbert_pequeno|sbert)_', col)
+                if match_col and match_col.group(1) == tecnica:
                     colunas_tecnica.append(col)
             
             if len(colunas_tecnica) <= 1:
@@ -3133,11 +3135,12 @@ class JsonAnaliseDataFrame():
             df_tecnica = df_exportar[colunas_tecnica].copy()
             
             # Remove nome da técnica das colunas (ex: GPT4_(global)_rouge2_F1 -> GPT4_(global)_F1)
+            # Usa replace com count=1 para evitar substituir múltiplas ocorrências
             rename_map = {}
             for col in df_tecnica.columns:
                 if col == col_id:
                     continue  # Pula ID
-                novo_nome = col.replace(f'_{tecnica}_', '_')
+                novo_nome = col.replace(f'_{tecnica}_', '_', 1)
                 rename_map[col] = novo_nome
             df_tecnica.rename(columns=rename_map, inplace=True)
             
