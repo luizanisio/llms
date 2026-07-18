@@ -236,7 +236,7 @@ experimentos/pubmed-experimento/treinos/*
 
 experimentos/summa-experimento/treinos/*
 !experimentos/summa-experimento/treinos/zip_treinos.sh
-!experimentos/summa-experimento/treinos_local/zip_treinos_lite.sh
+!experimentos/summa-experimento/treinos/zip_treinos_lite.sh
 
 experimentos/puil-mini-experimento/treinos_local/*
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos.sh
