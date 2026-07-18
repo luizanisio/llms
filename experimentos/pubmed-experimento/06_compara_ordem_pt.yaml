@@ -48,25 +48,31 @@ modelos_comparacao:
   # --- Baseline A: zero-shot ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
+    alias: "A"
     familia: "Qwen-1.5B"
+    baseline: true
   # --- Baseline B: LoRA direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
+    alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
   # --- Baseline C: FF direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
+    alias: "C"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
   # --- D5: Escalonamento FF→LoRA, sem CL ---
   - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
     rotulo: "Qwen1.5B(d5)"
+    alias: "D5"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d5)"
   # --- D6: Escalonamento LoRA→FF, sem CL ---
   - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
     rotulo: "Qwen1.5B(d6)"
+    alias: "D6"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d6)"
 

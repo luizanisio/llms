@@ -48,30 +48,37 @@ modelos_comparacao:
   # --- Baseline A: zero-shot ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
+    alias: "A"
     familia: "Qwen-1.5B"
+    baseline: true
   # --- Baseline B: LoRA direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
+    alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
   # --- D7: CL por etapas, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d7)_teste.parquet"
     rotulo: "Qwen1.5B(d7)"
+    alias: "D7"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d7)"
   # --- D8: CL acumulado, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d8)_teste.parquet"
     rotulo: "Qwen1.5B(d8)"
+    alias: "D8"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d8)"
   # --- D9: Anti-CL por etapas, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d9)_teste.parquet"
     rotulo: "Qwen1.5B(d9)"
+    alias: "D9"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d9)"
   # --- D10: Anti-CL acumulado, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d10)_teste.parquet"
     rotulo: "Qwen1.5B(d10)"
+    alias: "D10"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d10)"
 

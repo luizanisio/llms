@@ -716,6 +716,116 @@ class UtilGraficos:
             return arquivo_saida
 
     @classmethod
+    def gerar_scatter_custo(cls, pontos: list, baselines: list, titulo: str,
+                            ylabel: str = 'F1 Score', xlabel: str = 'Tokens',
+                            arquivo_saida: str = None,
+                            figsize: tuple = (12, 7),
+                            dpi: int = 150,
+                            lang: str = 'pt'):
+        """
+        Gera um scatter plot de custo-eficiência (tokens/instâncias vs F1 Score).
+        
+        Args:
+            pontos: Lista de dicts com dados dos modelos treinados:
+                [{'label': 'D1', 'x': 65555681, 'y': 0.93, 'cor': (r,g,b), 
+                  'marcador': '*', 'tamanho': 200}]
+                Marcadores: '*' (estrela, melhor), '^' (triângulo, pior), 'o' (círculo, demais)
+            baselines: Lista de dicts com modelos baseline:
+                [{'label': 'A', 'y': 0.72, 'cor': (r,g,b)}]
+            titulo: Título do gráfico
+            ylabel: Rótulo do eixo Y
+            xlabel: Rótulo do eixo X
+            arquivo_saida: Caminho para salvar (opcional)
+            figsize: Tamanho da figura
+            dpi: DPI da imagem
+            lang: Idioma ('pt' ou 'en')
+        
+        Returns:
+            str: Caminho do arquivo salvo, ou None
+        """
+        if not pontos and not baselines:
+            print(f"⚠️  Aviso: Sem dados para scatter de custo: {titulo}")
+            return None
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Plota linhas horizontais de baseline
+        for bl in baselines:
+            ax.axhline(y=bl['y'], color=bl.get('cor', 'gray'), linestyle='--', 
+                       alpha=0.6, linewidth=1.5, label=bl.get('label', 'Baseline'))
+        
+        # Plota pontos dos modelos treinados
+        for pt in pontos:
+            marcador = pt.get('marcador', 'o')
+            tamanho = pt.get('tamanho', 120)
+            cor = pt.get('cor', 'blue')
+            edgecolor = 'black' if marcador in ('*', '^') else 'none'
+            linewidth = 1.0 if marcador in ('*', '^') else 0.5
+            zorder = 10 if marcador in ('*', '^') else 5
+            
+            ax.scatter(pt['x'], pt['y'], marker=marcador, s=tamanho, c=[cor],
+                      edgecolors=edgecolor, linewidths=linewidth, zorder=zorder)
+            
+            # Anotação com o rótulo do modelo ao lado do ponto
+            label = pt.get('label', '')
+            if label:
+                ax.annotate(label, (pt['x'], pt['y']), 
+                          textcoords="offset points", xytext=(8, 4),
+                          fontsize=9, fontweight='bold', color=cor,
+                          ha='left', va='bottom')
+        
+        # Configurações do gráfico
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(titulo, fontsize=13, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # Formatação do eixo X (tokens em milhões)
+        if pontos:
+            max_x = max(pt['x'] for pt in pontos)
+            if max_x > 1_000_000:
+                from matplotlib.ticker import FuncFormatter
+                ax.xaxis.set_major_formatter(FuncFormatter(
+                    lambda x, p: f"{x/1e6:.1f}M" if lang == 'en' else f"{x/1e6:.1f}M"
+                ))
+        
+        # Legenda customizada para marcadores
+        from matplotlib.lines import Line2D
+        legend_elements = []
+        
+        # Verifica se há marcadores especiais nos pontos
+        tem_estrela = any(pt.get('marcador') == '*' for pt in pontos)
+        tem_triangulo = any(pt.get('marcador') == '^' for pt in pontos)
+        
+        if tem_estrela:
+            legend_elements.append(Line2D([0], [0], marker='*', color='w', markerfacecolor='gray', 
+                                         markersize=14, label='Best eval loss' if lang == 'en' else 'Melhor eval loss'))
+        if tem_triangulo:
+            legend_elements.append(Line2D([0], [0], marker='^', color='w', markerfacecolor='gray', 
+                                         markersize=10, label='Worst eval loss' if lang == 'en' else 'Pior eval loss'))
+        if any(pt.get('marcador') == 'o' for pt in pontos):
+            legend_elements.append(Line2D([0], [0], marker='o', color='w', markerfacecolor='gray', 
+                                         markersize=8, label='Other' if lang == 'en' else 'Demais'))
+        
+        # Adiciona baselines à legenda
+        for bl in baselines:
+            legend_elements.append(Line2D([0], [0], linestyle='--', color=bl.get('cor', 'gray'),
+                                         label=f"{bl.get('label', 'Baseline')} (baseline)", linewidth=1.5))
+        
+        if legend_elements:
+            ax.legend(handles=legend_elements, loc='best', frameon=True, framealpha=0.9, fontsize=10)
+        
+        plt.tight_layout()
+        
+        if not arquivo_saida:
+            plt.show()
+            return None
+        else:
+            plt.savefig(arquivo_saida, dpi=dpi, bbox_inches='tight')
+            plt.close(fig)
+            return arquivo_saida
+
+    @classmethod
     def _corrige_rotulos(cls, r):
         if r.startswith('ext_'):
            r = r.replace('ext_', '')

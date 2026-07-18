@@ -42,65 +42,79 @@ modelos_comparacao:
   # --- Baseline A: zero-shot ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
+    alias: "A"
     familia: "Qwen-1.5B"
+    baseline: true
   # --- Baseline B: LoRA direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
+    alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
   # --- Baseline C: FF direto ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
+    alias: "C"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
   # --- Experimental D1: CL por etapas, FF→LoRA ---
   - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
     rotulo: "Qwen1.5B(d1)"
+    alias: "D1"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
   # --- Experimental D2: CL por etapas, LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
     rotulo: "Qwen1.5B(d2)"
+    alias: "D2"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d2)"
   # --- Experimental D3: CL acumulado, FF→LoRA ---
   - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
     rotulo: "Qwen1.5B(d3)"
+    alias: "D3"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d3)"
   # --- Experimental D4: CL acumulado, LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
     rotulo: "Qwen1.5B(d4)"
+    alias: "D4"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
   # --- Ablação D5: Escalonamento FF→LoRA, sem CL ---
   - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
     rotulo: "Qwen1.5B(d5)"
+    alias: "D5"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d5)"
   # --- Ablação D6: Escalonamento LoRA→FF, sem CL ---
   - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
     rotulo: "Qwen1.5B(d6)"
+    alias: "D6"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d6)"
   # --- Ablação D7: CL por etapas, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d7)_teste.parquet"
     rotulo: "Qwen1.5B(d7)"
+    alias: "D7"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d7)"
   # --- Ablação D8: CL acumulado, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d8)_teste.parquet"
     rotulo: "Qwen1.5B(d8)"
+    alias: "D8"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d8)"
   # --- Ablação D9: Anti-CL por etapas, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d9)_teste.parquet"
     rotulo: "Qwen1.5B(d9)"
+    alias: "D9"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d9)"
   # --- Ablação D10: Anti-CL acumulado, LoRA-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d10)_teste.parquet"
     rotulo: "Qwen1.5B(d10)"
+    alias: "D10"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d10)"
 

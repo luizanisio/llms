@@ -64,11 +64,18 @@ modelo_base:
 modelos_comparacao:
   - arquivo: "./saida/saida_modelo_a.parquet"    # Entrada via .parquet
     rotulo: "ModeloA"
+    alias: "A"                                   # (Opcional) Rótulo curto para gráficos de custo-eficiência
     familia: "Modelo-A"
+    baseline: true                                # (Opcional, padrão: false) Se true, plotado como linha
+                                                  #   horizontal de referência nos gráficos de custo-eficiência.
+                                                  #   Use para modelos sem treinamento (ex: zero-shot).
 
   - arquivo: "./saida/saida_modelo_b.parquet"
     rotulo: "ModeloB"
+    alias: "B"                                   # (Opcional) Se não definido, usa 'rotulo' nos gráficos
     familia: "Modelo-B"
+    pasta_treinamento: "treinos/modelo_b"         # (Opcional) Pasta com training_metrics.jsonl para gráficos
+                                                  #   de treinamento (eval_loss) e custo-eficiência (tokens vs F1)
     # ativo: false                               # Descomente para desabilitar este modelo
 
 # ---- Configuração de Métricas e Campos ----
@@ -173,11 +180,15 @@ modelo_base:
 modelos_comparacao:
   - pasta: "./extraidos/modelo_a/"
     rotulo: "ModeloA"
+    alias: "A"                                   # (Opcional) Rótulo curto para gráficos de custo-eficiência
     familia: "Modelo-A"
+    baseline: true                                # (Opcional) Modelo de referência (linha horizontal nos gráficos)
 
   - pasta: "./extraidos/modelo_b/"
     rotulo: "ModeloB"
+    alias: "B"                                   # (Opcional) Se não definido, usa 'rotulo' nos gráficos
     familia: "Modelo-B"
+    pasta_treinamento: "treinos/modelo_b"         # (Opcional) Pasta com training_metrics.jsonl
 
 configuracao_comparacao:
   padronizar_simbolos: true

@@ -855,6 +855,13 @@ def main():
         
         if os.path.isfile(arquivo_excel):
             analisador.gerar_graficos_de_excel(arquivo_excel, pasta_saida=pasta_saida)
+        
+        # Gera gráficos de custo-eficiência (tokens/instâncias vs F1 Score)
+        if os.path.isfile(arquivo_excel):
+            CompararExtracoesGraficos.gerar_graficos_custo_eficiencia(
+                config, base_dir_yaml, pasta_base_ativa, dados_analise, pasta_saida,
+                arquivo_excel=arquivo_excel, lang=lang_graficos
+            )
     
     if flag_llm and analisador_instanciado:
         print("\n⚖️  Executando LLM-as-a-Judge (atualização do Excel)...")

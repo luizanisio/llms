@@ -261,3 +261,375 @@ class CompararExtracoesGraficos:
                 arquivo_saida=arquivo)
             print(f"   ✓ Gráfico salvo: {os.path.basename(arquivo)}")
 
+    @staticmethod
+    def _extrair_custo_melhor_modelo(arquivo_metricas):
+        """
+        Lê training_metrics.jsonl e retorna o custo (tokens, instâncias) e eval_loss
+        no ponto do último is_best_eval_global (ou is_best_eval como fallback).
+        
+        Prioridade: is_best_eval_global > is_best_eval.
+        O fallback para is_best_eval só é usado se nenhum is_best_eval_global for encontrado.
+        
+        Returns:
+            dict: {'tokens': int, 'instancias': int, 'eval_loss': float} ou None se não encontrado
+        """
+        best_global = None
+        best_local = None
+        last_tokens = 0
+        last_inst = 0
+        
+        try:
+            with open(arquivo_metricas, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        # Atualiza tokens/instâncias acumulados
+                        if obj.get('tokens_acumulados'):
+                            last_tokens = obj['tokens_acumulados']
+                        if obj.get('instancias_acumuladas'):
+                            last_inst = obj['instancias_acumuladas']
+                        # Registra o melhor ponto global (prioridade)
+                        if obj.get('is_best_eval_global'):
+                            loss = obj.get('eval_loss_global', obj.get('eval_loss'))
+                            best_global = {
+                                'tokens': last_tokens,
+                                'instancias': last_inst,
+                                'eval_loss': loss
+                            }
+                        # Registra o melhor ponto local (fallback)
+                        elif obj.get('is_best_eval'):
+                            loss = obj.get('eval_loss', obj.get('eval_loss_global'))
+                            best_local = {
+                                'tokens': last_tokens,
+                                'instancias': last_inst,
+                                'eval_loss': loss
+                            }
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"   ⚠️ Erro ao ler métricas de treinamento: {e}")
+            return None
+        
+        return best_global if best_global is not None else best_local
+
+    @staticmethod
+    def gerar_graficos_custo_eficiencia(config, base_dir_yaml, pasta_base_ativa, 
+                                         dados_analise, pasta_saida, arquivo_excel=None, lang='pt'):
+        """
+        Gera gráficos scatter de custo-eficiência: tokens/instâncias (até melhor eval loss) vs F1 Score.
+        
+        Para cada combinação campo × técnica, gera 2 gráficos:
+        - custo_tk_f1_<técnica>_<campo>.png (eixo X = tokens)
+        - custo_inst_f1_<técnica>_<campo>.png (eixo X = instâncias)
+        
+        Modelos com 'baseline: true' são plotados como linhas horizontais.
+        O modelo com melhor (menor) eval_loss recebe marcador estrela (★).
+        O modelo com pior (maior) eval_loss recebe marcador triângulo (▲).
+        
+        TODO: Incluir métricas _SIM (sbert_grande, levenshtein) nos gráficos de custo.
+              Atualmente apenas métricas com sufixo _F1 são geradas. Para suportar _SIM,
+              será necessário estender a detecção de sufixos e ajustar rótulos do eixo Y.
+        """
+        import util
+        
+        modelos_comp_all = config.get('modelos_comparacao', [])
+        modelos_ativos = [m for m in modelos_comp_all if m.get('ativo', True)]
+        modelo_base = config.get('modelo_base', {})
+        
+        # Mapa rotulo -> config do modelo
+        mapa_modelos = {modelo_base.get('rotulo'): modelo_base}
+        for m in modelos_ativos:
+            mapa_modelos[m.get('rotulo')] = m
+        
+        # Paleta de cores consistente com os demais gráficos
+        try:
+            paleta = sns.color_palette(Cores.Tab10.value, len(dados_analise.rotulos))
+        except Exception:
+            paleta = sns.color_palette("tab10", len(dados_analise.rotulos))
+        
+        # --- PASSO 1: Extrair custo de treinamento (tokens/inst até melhor eval loss) ---
+        dados_custo = {}  # rotulo -> {tokens, instancias, eval_loss}
+        dados_baseline = {}  # rotulo -> {alias, cor, idx}
+        
+        for idx, rotulo in enumerate(dados_analise.rotulos):
+            m = mapa_modelos.get(rotulo)
+            if not m:
+                continue
+            
+            cor = paleta[idx]
+            alias = m.get('alias', rotulo)
+            
+            # Baseline: sem custo de treinamento, gera linha horizontal
+            if m.get('baseline', False):
+                dados_baseline[rotulo] = {'alias': alias, 'cor': cor, 'idx': idx}
+                continue
+            
+            # Modelo treinado: lê métricas
+            pasta_treinamento_raw = m.get('pasta_treinamento')
+            if not pasta_treinamento_raw:
+                continue
+            
+            pasta_treinamento = util.Util.resolver_caminho(pasta_treinamento_raw, base_dir_yaml, pasta_base_ativa)
+            arquivo_metricas = os.path.join(pasta_treinamento, 'training_metrics.jsonl')
+            
+            # Fallback: subpasta "treinamento"
+            if not os.path.isfile(arquivo_metricas):
+                arquivo_metricas_alt = os.path.join(pasta_treinamento, 'treinamento', 'training_metrics.jsonl')
+                if os.path.isfile(arquivo_metricas_alt):
+                    arquivo_metricas = arquivo_metricas_alt
+            
+            if not os.path.isfile(arquivo_metricas):
+                continue
+            
+            custo = CompararExtracoesGraficos._extrair_custo_melhor_modelo(arquivo_metricas)
+            if custo and custo['tokens'] > 0:
+                dados_custo[rotulo] = {
+                    **custo,
+                    'alias': alias,
+                    'cor': cor,
+                    'idx': idx
+                }
+        
+        if not dados_custo:
+            return
+        
+        # --- PASSO 2: Ler F1 scores do Excel ---
+        if not arquivo_excel or not os.path.isfile(arquivo_excel):
+            print("   ⚠️ Arquivo Excel não encontrado para gráficos de custo-eficiência")
+            return
+        
+        try:
+            xl_file = pd.ExcelFile(arquivo_excel)
+        except Exception as e:
+            print("   ⚠️ Erro ao abrir Excel: {e}")
+            return
+        
+        abas_resultados = [aba for aba in xl_file.sheet_names if aba.startswith('Resultados')]
+        if not abas_resultados:
+            return
+        
+        # Consolida todas as abas num DataFrame com colunas formato: modelo_campo_tecnica_F1
+        df_consolidado = None
+        col_id_nome = None
+        
+        for aba in abas_resultados:
+            try:
+                df_aba = pd.read_excel(arquivo_excel, sheet_name=aba)
+            except Exception:
+                continue
+            
+            if col_id_nome is None:
+                col_id_nome = df_aba.columns[0]
+            
+            # Extrai técnica do nome da aba
+            if '_' in aba:
+                tecnica_nome = aba.split('_', 1)[1].lower()
+                if tecnica_nome.startswith('rouge-'):
+                    tecnica_nome = tecnica_nome.replace('-', '')
+                else:
+                    tecnica_nome = tecnica_nome.replace('-', '_')
+            else:
+                tecnica_nome = 'geral'
+            
+            # Renomeia colunas: modelo_campo_F1 -> modelo_campo_tecnica_F1
+            colunas_renomeadas = {col_id_nome: col_id_nome}
+            for col in df_aba.columns:
+                if col != col_id_nome:
+                    partes = col.split('_')
+                    metrica = partes[-1]
+                    if metrica in ['F1', 'P', 'R', 'LS', 'SIM']:
+                        novo_nome = '_'.join(partes[:-1]) + f'_{tecnica_nome}_{metrica}'
+                        colunas_renomeadas[col] = novo_nome
+                    else:
+                        colunas_renomeadas[col] = col
+            
+            df_aba_renomeada = df_aba.rename(columns=colunas_renomeadas)
+            
+            if df_consolidado is None:
+                df_consolidado = df_aba_renomeada
+            else:
+                df_consolidado = pd.merge(df_consolidado, df_aba_renomeada, on=col_id_nome, how='outer')
+        
+        if df_consolidado is None or df_consolidado.empty:
+            return
+        
+        # --- PASSO 3: Identificar pares (campo, técnica) com colunas _F1 ---
+        # Formato: modelo_campo_tecnica_F1
+        # Precisamos agrupar por (campo, técnica) e mapear para modelos
+        
+        # Todos os rótulos conhecidos (para parsing das colunas)
+        known_models = list(dados_analise.rotulos)
+        
+        # Identifica colunas F1 e agrupa por (campo, técnica)
+        # TODO: Estender para incluir colunas _SIM (sbert_grande, levenshtein)
+        #       quando solicitado. Requer ajustar sufixo de busca e ylabel do gráfico.
+        sufixos_alvo = ['_F1']
+        
+        # Estrutura: {(campo, técnica): {modelo: media_f1}}
+        campo_tecnica_dados = {}
+        
+        colunas_f1 = [c for c in df_consolidado.columns 
+                      if any(c.endswith(s) for s in sufixos_alvo) and c != col_id_nome]
+        
+        for col in colunas_f1:
+            # Identifica o sufixo
+            sufixo = next((s for s in sufixos_alvo if col.endswith(s)), None)
+            if not sufixo:
+                continue
+            
+            base = col[:-len(sufixo)]  # modelo_campo_tecnica
+            
+            # Identifica o modelo pelo prefixo mais longo que casa
+            modelo_match = None
+            for m in sorted(known_models, key=len, reverse=True):
+                if base.startswith(m + '_'):
+                    modelo_match = m
+                    break
+            
+            if not modelo_match:
+                continue
+            
+            resto = base[len(modelo_match)+1:]  # campo_tecnica
+            
+            # Extrai técnica (última parte) e campo (restante)
+            # Técnicas conhecidas (ordem importa: sbert_grande antes de sbert)
+            tecnicas_conhecidas = ['bertscore', 'rouge1', 'rouge2', 'rougel', 'levenshtein',
+                                   'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
+            
+            tecnica_match = None
+            for t in tecnicas_conhecidas:
+                if resto.endswith('_' + t):
+                    tecnica_match = t
+                    break
+            
+            if not tecnica_match:
+                continue
+            
+            campo = resto[:-len('_' + tecnica_match)]
+            if not campo:
+                continue
+            
+            chave = (campo, tecnica_match)
+            if chave not in campo_tecnica_dados:
+                campo_tecnica_dados[chave] = {}
+            
+            media_f1 = df_consolidado[col].mean()
+            campo_tecnica_dados[chave][modelo_match] = media_f1
+        
+        if not campo_tecnica_dados:
+            return
+        
+        # --- PASSO 4: Determinar melhor e pior eval_loss (para marcadores ★/▲) ---
+        eval_losses = {rotulo: info['eval_loss'] for rotulo, info in dados_custo.items() 
+                      if info.get('eval_loss') is not None}
+        
+        melhor_modelo = min(eval_losses, key=eval_losses.get) if eval_losses else None
+        pior_modelo = max(eval_losses, key=eval_losses.get) if eval_losses else None
+        # Se só tem 1 modelo treinado, não marca pior
+        if melhor_modelo == pior_modelo:
+            pior_modelo = None
+        
+        # Lê aliases de técnicas (para título do gráfico)
+        modelos_aliases = {}
+        try:
+            if 'Config' in xl_file.sheet_names:
+                df_config = pd.read_excel(arquivo_excel, sheet_name='Config')
+                for _, row in df_config.iterrows():
+                    p = row.get('parametro')
+                    v = row.get('valor')
+                    if pd.notna(p) and p in ['sbert_pequeno', 'sbert_medio', 'sbert_grande', 'bertscore']:
+                        modelos_aliases[p] = str(v) if pd.notna(v) else ''
+        except Exception:
+            pass
+        
+        # --- PASSO 5: Gerar gráficos ---
+        pasta_graficos = os.path.join(pasta_saida, 'graficos')
+        os.makedirs(pasta_graficos, exist_ok=True)
+        
+        print("\n📊 Gerando gráficos de custo-eficiência (tokens/instâncias vs F1)...")
+        
+        total_gerados = 0
+        
+        for (campo, tecnica), modelos_f1 in sorted(campo_tecnica_dados.items()):
+            # Nome da técnica para título (com alias se disponível)
+            tecnica_display = tecnica.upper().replace('_', ' ')
+            alias_tecnica = modelos_aliases.get(tecnica, '')
+            if alias_tecnica:
+                tecnica_display = f"{tecnica_display} ({alias_tecnica})"
+            
+            # Gera para tokens e instâncias
+            for eixo, campo_custo, label_eixo, prefixo in [
+                ('tokens', 'tokens', 'Accumulated Tokens' if lang == 'en' else 'Tokens Acumulados', 'custo_tk'),
+                ('instancias', 'instancias', 'Accumulated Instances' if lang == 'en' else 'Instâncias Acumuladas', 'custo_inst'),
+            ]:
+                pontos = []
+                baselines_plot = []
+                
+                # Modelos treinados (pontos no scatter)
+                for rotulo, info in dados_custo.items():
+                    if rotulo not in modelos_f1:
+                        continue
+                    
+                    f1_val = modelos_f1[rotulo]
+                    x_val = info[campo_custo]
+                    
+                    if x_val is None or x_val <= 0:
+                        continue
+                    
+                    # Marcador especial
+                    if rotulo == melhor_modelo:
+                        marcador = '*'
+                        tamanho = 300
+                    elif rotulo == pior_modelo:
+                        marcador = '^'
+                        tamanho = 180
+                    else:
+                        marcador = 'o'
+                        tamanho = 120
+                    
+                    pontos.append({
+                        'label': info['alias'],
+                        'x': x_val,
+                        'y': f1_val,
+                        'cor': info['cor'],
+                        'marcador': marcador,
+                        'tamanho': tamanho
+                    })
+                
+                # Modelos baseline (linhas horizontais)
+                for rotulo, info in dados_baseline.items():
+                    if rotulo not in modelos_f1:
+                        continue
+                    
+                    baselines_plot.append({
+                        'label': info['alias'],
+                        'y': modelos_f1[rotulo],
+                        'cor': info['cor']
+                    })
+                
+                if not pontos:
+                    continue
+                
+                titulo = f"Training Cost-Efficiency — {tecnica_display} F1 — {campo}" if lang == 'en' else \
+                         f"Custo-Eficiência de Treinamento — {tecnica_display} F1 — {campo}"
+                
+                nome_arquivo = f"{prefixo}_f1_{tecnica}_{campo}.png"
+                arquivo = os.path.join(pasta_graficos, nome_arquivo)
+                
+                UtilGraficos.gerar_scatter_custo(
+                    pontos=pontos,
+                    baselines=baselines_plot,
+                    titulo=titulo,
+                    ylabel='F1 Score',
+                    xlabel=label_eixo,
+                    arquivo_saida=arquivo,
+                    lang=lang
+                )
+                total_gerados += 1
+        
+        if total_gerados > 0:
+            print(f"   ✓ {total_gerados} gráficos de custo-eficiência gerados em: {pasta_graficos}")
+        else:
+            print("   ⚠️ Nenhum gráfico de custo-eficiência gerado (sem dados suficientes)")
