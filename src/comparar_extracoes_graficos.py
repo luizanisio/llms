@@ -550,7 +550,7 @@ class CompararExtracoesGraficos:
             
             # Extrai técnica (última parte) e campo (restante)
             # Técnicas conhecidas (ordem importa: sbert_grande antes de sbert)
-            tecnicas_conhecidas = ['bertscore', 'rouge1', 'rouge2', 'rougel', 'levenshtein',
+            tecnicas_conhecidas = ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein',
                                    'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
             
             tecnica_match = None

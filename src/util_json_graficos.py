@@ -411,8 +411,10 @@ class JsonAnaliseGraficos:
                     # Converte hífen para underscore para manter consistência
                     # Ex: SBERT-Pequeno -> sbert_pequeno
                     tecnica_nome = aba.split('_', 1)[1].lower()
-                    if tecnica_nome.startswith('rouge-'):
-                        tecnica_nome = tecnica_nome.replace('-', '')
+                    if tecnica_nome == 'rouge-l':
+                        tecnica_nome = 'rouge'  # mantém consistência com o nome interno
+                    elif tecnica_nome.startswith('rouge-'):
+                        tecnica_nome = tecnica_nome.replace('-', '')  # rouge-1 → rouge1, rouge-2 → rouge2
                     else:
                         tecnica_nome = tecnica_nome.replace('-', '_')
                 else:
@@ -841,7 +843,7 @@ class JsonAnaliseGraficos:
                     
                     for col in colunas_score_campos:
                         # Técnicas conhecidas (ordem importa: sbert_* antes de sbert para match correto)
-                        for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'rougel', 'levenshtein', 
+                        for t in ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein', 
                                   'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']:
                             # Verifica se coluna termina com _{tecnica}_{sufixo}
                             # Ex: _bertscore_F1 ou _levenshtein_SIM
@@ -1810,7 +1812,7 @@ class JsonAnaliseGraficos:
         # Precisamos identificar todos os modelos únicos
         modelos_unicos = []
         # Técnicas conhecidas (ordem importa: sbert_grande antes de sbert para match correto)
-        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein', 
+        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein', 
                                'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
         metricas_validas = ['F1', 'P', 'R', 'LS', 'SIM']
         
@@ -1933,7 +1935,7 @@ class JsonAnaliseGraficos:
         col_id = df.columns[0]
         
         # Técnicas e métricas conhecidas (ordem importa: sbert_* antes de sbert)
-        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein',
+        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein',
                                'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
         metricas_validas = ['F1', 'P', 'R', 'LS', 'SIM']
         
@@ -2158,7 +2160,7 @@ class JsonAnaliseGraficos:
                     resto = partes[0]
                     # Remove penúltima parte se for técnica conhecida
                     partes2 = resto.rsplit('_', 1)
-                    tecnicas_conhecidas = ['bertscore', 'rouge', 'rouge1', 'rouge2', 'rougel', 'levenshtein',
+                    tecnicas_conhecidas = ['bertscore', 'rouge', 'rouge1', 'rouge2', 'levenshtein',
                                            'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
                     if len(partes2) >= 2 and partes2[1] in tecnicas_conhecidas:
                         resto = partes2[0]
@@ -2304,7 +2306,7 @@ class JsonAnaliseGraficos:
                         # Remove métrica
                         partes = partes[:-1]
                         # Remove técnica se existir (ordem importa: sbert_* antes de sbert)
-                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein',
+                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein',
                                                'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
                         if partes and partes[-1] in tecnicas_conhecidas:
                             partes = partes[:-1]
@@ -2414,7 +2416,7 @@ class JsonAnaliseGraficos:
                         # Remove métrica
                         partes = partes[:-1]
                         # Remove técnica se existir (ordem importa: sbert_* antes de sbert)
-                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'rougel', 'levenshtein',
+                        tecnicas_conhecidas = ['bertscore', 'rouge2', 'rouge1', 'rouge', 'levenshtein',
                                                'sbert_grande', 'sbert_medio', 'sbert_pequeno', 'sbert']
                         if partes and partes[-1] in tecnicas_conhecidas:
                             partes = partes[:-1]

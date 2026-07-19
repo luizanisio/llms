@@ -872,7 +872,6 @@ def main():
                 r'\(global\)_llm_.*',       # LLM evaluation
                 r'\(global\)_bertscore_F1', # BERTScore
                 r'\(global\)_rouge_F1',     # ROUGE-L (rouge padrão = rouge-L)
-                r'\(global\)_rougel_F1',    # ROUGE-L alternativo
                 r'\(global\)_rouge2_F1',    # ROUGE-2
                 r'\(global\)_rouge1_F1',    # ROUGE-1
             ]
