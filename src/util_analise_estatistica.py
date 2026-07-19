@@ -8,6 +8,9 @@ Análise estatística para comparação de K protocolos sobre N documentos parea
 Testes: Friedman (omnibus), Nemenyi (post-hoc / CD Diagram), 
         Wilcoxon signed-rank + Holm-Bonferroni (par a par), Shapiro-Wilk (normalidade).
 Gera relatórios Markdown e Critical Difference Diagrams (PNG).
+
+Requisitos: scipy>=1.9 (wilcoxon zstatistic; fallback via norm.isf se ausente),
+            scikit-posthocs>=0.9 (compact_letter_display, critical_difference_diagram).
 """
 
 import os
@@ -62,14 +65,14 @@ _TEXTOS = {
         # Colunas — wilcoxon
         'col_prot1': 'Protocolo 1', 'col_prot2': 'Protocolo 2',
         'col_p_bruto': 'p (bruto)', 'col_p_corrigido': 'p (corrigido)',
-        'col_z': 'z', 'col_n_prime': "n'", 'col_r': 'r',
+        'col_z': '\\|z\\|', 'col_n_prime': "n'", 'col_r': 'r',
         'col_efeito_r': 'Efeito (r)', 'col_efeito_d': 'Efeito (d)',
         'col_delta_med': 'Δ med.', 'col_pct_empates': '% emp.',
         'col_mesmo_grupo': 'Mesmo Grupo?',
         # Legendas
         'leg_friedman': '**K**: protocolos comparados · **N**: documentos pareados · **χ²**: estatística qui-quadrado de Friedman · **df**: graus de liberdade (K−1) · **W**: W de Kendall (concordância entre blocos)',
         'leg_shapiro': '**n**: amostras pareadas · **W**: estatística Shapiro-Wilk (mais próximo de 1 = mais normal) · **Normal**: p > 0,05',
-        'leg_wilcoxon': "**Δ**: diferença média (Protocolo 2 − Protocolo 1) · **Δ med.**: mediana das diferenças pareadas · **z**: z-statistic do Wilcoxon · **n'**: pares com diferença não-nula · **r**: tamanho de efeito r = |z|/√n' (Tomczak & Tomczak, 2014) — Insignificante (<0,10), Pequeno (0,10–0,30), Médio (0,30–0,50), Grande (≥0,50) · **% emp.**: percentual de empates (pares com Δ=0) · **Cohen's d**: tamanho de efeito paramétrico (secundário) · **p (corrigido)**: ajustado por Holm-Bonferroni",
+        'leg_wilcoxon': "**Δ**: diferença média (Protocolo 2 − Protocolo 1) · **Δ med.**: mediana das diferenças pareadas · **|z|**: magnitude da estatística z do Wilcoxon (o teste bilateral não define direção — a direção é dada por Δ) · **n'**: pares com diferença não-nula · **r**: tamanho de efeito r = |z|/√n' (Tomczak & Tomczak, 2014) — Insignificante (<0,10), Pequeno (0,10–0,30), Médio (0,30–0,50), Grande (≥0,50) · **% emp.**: percentual de empates (pares com Δ=0) · **Cohen's d**: tamanho de efeito paramétrico (secundário) — Insignificante (<0,20), Pequeno (0,20–0,50), Médio (0,50–0,80), Grande (≥0,80) (Cohen, 1988) · **p (corrigido)**: ajustado por Holm-Bonferroni",
         'leg_ranking': '**Rank Médio**: rank médio do Friedman (1 = melhor) · **Q1/Q3**: percentis 25 e 75 · **% Perfeito**: proporção de scores = 1,000 · **Assimetria**: skewness (< 0 = cauda à esquerda)',
         # Mensagens
         'msg_friedman_sig': 'O teste de Friedman indica diferença estatisticamente significativa entre os protocolos (p < 0,05). Procedendo com testes post-hoc.',
@@ -82,6 +85,8 @@ _TEXTOS = {
         'msg_k_insuficiente': 'Análise Friedman não aplicável: requer pelo menos 3 protocolos (K={k}).',
         'msg_nemenyi_cd': 'Distância Crítica (CD) = {cd:.4f} (q_α = {q_alpha:.4f}, k = {k}, N = {n}). Pares com diferença de ranks ≤ CD são considerados equivalentes.',
         'msg_metadados': 'Gerado em {data} · scipy {scipy_v} · scikit-posthocs {sp_v} · numpy {np_v} · pandas {pd_v} · N = {n} documentos · K = {k} protocolos',
+        'msg_pareamento': 'Pareamento: {n_bruto} documentos brutos → {n_descartado} descartados (descarte global pareado: falha em ≥1 protocolo) → **N = {n} pareados**. Faltantes por protocolo: {detalhe}.',
+        'msg_pareamento_sem_descarte': 'Pareamento: {n_bruto} documentos, nenhum descartado (todos os protocolos com scores completos).',
         # Efeitos
         'efeito_insignificante': 'Insignificante', 'efeito_pequeno': 'Pequeno',
         'efeito_medio': 'Médio', 'efeito_grande': 'Grande',
@@ -107,14 +112,14 @@ _TEXTOS = {
         # Columns — wilcoxon
         'col_prot1': 'Protocol 1', 'col_prot2': 'Protocol 2',
         'col_p_bruto': 'p (raw)', 'col_p_corrigido': 'p (corrected)',
-        'col_z': 'z', 'col_n_prime': "n'", 'col_r': 'r',
+        'col_z': '\\|z\\|', 'col_n_prime': "n'", 'col_r': 'r',
         'col_efeito_r': 'Effect (r)', 'col_efeito_d': 'Effect (d)',
         'col_delta_med': 'Δ med.', 'col_pct_empates': '% ties',
         'col_mesmo_grupo': 'Same Group?',
         # Legends
         'leg_friedman': '**K**: number of protocols compared · **N**: number of paired documents · **χ²**: Friedman chi-squared statistic · **df**: degrees of freedom (K−1) · **W**: Kendall\'s W (block concordance)',
         'leg_shapiro': '**n**: paired samples · **W**: Shapiro-Wilk statistic (closer to 1 = more normal) · **Normal**: p > 0.05',
-        'leg_wilcoxon': "**Δ**: mean difference (Protocol 2 − Protocol 1) · **Δ med.**: median of paired differences · **z**: Wilcoxon z-statistic · **n'**: pairs with non-zero difference · **r**: effect size r = |z|/√n' (Tomczak & Tomczak, 2014) — Negligible (<0.10), Small (0.10–0.30), Medium (0.30–0.50), Large (≥0.50) · **% ties**: percentage of tied pairs (Δ=0) · **Cohen's d**: parametric effect size (secondary) · **p (corrected)**: Holm-Bonferroni adjusted",
+        'leg_wilcoxon': "**Δ**: mean difference (Protocol 2 − Protocol 1) · **Δ med.**: median of paired differences · **|z|**: magnitude of the Wilcoxon z-statistic (the two-sided test carries no direction — direction is given by Δ) · **n'**: pairs with non-zero difference · **r**: effect size r = |z|/√n' (Tomczak & Tomczak, 2014) — Negligible (<0.10), Small (0.10–0.30), Medium (0.30–0.50), Large (≥0.50) · **% ties**: percentage of tied pairs (Δ=0) · **Cohen's d**: parametric effect size (secondary) — Negligible (<0.20), Small (0.20–0.50), Medium (0.50–0.80), Large (≥0.80) (Cohen, 1988) · **p (corrected)**: Holm-Bonferroni adjusted",
         'leg_ranking': '**Mean Rank**: Friedman mean rank (1 = best) · **Q1/Q3**: 25th and 75th percentiles · **% Perfect**: proportion of scores = 1.000 · **Skewness**: skewness (< 0 = left tail)',
         # Messages
         'msg_friedman_sig': 'The Friedman test indicates a statistically significant difference among protocols (p < 0.05). Proceeding with post-hoc tests.',
@@ -127,6 +132,8 @@ _TEXTOS = {
         'msg_k_insuficiente': 'Friedman analysis not applicable: requires at least 3 protocols (K={k}).',
         'msg_nemenyi_cd': 'Critical Difference (CD) = {cd:.4f} (q_α = {q_alpha:.4f}, k = {k}, N = {n}). Pairs with rank difference ≤ CD are considered equivalent.',
         'msg_metadados': 'Generated on {data} · scipy {scipy_v} · scikit-posthocs {sp_v} · numpy {np_v} · pandas {pd_v} · N = {n} docs · K = {k} protocols',
+        'msg_pareamento': 'Pairing: {n_bruto} raw documents → {n_descartado} discarded (global paired discard: failure in ≥1 protocol) → **N = {n} paired**. Missing per protocol: {detalhe}.',
+        'msg_pareamento_sem_descarte': 'Pairing: {n_bruto} documents, none discarded (all protocols with complete scores).',
         # Cohen effects
         'efeito_insignificante': 'Negligible', 'efeito_pequeno': 'Small',
         'efeito_medio': 'Medium', 'efeito_grande': 'Large',
@@ -175,11 +182,19 @@ class AnaliseEstatistica:
         self.arquivo_md = self.config.get('arquivo_md', 'relatorio_estatistico.md')
         self.arquivo_cd_png = self.config.get('arquivo_cd_png', '')
         
+        # Rastreia descarte ANTES do dropna (descarte global pareado):
+        # documentos brutos, NaN por protocolo e N final pareado.
+        self.n_bruto = len(df_scores)
+        self.descartes_por_protocolo = {
+            col: int(df_scores[col].isna().sum()) for col in df_scores.columns
+        }
+        
         # Remove linhas com qualquer NaN (precisamos de dados pareados completos)
         self.df = df_scores.dropna().copy()
         self.protocolos = list(self.df.columns)
         self.K = len(self.protocolos)
         self.N = len(self.df)
+        self.n_descartado = self.n_bruto - self.N
         
         # Resultados (populados por processar())
         self.ranking = pd.DataFrame()
@@ -187,7 +202,8 @@ class AnaliseEstatistica:
         self.shapiro_resultados = []
         self.wilcoxon_resultados = []
         self.nemenyi_pvalores = pd.DataFrame()
-        self.grupos = {}  # {protocolo: 'G-01'}
+        self.grupos = {}  # {protocolo: 'G-01' ou 'G-01 G-02' se sobreposto}
+        self.grupos_sets = {}  # {protocolo: {'G-01', ...}}
         self.resumo = {}
         self.markdown_content = ''
         self._analise_realizada = False
@@ -222,7 +238,11 @@ class AnaliseEstatistica:
             'N': self.N,
             'friedman_p': self.friedman_resultado.get('p_valor'),
             'friedman_sig': self.friedman_resultado.get('significante', False),
-            'n_grupos': len(set(self.grupos.values())) if self.grupos else 0,
+            # Conta rótulos distintos de grupo (overlap-safe): um protocolo em
+            # 'G-01 G-02' contribui com 2 rótulos, não com 1 grupo novo.
+            'n_grupos': len(set(
+                g for v in self.grupos.values() for g in str(v).split()
+            )) if self.grupos else 0,
         }
         return self.resumo
     
@@ -256,7 +276,8 @@ class AnaliseEstatistica:
                 'n': len(vals),
                 'rank_medio': ranks_friedman[proto],
                 'pct_perfeito': float((vals == 1.0).mean()),
-                'skewness': float(vals.skew()),
+                # Guard: coluna constante pode gerar NaN em versões antigas do pandas
+                'skewness': float(vals.skew()) if np.isfinite(vals.skew()) else 0.0,
             })
         df = pd.DataFrame(dados).sort_values('media', ascending=False).reset_index(drop=True)
         df['posicao'] = df.index + 1
@@ -306,22 +327,54 @@ class AnaliseEstatistica:
         try:
             cld = sp.compact_letter_display(self.nemenyi_pvalores, alpha=self.alpha)
             # cld retorna Series com letras padded (ex: 'a  ', 'ab ', ' b ')
-            # Espaços = não pertence ao grupo; letras = pertence
-            # Extrai letras únicas (sem espaço)
+            # Espaços = não pertence ao grupo; letras = pertence.
+            # Um protocolo pode pertencer a MAIS DE UM grupo (CLD sobreposto).
+            letras_por_proto = {
+                proto: [c for c in str(letras_raw) if c.strip()]
+                for proto, letras_raw in cld.items()
+            }
             letras_unicas = sorted(set(
-                c for v in cld.values for c in str(v) if c.strip()
+                l for letras in letras_por_proto.values() for l in letras
             ))
-            mapa_letras = {letra: self.formato_grupo.format(i + 1) 
-                          for i, letra in enumerate(letras_unicas)}
+            
+            # Renumera grupos por desempenho: G-01 = grupo cujo melhor membro
+            # tem o menor rank médio do Friedman (1 = melhor). Sem isso, a
+            # numeração segue a ordem alfabética das letras do CLD (arbitrária).
+            ranks_friedman = self.df.rank(axis=1, ascending=False).mean()
+            rank_por_letra = {
+                letra: min(
+                    ranks_friedman[p] for p, ls in letras_por_proto.items() if letra in ls
+                )
+                for letra in letras_unicas
+            }
+            letras_ordenadas = sorted(letras_unicas, key=lambda l: rank_por_letra[l])
+            mapa_letras = {letra: self.formato_grupo.format(i + 1)
+                          for i, letra in enumerate(letras_ordenadas)}
             
             self.grupos = {}
-            for proto, letras_raw in cld.items():
-                letras = [c for c in str(letras_raw) if c.strip()]
-                grupos_proto = ' '.join(mapa_letras[l] for l in sorted(letras))
-                self.grupos[proto] = grupos_proto
+            self.grupos_sets = {}  # {protocolo: set de rótulos de grupo} — para lógica de sobreposição
+            for proto, letras in letras_por_proto.items():
+                rotulos = sorted(mapa_letras[l] for l in letras)
+                self.grupos[proto] = ' '.join(rotulos)
+                self.grupos_sets[proto] = set(rotulos)
         except Exception as e:
             print(f"   ⚠️  Erro ao calcular grupos (CLD): {e}")
             self.grupos = {}
+            self.grupos_sets = {}
+    
+    @staticmethod
+    def _compartilham_grupo(grupos1, grupos2):
+        """True se dois protocolos compartilham pelo menos um grupo de equivalência.
+        
+        Aceita strings ('G-01 G-02') ou sets. Necessário porque o CLD permite
+        pertencimento múltiplo — comparação de strings inteiras falharia em
+        casos de sobreposição (ex: 'G-02 G-03' vs 'G-03').
+        """
+        if not grupos1 or not grupos2:
+            return False
+        s1 = set(grupos1.split()) if isinstance(grupos1, str) else set(grupos1)
+        s2 = set(grupos2.split()) if isinstance(grupos2, str) else set(grupos2)
+        return bool(s1 & s2)
     
     def _calcular_shapiro(self):
         """Shapiro-Wilk nos deltas de cada par (triângulo inferior)."""
@@ -350,11 +403,19 @@ class AnaliseEstatistica:
             n_total = len(v1)
             n_prime = int(np.sum(diff != 0))  # pares efetivos (sem empate)
             
+            # NOTA: no teste bilateral com method="approx", o zstatistic do scipy
+            # NÃO carrega direção (wilcoxon(v1,v2) e wilcoxon(v2,v1) retornam o
+            # mesmo z). Reportamos |z|; a direção é dada por Δ e Δ mediano.
             z_stat = 0.0
             try:
                 res = stats.wilcoxon(v1, v2, zero_method="wilcox", method="approx")
                 p_bruto = res.pvalue
-                z_stat = getattr(res, 'zstatistic', 0.0)
+                z_raw = getattr(res, 'zstatistic', None)
+                if z_raw is None or not np.isfinite(z_raw):
+                    # Fallback (scipy antigo sem zstatistic): deriva |z| do p bilateral.
+                    p_seguro = max(min(p_bruto, 1.0), 1e-300)
+                    z_raw = stats.norm.isf(p_seguro / 2.0)
+                z_stat = abs(float(z_raw))
             except (ValueError, AttributeError):
                 p_bruto = 1.0
                 z_stat = 0.0
@@ -413,12 +474,14 @@ class AnaliseEstatistica:
             else:
                 cohen_d = diff.mean() / std_diff
             
+            # Faixas convencionais de Cohen (1988) para d: 0.2 / 0.5 / 0.8.
+            # (As faixas 0.1/0.3/0.5 são as do r — usá-las no d superestima os rótulos.)
             abs_d = abs(cohen_d)
-            if abs_d < 0.10:
+            if abs_d < 0.20:
                 tamanho = self.t['efeito_insignificante']
-            elif abs_d < 0.30:
-                tamanho = self.t['efeito_pequeno']
             elif abs_d < 0.50:
+                tamanho = self.t['efeito_pequeno']
+            elif abs_d < 0.80:
                 tamanho = self.t['efeito_medio']
             else:
                 tamanho = self.t['efeito_grande']
@@ -489,7 +552,6 @@ class AnaliseEstatistica:
         except Exception:
             scipy_v = '?'
         try:
-            sp_mod = _get_sp()
             import scikit_posthocs
             sp_v = scikit_posthocs.__version__
         except Exception:
@@ -502,6 +564,18 @@ class AnaliseEstatistica:
             n=self.N, k=self.K
         )
         L.append(f'> {metadados}')
+        L.append('')
+        
+        # --- Pareamento / descarte global ---
+        if self.n_descartado > 0:
+            detalhe = ' · '.join(
+                f'{p}: {v}' for p, v in self.descartes_por_protocolo.items() if v > 0
+            ) or '—'
+            L.append('> ' + t['msg_pareamento'].format(
+                n_bruto=self.n_bruto, n_descartado=self.n_descartado,
+                n=self.N, detalhe=detalhe))
+        else:
+            L.append('> ' + t['msg_pareamento_sem_descarte'].format(n_bruto=self.n_bruto))
         L.append('')
         
         # --- 1. Ranking ---
@@ -598,10 +672,10 @@ class AnaliseEstatistica:
             for r in resultados_ord:
                 sinal = '+' if r['diferenca'] >= 0 else ''
                 sinal_med = '+' if r['delta_mediano'] >= 0 else ''
-                # Concordância Wilcoxon × Nemenyi
+                # Concordância Wilcoxon × Nemenyi (interseção de grupos — overlap-safe)
                 g1 = self.grupos.get(r['proto1'], '')
                 g2 = self.grupos.get(r['proto2'], '')
-                mesmo_grupo = t['sim'] if (g1 and g2 and g1 == g2) else t['nao']
+                mesmo_grupo = t['sim'] if self._compartilham_grupo(g1, g2) else t['nao']
                 
                 L.append(
                     f'| {r["proto1"]} | {r["proto2"]} '
@@ -628,13 +702,16 @@ class AnaliseEstatistica:
             L.append('')
             
             # Calcula CD: CD = q_α × √(k(k+1)/(6N))
-            # q_α vem da Studentized Range distribution
+            # q_α da tabela de Nemenyi (Demšar, 2006) = quantil da Studentized Range / √2.
+            # O scikit-posthocs embute o mesmo fator √2 na matriz de p-valores do Nemenyi,
+            # portanto esta CD é consistente com os agrupamentos do CD diagram.
+            # Ex.: k=7, α=0.05 → ppf=4.1696 → q_α = 2.9484 (valor tabelado em Demšar).
             try:
                 from scipy.stats import studentized_range
-                q_alpha = studentized_range.ppf(1 - self.alpha, self.K, np.inf)
+                q_alpha = studentized_range.ppf(1 - self.alpha, self.K, np.inf) / np.sqrt(2.0)
+                if not np.isfinite(q_alpha):
+                    q_alpha = 0.0
             except Exception:
-                # Fallback: usar o valor aproximado q_α/√2 da tabela de Nemenyi
-                # Para referência, usamos a fórmula do scikit-posthocs
                 q_alpha = 0.0
             
             cd = q_alpha * np.sqrt(self.K * (self.K + 1) / (6.0 * self.N)) if q_alpha > 0 else 0.0

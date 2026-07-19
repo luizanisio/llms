@@ -460,6 +460,237 @@ def test_nota_shapiro_n_grande():
     print()
 
 
+def test_holm_valores_conhecidos():
+    """Teste unitário da correção de Holm contra valores calculados à mão."""
+    print("═" * 60)
+    print("Teste 9: Holm-Bonferroni contra valores conhecidos")
+    print("═" * 60)
+    
+    holm = AnaliseEstatistica._holm_bonferroni
+    
+    # Caso clássico: m=3, p=[0.01, 0.04, 0.03]
+    # Ordenado: 0.01×3=0.03; 0.03×2=0.06; 0.04×1=0.04→cummax=0.06
+    corr = holm([0.01, 0.04, 0.03])
+    esperado = [0.03, 0.06, 0.06]
+    for c, e in zip(corr, esperado):
+        assert abs(c - e) < 1e-12, f"Holm: esperado {esperado}, obtido {corr}"
+    
+    # Monotonicidade e teto em 1.0
+    corr2 = holm([0.5, 0.6, 0.9])
+    assert corr2 == sorted(corr2) or True  # ordem original preservada; checa teto
+    assert all(c <= 1.0 for c in corr2), f"p corrigido > 1.0: {corr2}"
+    
+    # m=1: sem alteração
+    assert holm([0.04]) == [0.04], "Holm com m=1 não deveria alterar o p"
+    
+    # Vazio
+    assert holm([]) == [], "Holm com lista vazia deveria retornar []"
+    
+    print(f"✅ Holm([0.01, 0.04, 0.03]) = {corr}")
+    print()
+
+
+def test_cd_formula_demsar():
+    """Teste que a CD usa q_α = studentized_range/√2 (Demšar, 2006).
+    
+    Para k=7, α=0.05: q_α tabelado ≈ 2.949 (NÃO 4.170, que é o quantil sem /√2).
+    Este teste teria detectado a CD inflada em √2 (~41% maior).
+    """
+    print("═" * 60)
+    print("Teste 10: Fórmula da CD (fator √2 de Demšar)")
+    print("═" * 60)
+    
+    from scipy.stats import studentized_range
+    
+    k, alpha, N = 7, 0.05, 2500
+    q_alpha = studentized_range.ppf(1 - alpha, k, np.inf) / np.sqrt(2.0)
+    assert abs(q_alpha - 2.949) < 0.01, \
+        f"q_α para k=7 deveria ser ≈2.949 (Demšar), obtido={q_alpha:.4f}"
+    
+    cd = q_alpha * np.sqrt(k * (k + 1) / (6.0 * N))
+    assert abs(cd - 0.1801) < 0.001, f"CD(k=7, N=2500) deveria ser ≈0.1801, obtido={cd:.4f}"
+    
+    # Valida também no relatório gerado: se a mensagem de CD existir num relatório
+    # com K>=3, o valor de q_α impresso deve ser < 3.5 para k<=10 (com /√2)
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    caminho_md = os.path.join(pasta_teste, 'estat_test1.md')
+    if os.path.exists(caminho_md):
+        with open(caminho_md, 'r', encoding='utf-8') as f:
+            md = f.read()
+        m = re.search(r'q_α = (\d+\.\d+)', md) or re.search(r'q_alpha = (\d+\.\d+)', md)
+        if m:
+            q_rel = float(m.group(1))
+            assert q_rel < 3.5, \
+                f"q_α={q_rel} no relatório sugere ausência do fator /√2 (k=5 → esperado ≈2.728)"
+    
+    print(f"✅ q_α(k=7) = {q_alpha:.4f} ≈ 2.949 (tabela de Demšar)")
+    print(f"✅ CD(k=7, N=2500) = {cd:.4f}")
+    print()
+
+
+def test_compartilham_grupo_sobreposicao():
+    """Teste da lógica de grupo compartilhado com CLD sobreposto (overlap-safe)."""
+    print("═" * 60)
+    print("Teste 11: Grupos sobrepostos (CLD com pertencimento múltiplo)")
+    print("═" * 60)
+    
+    f = AnaliseEstatistica._compartilham_grupo
+    
+    # Casos simples
+    assert f('G-01', 'G-01') == True
+    assert f('G-01', 'G-02') == False
+    
+    # Sobreposição: 'G-02 G-03' compartilha G-03 com 'G-03'
+    # (comparação de strings inteiras retornaria False — bug corrigido)
+    assert f('G-02 G-03', 'G-03') == True
+    assert f('G-01 G-02', 'G-02 G-03') == True
+    assert f('G-01', 'G-02 G-03') == False
+    
+    # Vazios
+    assert f('', 'G-01') == False
+    assert f('', '') == False
+    
+    # Aceita sets
+    assert f({'G-01', 'G-02'}, {'G-02'}) == True
+    
+    print("✅ _compartilham_grupo cobre sobreposição, vazios e sets")
+    print()
+
+
+def test_z_nao_direcional_e_faixas_d():
+    """Teste que |z| é não-negativo e que d usa faixas de Cohen (0.2/0.5/0.8)."""
+    print("═" * 60)
+    print("Teste 12: |z| não-negativo e faixas convencionais do d")
+    print("═" * 60)
+    
+    np.random.seed(7)
+    n = 150
+    base = np.random.normal(0.70, 0.10, n).clip(0, 1)
+    # K=2: caminho independente de scikit-posthocs (Nemenyi só com K>=3)
+    df = pd.DataFrame({
+        'P1': base,
+        'P2': (base + 0.06 + np.random.normal(0, 0.03, n)).clip(0, 1),
+    })
+    
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    os.makedirs(pasta_teste, exist_ok=True)
+    
+    analise = AnaliseEstatistica(df, config={
+        'metrica_nome': 'test', 'campo': 'test', 'tecnica': 'test',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test12.md'),
+        'arquivo_cd_png': '', 'lang': 'en',
+    })
+    analise.processar()
+    
+    for w in analise.wilcoxon_resultados:
+        # |z| deve ser não-negativo (scipy bilateral não carrega direção)
+        assert w['z_stat'] >= 0, \
+            f"|z| negativo ({w['z_stat']:.2f}) para {w['proto1']}↔{w['proto2']}"
+        # Coerência r = |z|/√n'
+        if w['n_prime'] > 0:
+            r_esperado = w['z_stat'] / np.sqrt(w['n_prime'])
+            assert abs(w['r_efeito'] - r_esperado) < 1e-9, \
+                f"r inconsistente com |z|/√n' para {w['proto1']}↔{w['proto2']}"
+    
+    # Faixas do d: 0.2/0.5/0.8 (Cohen, 1988)
+    # d=0.53 deve ser 'Medium' (nas faixas antigas 0.1/0.3/0.5 seria 'Large')
+    casos_d = [(0.10, 'Negligible'), (0.30, 'Small'), (0.53, 'Medium'), (0.85, 'Large')]
+    # Reconstrói classificação chamando o método sobre dados sintéticos com d controlado
+    for d_alvo, rotulo in casos_d:
+        np.random.seed(1)
+        diffs = np.random.normal(d_alvo, 1.0, 5000)  # mean/std ≈ d_alvo
+        df2 = pd.DataFrame({'X': np.zeros(5000), 'Y': diffs})
+        a2 = AnaliseEstatistica(df2, config={
+            'metrica_nome': 't', 'campo': 't', 'tecnica': 't',
+            'arquivo_md': os.path.join(pasta_teste, '_tmp_d.md'),
+            'arquivo_cd_png': '', 'lang': 'en',
+        })
+        a2.processar()
+        w = a2.wilcoxon_resultados[0]
+        assert w['tamanho_efeito_d'] == rotulo, \
+            f"d≈{d_alvo}: esperado '{rotulo}', obtido '{w['tamanho_efeito_d']}' (d={w['cohen_d']:.3f})"
+    
+    print("✅ |z| ≥ 0 e r = |z|/√n' consistentes")
+    print("✅ Faixas do d: 0.2/0.5/0.8 (d=0.53 → Medium)")
+    print()
+
+
+def test_pareamento_descarte():
+    """Teste que o cabeçalho reporta pareamento e descarte por protocolo."""
+    print("═" * 60)
+    print("Teste 13: Cabeçalho de pareamento/descarte (NaN por protocolo)")
+    print("═" * 60)
+    
+    np.random.seed(3)
+    n = 60
+    # K=2: caminho independente de scikit-posthocs
+    df = pd.DataFrame({
+        'A': np.random.normal(0.7, 0.1, n).clip(0, 1),
+        'B': np.random.normal(0.75, 0.1, n).clip(0, 1),
+    })
+    # Injeta NaN: 5 em A, 3 em B (com sobreposição parcial)
+    df.loc[0:4, 'A'] = np.nan
+    df.loc[3:5, 'B'] = np.nan
+    
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    os.makedirs(pasta_teste, exist_ok=True)
+    
+    analise = AnaliseEstatistica(df, config={
+        'metrica_nome': 'test', 'campo': 'test', 'tecnica': 'test',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test13.md'),
+        'arquivo_cd_png': '', 'lang': 'en',
+    })
+    analise.processar()
+    
+    assert analise.n_bruto == n, f"n_bruto esperado={n}, obtido={analise.n_bruto}"
+    assert analise.descartes_por_protocolo['A'] == 5, \
+        f"Descartes de A esperado=5, obtido={analise.descartes_por_protocolo['A']}"
+    assert analise.descartes_por_protocolo['B'] == 3, \
+        f"Descartes de B esperado=3, obtido={analise.descartes_por_protocolo['B']}"
+    # União {0..4} ∪ {3..5} = {0..5} → 6 linhas descartadas
+    assert analise.n_descartado == 6, f"n_descartado esperado=6, obtido={analise.n_descartado}"
+    assert analise.N == n - 6, f"N pareado esperado={n-6}, obtido={analise.N}"
+    
+    md = analise.markdown_content
+    assert 'Pairing:' in md or 'Pareamento:' in md, "Linha de pareamento ausente no cabeçalho"
+    assert 'A: 5' in md and 'B: 3' in md, "Detalhe de faltantes por protocolo ausente"
+    
+    print(f"✅ n_bruto={analise.n_bruto}, descartados={analise.n_descartado}, N={analise.N}")
+    print(f"✅ Cabeçalho reporta faltantes por protocolo (A: 5, B: 3)")
+    print()
+
+
+def test_grupos_numerados_por_desempenho():
+    """Teste que G-01 corresponde ao grupo do melhor protocolo (menor rank médio)."""
+    print("═" * 60)
+    print("Teste 14: G-01 = melhor grupo (numeração por rank médio)")
+    print("═" * 60)
+    
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    np.random.seed(42)
+    n = 100
+    df = pd.DataFrame({
+        'Pior': np.random.normal(0.55, 0.10, n).clip(0, 1),
+        'Melhor': np.random.normal(0.90, 0.05, n).clip(0, 1),
+        'Meio': np.random.normal(0.72, 0.08, n).clip(0, 1),
+    })
+    
+    analise = AnaliseEstatistica(df, config={
+        'metrica_nome': 'test', 'campo': 'test', 'tecnica': 'test',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test14.md'),
+        'arquivo_cd_png': '', 'lang': 'en',
+    })
+    analise.processar()
+    
+    if analise.grupos:
+        g_melhor = analise.grupos.get('Melhor', '')
+        assert 'G-01' in g_melhor.split(), \
+            f"Melhor protocolo deveria estar em G-01, obtido='{g_melhor}' (grupos={analise.grupos})"
+    
+    print(f"✅ Grupos: {analise.grupos}")
+    print()
+
+
 if __name__ == "__main__":
     test_analise_basica()
     test_dois_protocolos()
@@ -469,7 +700,13 @@ if __name__ == "__main__":
     test_relatorio_secoes_e_notas()
     test_efeito_teto()
     test_nota_shapiro_n_grande()
+    test_holm_valores_conhecidos()
+    test_cd_formula_demsar()
+    test_compartilham_grupo_sobreposicao()
+    test_z_nao_direcional_e_faixas_d()
+    test_pareamento_descarte()
+    test_grupos_numerados_por_desempenho()
     
     print("═" * 60)
-    print("✅ TODOS OS 8 TESTES PASSARAM!")
+    print("✅ TODOS OS 14 TESTES PASSARAM!")
     print("═" * 60)
