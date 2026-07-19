@@ -131,17 +131,24 @@ configuracao_comparacao:
       - "keywords"
 
     rouge_l:
+      - "(global)"
       - "title"
       - "publication"
       - "journal"
       - "keywords"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"  
 
     levenshtein:
       - "publication"
       - "journal"
 
     sbert_grande:
-      - "(global)"
       - "background"
       - "objective"
       - "methods"
