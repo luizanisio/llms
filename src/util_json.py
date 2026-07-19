@@ -3427,17 +3427,7 @@ class JsonAnaliseDataFrame():
         
         # Gera gráficos se solicitado
         if gerar_graficos:
-            # Limpa gráficos antigos UMA VEZ antes de gerar todos os novos
-            import glob
-            # pasta_saida já definida acima
-            graficos_antigos = glob.glob(os.path.join(pasta_saida, 'grafico_*.png'))
-            if graficos_antigos:
-                print(f"   🧹 Removendo {len(graficos_antigos)} gráficos antigos...")
-                for arquivo_grafico in graficos_antigos:
-                    try:
-                        os.remove(arquivo_grafico)
-                    except Exception as e:
-                        print(f"⚠️  Aviso: Não foi possível remover {arquivo_grafico}: {e}")
+            # A limpeza de gráficos antigos é centralizada em gerar_graficos_de_excel()
             
             # IMPORTANTE: Usa DataFrame em memória, não carrega do Excel!
             # Isso garante que todos os modelos/técnicas sejam consolidados

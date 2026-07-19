@@ -333,18 +333,21 @@ class JsonAnaliseGraficos:
             pasta_saida = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_saida, exist_ok=True)
         
-        # Limpa gráficos antigos
+        # Limpa gráficos antigos (todos .png e .md — pasta é dedicada a gráficos gerados)
         if limpar_graficos_antigos:
-            padroes = ['grafico_*.png', 'grafico_*.md', 'boxplot_*.png', 'boxplot_*.md', 'tokens_*.png', 'tokens_*.md', 'avaliacao_*.png', 'avaliacao_*.md', 'observabilidade_*.png', 'observabilidade_*.md', 'comparativo_*.png', 'comparativo_*.md']
-            graficos_antigos = []
-            for p in padroes:
-                graficos_antigos.extend(glob.glob(os.path.join(pasta_saida, p)))
+            graficos_antigos = glob.glob(os.path.join(pasta_saida, '*.png')) + \
+                               glob.glob(os.path.join(pasta_saida, '*.md'))
             
-            for arquivo in graficos_antigos:
-                try:
-                    os.remove(arquivo)
-                except Exception as e:
-                    print(f"⚠️  Aviso: Não foi possível remover {arquivo}: {e}")
+            if graficos_antigos:
+                erros = 0
+                for arquivo in graficos_antigos:
+                    try:
+                        os.remove(arquivo)
+                    except Exception:
+                        erros += 1
+                total = len(graficos_antigos) - erros
+                msg_erro = f" ({erros} erros)" if erros else ""
+                print(f"   🧹 {total} arquivos antigos removidos da pasta graficos{msg_erro}")
         
         # ═══════════════════════════════════════════════════════════════════════
         # LÊ CONFIGURAÇÕES DA ABA CONFIG (SE EXISTIR)

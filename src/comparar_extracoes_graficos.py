@@ -551,13 +551,14 @@ class CompararExtracoesGraficos:
         except Exception:
             pass
         
-        # --- PASSO 5: Gerar gráficos ---
+        # --- PASSO 5: Gerar gráficos e markdown ---
         pasta_graficos = os.path.join(pasta_saida, 'graficos')
         os.makedirs(pasta_graficos, exist_ok=True)
         
         print("\n📊 Gerando gráficos de custo-eficiência (tokens/instâncias vs Score)...")
         
         total_gerados = 0
+        total_md = 0
         
         for (campo, tecnica, sufixo), modelos_score in sorted(campo_tecnica_dados.items()):
             # Determina label Y e sufixo para título/arquivo baseado na métrica
@@ -576,7 +577,60 @@ class CompararExtracoesGraficos:
             # Nome da técnica para arquivo (usa SBERTp/m/g)
             tecnica_arquivo = _tecnica_nome_arquivo.get(tecnica, tecnica)
             
-            # Gera para tokens e instâncias
+            # Acumula dados para o markdown consolidado
+            linhas_md = []
+            algum_grafico_gerado = False
+            
+            # Modelos treinados (dados para tabela)
+            for rotulo, info in dados_custo.items():
+                if rotulo not in modelos_score:
+                    continue
+                
+                score_val = modelos_score[rotulo]
+                tokens_val = info.get('tokens', 0)
+                inst_val = info.get('instancias', 0)
+                eval_loss_val = info.get('eval_loss')
+                
+                if tokens_val is None or tokens_val <= 0:
+                    continue
+                
+                # Marcador especial
+                marcador_str = ''
+                if rotulo == melhor_modelo:
+                    marcador_str = ' ★'
+                elif rotulo == pior_modelo:
+                    marcador_str = ' ▲'
+                
+                linhas_md.append({
+                    'modelo': rotulo,
+                    'alias': info['alias'],
+                    'tokens': tokens_val,
+                    'instancias': inst_val or 0,
+                    'eval_loss': eval_loss_val,
+                    'score': score_val,
+                    'marcador': marcador_str,
+                    'cor': info['cor'],
+                    'tipo': 'treinado'
+                })
+            
+            # Modelos baseline
+            for rotulo, info in dados_baseline.items():
+                if rotulo not in modelos_score:
+                    continue
+                
+                linhas_md.append({
+                    'modelo': rotulo,
+                    'alias': info['alias'],
+                    'tokens': None,
+                    'instancias': None,
+                    'eval_loss': None,
+                    'score': modelos_score[rotulo],
+                    'marcador': '',
+                    'cor': info['cor'],
+                    'tipo': 'baseline'
+                })
+            
+            # Gera gráficos para tokens e instâncias
             for eixo, campo_custo, label_eixo, prefixo in [
                 ('tokens', 'tokens', 'Accumulated Tokens' if lang == 'en' else 'Tokens Acumulados', 'custo_tk'),
                 ('instancias', 'instancias', 'Accumulated Instances' if lang == 'en' else 'Instâncias Acumuladas', 'custo_inst'),
@@ -645,8 +699,58 @@ class CompararExtracoesGraficos:
                     lang=lang
                 )
                 total_gerados += 1
+                algum_grafico_gerado = True
+            
+            # Gera markdown consolidado (uma vez por campo×técnica×sufixo)
+            if algum_grafico_gerado and linhas_md:
+                nome_md = f"custo_{sufixo_limpo.lower()}_{tecnica_arquivo}_{campo}.md"
+                caminho_md = os.path.join(pasta_graficos, nome_md)
+                
+                try:
+                    with open(caminho_md, 'w', encoding='utf-8') as f:
+                        f.write(f"## {campo} — {tecnica_display} {sufixo_limpo}\n\n")
+                        
+                        # Cabeçalho da tabela
+                        if lang == 'en':
+                            f.write("| Model | Alias | Tokens | Instances | Eval Loss | Score |\n")
+                        else:
+                            f.write("| Modelo | Alias | Tokens | Instâncias | Eval Loss | Score |\n")
+                        f.write("|---|---|---|---|---|---|\n")
+                        
+                        # Ordena: treinados primeiro (por score desc), depois baselines
+                        treinados = sorted([l for l in linhas_md if l['tipo'] == 'treinado'], 
+                                          key=lambda x: x['score'] if x['score'] is not None else 0, reverse=True)
+                        baselines_md = [l for l in linhas_md if l['tipo'] == 'baseline']
+                        
+                        for linha in treinados + baselines_md:
+                            modelo = f"{linha['modelo']}{linha['marcador']}"
+                            alias = linha['alias']
+                            
+                            if linha['tipo'] == 'baseline':
+                                tokens_str = 'Baseline'
+                                inst_str = 'Baseline'
+                                loss_str = '—'
+                            else:
+                                tokens_str = f"{linha['tokens']:,}" if linha['tokens'] else '—'
+                                inst_str = f"{linha['instancias']:,}" if linha['instancias'] else '—'
+                                loss_str = f"{linha['eval_loss']:.4f}" if linha['eval_loss'] is not None else '—'
+                            
+                            score_str = f"{linha['score']:.4f}" if linha['score'] is not None else '—'
+                            
+                            f.write(f"| {modelo} | {alias} | {tokens_str} | {inst_str} | {loss_str} | {score_str} |\n")
+                        
+                        # Legenda
+                        f.write(f"\n★ = {'Best eval loss' if lang == 'en' else 'Melhor eval loss'}\n")
+                        f.write(f"▲ = {'Worst eval loss' if lang == 'en' else 'Pior eval loss'}\n")
+                    
+                    total_md += 1
+                except Exception as e:
+                    print(f"   ⚠️ Erro ao gerar markdown {nome_md}: {e}")
         
         if total_gerados > 0:
             print(f"   ✓ {total_gerados} gráficos de custo-eficiência gerados em: {pasta_graficos}")
+            if total_md > 0:
+                print(f"   ✓ {total_md} markdowns de custo-eficiência gerados")
         else:
             print("   ⚠️ Nenhum gráfico de custo-eficiência gerado (sem dados suficientes)")
+
