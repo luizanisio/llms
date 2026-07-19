@@ -26,9 +26,7 @@ saida:
 execucao:
   max_workers: 20
   teste_rapido: false
-  gerar_graficos: true 
   llm_as_a_judge: false
-  analise_estatistica: true
   ignorar_erro_extracao: false
 
 # Modelo Base (Gabarito/Referência)
@@ -165,6 +163,17 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - rouge_l
+      - sbert_grande
+
   # Mapeamento de campos para métricas
   campos:
     bertscore:
@@ -224,3 +233,5 @@ campos_virtuais:
     - publication
     - journal
     - keywords
+
+
