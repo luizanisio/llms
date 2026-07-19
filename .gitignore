@@ -232,14 +232,17 @@ experimentos/pubmed-experimento/compara**
 # treinos
 experimentos/pubmed-experimento/treinos/*
 !experimentos/pubmed-experimento/treinos/zip_treinos.sh
+!experimentos/pubmed-experimento/treinos/zip_treinos_metricas.sh
 !experimentos/pubmed-experimento/treinos/zip_treinos_lite.sh
 
 experimentos/summa-experimento/treinos/*
 !experimentos/summa-experimento/treinos/zip_treinos.sh
+!experimentos/summa-experimento/treinos/zip_treinos_metricas.sh
 !experimentos/summa-experimento/treinos/zip_treinos_lite.sh
 
 experimentos/puil-mini-experimento/treinos_local/*
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos.sh
+!experimentos/puil-mini-experimento/treinos_local/zip_treinos_metricas.sh
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos_lite.sh
 
 # comparações
