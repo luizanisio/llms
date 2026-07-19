@@ -2,7 +2,7 @@
 # Comparação: Panorama Completo (todos os protocolos)
 # ==========================================================================
 # Propósito: Visão global de todos os protocolos em um único relatório.
-#   Inclui baselines (A, b, c), experimentais (d1-d4), ablações (d5-d8) e anti-CL (d9-d10).
+#   Inclui baselines (A, b, c), experimentais (d1-d4, d11-d12), ablações (d5-d8) e anti-CL (d9-d10).
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
 # ==========================================================================
 
@@ -117,6 +117,18 @@ modelos_comparacao:
     alias: "D10"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d10)"
+  # --- Experimental D11: CL acumulado granular, FF→LoRA ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d11)_teste.parquet"
+    rotulo: "Qwen1.5B(d11)"
+    alias: "D11"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d11)"
+  # --- Experimental D12: CL acumulado granular, LoRA→FF ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d12)_teste.parquet"
+    rotulo: "Qwen1.5B(d12)"
+    alias: "D12"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d12)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:

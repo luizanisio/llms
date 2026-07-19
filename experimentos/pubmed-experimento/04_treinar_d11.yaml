@@ -1,0 +1,209 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d11.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d11.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D11)
+# ==========================================================================
+# Papel:   Experimental (variante granular de D3)
+# Modo:    CL acumulado granular + Escalonamento FF→LoRA
+# Etapas:  FF(≤1) → LoRA(≤2) → LoRA(≤3) → ... → LoRA(≤9) → LoRA-tudo
+# Objetivo: CL com progressão suave (incremento unitário de dificuldade_int)
+#           e acúmulo de dados entre etapas. Direção FF→LoRA.
+#           Variação de D3 com 10 etapas em vez de 3, para avaliar se
+#           uma progressão mais granular melhora o desempenho.
+# Pergunta: Q5 (granularidade do currículo: progressão suave vs saltos)
+# Comparar: d11 vs d3 (Q5: granularidade), d11 vs d4 (Q3+Q5), d11 vs b (Q2)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
+  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
+  saida:
+    #| Caminho do arquivo parquet que contém as respostas esperadas
+    dataframe: saidas/saida_pubmed_prof.parquet
+    #| Nome da coluna que contém o JSON de resposta
+    dataframe_col: resposta
+    #| Nome da coluna que contém o identificador do item
+    dataframe_id: chave
+    #| Formato estruturado esperado
+    formato: json
+    texto_criptografado: false
+
+  #| Entrada: Especifica os dados que o modelo vai receber como prompt
+  entrada:
+    #| Arquivo parquet com o texto fonte a ser processado
+    dataframe: dados/pubmed-rct-20k.parquet
+    #| Nome da coluna que contém o texto (prompt)
+    dataframe_col: article
+    #| Nome da coluna que contém o identificador do item
+    dataframe_id: pmid
+    #| Arquivo TXT com o template que dita como o texto bruto será empacotado
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL acumulado granular FF→LoRA: FF(≤1) → LoRA(≤2) → ... → LoRA(≤9) → LoRA-tudo
+  divisao:
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=1"}
+    alias: "f1-FF"
+    tipo: "full"
+    learning_rate: 5e-06
+    bits: 16
+    pace_epochs: 2
+    batch_size: 1
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=2"}
+    alias: "f2"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "f3"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=4"}
+    alias: "f4"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=5"}
+    alias: "f5"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=6"}
+    alias: "f6"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "f7"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=8"}
+    alias: "f8"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade_int": "<=9"}
+    alias: "f9"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo"
+    tipo: "lora"
+    learning_rate: 2e-05
+    pace_epochs: 2
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+#| Configurações do modelo base e diretório de saída.
+modelo:
+  #| Caminho do modelo pré-treinado usado como fundação
+  base_model_name: Qwen2.5-1.5B-Instruct
+  #| Diretório final onde os pesos atualizados serão salvos
+  saida: treinos/Qwen2.5-1.5B-Instruct(d11)
+  #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
+  ollama: Qwen2.5-1.5B-Instruct(d11):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+#| Configurações de hiperparâmetros (Unsloth).
+treinamento:
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
+  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
+
+  eval_steps: 20%
+
+  #| Configuração do tamanho do lote (batch). Lote por GPU é 2, com acumulação de 8.
+  batch_size:
+    efetivo: 16
+    batch_size: 2
+  grad_batch_size: 8
+
+  #| Número total de épocas (passagens pelo dataset completo)
+  num_train_epochs: 4
+  max_seq_length: 8192
+  validar_max_seq_length: true
+
+  #| Taxa de aprendizado base, otimizada para full finetuning
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  #| Curva de decaimento da taxa de aprendizado (suaviza nos passos finais)
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  #| Realiza o treinamento em 4-bits (LoRA)
+  nbits: 4
+
+  #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

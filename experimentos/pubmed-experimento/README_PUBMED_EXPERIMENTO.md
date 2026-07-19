@@ -226,7 +226,7 @@ O modelo-alvo é o **Qwen 2.5 1.5B Instruct**, escolhido porque o domínio biom�
 em inglês é genuinamente difícil para modelos pequenos sem fine-tuning — garantindo
 espaço real de ganho para o CL demonstrar efeito.
 
-O experimento conta com **13 protocolos** organizados em 5 camadas:
+O experimento conta com **15 protocolos** organizados em 5 camadas:
 
 #### Perguntas de pesquisa
 
@@ -236,6 +236,7 @@ O experimento conta com **13 protocolos** organizados em 5 camadas:
 | **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto? |
 | **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos? |
 | **Q4** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? |
+| **Q5** | Pace do currículo: progressão suave (unitária) melhora sobre saltos? |
 
 #### Camada 1 — Baselines (sem CL, sem escalonamento)
 
@@ -253,6 +254,8 @@ O experimento conta com **13 protocolos** organizados em 5 camadas:
 | **D2** | etapas | LoRA→FF | LoRA-fácil → LoRA-médio → LoRA-difícil → FF-completo | `04_treinar_d2.yaml` |
 | **D3** | acumulado | FF→LoRA | FF-fácil → LoRA-(fácil+médio) → LoRA-tudo | `04_treinar_d3.yaml` |
 | **D4** | acumulado | LoRA→FF | LoRA-fácil → LoRA-(fácil+médio) → FF-tudo | `04_treinar_d4.yaml` |
+| **D11** | acum. granular | FF→LoRA | FF(≤1) → LoRA(≤2) → ... → LoRA(≤9) → LoRA-tudo | `04_treinar_d11.yaml` |
+| **D12** | acum. granular | LoRA→FF | LoRA(≤1) → LoRA(≤2) → ... → LoRA(≤9) → FF-tudo | `04_treinar_d12.yaml` |
 
 #### Camada 3 — Ablação: escalonamento sem CL
 
@@ -284,6 +287,7 @@ O design forma um fatorial quase completo em 3 dimensões:
 | **Sem CL** | b, c | D5 | D6 |
 | **CL por etapas** | D7 | D1 | D2 |
 | **CL acumulado** | D8 | D3 | D4 |
+| **CL acum. granular** | — | D11 | D12 |
 | **Anti-CL etapas** | D9 | — | — |
 | **Anti-CL acumulado** | D10 | — | — |
 
@@ -324,15 +328,24 @@ O design forma um fatorial quase completo em 3 dimensões:
 | D9 vs b | Anti-CL vs baseline | Anti-CL pelo menos melhora sobre FT direto? |
 | D10 vs b | Anti-CL acum vs baseline | Anti-CL acum melhora sobre FT direto? |
 
+**Q5 — Granularidade do currículo (progressão suave):**
+
+| Comparação | O que isola | Interpretação |
+|---|---|---|
+| D11 vs D3 | Granularidade (FF→LoRA) | Progressão suave melhora sobre saltos? |
+| D12 vs D4 | Granularidade (LoRA→FF) | Progressão suave melhora sobre saltos? |
+| D11 vs D12 | Direção do escalonamento (granular) | FF→LoRA vs LoRA→FF em granularidade fina |
+| D11 vs b | CL granular vs baseline | CL granular melhora sobre FT direto? |
+
 #### Arquivos de comparação
 
 | Arquivo | Modelos incluídos | Propósito |
 |---|---|---|
-| `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4 | Q1 + Q2 + Q3 (experimento principal) |
+| `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4, D11, D12 | Q1 + Q2 + Q3 + Q5 (experimento principal) |
 | `06_compara_ablacoes.yaml` | A, b, c, D5, D6, D7, D8 | Decomposição CL vs escalonamento |
 | `06_compara_ordem_cl.yaml` | A, b, D7, D8, D9, D10 | Q4 (efeito da direção do currículo) |
 | `06_compara_ordem_pt.yaml` | A, b, c, D5, D6 | Q3 (efeito da direção do escalonamento) |
-| `06_compara_todos.yaml` | A, b, c, D1–D10 | Panorama completo |
+| `06_compara_todos.yaml` | A, b, c, D1–D12 | Panorama completo |
 
 #### Controle de volume de treinamento entre estratégias de pacing
 
@@ -367,6 +380,23 @@ do tipo de pacing com o efeito de mais treinamento. A decisão de manter
 `pace_epochs=2` uniforme preserva a comparabilidade em volume total de tokens
 e permite que qualquer diferença de desempenho entre D1 e D3 (ou D7 e D8) seja
 atribuída exclusivamente à estratégia de pacing.
+
+#### Volume de treinamento dos protocolos granulares (D11, D12)
+
+Os protocolos D11 e D12 utilizam 10 etapas acumuladas com `pace_epochs=2`,
+resultando em volume total significativamente maior que os protocolos de 3 etapas:
+
+| Protocolo | Estágios | Cálculo (% dataset × epochs) | Total |
+|---|---|---|---|
+| **D3** (acum. 3 etapas) | 3 | 30%×2 + 70%×2 + 100%×2 | **4.0** dataset-eq |
+| **D11** (acum. granular) | 10 | Σ(≤k×2, k=1..9) + 100%×2 | **~11.0** dataset-eq |
+
+Esta diferença de volume causa uma **variação esperada**: D11/D12 veem
+mais dados no total que D3/D4. A decisão de manter `pace_epochs=2` uniforme
+prioriza a consistência com todos os outros protocolos. A interpretação dos
+resultados D11 vs D3 (e D12 vs D4) deve considerar que qualquer ganho pode
+ser atribuído tanto à granularidade quanto ao volume adicional de treinamento.
+Uma análise complementar por token-equivalente pode ser reportada se necessário.
 
 ### Métricas de avaliação
 

@@ -1,11 +1,12 @@
 # ==========================================================================
-# Comparação: Experimento Principal (Q1 + Q2 + Q3)
+# Comparação: Experimento Principal (Q1 + Q2 + Q3 + Q5)
 # ==========================================================================
-# Propósito: Responder as 3 perguntas de pesquisa com os protocolos centrais.
+# Propósito: Responder as perguntas de pesquisa com os protocolos centrais.
 #   Q1 — Efeito do ajuste fino: A vs {b, c, d1, d2}
 #   Q2 — Efeito do CL: {b, c} vs {d1, d2, d3, d4}
 #   Q3 — Direção do escalonamento: d1 vs d2, d3 vs d4
-# Modelos: A (baseline), b (LoRA), c (FF), d1-d4 (experimentais)
+#   Q5 — Granularidade do currículo: d11 vs d3, d12 vs d4
+# Modelos: A (baseline), b (LoRA), c (FF), d1-d4 (experimentais), d11-d12 (granulares)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_experimentais.yaml
 # ==========================================================================
 
@@ -84,6 +85,18 @@ modelos_comparacao:
     alias: "D4"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
+  # --- Experimental D11: CL acumulado granular, FF→LoRA ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d11)_teste.parquet"
+    rotulo: "Qwen1.5B(d11)"
+    alias: "D11"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d11)"
+  # --- Experimental D12: CL acumulado granular, LoRA→FF ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d12)_teste.parquet"
+    rotulo: "Qwen1.5B(d12)"
+    alias: "D12"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d12)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:

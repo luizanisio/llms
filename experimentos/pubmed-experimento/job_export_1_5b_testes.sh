@@ -62,7 +62,7 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 
-PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8" "d9" "d10")
+PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8" "d9" "d10" "d11" "d12")
 
 for PROTOCOL in "${PROTOCOLS[@]}"; do
     CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
