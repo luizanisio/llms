@@ -850,11 +850,12 @@ def main():
         # Gera gráfico de status/erros
         CompararExtracoesGraficos.gerar_grafico_erros(dados_analise, pasta_saida, lang=lang_graficos)
         
-        # Gera gráficos de métricas de treinamento (se configurado na pasta do modelo)
-        CompararExtracoesGraficos.gerar_graficos_treinamento(config, base_dir_yaml, pasta_base_ativa, dados_analise, pasta_saida, lang=lang_graficos)
-        
+        # gerar_graficos_de_excel faz a limpeza da pasta graficos, então deve rodar primeiro
         if os.path.isfile(arquivo_excel):
             analisador.gerar_graficos_de_excel(arquivo_excel, pasta_saida=pasta_saida)
+        
+        # Gera gráficos de métricas de treinamento (após limpeza, para não serem apagados)
+        CompararExtracoesGraficos.gerar_graficos_treinamento(config, base_dir_yaml, pasta_base_ativa, dados_analise, pasta_saida, lang=lang_graficos)
         
         # Gera gráficos de custo-eficiência (tokens/instâncias vs F1 Score)
         if os.path.isfile(arquivo_excel):

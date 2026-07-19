@@ -93,6 +93,8 @@ class CompararExtracoesGraficos:
         series_eval_loss_inst = {}
         series_eval_loss_global_tokens = {}
         series_eval_loss_global_inst = {}
+        series_train_loss_tokens = {}
+        series_train_loss_inst = {}
         
         algum_modelo_tem_metricas = False
     
@@ -121,6 +123,7 @@ class CompararExtracoesGraficos:
             
             eval_loss_by_step = {}
             eval_loss_global_by_step = {}
+            train_loss_entries = []  # lista de (tokens, instancias, loss)
             
             current_tokens = None
             current_instances = None
@@ -147,6 +150,11 @@ class CompararExtracoesGraficos:
                                         eval_loss_global_by_step[step] = {'loss': obj["eval_loss_global"]}
                                     eval_loss_global_by_step[step]['tokens'] = current_tokens
                                     eval_loss_global_by_step[step]['instancias'] = current_instances
+                                
+                                if "train_loss" in obj and current_tokens is not None:
+                                    train_loss_entries.append((
+                                        current_tokens, current_instances, obj["train_loss"]
+                                    ))
                         except Exception:
                             pass
             except Exception as e:
@@ -187,6 +195,26 @@ class CompararExtracoesGraficos:
                 series_eval_loss_global_tokens[rotulo] = {'x': x_tok_eval_g, 'y': y_eval_g, 'cor': cor, 'estilo': '-'}
             if x_inst_eval_g and y_eval_g:
                 series_eval_loss_global_inst[rotulo] = {'x': x_inst_eval_g, 'y': y_eval_g, 'cor': cor, 'estilo': '-'}
+            
+            # Train loss com amostragem para legibilidade (máx 100 pontos)
+            if train_loss_entries:
+                max_pontos = 100
+                if len(train_loss_entries) > max_pontos:
+                    step = len(train_loss_entries) / max_pontos
+                    indices = [int(i * step) for i in range(max_pontos)]
+                    # Garante que o último ponto seja incluído
+                    if indices[-1] != len(train_loss_entries) - 1:
+                        indices[-1] = len(train_loss_entries) - 1
+                    train_loss_entries = [train_loss_entries[i] for i in indices]
+                
+                x_tok_train = [e[0] for e in train_loss_entries if e[0] is not None]
+                x_inst_train = [e[1] for e in train_loss_entries if e[1] is not None]
+                y_train = [e[2] for e in train_loss_entries]
+                
+                if x_tok_train and len(x_tok_train) == len(y_train):
+                    series_train_loss_tokens[rotulo] = {'x': x_tok_train, 'y': y_train, 'cor': cor, 'estilo': '-'}
+                if x_inst_train and len(x_inst_train) == len(y_train):
+                    series_train_loss_inst[rotulo] = {'x': x_inst_train, 'y': y_train, 'cor': cor, 'estilo': '-'}
     
         if not algum_modelo_tem_metricas:
             return
@@ -258,6 +286,26 @@ class CompararExtracoesGraficos:
             UtilGraficos.gerar_grafico_linhas(series_eval_loss_global_inst,
                 titulo="Eval Loss Global vs Instâncias Acumuladas",
                 ylabel="Eval Loss Global", xlabel="Instâncias Acumuladas",
+                arquivo_saida=arquivo)
+            print(f"   ✓ Gráfico salvo: {os.path.basename(arquivo)}")
+    
+        # Train loss (amostrado para legibilidade)
+        series_train_loss_tokens = _adicionar_melhor_loss(series_train_loss_tokens) if series_train_loss_tokens else {}
+        series_train_loss_inst = _adicionar_melhor_loss(series_train_loss_inst) if series_train_loss_inst else {}
+        
+        if series_train_loss_tokens:
+            arquivo = os.path.join(pasta_graficos, 'treinamento_train_loss_vs_tokens.png')
+            UtilGraficos.gerar_grafico_linhas(series_train_loss_tokens,
+                titulo="Train Loss vs Accumulated Tokens" if lang == 'en' else "Train Loss vs Tokens Acumulados",
+                ylabel="Train Loss", xlabel="Accumulated Tokens" if lang == 'en' else "Tokens Acumulados",
+                arquivo_saida=arquivo)
+            print(f"   ✓ Gráfico salvo: {os.path.basename(arquivo)}")
+    
+        if series_train_loss_inst:
+            arquivo = os.path.join(pasta_graficos, 'treinamento_train_loss_vs_instancias.png')
+            UtilGraficos.gerar_grafico_linhas(series_train_loss_inst,
+                titulo="Train Loss vs Accumulated Instances" if lang == 'en' else "Train Loss vs Instâncias Acumuladas",
+                ylabel="Train Loss", xlabel="Accumulated Instances" if lang == 'en' else "Instâncias Acumuladas",
                 arquivo_saida=arquivo)
             print(f"   ✓ Gráfico salvo: {os.path.basename(arquivo)}")
 
@@ -572,7 +620,7 @@ class CompararExtracoesGraficos:
             tecnica_display = tecnica.upper().replace('_', ' ')
             alias_tecnica = modelos_aliases.get(tecnica, '')
             if alias_tecnica:
-                tecnica_display = f"{tecnica_display} ({alias_tecnica})"
+                tecnica_display = f"{tecnica_display}, {alias_tecnica}"
             
             # Nome da técnica para arquivo (usa SBERTp/m/g)
             tecnica_arquivo = _tecnica_nome_arquivo.get(tecnica, tecnica)

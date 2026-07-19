@@ -754,7 +754,12 @@ class UtilGraficos:
             ax.axhline(y=bl['y'], color=bl.get('cor', 'gray'), linestyle='--', 
                        alpha=0.6, linewidth=1.5, label=bl.get('label', 'Baseline'))
         
-        # Plota pontos dos modelos treinados
+        # Plota pontos dos modelos treinados e coleta textos para adjustText
+        textos_labels = []
+        textos_x = []
+        textos_y = []
+        textos_cores = []
+        
         for pt in pontos:
             marcador = pt.get('marcador', 'o')
             tamanho = pt.get('tamanho', 120)
@@ -766,13 +771,39 @@ class UtilGraficos:
             ax.scatter(pt['x'], pt['y'], marker=marcador, s=tamanho, c=[cor],
                       edgecolors=edgecolor, linewidths=linewidth, zorder=zorder)
             
-            # Anotação com o rótulo do modelo ao lado do ponto
+            # Coleta dados para adjustText
             label = pt.get('label', '')
             if label:
-                ax.annotate(label, (pt['x'], pt['y']), 
-                          textcoords="offset points", xytext=(8, 4),
-                          fontsize=9, fontweight='bold', color=cor,
-                          ha='left', va='bottom')
+                textos_labels.append(label)
+                textos_x.append(pt['x'])
+                textos_y.append(pt['y'])
+                textos_cores.append(cor)
+        
+        # Usa adjustText para posicionar rótulos sem sobreposição
+        if textos_labels:
+            try:
+                from adjustText import adjust_text
+                
+                texts = []
+                for i, label in enumerate(textos_labels):
+                    t = ax.text(textos_x[i], textos_y[i], label,
+                               fontsize=9, fontweight='bold', color=textos_cores[i],
+                               ha='left', va='bottom', zorder=15)
+                    texts.append(t)
+                
+                adjust_text(texts, ax=ax,
+                           arrowprops=dict(arrowstyle='-', color='gray', alpha=0.5, lw=0.8),
+                           force_text=(0.8, 1.0),
+                           force_points=(0.5, 0.5),
+                           expand=(1.2, 1.4),
+                           ensure_inside_axes=True)
+            except ImportError:
+                # Fallback sem adjustText
+                for i, label in enumerate(textos_labels):
+                    ax.annotate(label, (textos_x[i], textos_y[i]),
+                               textcoords="offset points", xytext=(8, 4),
+                               fontsize=9, fontweight='bold', color=textos_cores[i],
+                               ha='left', va='bottom')
         
         # Configurações do gráfico
         ax.set_xlabel(xlabel, fontsize=12)

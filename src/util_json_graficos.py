@@ -2074,7 +2074,7 @@ class JsonAnaliseGraficos:
                     if tecnica in modelos_aliases:
                         alias = modelos_aliases[tecnica][0]
                         if alias:
-                            alias_info = f" ({alias})"
+                            alias_info = f", {alias}"
                     
                     # Título do gráfico
                     titulo = f'{campo} - {metrica} ({tecnica_nome}{alias_info})'
@@ -2237,7 +2237,7 @@ class JsonAnaliseGraficos:
                     if modelos_aliases and tecnica in modelos_aliases:
                         alias = modelos_aliases[tecnica][0]
                         if alias:
-                            alias_info = f" ({alias})"
+                            alias_info = f", {alias}"
                     
                     # Título
                     titulo = f'{campo} - {metrica} ({tecnica_nome}{alias_info})'

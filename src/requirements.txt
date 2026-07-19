@@ -36,6 +36,7 @@ PyYAML==6.0.3
 nvitop
 ipywidgets==8.1.7
 matplotlib==3.10.3
+adjustText==1.4.0
 fuzzywuzzy==0.18.0
 tensorboardX==2.6.2.2
 tiktoken==0.9.0
