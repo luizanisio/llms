@@ -1,5 +1,13 @@
+# -*- coding: utf-8 -*-
 # Autor: Luiz Anísio
 # Fonte: https://github.com/luizanisio/llms/tree/main/src
+
+"""
+Teste de validação do módulo util_analise_estatistica (interface N×K).
+Simula K protocolos com diferenças conhecidas e verifica:
+- Friedman, Nemenyi, Wilcoxon+Holm, Shapiro-Wilk, Cohen's d
+- Geração de .md e .png
+"""
 
 import pandas as pd
 import numpy as np
@@ -8,87 +16,183 @@ import os
 import util  # garante que a pasta src está no sys.path
 from util_analise_estatistica import AnaliseEstatistica
 
-def test_analise():
-    print("Iniciando teste de validação da AnaliseEstatistica...")
-    
-    # Criando dados sintéticos
-    # Criando dados sintéticos baseados nas imagens (Tabela III)
-    np.random.seed(42)  # Seed para reprodutibilidade
-    
-    # Configuração dos tamanhos de amostra (Tabela II: 300 pares por família)
-    n_gpt = 300
-    n_gemma12 = 300
-    n_gemma27 = 300
-    
-    # Família 1: GPT5
-    # Base: Média 0.8325, Std 0.0721
-    # Agente: Média 0.9271, Std 0.0394
-    # Shapiro (GPT5): W=0.9183 (Não normal) -> Adicionamos leve skew se possível, mas mantendo normal para média/std corretos
-    gpt_base = np.random.normal(0.8325, 0.0721, n_gpt)
-    gpt_agente = np.random.normal(0.9271, 0.0394, n_gpt)
-    gpt_custo_base = np.full(n_gpt, 38835) # Custo aproximado do relatório anterior
-    gpt_custo_agente = np.full(n_gpt, 99247) 
 
-    # Família 2: Gemma3(12B)
-    # Base: Média 0.6247, Std 0.0966
-    # Agente: Média 0.6494, Std 0.1008
-    gemma12_base = np.random.normal(0.6247, 0.0966, n_gemma12)
-    gemma12_agente = np.random.normal(0.6494, 0.1008, n_gemma12)
-    gemma12_custo_base = np.full(n_gemma12, 38835)
-    gemma12_custo_agente = np.full(n_gemma12, 153069)
-
-    # Família 3: Gemma3(27B)
-    # Base: Média 0.7084, Std 0.1043
-    # Agente: Média 0.7244, Std 0.1041
-    gemma27_base = np.random.normal(0.7084, 0.1043, n_gemma27)
-    gemma27_agente = np.random.normal(0.7244, 0.1041, n_gemma27)
-    gemma27_custo_base = np.full(n_gemma27, 38835)
-    gemma27_custo_agente = np.full(n_gemma27, 105985)
-
-    # Concatenando
+def test_analise_basica():
+    """Teste com 5 protocolos e diferenças claras."""
+    print("═" * 60)
+    print("Teste 1: 5 protocolos com diferenças claras")
+    print("═" * 60)
+    
+    np.random.seed(42)
+    n = 100
+    
     df = pd.DataFrame({
-        'valor1': np.concatenate([gpt_base, gemma12_base, gemma27_base]),
-        'valor2': np.concatenate([gpt_agente, gemma12_agente, gemma27_agente]),
-        'custo1': np.concatenate([gpt_custo_base, gemma12_custo_base, gemma27_custo_base]),
-        'custo2': np.concatenate([gpt_custo_agente, gemma12_custo_agente, gemma27_custo_agente]),
-        'familia': ['agentes_gpt5'] * n_gpt + ['agentes_gemma3(12B)'] * n_gemma12 + ['agentes_gemma3(27B)'] * n_gemma27
+        'A': np.random.normal(0.60, 0.12, n).clip(0, 1),
+        'B': np.random.normal(0.65, 0.10, n).clip(0, 1),
+        'D1': np.random.normal(0.80, 0.08, n).clip(0, 1),
+        'D2': np.random.normal(0.82, 0.07, n).clip(0, 1),
+        'D3': np.random.normal(0.85, 0.06, n).clip(0, 1),
     })
     
-    # Clip para garantir valores entre 0 e 1 (analise de F1)
-    df['valor1'] = df['valor1'].clip(0, 1)
-    df['valor2'] = df['valor2'].clip(0, 1)
-    
-    output_file = 'relatorio_teste_validacao.md'
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    os.makedirs(pasta_teste, exist_ok=True)
     
     analise = AnaliseEstatistica(df, config={
-        'rotulo1': 'Base',
-        'rotulo2': 'Agentes',
-        'arquivo_saida': output_file
+        'metrica_nome': '(global)_bertscore_F1',
+        'campo': '(global)',
+        'tecnica': 'BERTScore',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test1.md'),
+        'arquivo_cd_png': os.path.join(pasta_teste, 'estat_test1_cd.png'),
+        'lang': 'en',
     })
     
-    try:
-        analise.processar_analise()
-        analise.salvar_relatorio()
-        
-        if os.path.exists(output_file):
-            print(f"✅ Relatório gerado com sucesso: {output_file}")
-            with open(output_file, 'r') as f:
-                content = f.read()
-                print("\n--- Conteúdo do Relatório ---")
-                print(content)
-                print("-----------------------------")
-                
-                # Verificação simples se a tabela nova existe
-                if "Desempenho Geral (Ranking)" in content:
-                    print("✅ Tabela 'Desempenho Geral' encontrada.")
-                else:
-                    print("❌ ERRO: Tabela 'Desempenho Geral' NÃO encontrada.")
-        else:
-            print("❌ Erro: Arquivo de relatório não foi criado.")
-            
-    except Exception as e:
-        print(f"❌ Erro durante a execução: {str(e)}")
-        raise e
+    resumo = analise.processar()
+    analise.salvar()
+    
+    # Validações
+    assert resumo['K'] == 5, f"K esperado=5, obtido={resumo['K']}"
+    assert resumo['N'] == n, f"N esperado={n}, obtido={resumo['N']}"
+    assert resumo['friedman_sig'] == True, f"Friedman deveria ser significativo"
+    assert resumo['n_grupos'] == 2, f"Esperado 2 grupos, obtido={resumo['n_grupos']}"
+    
+    # Verifica que A e B estão no mesmo grupo
+    grupo_a = analise.grupos.get('A', '')
+    grupo_b = analise.grupos.get('B', '')
+    assert grupo_a == grupo_b, f"A e B deveriam estar no mesmo grupo: {grupo_a} vs {grupo_b}"
+    
+    # Verifica que D1, D2, D3 estão no mesmo grupo e diferente de A/B
+    grupo_d1 = analise.grupos.get('D1', '')
+    assert grupo_d1 != grupo_a, f"D1 deveria estar em grupo diferente de A"
+    
+    # Verifica geração de arquivos
+    assert os.path.exists(os.path.join(pasta_teste, 'estat_test1.md')), "Arquivo .md não gerado"
+    assert os.path.exists(os.path.join(pasta_teste, 'estat_test1_cd.png')), "Arquivo CD .png não gerado"
+    
+    print(f"✅ Resumo: {resumo}")
+    print(f"✅ Grupos: {analise.grupos}")
+    print()
+
+
+def test_dois_protocolos():
+    """Teste com apenas 2 protocolos (Friedman não se aplica)."""
+    print("═" * 60)
+    print("Teste 2: 2 protocolos (Friedman não aplicável)")
+    print("═" * 60)
+    
+    np.random.seed(42)
+    n = 50
+    
+    df = pd.DataFrame({
+        'Base': np.random.normal(0.70, 0.10, n).clip(0, 1),
+        'Modelo': np.random.normal(0.75, 0.08, n).clip(0, 1),
+    })
+    
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    os.makedirs(pasta_teste, exist_ok=True)
+    
+    analise = AnaliseEstatistica(df, config={
+        'metrica_nome': '(global)_rouge_F1',
+        'campo': '(global)',
+        'tecnica': 'ROUGE-L',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test2.md'),
+        'arquivo_cd_png': '',  # Sem CD diagram para K=2
+        'lang': 'pt',
+    })
+    
+    resumo = analise.processar()
+    analise.salvar()
+    
+    assert resumo['K'] == 2, f"K esperado=2, obtido={resumo['K']}"
+    assert resumo['friedman_p'] is None, "Friedman não deveria ser aplicável com K=2"
+    assert len(analise.wilcoxon_resultados) == 1, "Deveria ter exatamente 1 comparação par a par"
+    
+    print(f"✅ Resumo: {resumo}")
+    print(f"✅ Wilcoxon: p={analise.wilcoxon_resultados[0]['p_corrigido']:.4f}")
+    print()
+
+
+def test_amostras_insuficientes():
+    """Teste com menos de 20 amostras."""
+    print("═" * 60)
+    print("Teste 3: Amostras insuficientes (n=10)")
+    print("═" * 60)
+    
+    np.random.seed(42)
+    
+    df = pd.DataFrame({
+        'A': np.random.normal(0.70, 0.10, 10),
+        'B': np.random.normal(0.75, 0.08, 10),
+        'C': np.random.normal(0.80, 0.06, 10),
+    })
+    
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    os.makedirs(pasta_teste, exist_ok=True)
+    
+    analise = AnaliseEstatistica(df, config={
+        'metrica_nome': 'test',
+        'campo': 'test',
+        'tecnica': 'test',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test3.md'),
+        'lang': 'en',
+        'min_amostras': 20,
+    })
+    
+    resumo = analise.processar()
+    analise.salvar()
+    
+    assert analise._analise_realizada == False, "Análise não deveria ter sido realizada"
+    assert 'WARNING' in analise.markdown_content or 'insufficient' in analise.markdown_content.lower() or 'below' in analise.markdown_content.lower(), \
+        "Relatório deveria conter aviso de amostras insuficientes"
+    
+    print(f"✅ Análise corretamente não realizada (n={analise.N} < min_amostras={analise.min_amostras})")
+    print()
+
+
+def test_portugues():
+    """Teste com idioma português."""
+    print("═" * 60)
+    print("Teste 4: Relatório em português")
+    print("═" * 60)
+    
+    np.random.seed(42)
+    n = 50
+    
+    df = pd.DataFrame({
+        'Proto_A': np.random.normal(0.60, 0.10, n).clip(0, 1),
+        'Proto_B': np.random.normal(0.70, 0.08, n).clip(0, 1),
+        'Proto_C': np.random.normal(0.80, 0.06, n).clip(0, 1),
+    })
+    
+    pasta_teste = os.path.join(os.path.dirname(__file__) or '.', '_teste_estatistica')
+    os.makedirs(pasta_teste, exist_ok=True)
+    
+    analise = AnaliseEstatistica(df, config={
+        'metrica_nome': '(global)_bertscore_F1',
+        'campo': '(global)',
+        'tecnica': 'BERTScore',
+        'arquivo_md': os.path.join(pasta_teste, 'estat_test4_pt.md'),
+        'arquivo_cd_png': os.path.join(pasta_teste, 'estat_test4_pt_cd.png'),
+        'lang': 'pt',
+    })
+    
+    resumo = analise.processar()
+    analise.salvar()
+    
+    # Verifica que textos estão em português
+    assert 'Análise Estatística' in analise.markdown_content, "Título deveria estar em português"
+    assert 'Ranking de Desempenho' in analise.markdown_content, "Seções deveriam estar em português"
+    
+    print(f"✅ Relatório em português gerado corretamente")
+    print(f"✅ Grupos: {analise.grupos}")
+    print()
+
 
 if __name__ == "__main__":
-    test_analise()
+    test_analise_basica()
+    test_dois_protocolos()
+    test_amostras_insuficientes()
+    test_portugues()
+    
+    print("═" * 60)
+    print("✅ TODOS OS TESTES PASSARAM!")
+    print("═" * 60)

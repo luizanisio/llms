@@ -94,89 +94,24 @@ def _inicializar_ambiente():
 # FUNÇÕES DE ANÁLISE
 # ============================================================================
 
-def processar_analise_estatistica(dados_analise, pasta_saida, config):
+def processar_analise_estatistica(analisador, dados_analise, pasta_saida, config, lang='en'):
     """
-    Executa a análise estatística (LLM-as-a-Judge) baseada nos pares definidos no YAML.
+    Executa análise estatística (Friedman, Wilcoxon, Nemenyi, Shapiro-Wilk)
+    para cada combinação campo×métrica configurada em campos_estatisticas.
     """
-    if not config.get('execucao', {}).get('analise_estatistica', False):
-        return
-
-    print("\n📊 Iniciando Análise Estatística (LLM-as-a-Judge)...")
-    
     try:
-        from util_analise_estatistica import AnaliseEstatistica
+        from util_analise_estatistica import executar_analise_estatistica
     except ImportError:
         print("❌ Módulo util_analise_estatistica não encontrado.")
-        return
+        return []
 
-    lista_dados = []
-    pk = dados_analise.config.nome_campo_id
-    
-    rotulo_base = config['modelo_base']['rotulo']
-    familia_base = config['modelo_base'].get('familia', 'Base')
-    
-    ignorar_erro = config.get('execucao', {}).get('ignorar_erro_extracao', False)
-    
-    # Itera sobre os modelos de comparação definidos no YAML (respeitando flag ativo)
-    modelos_ativos = [m for m in config.get('modelos_comparacao', []) if m.get('ativo', True)]
-    
-    for modelo in modelos_ativos:
-        rotulo_agente = modelo['rotulo']
-        nome_familia = modelo.get('familia', rotulo_agente)
-        
-        print(f"   Processando par: {familia_base} ({rotulo_base}) vs {nome_familia} ({rotulo_agente})...")
-        
-        if rotulo_base not in dados_analise.rotulos or rotulo_agente not in dados_analise.rotulos:
-            print(f"      ⚠️  Saltando: Rótulos {rotulo_base} ou {rotulo_agente} não encontrados nos dados.")
-            continue
-
-        for item in dados_analise.dados_completos:
-            id_peca = item.get(pk)
-            if not id_peca: continue
-            
-            if ignorar_erro:
-                d1 = item.get(rotulo_base)
-                d2 = item.get(rotulo_agente)
-                if d1 is None or (isinstance(d1, dict) and 'erro' in d1):
-                    continue
-                if d2 is None or (isinstance(d2, dict) and 'erro' in d2):
-                    continue
-            
-            tokens = dados_analise.get_tokens(id_peca)
-            evals = dados_analise.get_avaliacao(id_peca)
-            
-            v1 = evals.get(f'{rotulo_base}_F1')
-            v2 = evals.get(f'{rotulo_agente}_F1')
-            
-            c1 = tokens.get(f'{rotulo_base}_total', 1) or 1
-            c2 = tokens.get(f'{rotulo_agente}_total', 1) or 1
-            
-            if v1 is not None and v2 is not None:
-                lista_dados.append({
-                    'id_doc': id_peca,
-                    'valor1': v1,
-                    'valor2': v2,
-                    'custo1': c1,
-                    'custo2': c2,
-                    'familia': nome_familia,
-                    'rotulo_modelo': rotulo_agente
-                })
-    
-    if not lista_dados:
-        print("❌ Nenhum dado compatível encontrado para análise estatística.")
-        return
-
-    df_stat = pd.DataFrame(lista_dados)
-    arquivo_saida = os.path.join(pasta_saida, 'relatorio_analise_estatistica.md')
-    
-    analise = AnaliseEstatistica(df_stat, config={
-        'rotulo_base': rotulo_base,
-        'familia_base': familia_base,
-        'arquivo_saida': arquivo_saida
-    })
-    analise.processar_analise()
-    analise.salvar_relatorio()
-    print(f"\n✅ Análise Estatística concluída e salva em: {arquivo_saida}")
+    return executar_analise_estatistica(
+        analisador=analisador,
+        dados_analise=dados_analise,
+        config=config,
+        pasta_saida=pasta_saida,
+        lang=lang
+    )
 
 def calcular_divisao_grupos(config):
     """
@@ -869,8 +804,8 @@ def main():
         if os.path.isfile(arquivo_excel):
             analisador.atualizar_avaliacao_llm_no_excel(arquivo_excel, gerar_graficos=True, pasta_saida=pasta_saida)
 
-    if flag_estatisticas:
-        processar_analise_estatistica(dados_analise, pasta_saida, config)
+    if flag_estatisticas and analisador_instanciado:
+        processar_analise_estatistica(analisador, dados_analise, pasta_saida, config, lang=lang_graficos)
 
     # 8. Divisão dos Dados (Treino/Teste/Validação) (pula se for execução parcial)
     if qualquer_flag_parcial:

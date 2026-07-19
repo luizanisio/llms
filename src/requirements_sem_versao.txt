@@ -43,6 +43,7 @@ xlsxwriter
 pandas
 openpyxl
 seaborn
+scikit-posthocs
 
 # ==============================================================================
 # 📊 COMPARAÇÕES E ANÁLISE (JsonAnalise)
