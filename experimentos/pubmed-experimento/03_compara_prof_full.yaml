@@ -3,10 +3,17 @@
 # Zipar e apagar a pasta: zip -r "analises_comparacao_pubmed (full).zip" "analises_comparacao_pubmed (full)"
 #                         rm -rf "analises_comparacao_pubmed (full)"
 
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl/llms/experimentos/pubmed-experimento
+
 # Configuração Global de Saída
 saida:
-  pasta: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/compara/analises_comparacao_pubmed (full)"
-  pasta_parquet: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/compara/"
+  pasta: "compara/analises_comparacao_pubmed (full)"
+  pasta_parquet: "compara/"
   arquivo_base: "comparacao_pubmed"
   regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
   linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
@@ -15,24 +22,35 @@ saida:
 execucao:
   max_workers: 20
   teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
-  gerar_graficos: true 
   llm_as_a_judge: false
-  analise_estatistica: true
   ignorar_erro_extracao: true
+  
+  # =========================================================================
+  # CONFIGURAÇÃO DE DIVISÃO
+  # =========================================================================
+  # A propriedade `arquivo_referencia`é opcional e indica um gabarito prévio
+  # dos alvos treino/teste/validaçao. 
+  # Caso não exista, o script irá criar um.
+  # Este arquivo DEVE conter as colunas mapeadas de 
+  # id e a coluna "alvo" definindo o que é treino, validacao e teste.
+  # 
+  # COMO A DIVISÃO É FEITA:
+  # O script irá computar a "dificuldade" das predições do Professor, e ao
+  # gerar o CSV final, fará um merge dessa dificuldade com o `arquivo_referencia`,
+  # mantendo a integridade da divisão original e evitando data leakage.
+  # =========================================================================
   divisao:
-    treino: 0.70
-    validacao: 0.10
-    teste: 0.20
+    arquivo_referencia: "dados/divisao_pubmed.csv"
 
 # Modelo Base (Gabarito/Referência)
 modelo_base:
-  arquivo: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/saida_pubmed_prof.parquet"
+  arquivo: "saidas/saida_pubmed_prof.parquet"
   rotulo: "Professor"
   familia: "PubMed-Gold"
 
 # Modelos Comparados
 modelos_comparacao:
-  - arquivo: "/students/luiz.abatitucci/llms/experimentos/pubmed-experimento/saidas/saida_pubmed_1_5b.parquet"
+  - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     familia: "Qwen-1.5B"
 
@@ -80,6 +98,17 @@ configuracao_comparacao:
     tokens: ".tokens.json" 
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - rouge_l
+      - sbert_grande
 
   # Mapeamento de campos para métricas
   campos:

@@ -6,6 +6,16 @@ Diferente do SUMMA, o prompt desse experimento é mais simples, com menos detalh
 
 ---
 
+## 📊 Fluxo de Dados e Controle de Splits
+
+A garantia de isolamento do conjunto de teste (*data leakage prevention*) é um pilar desse experimento. Para garantir a replicação e integridade do processo de Curriculum Learning, siga este roteiro conceitual sobre a vida do dado:
+1. **Extração e Preservação Inicial:** O script `util_pubmed.py` constrói o `pubmed-rct-20k.parquet` lendo os CSVs originais do PubMed. Ele preserva a flag de origem criando uma coluna `split` (`train`, `dev`, `test`), e salva simultaneamente o gabarito das divisões em `dados/divisao_pubmed.csv` (contendo `id_arquivo` e `alvo`).
+2. **Gabarito (Goldset) e Inferência Base:** Como o PubMed-RCT já possui o "Ground Truth" (Goldset) publicado e verificado na base original, não utilizamos um "Modelo Professor" para gerar as predições ideais. A extração inicial do Baseline (Qwen1.5B zero-shot) será comparada diretamente contra esse gabarito real da base.
+3. **Mapeamento de Dificuldades (O Segredo do CL):** Rodamos a comparação primária (`03_compara_prof_full.yaml`), que analisa o quão distante as predições do modelo baseline (Qwen1.5B) ficaram do Goldset. **Importante:** Nesse YAML, o parâmetro `arquivo_referencia` DEVE apontar para o `divisao_pubmed.csv`. Isso garante que o framework absorva as métricas de "Dificuldade" (fácil, médio, difícil) baseadas no Baseline, mas *respeite* a marcação original dos alvos em vez de sortear uma nova divisão aleatória de treino.
+4. **Treinamento e Filtragem:** Por fim, os currículos em `04_treinar_*.yaml` consomem o CSV gerado na comparação (ex: `divisoes/divisao_Qwen1.5B.csv`). Eles treinam apenas com as linhas marcadas como `alvo: treino`, criando fases lógicas baseadas na coluna `dificuldade`.
+
+---
+
 ## 🚀 Roteiro de Replicação (Passo a Passo)
 
 Para replicar o experimento (exemplo para o protocolo D1 / treinamento do modelo 1.5B), siga os seguintes passos:

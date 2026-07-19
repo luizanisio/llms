@@ -255,3 +255,4 @@ experimentos/summa-experimento/treinos_local/**
 experimentos/pubmed-experimento/treinos_local/**
 experimentos/puil-mini-experimento/treinos_local/**
 src/_teste_estatistica/**
+src/dummy_input.csv
