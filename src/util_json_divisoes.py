@@ -82,9 +82,10 @@ def contar_chaves_recursivo(obj) -> int:
 
 
 class UtilJsonDivisoes:
-    def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1), mapa_chaves: dict = None, mapa_tokens: dict = None):
+    def __init__(self, pasta_analises: str, divisao_grupos: tuple = (0.7, 0.2, 0.1), mapa_chaves: dict = None, mapa_tokens: dict = None, arquivo_referencia: str = None):
         self.pasta_analises = pasta_analises
         self.divisao_grupos = divisao_grupos
+        self.arquivo_referencia = arquivo_referencia
         self.pasta_jsons = os.path.join(self.pasta_analises, 'jsons')
         self.pasta_saida = os.path.join(self.pasta_analises, 'divisoes')
         # Mapa {id_doc: num_chaves} com contagem de chaves do ground truth
@@ -268,34 +269,60 @@ class UtilJsonDivisoes:
         df['dificuldade_int'] = df['dificuldade_int'].astype(int)
 
         # 5. Organização e Divisão Baseada nos Grupos (Treinamento, Teste e Validação)
-        dfs_finais = []
-        seed_fixa = 42 # Semente fixa para amostragem reprodutível
-        
-        for dif in ['facil', 'medio', 'dificil']:
-            df_sub = df[df['dificuldade'] == dif].copy()
-            if df_sub.empty:
-                continue
+        if self.arquivo_referencia and os.path.exists(self.arquivo_referencia):
+            print(f"   ℹ️  Utilizando dataset de referência para alvos: {self.arquivo_referencia}")
+            if self.arquivo_referencia.endswith('.csv'):
+                df_ref = pd.read_csv(self.arquivo_referencia)
+            elif self.arquivo_referencia.endswith('.parquet'):
+                df_ref = pd.read_parquet(self.arquivo_referencia)
+            else:
+                raise ValueError("O arquivo de referência deve ser .csv ou .parquet")
             
-            # Embaralha os dados pertencentes ao mesmo nível de dificuldade
-            df_sub = df_sub.sample(frac=1.0, random_state=seed_fixa)
-            n_total = len(df_sub)
+            if 'alvo' not in df_ref.columns:
+                raise ValueError(f"O dataset de referência '{self.arquivo_referencia}' deve obrigatoriamente conter a coluna 'alvo'")
             
-            p_treino, p_teste, _ = self.divisao_grupos
+            # Garante que os IDs sejam strings para o merge
+            col_ref = 'id_arquivo' if 'id_arquivo' in df_ref.columns else 'id'
+            col_df = 'id_arquivo' if 'id_arquivo' in df.columns else 'id'
             
-            n_treino = int(n_total * p_treino)
-            n_teste = int(n_total * p_teste)
-            n_val = n_total - n_treino - n_teste
+            df_ref[col_ref] = df_ref[col_ref].astype(str)
+            df[col_df] = df[col_df].astype(str)
             
-            # Associa grupos às partições embaralhadas
-            grupos = ['treino'] * n_treino + ['teste'] * n_teste + ['validacao'] * n_val
-            df_sub['alvo'] = grupos
+            df = df.merge(df_ref[[col_ref, 'alvo']], left_on=col_df, right_on=col_ref, how='left')
             
-            dfs_finais.append(df_sub)
-
-        if not dfs_finais:
-            return
-
-        df_final = pd.concat(dfs_finais)
+            if col_ref != col_df:
+                df = df.drop(columns=[col_ref])
+                
+            df_final = df
+        else:
+            dfs_finais = []
+            seed_fixa = 42 # Semente fixa para amostragem reprodutível
+            
+            for dif in ['facil', 'medio', 'dificil']:
+                df_sub = df[df['dificuldade'] == dif].copy()
+                if df_sub.empty:
+                    continue
+                
+                # Embaralha os dados pertencentes ao mesmo nível de dificuldade
+                df_sub = df_sub.sample(frac=1.0, random_state=seed_fixa)
+                n_total = len(df_sub)
+                
+                p_treino, p_teste, _ = self.divisao_grupos
+                
+                n_treino = int(n_total * p_treino)
+                n_teste = int(n_total * p_teste)
+                n_val = n_total - n_treino - n_teste
+                
+                # Associa grupos às partições embaralhadas
+                grupos = ['treino'] * n_treino + ['teste'] * n_teste + ['validacao'] * n_val
+                df_sub['alvo'] = grupos
+                
+                dfs_finais.append(df_sub)
+    
+            if not dfs_finais:
+                return
+    
+            df_final = pd.concat(dfs_finais)
         
         # O cabeçalho determina ordenar "da pontuação mais baixa (facil) para a mais alta (dificil)"
         # Note que a dificuldade aumenta de "1" (facil) para "10" (dificil). Ordenamos então por esse indicador.

@@ -851,7 +851,15 @@ def main():
                         if doc_tokens:
                             mapa_tokens[str(id_doc)] = doc_tokens
 
-        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos, mapa_chaves=mapa_chaves, mapa_tokens=mapa_tokens)
+        divisao_config = config.get('execucao', {}).get('divisao')
+        if not isinstance(divisao_config, dict):
+            divisao_config = config.get('execucao-divisao')
+        
+        arquivo_referencia = None
+        if isinstance(divisao_config, dict):
+            arquivo_referencia = divisao_config.get('arquivo_referencia')
+
+        util_divisoes = UtilJsonDivisoes(pasta_analises=pasta_saida, divisao_grupos=divisao_grupos, mapa_chaves=mapa_chaves, mapa_tokens=mapa_tokens, arquivo_referencia=arquivo_referencia)
         util_divisoes.processar()
     except Exception as e:
         print(f"❌ Erro ao gerar divisões: {e}")
