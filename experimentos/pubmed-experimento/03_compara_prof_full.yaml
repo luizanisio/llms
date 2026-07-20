@@ -23,7 +23,7 @@ execucao:
   max_workers: 20
   teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
   llm_as_a_judge: false
-  ignorar_erro_extracao: true
+  ignorar_erro_extracao: false
   
   # =========================================================================
   # CONFIGURAÇÃO DE DIVISÃO
