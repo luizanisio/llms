@@ -3,13 +3,16 @@
 # ==========================================================================
 # Propósito: Isolar a contribuição de cada componente do framework CL+PT.
 #   - d5, d6: Escalonamento sem CL (isola contribuição do escalonamento)
-#   - d7, d8: CL sem escalonamento (isola contribuição do CL)
+#   - d7, d8: CL sem escalonamento, LoRA-only (isola contribuição do CL)
+#   - d13: CL sem escalonamento, FF-only (contraparte FF do d7)
 #   Comparações-chave:
-#     d7 vs b → CL puro melhora sobre FT direto?
+#     d7 vs b → CL puro (LoRA) melhora sobre FT direto?
+#     d13 vs c → CL puro (FF) melhora sobre FF direto?
+#     d7 vs d13 → CL LoRA-only vs CL FF-only
 #     d5/d6 vs c → Escalonamento sem CL melhora sobre FF direto?
 #     d7 vs d8 → Pace por etapas vs acumulado (sem escalonamento)
 #     d5 vs d6 → Direção do escalonamento sem CL
-# Modelos: A (baseline), b (LoRA), c (FF), d5-d8 (ablações)
+# Modelos: A (baseline), b (LoRA), c (FF), d5-d8, d13 (ablações)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ablacoes.yaml
 # ==========================================================================
 
@@ -86,6 +89,12 @@ modelos_comparacao:
     alias: "D8"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d8)"
+  # --- Ablação D13: CL por etapas, FF-only ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d13)_teste.parquet"
+    rotulo: "Qwen1.5B(d13)"
+    alias: "D13"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:

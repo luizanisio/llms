@@ -1,0 +1,147 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d13.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d13.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D13)
+# ==========================================================================
+# Papel:   Ablação (CL sem escalonamento)
+# Modo:    CL por etapas, FF-only (sem escalonamento de capacidade)
+# Etapas:  FF-fácil → FF-médio → FF-difícil → FF-completo
+# Objetivo: Isolar o efeito do curriculum learning sem escalonamento de
+#           capacidade. Todas as etapas usam FF, removendo a variável
+#           FF→LoRA / LoRA→FF para medir o CL puro.
+# Pergunta: Q2 (CL melhora o FT? — ablação para isolar CL do escalonamento)
+# Comparar: d13 vs b (CL puro ajuda?), d13 vs d1/d2 (escalonamento adiciona?)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
+  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  #| Entrada: Especifica os dados que o modelo vai receber como prompt
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL por etapas FF-only: fácil → médio → difícil → completo
+  divisao:
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-FF"
+    tipo: "ff"
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-FF"
+    tipo: "ff"
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-FF"
+    tipo: "ff"
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo-FF"
+    tipo: "ff"
+    pace_epochs: 2
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  saida: treinos/Qwen2.5-1.5B-Instruct(d13)
+  ollama: Qwen2.5-1.5B-Instruct(d13):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  eval_steps: 20%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 2
+  grad_batch_size: 8
+
+  num_train_epochs: 4
+  max_seq_length: 8192
+  validar_max_seq_length: true
+
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 4
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
