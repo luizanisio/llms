@@ -2441,7 +2441,7 @@ class ExemplosCKan():
         print('=== Exemplo 2: construir mapas + dataset com um número de registro específico ===\n')
         num_registro = num_registro or '202201546162'
         ckan2 = UtilCkan(
-            registros= {num_registro},
+            processos= {num_registro},
             atualizar_cache_e_mapas = atualizar_cache_e_mapas,
         )
 
@@ -2459,7 +2459,7 @@ class ExemplosCKan():
         print('=== Exemplo 3: UtilCkanIntegra — íntegras sem espelhos ===\n')
         num_registro = num_registro or '202302829818'
         integra = UtilCkanIntegra(
-            registros = {num_registro},
+            processos = {num_registro},
             atualizar_cache_e_mapas = atualizar_cache_e_mapas,
         )
 
@@ -2537,7 +2537,7 @@ if __name__ == '__main__':
             executar_ckan_batch(yaml_path)
     else:
         print("💡 Dica: Use --config <arquivo.yaml> para rodar extração em lote.\n")
-        atualizar_mapas_e_cache = True
+        atualizar_mapas_e_cache = False
         
         # Exemplo 2: construir mapas e gerar dataset com um número de registro específico
         ExemplosCKan.exemplo2(num_registro = '202302829818', atualizar_cache_e_mapas = atualizar_mapas_e_cache)
