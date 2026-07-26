@@ -475,7 +475,9 @@ class CompararExtracoesGraficos:
             # Extrai técnica do nome da aba
             if '_' in aba:
                 tecnica_nome = aba.split('_', 1)[1].lower()
-                if tecnica_nome.startswith('rouge-'):
+                if tecnica_nome == 'rouge-l':
+                    tecnica_nome = 'rouge'  # ROUGE-L usa 'rouge' como nome interno
+                elif tecnica_nome.startswith('rouge-'):
                     tecnica_nome = tecnica_nome.replace('-', '')
                 else:
                     tecnica_nome = tecnica_nome.replace('-', '_')
