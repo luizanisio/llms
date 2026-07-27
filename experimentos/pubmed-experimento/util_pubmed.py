@@ -1,7 +1,14 @@
 # pip install biopython pandas fastparquet
 
+try:
+    from Bio import Entrez
+except ImportError as e:
+    print('-' * 50)
+    print('🚩 Erro: Não foi possível importar a biblioteca biopython')
+    print('Para instalar, execute: pip install biopython')
+    print()
+    exit(1)
 
-from Bio import Entrez
 import sys
 import os
 import time
