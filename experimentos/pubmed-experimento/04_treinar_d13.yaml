@@ -64,22 +64,30 @@ curriculum:
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-FF"
-    tipo: "ff"
+    tipo: "full"
     pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio-FF"
-    tipo: "ff"
+    tipo: "full"
     pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil-FF"
-    tipo: "ff"
+    tipo: "full"
     pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
   - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
     alias: "completo-FF"
-    tipo: "ff"
+    tipo: "full"
     pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
 
 #| =========================================================================
 #| MODELO
