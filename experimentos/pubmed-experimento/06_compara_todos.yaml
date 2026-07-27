@@ -128,11 +128,11 @@ modelos_comparacao:
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d12)"
   # --- Ablação D13: CL por etapas, FF-only ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d13)_teste.parquet"
-    rotulo: "Qwen1.5B(d13)"
-    alias: "D13"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
+  # - arquivo: "saidas/saida_pubmed_1_5b(d13)_teste.parquet"
+  #   rotulo: "Qwen1.5B(d13)"
+  #   alias: "D13"
+  #   familia: "Qwen-1.5B"
+  #   pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
