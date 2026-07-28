@@ -716,9 +716,12 @@ def main():
             )
             analisador_instanciado = True
             
+            if flag_planilha or flag_estatisticas:
+                print("📊 Carregando DataFrame de resultados...")
+                analisador.to_df()
+                
             if flag_planilha:
                 print("📊 Regerando Excel e formatação...")
-                analisador.to_df()
                 analisador.exportar_excel(
                     arquivo_excel, 
                     incluir_estatisticas=True, 
