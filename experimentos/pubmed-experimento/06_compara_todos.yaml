@@ -133,6 +133,12 @@ modelos_comparacao:
     alias: "D13"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
+  # --- Experimental D14: PT LoRA completo + CL por etapas FF-only ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d14)_teste.parquet"
+    rotulo: "Qwen1.5B(d14)"
+    alias: "D14"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d14)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:

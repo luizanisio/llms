@@ -103,6 +103,26 @@ modelos_comparacao:
     rotulo: "Qwen7B(d10)"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d10)"
+  # --- Experimental D11: CL acum granular, FF→LoRA ---
+  - arquivo: "saida/saida_qwen7b(d11)_teste.parquet"
+    rotulo: "Qwen7B(d11)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d11)"
+  # --- Experimental D12: CL acum granular, LoRA→FF ---
+  - arquivo: "saida/saida_qwen7b(d12)_teste.parquet"
+    rotulo: "Qwen7B(d12)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d12)"
+  # --- Ablação D13: CL por etapas, FF-only ---
+  - arquivo: "saida/saida_qwen7b(d13)_teste.parquet"
+    rotulo: "Qwen7B(d13)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d13)"
+  # --- Experimental D14: PT LoRA completo + CL por etapas FF-only ---
+  - arquivo: "saida/saida_qwen7b(d14)_teste.parquet"
+    rotulo: "Qwen7B(d14)"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d14)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:

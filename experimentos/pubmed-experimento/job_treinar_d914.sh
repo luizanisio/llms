@@ -62,6 +62,7 @@ CONFIGS=(
   "04_treinar_d11.yaml"
   "04_treinar_d12.yaml"
   "04_treinar_d13.yaml"
+  "04_treinar_d14.yaml"
 )
 
 OUT_BASE="$BASE_DIR/treinos"
