@@ -1,0 +1,168 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d15.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d15.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D15)
+# ==========================================================================
+# Papel:   Experimental (PT + estabilização + CL)
+# Modo:    PT LoRA completo + estabilização FF (LR baixo) + CL por etapas FF-only
+# Etapas:  LoRA-completo → estabilizar-FF → FF-fácil → FF-médio → FF-difícil → FF-completo
+# Objetivo: Avaliar se uma etapa de estabilização FF com LR ultra-baixo (1e-6)
+#           após o merge LoRA→FF suaviza o spike de loss na transição de regime
+#           e permite que o CL subsequente alcance loss inferior ao LoRA.
+#           Baseado no D14, adicionando 1 epoch FF com todos os dados como "ponte".
+# Pergunta: Q7 (estabilização pós-merge LoRA→FF melhora o CL?)
+# Comparar: d15 vs d14 (efeito da estabilização), d15 vs d13, d15 vs b
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
+  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  #| Entrada: Especifica os dados que o modelo vai receber como prompt
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL + PT por etapas completo LoRA -> estabilizar-FF -> FF-only: completo LoRA -> estabilizar-FF → fácil-FF → médio-FF → difícil-FF → completo-FF
+  divisao:
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 4
+    batch_size: 2
+    learning_rate: 2e-05
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "estabilizar-FF"
+    tipo: "full"
+    pace_epochs: 1
+    batch_size: 2
+    learning_rate: 1e-06 # LR ultra-baixo para estabilizar pesos pós-merge LoRA→FF
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 2
+    learning_rate: 5e-06 # Padrão para Full FT
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  saida: treinos/Qwen2.5-1.5B-Instruct(d15)
+  ollama: Qwen2.5-1.5B-Instruct(d15):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  eval_steps: 20%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 2
+  grad_batch_size: 8
+
+  num_train_epochs: 4
+  max_seq_length: 8192
+  validar_max_seq_length: true
+
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 4
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
