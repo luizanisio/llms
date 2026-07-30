@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=pubmed-treinar-d58
+#SBATCH --job-name=pubmed-treinar-d0509
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -61,6 +61,7 @@ CONFIGS=(
   "04_treinar_d6.yaml"
   "04_treinar_d7.yaml"
   "04_treinar_d8.yaml"
+  "04_treinar_d9.yaml"
 )
 
 OUT_BASE="$BASE_DIR/treinos"

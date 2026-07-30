@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=pubmed-treinar-d914
+#SBATCH --job-name=pubmed-treinar-d1015
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -57,7 +57,6 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 CONFIGS=(
-  "04_treinar_d9.yaml"
   "04_treinar_d10.yaml"
   "04_treinar_d11.yaml"
   "04_treinar_d12.yaml"
