@@ -1256,45 +1256,37 @@ class LLMsTrainer:
     def _load_global_eval_dataset(self) -> Dataset:
         """Carrega dataset de validação unificado de TODAS as etapas do curriculum.
         
-        Utiliza carregar_divisao_completa() para obter os IDs de validação
-        de todas as etapas e carregar as mensagens correspondentes.
-        Retorna None se houver apenas 1 etapa ou se não houver dados.
+        Utiliza verificar_eval_global_necessario() para decidir se as etapas
+        possuem conjuntos de validação distintos. Se sim, carrega e retorna
+        o dataset global (união de todas as etapas). Retorna None caso contrário.
         """
         try:
-            # Constrói divisão unificada com todas as etapas (incluindo não-treináveis)
             todas_etapas = self._yaml_config.curriculum
-            divisao_unificada = self._yaml_config.dataset_manager.carregar_divisao_completa(todas_etapas)
+            dataset_manager = self._yaml_config.dataset_manager
             
+            # Verifica se as etapas têm conjuntos de validação diferentes
+            check = dataset_manager.verificar_eval_global_necessario(todas_etapas)
+            if not check["necessario"]:
+                logger.info(f"ℹ️  Eval global desativado: {check['motivo']}")
+                return None
+            
+            logger.info(f"📊 Eval global ativado: {check['motivo']}")
+            
+            # Constrói divisão unificada e carrega mensagens
+            divisao_unificada = dataset_manager.carregar_divisao_completa(todas_etapas)
             if not divisao_unificada:
                 logger.warning("⚠️  Não foi possível construir divisão unificada para eval global")
                 return None
             
-            # Conta quantos IDs de validação existem na divisão unificada
-            ids_val_global = [
-                id_arq for id_arq, info in divisao_unificada.items()
-                if info["alvo"] == "validacao"
-            ]
-            
-            # Compara com validação da etapa atual
-            n_val_etapa = len(self.eval_ds) if self.eval_ds else 0
-            n_val_global = len(ids_val_global)
-            
-            if n_val_global <= n_val_etapa:
-                # Validação global não traz dados extras — não vale a pena
-                logger.info(f"ℹ️  Eval global: {n_val_global} instância(s) = mesma qtde da etapa atual ({n_val_etapa}). Desativado.")
-                return None
-            
-            # Desativa temporariamente o filtro de divisão específico da etapa usando o filtro global original
+            # Desativa temporariamente o filtro de divisão específico da etapa
             filtro_original = self._yaml_config.curriculum_config.divisao.dataset_filtro
             self._yaml_config.curriculum_config.divisao.dataset_filtro = getattr(self, "_global_dataset_filtro_divisao", None)
             
             try:
-                # Carrega mensagens de validação usando a divisão unificada
                 mensagens = self._yaml_config.dataset_manager.carregar_mensagens_de_pastas(
                     alvo="validacao", divisao=divisao_unificada
                 )
             finally:
-                # Restaura filtro
                 self._yaml_config.curriculum_config.divisao.dataset_filtro = filtro_original
             
             if not mensagens:
@@ -1310,11 +1302,8 @@ class LLMsTrainer:
             ds = dataset_loader.dataset
             if not ds or len(ds) == 0:
                 return None
-                
-            if len(ds) <= n_val_etapa:
-                logger.info(f"ℹ️  Eval global: {len(ds)} instância(s) filtradas = qtde da etapa atual ({n_val_etapa}). Desativado após aplicação do filtro.")
-                return None
-                
+            
+            n_val_etapa = len(self.eval_ds) if self.eval_ds else 0
             print_cores(
                 f"<cinza>   📊 Eval global: {len(ds)} instâncias de validação "
                 f"(todas as etapas combinadas, vs {n_val_etapa} da etapa atual)</cinza>",

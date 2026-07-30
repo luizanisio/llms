@@ -135,28 +135,51 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
     # Simula Avaliação Global
     relatorio_linhas.append("\n## Avaliação Global\n")
     if total_etapas > 1 and yaml_config.treinamento.eval_global:
-        # Prepara a divisão completa
+        # Usa a mesma função que o treino real para decidir se eval global é necessário
+        check = dataset_manager.verificar_eval_global_necessario(yaml_config.curriculum)
+        
+        if check["necessario"]:
+            status_str = "✅ **ATIVO**"
+        else:
+            status_str = "❌ **DESATIVADO**"
+        
+        relatorio_linhas.append(f"- **Status**: {status_str}")
+        relatorio_linhas.append(f"- **Motivo**: {check['motivo']}")
+        
+        # Detalha validação por etapa
+        if check["ids_por_etapa"]:
+            relatorio_linhas.append(f"- **IDs de validação globais (união)**: {len(check['ids_global'])}")
+            relatorio_linhas.append("")
+            relatorio_linhas.append("| Etapa | Validação (IDs) |")
+            relatorio_linhas.append("|---|---|")
+            for alias, ids in check["ids_por_etapa"].items():
+                relatorio_linhas.append(f"| {alias} | {len(ids)} |")
+            relatorio_linhas.append(f"| **Global (união)** | **{len(check['ids_global'])}** |")
+        
+        # Carrega contagem real da divisão unificada
         try:
             divisao_unificada = dataset_manager.carregar_divisao_completa(yaml_config.curriculum)
             yaml_config.curriculum_config.divisao.dataset_filtro = global_filtro_divisao
-            
             msg_global = dataset_manager.carregar_mensagens_de_pastas(alvo="validacao", divisao=divisao_unificada)
-            qtd_global = len(msg_global)
-            
-            str_filtro_g = json.dumps(global_filtro_divisao, ensure_ascii=False) if global_filtro_divisao else "(Sem filtro)"
-            
-            relatorio_linhas.append(f"- **Filtro Global Ativo**: `{str_filtro_g}`")
-            relatorio_linhas.append(f"- **Total de Instâncias (Validação Unificada)**: {qtd_global}")
-            
-            if print_console:
-                print_cores(f"   <verde>✓</verde> Eval Global Unificado: Validação={qtd_global}", color_auto=False)
+            relatorio_linhas.append(f"\n- **Instâncias carregadas (validação unificada)**: {len(msg_global)}")
         except Exception as e:
-            relatorio_linhas.append(f"- Erro ao computar avaliação global: {str(e)}")
-            logger.warning(f"Erro no eval global: {e}")
-    else:
-        relatorio_linhas.append("- *Avaliação global desativada ou não aplicável (apenas 1 etapa no currículo).*")
+            relatorio_linhas.append(f"\n- Erro ao computar validação unificada: {str(e)}")
+        
         if print_console:
-            print_cores("   <cinza>ℹ Eval Global: N/A</cinza>", color_auto=False)
+            emoji = "✅" if check["necessario"] else "❌"
+            print_cores(f"   {emoji} Eval Global: {check['motivo']}", color_auto=False)
+            if check["ids_por_etapa"]:
+                for alias, ids in check["ids_por_etapa"].items():
+                    print_cores(f"      → {alias}: {len(ids)} IDs de validação", color_auto=False)
+                print_cores(f"      → Global (união): {len(check['ids_global'])} IDs", color_auto=False)
+    else:
+        if total_etapas <= 1:
+            motivo = "apenas 1 etapa no currículo"
+        else:
+            motivo = "desativado via YAML (treinamento.eval_global: false)"
+        relatorio_linhas.append(f"- *Avaliação global não aplicável: {motivo}.*")
+        if print_console:
+            print_cores(f"   <cinza>ℹ Eval Global: {motivo}</cinza>", color_auto=False)
             
     # Restaura configuração para não alterar estado do objeto (caso continue)
     yaml_config.curriculum_config.divisao.dataset_filtro = global_filtro_divisao

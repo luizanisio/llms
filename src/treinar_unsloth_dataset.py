@@ -450,6 +450,96 @@ class DatasetTreinamento:
             print(f"📋 Divisão carregada: {len(resultado)} instâncias")
         return resultado
 
+    def verificar_eval_global_necessario(self, etapas) -> dict:
+        """Verifica se o eval_global é necessário comparando IDs de validação entre etapas.
+
+        O eval_global só é útil quando as etapas do curriculum usam conjuntos de
+        validação diferentes (ex: etapas com dataset_filtro distintos). Se todas
+        as etapas avaliam exatamente os mesmos IDs, o eval_global é redundante.
+
+        Args:
+            etapas: Lista de EtapaCurriculum do pipeline.
+
+        Returns:
+            Dict com:
+                - necessario (bool): True se eval_global deve ser ativado.
+                - motivo (str): Descrição legível da decisão.
+                - ids_por_etapa (dict): {alias: set(ids)} de validação por etapa.
+                - ids_global (set): União de todos os IDs de validação.
+        """
+        resultado = {
+            "necessario": False,
+            "motivo": "",
+            "ids_por_etapa": {},
+            "ids_global": set(),
+        }
+
+        if len(etapas) <= 1:
+            resultado["motivo"] = "Apenas 1 etapa no curriculum"
+            return resultado
+
+        # Coleta IDs de validação de cada etapa (mesmo padrão de carregar_divisao_completa)
+        ids_por_etapa = {}
+        for etapa in etapas:
+            if not etapa.arquivo or not os.path.isfile(etapa.arquivo):
+                continue
+            try:
+                df = pd.read_csv(etapa.arquivo, sep=None, engine='python')
+                df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+                if "id_arquivo" not in df.columns and "id" in df.columns:
+                    df.rename(columns={"id": "id_arquivo"}, inplace=True)
+                if "alvo" not in df.columns:
+                    for col_antiga in ("divisão", "divisao", "divisões", "divisoes", "grupo"):
+                        if col_antiga in df.columns:
+                            df.rename(columns={col_antiga: "alvo"}, inplace=True)
+                            break
+                if "id_arquivo" not in df.columns or "alvo" not in df.columns:
+                    continue
+                mask = df["alvo"].isin(["avaliacao", "avaliação", "eval"])
+                if mask.any():
+                    df.loc[mask, "alvo"] = "validacao"
+                if etapa.dataset_filtro:
+                    from util_pandas import aplicar_filtro_dataset
+                    df = aplicar_filtro_dataset(df, etapa.dataset_filtro)
+
+                df_val = df[df["alvo"].str.strip() == "validacao"]
+                ids_val = set(df_val["id_arquivo"].astype(str).str.strip())
+                ids_val.discard("")
+                alias = etapa.alias or f"etapa_{len(ids_por_etapa)}"
+                ids_por_etapa[alias] = ids_val
+            except Exception:
+                continue
+
+        if len(ids_por_etapa) <= 1:
+            resultado["motivo"] = "Apenas 1 etapa com CSV válido"
+            return resultado
+
+        ids_global = set()
+        for ids in ids_por_etapa.values():
+            ids_global |= ids
+
+        resultado["ids_por_etapa"] = ids_por_etapa
+        resultado["ids_global"] = ids_global
+
+        # Verifica se todas as etapas têm exatamente os mesmos IDs
+        todas_iguais = all(ids == ids_global for ids in ids_por_etapa.values())
+
+        if todas_iguais:
+            resultado["necessario"] = False
+            resultado["motivo"] = (
+                f"Todas as {len(ids_por_etapa)} etapas usam os mesmos "
+                f"{len(ids_global)} IDs de validação"
+            )
+        else:
+            resultado["necessario"] = True
+            tamanhos = [f"{alias}={len(ids)}" for alias, ids in ids_por_etapa.items()]
+            resultado["motivo"] = (
+                f"Etapas com conjuntos diferentes de validação "
+                f"({', '.join(tamanhos)}, global={len(ids_global)})"
+            )
+
+        return resultado
+
     def _carregar_conteudo_arquivo(self, caminho: str) -> str:
         try:
             with open(caminho, "r", encoding="utf-8") as f:
