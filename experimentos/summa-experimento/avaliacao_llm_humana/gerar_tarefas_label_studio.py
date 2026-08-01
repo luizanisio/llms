@@ -19,7 +19,7 @@ PROJETOS = ['Teste', 'Rafael','Amilar','Monty']
 # Caminhos dos arquivos
 # ARQUIVO_DIVISOES_QWEN: CSV gerado na fase de curadoria/avaliação, que contém o ID do documento ('id' ou 'seq_documento_acordao')
 # e a coluna 'dificuldade' calculada previamente a partir das extrações do modelo qwen 7b (ex: percentis P30/P70 do score S_i).
-ARQUIVO_DIVISOES_QWEN = '../compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv'
+ARQUIVO_DIVISOES_QWEN = '../dados/divisao_Qwen235b_Qwen7b.csv'
 ARQUIVO_DIVISAO_AMOSTRA = './arquivo_avaliacao.csv'
 ARQUIVO_TAREFAS = './tarefas_avaliacao_label_studio_<PROJETO>.json'
 

@@ -214,7 +214,9 @@ experimentos/summa_qualifica/treino_grupo2**
 experimentos/summa_qualifica/dados_experimento**
 experimentos/summa_qualifica/summa_data/eda_output**
 experimentos/summa-experimento/**.parquet
-experimentos/summa-experimento/dados**
+experimentos/summa-experimento/dados/*
+!experimentos/summa-experimento/dados/divisao_Qwen235b_Qwen7b.csv
+!experimentos/summa-experimento/dados/divisao_Qwen235b_Qwen7b_blocos.csv
 experimentos/summa-experimento/saida**
 **log_openai_resposta_bruta.txt
 **downloads_stj**

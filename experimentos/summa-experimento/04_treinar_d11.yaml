@@ -50,7 +50,7 @@ curriculum:
 
   #| CL acumulado granular FF→LoRA: FF(≤1) → LoRA(≤2) → ... → LoRA(≤9) → LoRA-tudo
   divisao:
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=1"}
     alias: "f1-FF"
     tipo: "full"
@@ -58,55 +58,55 @@ curriculum:
     #| Etapas 'full' sempre rodam em 16 bits (fixado no código) — não existe chave 'bits' por etapa.
     pace_epochs: 2
     batch_size: 1
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=2"}
     alias: "f2"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=3"}
     alias: "f3"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=4"}
     alias: "f4"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=5"}
     alias: "f5"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=6"}
     alias: "f6"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=7"}
     alias: "f7"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=8"}
     alias: "f8"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade_int": "<=9"}
     alias: "f9"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     alias: "completo"
     tipo: "lora"
     learning_rate: 2e-05
