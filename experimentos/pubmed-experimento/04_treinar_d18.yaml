@@ -1,0 +1,145 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d18.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d18.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D18)
+# ==========================================================================
+# Papel:   Controle (blocos aleatórios — separa ordenação de efeito de bloco)
+# Modo:    LoRA 16 bits + estágios em TERÇOS ALEATÓRIOS (sem ordenação)
+# Etapas:  b1 → b2 → b3 → completo (2 épocas cada)
+# Objetivo: Estrutura idêntica ao D17 (mesmas fronteiras, mesmos tamanhos de
+#           fatia, mesmo orçamento), mas com atribuição ALEATÓRIA das
+#           instâncias aos estágios. D18 vs D17 isola "ordenar por
+#           dificuldade" de "treinar em blocos com recência" — o controle
+#           que a literatura de CL costuma exigir.
+# Orçamento: (b1+b2+b3 = N) × 2 + completo N × 2 = 4N instâncias.
+# Comparar: d18 vs d17 (ordenação por dificuldade), d18 vs d16 (efeito de bloco)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+#
+# PRÉ-REQUISITO: gerar o CSV com a coluna 'bloco' (b1/b2/b3 em terços
+# aleatórios, seed 3407) — script no PLANO_UNFREEZE_D16_D20.md, seção 5.1:
+#   divisao_Professor_Qwen1_5B_blocos.csv
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Mesma topologia do D17, com filtro por bloco aleatório no lugar da dificuldade.
+  divisao:
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+    dataset_filtro: {"bloco": "b1"}
+    alias: "bloco-1"
+    tipo: "lora"
+    pace_epochs: 2
+    learning_rate: 2e-05
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+    dataset_filtro: {"bloco": "b2"}
+    alias: "bloco-2"
+    tipo: "lora"
+    pace_epochs: 2
+    learning_rate: 2e-05
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+    dataset_filtro: {"bloco": "b3"}
+    alias: "bloco-3"
+    tipo: "lora"
+    pace_epochs: 2
+    learning_rate: 2e-05
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 2
+    learning_rate: 2e-05
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  saida: treinos/Qwen2.5-1.5B-Instruct(d18)
+  ollama: Qwen2.5-1.5B-Instruct(d18):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  eval_steps: 20%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 2
+  grad_batch_size: 8
+
+  num_train_epochs: 4
+  max_seq_length: 8192
+  validar_max_seq_length: true
+
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # Idêntico a D16/D17 — fronteiras comparáveis
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # 16 bits: sem NF4, sem erro de quantização
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

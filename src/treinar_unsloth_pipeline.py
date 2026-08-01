@@ -23,6 +23,17 @@ from treinar_unsloth_logging import get_logger
 logger = get_logger(__name__)
 
 
+# Chaves aceitas em cada item de ``curriculum.divisao``.
+# Serve de proteção contra typos e chaves mortas: qualquer chave fora desta lista
+# é ignorada silenciosamente pelo parser, então emitimos um warning explícito
+# (um typo em 'unfreeze_layers_from', por exemplo, desativaria o recurso sem aviso).
+_CHAVES_ETAPA_VALIDAS = {
+    "alias", "arquivo", "tipo", "pace_epochs", "pace_epochs_max", "pace_loss",
+    "max_seq_length", "learning_rate", "batch_size", "dataset_filtro",
+    "warmup_steps", "unfreeze_layers_from",
+}
+
+
 # ---------------------------------------------------------------------------
 # Dataclass: Etapa do Curriculum
 # ---------------------------------------------------------------------------
@@ -48,6 +59,31 @@ class EtapaCurriculum:
     learning_rate: float = 0.0     # 0 = usa valor global
     batch_size: int = 0            # 0 = usa valor global (treinamento.batch_size)
     dataset_filtro: Optional[Dict[str, Any]] = None # Filtro específico da etapa (mesclado/substitui o global)
+
+    # Sentinela -1 (e não 0) porque ``warmup_steps: 0`` é um valor legítimo
+    # ("sem warmup nesta etapa"), distinto de "usar o valor global".
+    warmup_steps: int = -1         # -1 = usa valor global (treinamento.warmup_steps)
+
+    # Descongelamento progressivo (progressive unfreezing) — protocolos D19/D20.
+    # A chave YAML é sempre ``unfreeze_layers_from``, aceitando DOIS formatos que
+    # são separados aqui em dois campos mutuamente exclusivos:
+    #
+    #   unfreeze_layers_from: 21     → índice absoluto  → unfreeze_layers_from=21
+    #   unfreeze_layers_from: 75%    → percentual       → unfreeze_layers_pct=75.0
+    #
+    # O percentual NÃO é convertido no parse: o número de blocos do modelo só é
+    # conhecido após o carregamento. A resolução para índice absoluto acontece em
+    # LLMsTrainer._aplicar_unfreeze_parcial(), contra num_hidden_layers.
+    # Válido apenas em etapas ``tipo: "full"`` — validado em construir_etapas().
+
+    # -1 = desativado. N >= 0 = treina apenas os blocos transformer com índice >= N
+    # (mais a norm final e o lm_head não-tied). N = 0 equivale ao full completo.
+    unfreeze_layers_from: int = -1
+
+    # -1 = desativado. 0..100 = % de blocos CONGELADOS a partir da base; os blocos
+    # finais restantes ficam treináveis (ex.: 75% congela 75% e treina os 25% finais).
+    # Portável entre modelos de profundidades diferentes.
+    unfreeze_layers_pct: float = -1.0
 
     @property
     def is_treinavel(self) -> bool:
@@ -383,7 +419,16 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
     for i, item in enumerate(divisao_list):
         if not isinstance(item, dict):
             raise ValueError(f"Etapa {i} do curriculum deve ser um dicionário, recebido: {type(item)}")
-        
+
+        # Chaves fora da whitelist são ignoradas pelo parser: avisa em vez de falhar
+        # silenciosamente (o YAML continua válido, apenas sem efeito para essas chaves).
+        desconhecidas = set(item.keys()) - _CHAVES_ETAPA_VALIDAS
+        if desconhecidas:
+            logger.warning(
+                f"⚠️  Etapa {i}: chaves desconhecidas IGNORADAS no YAML: {sorted(desconhecidas)}. "
+                f"Verifique typos (chaves válidas: {sorted(_CHAVES_ETAPA_VALIDAS)})"
+            )
+
         alias = item.get("alias", f"etapa_{i}" if len(divisao_list) > 1 else "Principal")
         arquivo = item.get("arquivo", "")
         if arquivo:
@@ -395,7 +440,37 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             tipo_etapa = str(item["tipo"] or "")
         else:
             tipo_etapa = tipo_padrao
-        
+
+        # --- unfreeze_layers_from: aceita índice absoluto (21) ou percentual ("75%") ---
+        # Nota YAML: `unfreeze_layers_from: 75%` sem aspas já é lido como a string "75%"
+        # pelo yaml.safe_load (o '%' impede a interpretação numérica); aspas são opcionais.
+        _uf_raw = item.get("unfreeze_layers_from", -1)
+        _uf_abs, _uf_pct = -1, -1.0
+        if isinstance(_uf_raw, str) and _uf_raw.strip().endswith("%"):
+            try:
+                _uf_pct = float(_uf_raw.strip().rstrip("%").strip())
+            except ValueError:
+                raise ValueError(
+                    f"Etapa '{alias}': unfreeze_layers_from='{_uf_raw}' inválido. "
+                    f"Use um inteiro (índice do bloco) ou percentual como '75%'."
+                )
+            if not (0.0 <= _uf_pct <= 100.0):
+                raise ValueError(
+                    f"Etapa '{alias}': unfreeze_layers_from percentual deve estar em 0%..100%, "
+                    f"recebido: {_uf_pct}%"
+                )
+        else:
+            # Sem '%' → índice absoluto do primeiro bloco treinável.
+            # "75" (string sem %) cai aqui e vira o bloco 75 — comportamento definido,
+            # sinalizado depois pelo warning de from_layer >= num_hidden_layers.
+            try:
+                _uf_abs = int(_uf_raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Etapa '{alias}': unfreeze_layers_from={_uf_raw!r} inválido. "
+                    f"Use um inteiro (índice do bloco) ou percentual como '75%'."
+                )
+
         etapa = EtapaCurriculum(
             alias=alias,
             arquivo=arquivo,
@@ -407,7 +482,22 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             learning_rate=float(item.get("learning_rate", 0.0)),
             batch_size=int(item.get("batch_size", 0)),
             dataset_filtro=yaml_config._processar_dataset_filtro(item.get("dataset_filtro")),
+            warmup_steps=int(item.get("warmup_steps", -1)),
+            unfreeze_layers_from=_uf_abs,
+            unfreeze_layers_pct=_uf_pct,
         )
+
+        # unfreeze_layers_from só faz sentido com os parâmetros base destravados (full).
+        # Em etapas LoRA a capacidade já é controlada pelo rank do adaptador, e a base
+        # fica integralmente congelada — o corte por camada não teria efeito.
+        # A checagem cobre os dois formatos (absoluto e percentual).
+        if (etapa.unfreeze_layers_from >= 0 or etapa.unfreeze_layers_pct >= 0) and etapa.tipo != "full":
+            raise ValueError(
+                f"Etapa '{alias}': 'unfreeze_layers_from' só é válido com tipo: \"full\" "
+                f"(recebido tipo='{etapa.tipo or '(vazio)'}'). Em etapas LoRA a capacidade "
+                f"já é controlada pelo rank do adaptador."
+            )
+
         etapas.append(etapa)
     
     treinaveis = [e for e in etapas if e.is_treinavel]
@@ -421,6 +511,16 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             pace_info += f", max={e.pace_epochs_max}"
         if e.pace_loss > 0:
             pace_info += f", loss<{e.pace_loss}"
+        # O percentual só vira índice após o load do modelo — aqui exibimos como veio do YAML.
+        # O rótulo repete o nome da chave ('unfreeze_layers_from') de propósito: sem o "from",
+        # "unfreeze=75%" se lê como "75% descongelado", o inverso do significado real
+        # (75% CONGELADO, 25% final treinável).
+        if e.unfreeze_layers_pct >= 0:
+            pace_info += f", unfreeze_from={e.unfreeze_layers_pct:g}%"
+        elif e.unfreeze_layers_from >= 0:
+            pace_info += f", unfreeze_from>={e.unfreeze_layers_from}"
+        if e.warmup_steps >= 0:
+            pace_info += f", warmup={e.warmup_steps}"
         logger.info(f"<cinza>   [{i}] alias='{e.alias}', tipo={e.tipo or '(vazio)'}, {pace_info}, arquivo={os.path.basename(e.arquivo) if e.arquivo else '(vazio)'}{tag}</cinza>")
     
     return etapas

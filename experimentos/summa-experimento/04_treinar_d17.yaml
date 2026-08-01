@@ -1,26 +1,32 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d1.yaml
-# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d1.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d17.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d17.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D1)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D17)
 # ==========================================================================
-# Papel:   Experimental (CL + escalonamento de capacidade)
-# Modo:    CL por etapas, FF→LoRA
-# Etapas:  FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo
-# Pergunta: Q2 (efeito do CL) + Q3 (direção do escalonamento)
-# Comparar: d1 vs b (Q2), d1 vs d2 (Q3), d1 vs d7 (escalonamento sobre CL)
+# Papel:   Experimental (CL puro no regime LoRA, sem quantização)
+# Modo:    LoRA 16 bits + CL por dificuldade
+# Etapas:  fácil → médio → difícil → completo (2 épocas cada)
+# Objetivo: Refazer o D7 (CL-LoRA) removendo a variável de quantização NF4.
+#           Comparado ao D16 (mesmas 3 fronteiras, mesmo warmup, mesma
+#           precisão, mesmo orçamento), a ÚNICA diferença é a composição dos
+#           dados por etapa — teste limpo de "a ordenação curricular ajuda?".
+# Orçamento: (fácil+médio+difícil = N) × 2 + completo N × 2 = 4N instâncias.
+# Comparar: d17 vs d16 (ordenação com fronteiras controladas),
+#           d17 vs d18 (dificuldade vs blocos aleatórios), d17 vs d7 (efeito do 4-bit)
 # Ambiente: H100 80GB (1 GPU via Slurm)
+# Nota VRAM: ver cabeçalho do D16 (7B em 16 bits com seq 32768).
 # ==========================================================================
 
 #| =========================================================================
 #| MISCELÂNEA
 #| =========================================================================
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/summa-experimento
     - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
     - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
-  pastas_modelos:  
+  pastas_modelos:
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
@@ -50,39 +56,40 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
 
-  #| CL por etapas FF→LoRA: FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo
+  #| CL clássico por dificuldade, TODAS as etapas em LoRA 16 bits:
+  #| nenhuma troca de técnica ou de precisão em nenhuma fronteira.
   divisao:
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "facil"}
-    alias: "fácil-FF"
-    tipo: "full"
-    learning_rate: 5e-06
-    #| Etapas 'full' sempre rodam em 16 bits (fixado no código) — não existe chave 'bits' por etapa.
+    alias: "fácil"
+    tipo: "lora"
     pace_epochs: 2
-    batch_size: 1
+    learning_rate: 2e-05
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
-    learning_rate: 2e-05
     pace_epochs: 2
+    learning_rate: 2e-05
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
     pace_epochs: 2
+    learning_rate: 2e-05
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     alias: "completo"
     tipo: "lora"
     pace_epochs: 2
+    learning_rate: 2e-05
 
 #| =========================================================================
 #| MODELO
 #| =========================================================================
 modelo:
   base_model_name: Qwen2.5-7B-Instruct
-  saida: treinos/Qwen2.5-7B-Instruct(d1)
-  ollama: Qwen2.5-7B-Instruct(d1):latest
+  saida: treinos/Qwen2.5-7B-Instruct(d17)
+  ollama: Qwen2.5-7B-Instruct(d17):latest
   ollama_base: qwen2.5:7b
   ollama_url:
 
@@ -91,8 +98,8 @@ modelo:
 #| =========================================================================
 treinamento:
   flash_attention_2: true
-  full_com_sdpa: true
   liger_kernel: true
+  full_com_sdpa: true   # irrelevante aqui (todas as etapas são LoRA), mantido por padrão
 
   eval_steps: 20%
 
@@ -107,31 +114,27 @@ treinamento:
   filtrar_max_seq_length: true
 
   learning_rate: 2e-05
+  max_grad_norm: 1
   save_checkpoints: true
   resume_from_checkpoint: true
-  warmup_steps: 5
+  warmup_steps: 100          # Idêntico a D16/D18 — fronteiras comparáveis
   weight_decay: 0.01
   optim: adamw_8bit
 
   lr_scheduler_type: cosine
   seed: 3407
 
-  nbits: 4
+  nbits: 16                  # Sem NF4: mesma precisão de D16/D18
 
   train_on_responses_only: true
 
 #| =========================================================================
 #| LORA (Low-Rank Adaptation)
 #| =========================================================================
-#| Configura a técnica de Parameter-Efficient Fine-Tuning.
 lora:
-  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
   r: 16
-  #| Fator de escala, geralmente o dobro do rank.
   alpha: 32
   dropout: 0.05
-
-  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
   target_modules:
     - q_proj
     - k_proj

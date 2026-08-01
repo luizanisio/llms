@@ -312,12 +312,24 @@ class CompararExtracoesGraficos:
     @staticmethod
     def _extrair_custo_melhor_modelo(arquivo_metricas):
         """
-        Lê training_metrics.jsonl e retorna o custo (tokens, instâncias) e eval_loss
-        no ponto do último is_best_eval_global (ou is_best_eval como fallback).
-        
-        Prioridade: is_best_eval_global > is_best_eval.
-        O fallback para is_best_eval só é usado se nenhum is_best_eval_global for encontrado.
-        
+        Lê training_metrics.jsonl e retorna o custo (tokens, instâncias) e o eval_loss
+        no ponto de MENOR eval_loss_global do treino inteiro (ou eval_loss como fallback).
+
+        Prioridade: eval_loss_global > eval_loss. O fallback só é usado quando o
+        treino não possui avaliação global (ex.: etapa única, sem curriculum).
+
+        IMPORTANTE — por que o mínimo é recalculado aqui em vez de usar os flags:
+        os campos ``is_best_eval_global`` / ``is_best_eval`` gravados no JSONL são
+        recordes **por etapa** — o callback que os escreve é recriado a cada etapa do
+        curriculum e reinicia seu melhor valor. Em pipelines onde a última etapa não
+        supera uma anterior (comum em transições LoRA→FF), a última linha marcada é
+        PIOR que o mínimo real. Confiar no flag deslocava tanto o eval_loss quanto o
+        custo (eixo X do scatter) para o fim do treino, subestimando a eficiência
+        justamente dos protocolos multi-etapa.
+
+        Esta função busca o mínimo diretamente, ficando imune à semântica do flag —
+        e alinhada com os gráficos de linha, que já usavam min() sobre a série.
+
         Returns:
             dict: {'tokens': int, 'instancias': int, 'eval_loss': float} ou None se não encontrado
         """
@@ -325,7 +337,7 @@ class CompararExtracoesGraficos:
         best_local = None
         last_tokens = 0
         last_inst = 0
-        
+
         try:
             with open(arquivo_metricas, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -333,33 +345,36 @@ class CompararExtracoesGraficos:
                         continue
                     try:
                         obj = json.loads(line)
-                        # Atualiza tokens/instâncias acumulados
+                        # Atualiza tokens/instâncias acumulados (último valor visto vale
+                        # para as linhas seguintes, que nem sempre repetem os contadores)
                         if obj.get('tokens_acumulados'):
                             last_tokens = obj['tokens_acumulados']
                         if obj.get('instancias_acumuladas'):
                             last_inst = obj['instancias_acumuladas']
-                        # Registra o melhor ponto global (prioridade)
-                        if obj.get('is_best_eval_global'):
-                            loss = obj.get('eval_loss_global', obj.get('eval_loss'))
+
+                        # Mínimo da série global (fonte de verdade quando existe)
+                        loss_g = obj.get('eval_loss_global')
+                        if loss_g is not None and (best_global is None or loss_g < best_global['eval_loss']):
                             best_global = {
                                 'tokens': last_tokens,
                                 'instancias': last_inst,
-                                'eval_loss': loss
+                                'eval_loss': loss_g
                             }
-                        # Registra o melhor ponto local (fallback)
-                        elif obj.get('is_best_eval'):
-                            loss = obj.get('eval_loss', obj.get('eval_loss_global'))
+
+                        # Mínimo da série por etapa (fallback para treinos sem eval global)
+                        loss_l = obj.get('eval_loss')
+                        if loss_l is not None and (best_local is None or loss_l < best_local['eval_loss']):
                             best_local = {
                                 'tokens': last_tokens,
                                 'instancias': last_inst,
-                                'eval_loss': loss
+                                'eval_loss': loss_l
                             }
                     except Exception:
                         pass
         except Exception as e:
             print(f"   ⚠️ Erro ao ler métricas de treinamento: {e}")
             return None
-        
+
         return best_global if best_global is not None else best_local
 
     @staticmethod

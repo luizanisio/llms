@@ -1,31 +1,37 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d11.yaml
-# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d11.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d15.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d15.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D11)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D15)
 # ==========================================================================
-# Papel:   Experimental (variante granular de D3)
-# Modo:    CL acumulado granular + Escalonamento FF→LoRA
-# Etapas:  FF(≤1) → LoRA(≤2) → LoRA(≤3) → ... → LoRA(≤9) → LoRA-tudo
-# Objetivo: CL com progressão suave (incremento unitário de dificuldade_int)
-#           e acúmulo de dados entre etapas. Direção FF→LoRA.
-#           Variação de D3 com 10 etapas em vez de 3, para avaliar se
-#           uma progressão mais granular melhora o desempenho.
-# Pergunta: Q5 (granularidade do currículo: progressão suave vs saltos)
-# Comparar: d11 vs d3 (Q5: granularidade), d11 vs d4 (Q3+Q5), d11 vs b (Q2)
+# Papel:   Experimental (PT + estabilização + CL)
+# Modo:    PT LoRA completo + estabilização FF (LR baixo) + CL por etapas FF-only
+# Etapas:  LoRA-completo → estabilizar-FF → FF-fácil → FF-médio → FF-difícil → FF-completo
+# Objetivo: Avaliar se uma etapa de estabilização FF com LR ultra-baixo (1e-6)
+#           após o merge LoRA→FF suaviza o spike de loss na transição de regime
+#           e permite que o CL subsequente alcance loss inferior ao LoRA.
+#           Baseado no D14, adicionando 1 epoch FF com todos os dados como "ponte".
+# Pergunta: Q7 (estabilização pós-merge LoRA→FF melhora o CL?)
+# Comparar: d15 vs d14 (efeito da estabilização), d15 vs d13, d15 vs b
 # Ambiente: H100 80GB (1 GPU via Slurm)
 # ==========================================================================
 
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/summa-experimento
     - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
     - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
-  pastas_modelos:  
+  pastas_modelos:
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
 
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
 curriculum:
   saida:
     dataframe: saida/saida_or_235b.parquet
@@ -48,99 +54,90 @@ curriculum:
     exigir_json_valido: true
     exigir_ids_pareados: false
 
-  #| CL acumulado granular FF→LoRA: FF(≤1) → LoRA(≤2) → ... → LoRA(≤9) → LoRA-tudo
+  #| CL + PT: completo LoRA → estabilizar-FF → fácil-FF → médio-FF → difícil-FF → completo-FF
   divisao:
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=1"}
-    alias: "f1-FF"
-    tipo: "full"
-    learning_rate: 5e-06
-    #| Etapas 'full' sempre rodam em 16 bits (fixado no código) — não existe chave 'bits' por etapa.
-    pace_epochs: 2
-    batch_size: 1
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=2"}
-    alias: "f2"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=3"}
-    alias: "f3"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=4"}
-    alias: "f4"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=5"}
-    alias: "f5"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=6"}
-    alias: "f6"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=7"}
-    alias: "f7"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=8"}
-    alias: "f8"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
-  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
-    dataset_filtro: {"dificuldade_int": "<=9"}
-    alias: "f9"
-    tipo: "lora"
-    learning_rate: 2e-05
-    pace_epochs: 2
   - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
     alias: "completo"
     tipo: "lora"
+    pace_epochs: 4
     learning_rate: 2e-05
+  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+    alias: "estabilizar-FF"
+    tipo: "full"
+    pace_epochs: 1
+    batch_size: 1
+    learning_rate: 1e-06 # LR ultra-baixo para estabilizar pesos pós-merge LoRA→FF
+  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-FF"
+    tipo: "full"
     pace_epochs: 2
+    batch_size: 1
+    learning_rate: 5e-06 # Padrão para Full FT
+  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 1
+    learning_rate: 5e-06 # Padrão para Full FT
+  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 1
+    learning_rate: 5e-06 # Padrão para Full FT
+  - arquivo: compara/analises_comparacao_summa_q235 (full-base)/divisoes/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-FF"
+    tipo: "full"
+    pace_epochs: 2
+    batch_size: 1
+    learning_rate: 5e-06 # Padrão para Full FT
 
+#| =========================================================================
+#| MODELO
+#| =========================================================================
 modelo:
   base_model_name: Qwen2.5-7B-Instruct
-  saida: treinos/Qwen2.5-7B-Instruct(d11)
-  ollama: Qwen2.5-7B-Instruct(d11):latest
+  saida: treinos/Qwen2.5-7B-Instruct(d15)
+  ollama: Qwen2.5-7B-Instruct(d15):latest
   ollama_base: qwen2.5:7b
   ollama_url:
 
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
 treinamento:
   flash_attention_2: true
   full_com_sdpa: true
   liger_kernel: true
+
   eval_steps: 20%
+
   batch_size:
     efetivo: 16
     batch_size: 1
   grad_batch_size: 8
+
   num_train_epochs: 4
   max_seq_length: 32768
   validar_max_seq_length: true
   filtrar_max_seq_length: true
+
   learning_rate: 2e-05
+  max_grad_norm: 1
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
+
   lr_scheduler_type: cosine
   seed: 3407
+
   nbits: 4
+
   train_on_responses_only: true
 
 #| =========================================================================

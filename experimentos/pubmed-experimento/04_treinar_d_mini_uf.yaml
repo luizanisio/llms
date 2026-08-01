@@ -1,0 +1,190 @@
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d_mini_uf.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d_mini_uf.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Mini teste de UNFREEZE)
+# ==========================================================================
+# Ambiente: LOCAL — RTX 3060 12GB sob WSL2
+# Modo:     Full FT 16 bits com descongelamento progressivo (75%→50%→25%→0%)
+# Papel:    SMOKE TEST do mecanismo de unfreeze, NÃO é um experimento científico.
+#           Réplica reduzida do D19 para validar o pipeline antes de submeter
+#           a fila completa na H100.
+#
+# O que este mini exercita:
+#   1. Parse do percentual e resolução para índice (75% → bloco 21 de 28)
+#   2. Crescimento do contador 'Modo FULL: X/Y' etapa a etapa (~21% → 100%)
+#   3. Transição function-preserving entre etapas full (SEM reload — nbits não muda,
+#      então NÃO deve aparecer o log '🔄 ... Descarregando e recarregando o modelo')
+#   4. Liberação de embeddings/lm_head na etapa 0% (no 1.5B são tied, tensor único)
+#   5. Fluxo de gradiente com gradient checkpointing + camadas iniciais congeladas
+#   6. Override de warmup_steps por etapa e retorno ao global na etapa seguinte
+#
+# ==========================================================================
+# ORÇAMENTO DE VRAM — por que os valores abaixo são tão conservadores
+# ==========================================================================
+# Sem o pacote `flash-attn` instalado, o loader DESATIVA a fused cross-entropy
+# do Liger (evita NaN com SDPA), então `outputs.logits` é materializado inteiro:
+#
+#   logits = batch × seq × vocab(151936), em bf16 E no upcast fp32 da loss
+#
+# Custo estático do Full FT do 1.5B na etapa 0% (tudo treinável):
+#   pesos bf16 2.88 + grads bf16 2.88 + adamw_8bit 2.88 = 8.63 GiB
+#
+# Cadeia de logits com batch 1:
+#   seq 1024 → 0.87 GiB (total ~9.7 GiB)
+#   seq 1536 → 1.30 GiB (total ~10.1 GiB)   <<< escolhido
+#   seq 2048 → 1.74 GiB (total ~10.6 GiB)   <<< arriscado em 12 GiB sob WSL2
+#
+# ⚠️  Foi exatamente esse estouro que fez o D19 completo (seq 8192, batch 2 →
+#     4.64 GiB só de logits bf16) falhar nesta placa com `CUDA error: unknown
+#     error` em vez de um OOM limpo: sob WSL2, o driver WDDM pagina VRAM para
+#     a RAM do host via PCIe e acaba retornando cudaErrorUnknown.
+#
+# SE AINDA ESTOURAR: reduza max_seq_length para 1024, ou remova a última etapa
+# (0%) — as três primeiras somam bem menos porque grads e estados do Adam
+# existem só para os blocos descongelados.
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Mesma topologia do D19 (CL alinhado ao unfreeze), sobre a divisão mini de
+  #| 300 instâncias: ~70-80 de treino por etapa de dificuldade, 225 na completa.
+  #| 1 época por etapa — o suficiente para o loss se mover e validar o mecanismo.
+  divisao:
+  - arquivo: compara/divisao_mini_300.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-uf75pct"
+    tipo: "full"
+    unfreeze_layers_from: 75%  # 75% congelado = bloco 21 (28 blocos): treina 21-27 (25% finais)
+    pace_epochs: 1
+    batch_size: 1
+    learning_rate: 5e-06
+  - arquivo: compara/divisao_mini_300.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-uf50pct"
+    tipo: "full"
+    unfreeze_layers_from: 50%  # 50% congelado = bloco 14 (28 blocos): treina 14-27 (50% finais)
+    pace_epochs: 1
+    batch_size: 1
+    learning_rate: 5e-06
+  - arquivo: compara/divisao_mini_300.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-uf25pct"
+    tipo: "full"
+    unfreeze_layers_from: 25%  # 25% congelado = bloco 7 (28 blocos): treina 7-27 (75% finais)
+    pace_epochs: 1
+    batch_size: 1
+    learning_rate: 5e-06
+  - arquivo: compara/divisao_mini_300.csv
+    alias: "completo-uf0pct"
+    tipo: "full"
+    unfreeze_layers_from: 0%   # 0% congelado = bloco 0: tudo treinável, inclui embeddings/lm_head
+    pace_epochs: 1
+    batch_size: 1
+    learning_rate: 3e-06       # LR menor na capacidade plena (paridade com o D19)
+    warmup_steps: 10           # Override por etapa — valida o mecanismo e o retorno ao global
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  saida: treinos_local/Qwen2.5-1.5B-Instruct(d-mini-uf)
+  ollama: Qwen2.5-1.5B-Instruct(d-mini-uf):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true    # Sem o pacote instalado cai em SDPA (full_com_sdpa abaixo)
+  liger_kernel: true         # RoPE/RMSNorm fundidos; a fused CE é desativada sem FA2 real
+  full_com_sdpa: true        # Todas as etapas são full → SDPA liberado com segurança
+
+  eval_steps: 20%
+
+  #| batch 1 é o que mantém a cadeia de logits em 1.30 GiB (ver orçamento acima).
+  #| grad_accum compensa para preservar um batch efetivo razoável.
+  batch_size:
+    efetivo: 8
+    batch_size: 1
+  grad_batch_size: 8
+
+  num_train_epochs: 1
+  #| 1536 é o ponto de equilíbrio: a mediana do mini é 1344 tokens e o p90 é 1876.
+  max_seq_length: 1536
+  validar_max_seq_length: true
+  #| false de propósito: TRUNCA em vez de descartar. Com filtro ativo em 1536
+  #| sobrariam só 69% das instâncias — para um smoke test é melhor manter todas
+  #| e aceitar truncagem, já que não estamos medindo qualidade.
+  filtrar_max_seq_length: false
+
+  learning_rate: 5e-06       # Padrão Full FT (etapas sobrescrevem)
+  #| Mesmo clip apertado do D19: estabiliza os primeiros steps após cada
+  #| descongelamento, quando os blocos recém-liberados têm momentos Adam zerados.
+  max_grad_norm: 0.3
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5            # Global baixo — a etapa 'completo' sobrescreve para 10
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # Full FT em todas as etapas: sem troca de precisão
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA — NÃO UTILIZADO (todas as etapas são full)
+#| =========================================================================
+#| r: 0 garante tipo_padrao = "full" caso alguma etapa omita 'tipo'.
+lora:
+  r: 0
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

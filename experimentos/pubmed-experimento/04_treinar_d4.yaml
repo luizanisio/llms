@@ -85,7 +85,7 @@ curriculum:
     alias: "completo-FF"
     tipo: "full"
     learning_rate: 5e-06
-    bits: 16
+    #| Etapas 'full' sempre rodam em 16 bits (fixado no código) — não existe chave 'bits' por etapa.
     pace_epochs: 2
     batch_size: 1
 

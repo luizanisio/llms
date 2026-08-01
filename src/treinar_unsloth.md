@@ -53,6 +53,10 @@ O comportamento de todos os scripts transita em volta do seu YAML. Os principais
     - `max_seq_length`: (Opcional) Define o comprimento máximo de sequência para a etapa. Se omitido (ou 0), e o `max_seq_length` global também for omitido, o valor é **auto-estimado** a partir da coluna `token_total` do CSV de divisão (max + 10% margem, arredondado para múltiplo de 128). Se definido, funciona como **teto** que trunca instâncias maiores. Importante colocar fixo quando a memória GPU é limitada (ex: RTX 3060 12GB).
     - `learning_rate`: (Opcional) Sobrepõe o `learning_rate` global apenas nesta etapa.
     - `batch_size`: (Opcional) Sobrepõe o `batch_size` por GPU (`treinamento.batch_size.batch_size`) apenas nesta etapa. Útil quando etapas com `max_seq_length` menor permitem batch maior, ou etapas com sequências longas exigem batch reduzido para evitar OOM.
+    - `warmup_steps`: (Opcional) Sobrepõe o `warmup_steps` global apenas nesta etapa. Cada etapa reconstrói o `SFTTrainer` do zero, o que **zera os momentos do Adam e reinicia o scheduler cosine** — uma rampa de aquecimento por etapa (~50-100 steps, recomendação da literatura de ReLoRA) mitiga o degrau de loss na fronteira. Atenção à sentinela: o valor "não informado" é `-1`, não `0`, porque `warmup_steps: 0` é uma escolha legítima ("sem warmup nesta etapa"). O global é restaurado a cada etapa, então um override não vaza para as seguintes.
+    - `unfreeze_layers_from`: (Opcional) **Descongelamento progressivo** — treina apenas os blocos transformer a partir de um corte, congelando os inferiores. Aceita dois formatos: índice absoluto (`21`) ou percentual de blocos **congelados** (`75%`, que congela os primeiros 75% e treina os 25% finais). Válido **apenas** em etapas `tipo: "full"` — em etapas LoRA a capacidade já é controlada pelo rank do adaptador, e a tentativa levanta `ValueError` na carga do YAML. Ver a seção [Descongelamento Progressivo](#-descongelamento-progressivo-progressive-unfreezing) para a política completa.
+
+  > **Proteção contra typos:** as chaves aceitas em cada item de `divisao` são validadas contra uma whitelist (`_CHAVES_ETAPA_VALIDAS` em `treinar_unsloth_pipeline.py`). Qualquer chave desconhecida gera um **warning explícito** no log, listando as válidas. Sem isso, um typo em `unfreeze_layers_from` desativaria o recurso silenciosamente e o experimento rodaria como full tradicional sem ninguém perceber.
 
 - **`treinamento`**:
   - `max_seq_length`: Comprimento máximo de sequência. Se **omitido ou 0**, o sistema auto-estima a partir de `max(token_total)` dos CSVs de divisão + 10% margem, arredondado para múltiplo de 128. Se o CSV não possuir a coluna `token_total`, falha com instrução para definir manualmente. Se **definido > 0**, funciona como teto que trunca instâncias maiores. Quando o global é auto-estimado, cada etapa do curriculum também recebe um valor auto-estimado a partir do seu próprio CSV (otimizando memória por etapa).
@@ -169,10 +173,162 @@ lora (etapa 3, 4-bit)
 
 **Nota sobre LoRA fresco:** Quando ocorre uma transição que recarrega o modelo (ou quando entra num LoRA após um Full sem recarregar), os adaptadores LoRA são inicializados do zero. Isso é o comportamento correto do curriculum — a cada etapa `lora` inicia-se uma nova fase sobre os pesos base já consolidados. No caso de *resume* via checkpoint no meio da etapa, os pesos do adaptador são restaurados a partir do checkpoint respectivo (`chkpt/`).
 
+### ⚠️ Erro de Requantização no Merge com `nbits: 4`
+
+Quando a etapa LoRA anterior rodou em 4 bits, `merge_adapter()` opera sobre camadas bitsandbytes: o PEFT **dequantiza, soma o delta e requantiza** cada camada. Isso injeta erro de quantização nos pesos salvos — e é a origem do degrau de loss que **não retorna ao patamar anterior** nas transições LoRA→FF.
+
+O sistema não corrige isso automaticamente (alterar o fluxo de merge seria invasivo), mas **emite um warning explícito no log** sempre que o merge acontece com `nbits_memoria == 4`, para que o fenômeno fique registrado nos artefatos do experimento:
+
+```
+⚠️  Merge LoRA→base com modelo em 4 bits: o merge dequantiza e REQUANTIZA cada camada,
+    introduzindo erro de quantização nos pesos salvos (fonte do degrau de loss na
+    transição de regime). Para eliminar o efeito, rode as etapas LoRA com nbits: 16.
+```
+
+**Como eliminar:** rodar as etapas LoRA com `nbits: 16`. O custo é VRAM (sem NF4), o benefício é remover por construção uma variável confundidora dos contrastes experimentais. Protocolos que comparam regimes de treinamento devem preferir 16 bits; protocolos focados em custo de inferência podem manter 4 bits e citar este warning como limitação conhecida.
+
 ### Arquivos Chave
 
 - `treinar_unsloth.py` → `_save_model()` (merge incondicional para mistos), `_load_model()` (uso do full local), `_aplicar_etapa_curriculum()` (merge preventivo antes de descarte da memória).
 - `treinar_unsloth_actions.py` → `_detectar_tipo_modelo_saida()` (identifica se a saída é Lora puro ou Full auto-contido).
+
+---
+
+## 🧊 Descongelamento Progressivo (Progressive Unfreezing)
+
+### Contexto e motivação
+
+O parâmetro por etapa `unfreeze_layers_from` permite que a **capacidade do modelo cresça ao longo do curriculum** sem trocar de técnica. É uma alternativa ao escalonamento LoRA→Full que evita três variáveis confundidoras de uma vez: **sem merge de adaptadores, sem requantização, sem troca de espaço de busca**.
+
+A propriedade central é que as transições são ***function-preserving***: na fronteira entre etapas, **nenhum peso muda** — apenas mais blocos passam a ter `requires_grad = True`. O modelo que termina a etapa N é bit-a-bit o mesmo que começa a etapa N+1. Isso não acontece nas transições LoRA→FF, onde o merge altera os pesos.
+
+Os blocos inferiores congelados funcionam como **âncora do conhecimento pré-treinado**, cumprindo papel análogo à regularização implícita do LoRA, mas sem restringir o espaço de busca a atualizações de baixo rank.
+
+### Por que a implementação é pequena
+
+O loop de `train()` reconstrói o `SFTTrainer` do zero a cada etapa, e o `Trainer` do HF monta o otimizador **filtrando `p.requires_grad`**. Basta portanto ajustar os flags antes de `_build_trainer` — exatamente o que `_aplicar_etapa_curriculum()` já fazia para alternar `full`/`lora`. O unfreeze é um refinamento do ramo `full`.
+
+Entre etapas `full` consecutivas com o mesmo `nbits` (16), `precisa_recarregar` é `False`: o modelo **permanece em memória** e a transição é puramente uma reconfiguração de flags.
+
+### Os dois formatos
+
+| Formato | Exemplo | Significado |
+|---|---|---|
+| Índice absoluto | `unfreeze_layers_from: 21` | Treina os blocos com índice ≥ 21 |
+| Percentual | `unfreeze_layers_from: 75%` | Congela os primeiros 75% dos blocos, treina os 25% finais |
+
+**Decisão de design:** o percentual **não** é convertido no parse do YAML — o número de blocos só é conhecido após o carregamento do modelo. A etapa carrega a especificação bruta em `unfreeze_layers_pct` e a resolução para índice absoluto acontece em `_aplicar_unfreeze_parcial()`, contra `model.config.num_hidden_layers`.
+
+O ganho é **portabilidade**: `75%` significa a mesma fração de profundidade em qualquer modelo. No Qwen 2.5, tanto o 1.5B quanto o 7B têm 28 blocos, então `75/50/25/0%` resolvem para `21/14/7/0` nos dois — o mesmo YAML descreve o protocolo em ambas as escalas.
+
+> Nota YAML: `unfreeze_layers_from: 75%` sem aspas já é lido como a string `"75%"` pelo `yaml.safe_load` (o `%` impede a interpretação numérica). Aspas são opcionais.
+
+### Política de congelamento
+
+| Grupo de parâmetros | Regra |
+|---|---|
+| Bloco `layers.N.*` | Treinável se `N >= from_layer` |
+| `embed_tokens` e `lm_head` | Treináveis **apenas** se `from_layer == 0` |
+| Demais float (norm final, etc.) | Sempre treináveis |
+| Parâmetros quantizados (int4/int8) | Intocados — não suportam gradiente |
+
+#### Decisão: `lm_head` congelado junto com os embeddings
+
+**Problema:** no Qwen 2.5 **1.5B**, `lm_head.weight` compartilha o tensor de `embed_tokens.weight` (`tie_word_embeddings: true`) — o par é **um parâmetro só**. No **7B** eles são tensores **separados** (untied, ~545M cada).
+
+Se `lm_head` caísse na regra "demais float → sempre treinável", o mesmo protocolo treinaria a cabeça desde a primeira etapa no 7B e não no 1.5B. Os 545M da cabeça do 7B inflariam a etapa de 75% congelado para ~28% dos parâmetros, contra ~21% no 1.5B, **quebrando a comparabilidade entre experimentos**.
+
+**Decisão:** congelar `lm_head` junto com `embed_tokens` até `from_layer == 0`. A progressão de capacidade fica praticamente idêntica nos dois modelos (medido nas arquiteturas reais):
+
+| Corte | Qwen 2.5 1.5B (tied) | Qwen 2.5 7B (untied) |
+|---|---|---|
+| `75%` | 327.586.304 / 1.543.714.304 = **21,2%** | 1.631.408.128 / 7.615.616.512 = **21,4%** |
+| `50%` | 655.171.072 = **42,4%** | 3.262.812.672 = **42,8%** |
+| `25%` | 982.755.840 = **63,7%** | 4.894.217.216 = **64,3%** |
+| `0%` | 1.543.714.304 = **100%** | 7.615.616.512 = **100%** |
+
+A diferença residual (21,2% vs 21,4%) vem apenas da proporção entre blocos e embeddings ser ligeiramente diferente nas duas escalas — não de assimetria na política.
+
+O gradiente continua fluindo **através** da cabeça congelada para os blocos superiores — isso é esperado e não impede o treinamento. Para a dissertação, a decisão se documenta como escolha de desenho: embeddings e cabeça como âncora do conhecimento pré-treinado.
+
+#### Gradient checkpointing com camadas iniciais congeladas
+
+Com as primeiras camadas congeladas, a entrada do primeiro bloco *checkpointed* não exige gradiente e o backward é cortado. A solução é `model.enable_input_require_grads()` — o mesmo mecanismo que o PEFT usa ao treinar adaptadores sobre base congelada.
+
+**Guarda de idempotência:** a implementação do HF registra um forward hook nos embeddings e sobrescreve `_require_grads_hook` **sem remover o anterior**. Como o método roda uma vez por etapa (4× nos protocolos de unfreeze) sobre um modelo que permanece em memória, sem a guarda os hooks se acumulariam. O código só chama o método se ainda não houver hook registrado.
+
+### Restrições e validações
+
+1. **Só com `tipo: "full"`** — em etapas LoRA a capacidade já é controlada pelo rank; a tentativa levanta `ValueError` na carga do YAML (falha antes de alocar GPU).
+2. **Incompatível com LoRA aplicado em memória** — `_aplicar_unfreeze_parcial()` levanta `ValueError` se `_lora_applied` for `True`. Protocolos de unfreeze devem ser pipelines 100% `full`.
+3. **Percentual fora de 0–100%** ou valor não-numérico → `ValueError` com mensagem orientativa no parse.
+4. **`from_layer >= num_hidden_layers`** (ex.: `100%`) → warning explícito; nenhum bloco treinável, apenas a norm final.
+5. **`"75"` sem `%`** → interpretado como bloco absoluto 75, caindo no warning do item 4. Comportamento definido, não silencioso.
+
+### Leitura dos logs
+
+O resumo do curriculum mostra o corte **como declarado no YAML** (o percentual ainda não foi resolvido nesse ponto):
+
+```
+📋 Curriculum: 4 etapa(s) configurada(s)
+   [0] alias='fácil-uf75pct', tipo=full, epochs=2, unfreeze_from=75%, arquivo=divisao_....csv
+   [1] alias='médio-uf50pct', tipo=full, epochs=2, unfreeze_from=50%, arquivo=divisao_....csv
+```
+
+**Decisão de nomenclatura:** o rótulo é `unfreeze_from=`, não `unfreeze=`. Sem o `from`, "unfreeze=75%" se lê naturalmente como "75% descongelado" — o **inverso** do significado real (75% congelado, 25% final treinável). O `from` transforma o número numa *posição* na profundidade do modelo, e de quebra espelha o nome da chave YAML. O formato absoluto usa o mesmo prefixo: `unfreeze_from>=21`.
+
+No início de cada etapa, o log resolve o corte e mostra o efeito concreto:
+
+```
+🧊 Unfreeze 75% congelado (7 camadas finais treináveis ≈ 25%): blocos 21-27 de 28 (etapa 'fácil-uf75pct')
+ℹ️  Âncora de conhecimento pré-treinado: tensor único tied embed_tokens/lm_head permanece(m) CONGELADO(S) até unfreeze_layers_from: 0.
+🧊 Unfreeze parcial (etapa 'fácil-uf75pct'): blocos >= 21 treináveis (327.586.304 params) | blocos congelados: 982.752.768 | embeddings+cabeça congelados: 233.373.696 | norm (sempre treinável): 1.536
+🔓 Modo FULL: 327.586.304/1.543.714.304 parâmetros desbloqueados para treinamento
+```
+
+O contador `Modo FULL: X/Y` deve **crescer etapa a etapa**. Quando o percentual não divide exato (ex.: 30% de 28 = 8,4 → bloco 8), o log registra o índice efetivo, deixando o arredondamento documentado nos artefatos.
+
+### Validação recomendada antes de submeter uma fila longa
+
+Rodar `--datasets` (dry-run) confirma o parse e a listagem das etapas sem alocar GPU. No início da etapa 1, verificar nos primeiros ~50 steps que o loss desce e que não há warning de gradiente nulo — barato e conclusivo.
+
+### Exemplo: currículo alinhado à capacidade
+
+```yaml
+curriculum:
+  divisao:
+  - dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-uf75pct"
+    tipo: "full"
+    unfreeze_layers_from: 75%  # 75% congelado = bloco 21 (28 blocos): treina 21-27 (25% finais)
+    pace_epochs: 2
+    learning_rate: 5e-06
+  - dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-uf50pct"
+    tipo: "full"
+    unfreeze_layers_from: 50%  # 50% congelado = bloco 14 (28 blocos): treina 14-27 (50% finais)
+    pace_epochs: 2
+    learning_rate: 5e-06
+  - alias: "completo-uf0pct"
+    tipo: "full"
+    unfreeze_layers_from: 0%   # 0% congelado = tudo treinável, inclui embeddings/lm_head
+    pace_epochs: 2
+    learning_rate: 3e-06       # LR menor na capacidade plena (params recém-liberados
+                               # entram com momentos Adam zerados)
+
+treinamento:
+  nbits: 16                    # Full FT: sempre 16 bits em todas as etapas
+  max_grad_norm: 0.3           # Aperta o clip: estabiliza os primeiros steps após cada
+                               # descongelamento (momentos zerados + sequências longas)
+  warmup_steps: 100            # Rampa após cada reset de otimizador
+```
+
+Dados e capacidade progridem **juntos**: pouca capacidade para conteúdo simples, capacidade plena para o conjunto completo. O comentário ao lado de cada percentual registra o índice absoluto resolvido, para leitura direta sem precisar consultar a arquitetura.
+
+### Arquivos Chave
+
+- `treinar_unsloth_pipeline.py` → `EtapaCurriculum` (campos `unfreeze_layers_from` / `unfreeze_layers_pct` / `warmup_steps`), `construir_etapas()` (parse dual, whitelist de chaves, validação de tipo), `_CHAVES_ETAPA_VALIDAS`.
+- `treinar_unsloth.py` → `_aplicar_unfreeze_parcial()` (resolução do percentual + política de congelamento), `_aplicar_etapa_curriculum()` (integração no ramo `full`, override de `warmup_steps`), `train()` (`global_defaults` com anti-vazamento de overrides entre etapas).
 
 ---
 
@@ -237,9 +393,65 @@ Se você estiver rodando **Full FT** e precisar contornar a limitação de VRAM 
 
 Ambos estão protegidos por `if not self.args.use_liger_kernel`, mas esse parâmetro precisa ser passado ao `SFTConfig`.
 
-**Decisão:** Adicionar `use_liger_kernel=treino_cfg.liger_kernel and _LIGER_DISPONIVEL` na construção do `SFTConfig`. Assim o TRL pula nativamente os blocos de entropia e token accuracy quando o Liger está ativo.
+**Decisão inicial (revertida):** passar `use_liger_kernel=treino_cfg.liger_kernel and _LIGER_DISPONIVEL` ao `SFTConfig`, para que o TRL pulasse nativamente os dois blocos.
 
-**Rede de segurança:** Um monkey-patch de `entropy_from_logits` permanece ativo no nível do módulo (`treinar_unsloth.py`, linhas 108-130), retornando `torch.tensor(0.0)` quando `logits is None`. Este patch é seguro mesmo sem Liger — é um passthrough transparente (único `is None` check, overhead de nanossegundos). Serve como proteção contra futuras versões do TRL que possam adicionar novos acessos a logits fora das guardas existentes.
+**Problema descoberto — double patching:** `use_liger_kernel=True` no `SFTConfig` faz o **TRL re-aplicar** os patches do Liger por conta própria, incluindo a **fused cross-entropy**. Quando o model loader já carregou o modelo com `AutoLigerKernelForCausalLM` tendo *propositalmente desativado* a fused CE (o que ele faz sempre que `attn_implementation != "flash_attention_2"`, para evitar NaN com SDPA), o TRL a reabilita por cima — e o loss vira NaN imediatamente.
+
+**Decisão atual:** `use_liger_kernel=False` fixo no `SFTConfig` ([treinar_unsloth.py:1880](treinar_unsloth.py#L1880)). O Liger é aplicado **num único lugar** — o model loader, via `AutoLigerKernelForCausalLM` — e o TRL não participa dessa decisão.
+
+**Consequência a conhecer:** com `use_liger_kernel=False`, os blocos de entropia e token accuracy do TRL **sempre executam**. Se a fused CE estiver ativa, `outputs.logits` é `None` e o monkey-patch abaixo cobre o caso. Se a fused CE estiver **desativada** (sem `flash-attn` real), os logits são materializados e esses blocos passam a operar sobre um tensor grande — ver [Custo de VRAM quando a fused CE está desativada](#custo-de-vram-quando-a-fused-cross-entropy-está-desativada).
+
+**Rede de segurança:** Um monkey-patch de `entropy_from_logits` permanece ativo no nível do módulo (`treinar_unsloth.py`, linhas 108-130), retornando `torch.tensor(0.0)` quando `logits is None`. Este patch é seguro mesmo sem Liger — é um passthrough transparente (único `is None` check, overhead de nanossegundos). Com `use_liger_kernel=False` no `SFTConfig`, ele deixou de ser apenas uma proteção defensiva e passou a ser o mecanismo **efetivo** que evita o crash quando a fused CE está ativa.
+
+---
+
+### Custo de VRAM quando a fused cross-entropy está desativada
+
+O loader desativa `cross_entropy` e `fused_linear_cross_entropy` do Liger sempre que `attn_implementation != "flash_attention_2"` ([treinar_model_loader.py:179-185](treinar_model_loader.py#L179-L185)) — ou seja, **em qualquer máquina sem o pacote `flash-attn` instalado**, mesmo com `flash_attention_2: true` no YAML (o YAML expressa intenção; o fallback é `eager`/SDPA). O aviso aparece no log:
+
+```
+⚠️  Liger Kernel: desativando cross_entropy pois flash_attention_2 está desativado (evita NaN no eval loss com SDPA)
+```
+
+Sem a fused CE, `outputs.logits` é materializado inteiro, e o tensor escala com o **vocabulário**:
+
+```
+logits = batch × seq_len × vocab_size
+```
+
+No Qwen 2.5 (`vocab_size: 151936`), em bf16 **e** no upcast fp32 que a cross-entropy e a entropia fazem:
+
+| batch × seq | logits bf16 | + upcast fp32 | pico da cadeia |
+|---|---|---|---|
+| 1 × 1024 | 0,29 GiB | 0,58 GiB | **0,87 GiB** |
+| 1 × 2048 | 0,58 GiB | 1,16 GiB | **1,74 GiB** |
+| 2 × 8192 | 4,64 GiB | 9,27 GiB | **13,91 GiB** |
+
+Para comparação, o custo **estático** de um Full FT do Qwen 1.5B (pesos bf16 2,88 + grads 2,88 + `adamw_8bit` 2,88) é 8,63 GiB. A última linha da tabela sozinha já estoura qualquer GPU de consumo.
+
+**Sintoma sob WSL2 — não é um OOM limpo:** quando a VRAM se esgota, o driver WDDM pagina para a RAM do host via PCIe em vez de falhar. O treino fica ordens de magnitude mais lento (ex.: 37 s/it) e eventualmente aborta com:
+
+```
+torch.AcceleratorError: CUDA error: unknown error
+  ...
+  File ".../trl/trainer/sft_trainer.py", line 1297, in compute_loss
+    entropy = self.accelerator.gather_for_metrics(entropy).mean().item()
+```
+
+O `.item()` é apenas o ponto de **sincronização** onde o erro assíncrono aflora — não a linha culpada. Diagnóstico por eliminação:
+
+| Sintoma | Causa provável |
+|---|---|
+| `CUDA error: device-side assert triggered` + `indexSelectLargeIndex` | Índice fora do vocabulário (OOV real) |
+| `torch.OutOfMemoryError: CUDA out of memory` | Falta de VRAM, reportada limpa (típico em Linux nativo) |
+| `CUDA error: unknown error` + s/it muito alto | Exaustão de VRAM sob WSL2/WDDM (paginação PCIe) |
+
+**Mitigações, em ordem de eficácia:**
+1. Reduzir `max_seq_length` — ataca a causa, pois o tensor é linear em `seq_len`.
+2. Reduzir `batch_size` por GPU e compensar com `grad_batch_size` (mantém o batch efetivo).
+3. Instalar `flash-attn`, que reativa a fused CE e elimina a materialização dos logits.
+
+O YAML `04_treinar_d_mini_uf.yaml` (pubmed-experimento) documenta esse orçamento no cabeçalho e serve de molde para rodadas locais em GPUs de 12 GB.
 
 #### Decisão 3: Defaults e Validação
 

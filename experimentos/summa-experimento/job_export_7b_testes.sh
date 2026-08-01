@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=qwen7b-predicao-lote
+#SBATCH --job-name=summa-extracao-testes
 
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
@@ -23,14 +23,13 @@
 #SBATCH --mem=64G
 
 # Tempo máximo de execução (HH:MM:SS). Job é cancelado ao atingir o limite.
-# 20 k prompts × ~32 k tokens @ ~750 tok/s estimado ≈ 30-40 h no caso médio.
-#SBATCH --time=48:00:00
+#SBATCH --time=72:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
-#SBATCH --output=/students/luiz.abatitucci/llms/experimentos/summa-experimento/jobs_logs/%x_%j.out
+#SBATCH --output=jobs_logs/%x_%j.out
 
 # Arquivo de saída de erros: <job-name>_<job-id>.err
-#SBATCH --error=/students/luiz.abatitucci/llms/experimentos/summa-experimento/jobs_logs/%x_%j.err
+#SBATCH --error=jobs_logs/%x_%j.err
 
 # Notificações por e-mail: END = ao terminar, FAIL = se falhar
 #SBATCH --mail-type=END,FAIL
@@ -42,12 +41,16 @@
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 cd "$SCRIPT_DIR"
 
+# Constante de diretório base para facilitar portabilidade
+BASE_DIR="/students/luiz.abatitucci/llms/experimentos/summa-experimento"
+SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
+
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat02
 
-echo "Configurando variáveis de ambiente..."
-export CUDA_HOME=$CONDA_PREFIX
-export PATH=$CUDA_HOME/bin:$PATH
+# echo "Configurando variáveis de ambiente..."
+# export CUDA_HOME=$CONDA_PREFIX
+# export PATH=$CUDA_HOME/bin:$PATH
 
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
@@ -58,16 +61,32 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/de
 echo "==============================="
 
 
-#python baixar-qwen7b.py
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
+PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8" "d9" "d10" "d11" "d12" "d13" "d14" "d15" "d16" "d17" "d18" "d19" "d20")
 
-# Mais rodadas para repescagem do que deu erro
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
+for PROTOCOL in "${PROTOCOLS[@]}"; do
+    CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
+    ARQUIVO_SAIDA="$BASE_DIR/saida/saida_qwen7b(${PROTOCOL})_teste.parquet"
+                          
+    if [ -f "$ARQUIVO_SAIDA" ]; then
+        echo "=== Arquivo $ARQUIVO_SAIDA já existe. Pulando extração do protocolo $PROTOCOL. ==="
+        continue
+    fi
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
+    echo ""
+    echo "============================================================"
+    echo "=== Iniciando extração do protocolo: $PROTOCOL ==="
+    echo "=== Config: $CONFIG_FILE ==="
+    echo "=== Hora: $(date) ==="
+    echo "============================================================"
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
+    # Roda a extração 20 vezes (útil para repescagem de erros)
+    for i in $(seq 1 20); do
+        echo "--- Rodada $i/20 para o protocolo $PROTOCOL --- $(date)"
+        python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
+    done
 
-python /students/luiz.abatitucci/llms/src/util_vllm_batch.py --config /students/luiz.abatitucci/llms/experimentos/summa-experimento/config_batch.yaml
+    echo "=== Protocolo $PROTOCOL finalizado: $(date) ==="
+done
+
 
 echo "=== Job finalizado: $(date) ==="

@@ -60,6 +60,7 @@ import argparse
 from cmath import inf
 import math
 import os, time, json
+import re
 import sys
 import traceback
 from typing import Any, Dict
@@ -944,8 +945,46 @@ class GlobalEvalCallback(TrainerCallback):
     
     O campo eval_loss_global é registrado no training_metrics.jsonl
     junto com o eval_loss da etapa atual para comparação direta.
+
+    O flag ``is_best_eval_global`` marca recorde de TODO o pipeline, não da etapa:
+    como este callback é recriado a cada etapa do curriculum, o melhor valor é
+    semeado a partir do próprio training_metrics.jsonl (ver
+    ``_ler_melhor_eval_global_registrado``). Sem essa semeadura, cada etapa
+    recomeçaria em ``inf`` e marcaria recordes locais — e um pipeline cuja última
+    etapa não supera uma anterior terminaria com o flag num ponto PIOR que o
+    mínimo real, corrompendo qualquer leitor que confiasse no flag.
     """
-    
+
+    @staticmethod
+    def _ler_melhor_eval_global_registrado(metrics_file: str) -> float:
+        """Menor eval_loss_global já registrado no arquivo de métricas.
+
+        Serve de semente para o melhor valor do callback, garantindo continuidade
+        entre etapas do curriculum E entre execuções (resume via checkpoint, onde
+        o processo reinicia mas o arquivo persiste).
+
+        Returns:
+            float: o mínimo encontrado, ou float('inf') se o arquivo não existir,
+                   estiver vazio ou não contiver nenhum eval_loss_global.
+        """
+        melhor = float('inf')
+        if not metrics_file or not os.path.isfile(metrics_file):
+            return melhor
+        try:
+            with open(metrics_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        valor = json.loads(line).get("eval_loss_global")
+                    except Exception:
+                        continue  # linha corrompida/parcial: ignora e segue
+                    if isinstance(valor, (int, float)) and valor < melhor:
+                        melhor = valor
+        except Exception as e:
+            logger.warning(f"⚠️  Não foi possível ler o melhor eval_loss_global de {metrics_file}: {e}")
+        return melhor
+
     def __init__(self, global_eval_dataset, metrics_file: str,
                  step_offset: int = 0, epoch_offset: float = 0.0,
                  etapa_alias: str = "Principal", etapa_index: int = 0):
@@ -965,7 +1004,14 @@ class GlobalEvalCallback(TrainerCallback):
         self._etapa_alias = etapa_alias
         self._etapa_index = etapa_index
         self._trainer_ref = None  # Preenchido após criação do trainer
-        self._best_eval_loss_global = float('inf')
+        # Semeia com o melhor já registrado: o flag is_best_eval_global passa a
+        # significar recorde do PIPELINE, não da etapa (ver docstring da classe).
+        self._best_eval_loss_global = self._ler_melhor_eval_global_registrado(metrics_file)
+        if self._best_eval_loss_global < float('inf'):
+            logger.info(
+                f"<cinza>   • eval global: melhor anterior = {self._best_eval_loss_global:.6f} "
+                f"(is_best_eval_global marca recorde do pipeline inteiro)</cinza>"
+            )
         self._avaliando_global = False  # Guarda contra recursão
     
     def set_trainer(self, trainer):
@@ -1419,7 +1465,9 @@ class LLMsTrainer:
             # na pasta de saída. Se uma etapa lora subsequente salvou adapters por cima,
             # a pasta tem AMBOS: full safetensors + adapter files. Nesse caso, usa o
             # modelo full local como base (preservando pesos treinados) em vez do HF.
-            _tem_full_local = any(
+            # os.path.isdir antes do listdir: a pasta pode desaparecer entre a detecção
+            # do tipo e este ponto (raro, mas possível em Slurm com storage de rede).
+            _tem_full_local = os.path.isdir(lora_model_path) and any(
                 f.endswith('.safetensors') and not f.startswith('adapter')
                 for f in os.listdir(lora_model_path)
             )
@@ -2208,6 +2256,135 @@ class LLMsTrainer:
             print(f"⚠️  Checkpoint incompleto encontrado: {latest_path}")
             return None
 
+    # ------------------------- curriculum: descongelamento progressivo ----
+    # Regex para extrair o índice do bloco transformer a partir do nome do parâmetro.
+    # Cobre nomes como "model.layers.24.self_attn.q_proj.weight" e também o prefixo
+    # do PEFT "base_model.model.model.layers.24....".
+    _RE_IDX_CAMADA = re.compile(r"\.layers\.(\d+)\.")
+
+    def _aplicar_unfreeze_parcial(self, etapa) -> None:
+        """Descongelamento progressivo: mantém treináveis apenas os blocos
+        transformer a partir de um corte, além da norm final e do lm_head.
+
+        O corte vem da etapa em um de dois formatos, resolvidos aqui:
+        - ``etapa.unfreeze_layers_from`` → índice absoluto do 1º bloco treinável
+        - ``etapa.unfreeze_layers_pct``  → % de blocos CONGELADOS a partir da base,
+          resolvido contra ``model.config.num_hidden_layers``. É por isso que a
+          resolução mora aqui e não no parse do YAML: a profundidade do modelo só
+          é conhecida depois do carregamento (torna o percentual portável entre
+          modelos de tamanhos diferentes).
+
+        Chamado logo APÓS o destravamento total do ramo "full", re-congelando
+        os blocos abaixo do corte. Como o SFTTrainer é reconstruído a cada etapa
+        (``_build_trainer``) e o Trainer do HF monta o otimizador filtrando
+        ``p.requires_grad``, ajustar os flags aqui basta — nenhum peso muda na
+        fronteira entre etapas (transição *function-preserving*).
+
+        Política:
+        - bloco ``layers.N.*``           → treinável se N >= from_layer
+        - ``embed_tokens`` e ``lm_head`` → treináveis apenas se from_layer == 0
+        - demais float (norm final etc.) → sempre treináveis
+        - parâmetros quantizados         → intocados (não suportam gradiente)
+
+        NOTA (tied vs. untied embeddings): no Qwen 2.5 1.5B, ``lm_head.weight``
+        compartilha o tensor de ``embed_tokens.weight`` (tie_word_embeddings=true),
+        então o par é UM parâmetro só. No 7B eles são tensores SEPARADOS
+        (untied). Congelar os dois juntos até from_layer == 0 mantém a mesma
+        política de capacidade nos dois casos — sem isso, o mesmo protocolo
+        treinaria a cabeça desde a 1ª etapa no 7B e não no 1.5B, quebrando a
+        comparabilidade entre experimentos.
+
+        O gradiente continua fluindo através da cabeça congelada para os blocos
+        superiores — isso é esperado e não impede o treinamento.
+        """
+        alias = etapa.alias
+        if self._lora_applied:
+            raise ValueError(
+                f"Etapa '{alias}': unfreeze_layers_from não é compatível com adaptadores "
+                f"LoRA aplicados ao modelo. Use pipelines 100% 'full' para protocolos de "
+                f"descongelamento progressivo (D19/D20)."
+            )
+
+        n_layers = getattr(self.model.config, "num_hidden_layers", None)
+
+        # === Resolução do corte: percentual → índice absoluto ===
+        if getattr(etapa, "unfreeze_layers_pct", -1.0) >= 0:
+            if n_layers is None:
+                raise ValueError(
+                    f"Etapa '{alias}': unfreeze percentual requer model.config.num_hidden_layers, "
+                    f"não encontrado neste modelo. Use o formato absoluto (índice do bloco)."
+                )
+            pct = etapa.unfreeze_layers_pct
+            # round() pode não dividir exato (ex.: 30% de 28 = 8.4 → 8); o log abaixo
+            # registra o índice efetivo, deixando a aproximação documentada nos artefatos.
+            from_layer = int(round(n_layers * pct / 100.0))
+            from_layer = max(0, min(from_layer, n_layers))  # clamp defensivo
+            # Em 100% o corte cai fora do range (from_layer == n_layers) e a faixa
+            # ficaria invertida ("28-27"); descreve o caso degenerado em palavras.
+            _faixa = (f"blocos {from_layer}-{n_layers - 1} de {n_layers}"
+                      if from_layer < n_layers else f"nenhum bloco (de {n_layers})")
+            logger.info(
+                f"🧊 Unfreeze {pct:g}% congelado "
+                f"({n_layers - from_layer} camadas finais treináveis ≈ {100.0 - pct:g}%): "
+                f"{_faixa} (etapa '{alias}')"
+            )
+        else:
+            from_layer = etapa.unfreeze_layers_from
+
+        if n_layers is not None and from_layer >= n_layers:
+            logger.warning(
+                f"⚠️  Etapa '{alias}': unfreeze_layers_from={from_layer} >= num_hidden_layers="
+                f"{n_layers}. Nenhum bloco transformer será treinado (apenas norm/lm_head)."
+            )
+
+        stats = {"blocos_treinaveis": 0, "blocos_congelados": 0,
+                 "embed_cabeca": 0, "norm": 0}
+        for name, param in self.model.named_parameters():
+            if param.dtype not in (torch.float32, torch.float16, torch.bfloat16):
+                continue  # quantizados (int8/int4 via bitsandbytes): intocados
+            m = self._RE_IDX_CAMADA.search(name)
+            if m:
+                treinavel = int(m.group(1)) >= from_layer
+                stats["blocos_treinaveis" if treinavel else "blocos_congelados"] += param.numel()
+            elif "embed_tokens" in name or "lm_head" in name:
+                # Em modelos untied (7B) são dois tensores; em tied (1.5B) é um só.
+                # Nos dois casos ficam congelados até o corte 0 — ver NOTA no docstring.
+                treinavel = (from_layer <= 0)
+                stats["embed_cabeca"] += param.numel()
+            else:
+                treinavel = True  # norm final e demais tensores pequenos
+                stats["norm"] += param.numel()
+            param.requires_grad = treinavel
+
+        # Gradient checkpointing com camadas iniciais congeladas: sem isso, a entrada
+        # do primeiro bloco checkpointed não exige grad e o backward é cortado.
+        # É o mesmo mecanismo que o PEFT usa ao treinar adaptadores sobre base congelada.
+        #
+        # Guarda de idempotência: enable_input_require_grads() registra um forward hook
+        # nos embeddings e sobrescreve _require_grads_hook SEM remover o anterior. Como
+        # este método roda uma vez por etapa (4x no D19/D20), sem a guarda os hooks se
+        # acumulariam no modelo mantido em memória entre etapas.
+        if hasattr(self.model, "enable_input_require_grads") and \
+                getattr(self.model, "_require_grads_hook", None) is None:
+            self.model.enable_input_require_grads()
+
+        if from_layer > 0:
+            _tied = getattr(self.model.config, "tie_word_embeddings", False)
+            _desc = ("tensor único tied embed_tokens/lm_head" if _tied
+                     else "embed_tokens e lm_head (untied, tensores separados)")
+            logger.info(
+                f"ℹ️  Âncora de conhecimento pré-treinado: {_desc} permanece(m) "
+                f"CONGELADO(S) até unfreeze_layers_from: 0."
+            )
+        # O bucket embed/cabeça muda de lado conforme o corte (treinável só em from_layer == 0)
+        _emb_estado = "treináveis" if from_layer <= 0 else "congelados"
+        logger.info(
+            f"🧊 Unfreeze parcial (etapa '{alias}'): blocos >= {from_layer} treináveis "
+            f"({stats['blocos_treinaveis']:,} params) | blocos congelados: "
+            f"{stats['blocos_congelados']:,} | embeddings+cabeça {_emb_estado}: "
+            f"{stats['embed_cabeca']:,} | norm (sempre treinável): {stats['norm']:,}"
+        )
+
     # ------------------------- curriculum: preparação por etapa -----------
     def _aplicar_etapa_curriculum(self, step_index: int, etapa) -> None:
         """Configura parâmetros e dados para uma etapa específica do curriculum.
@@ -2252,6 +2429,15 @@ class LLMsTrainer:
             if self._pipeline_tem_full and self._lora_applied and hasattr(self, "model"):
                 out_dir = self._yaml_config.modelo.saida
                 logger.info("💾 Merge LoRA→base antes de recarregar (preservando pesos full)...")
+                if nbits_memoria == 4:
+                    # Guarda-corpo (não é fix automático — alterar o fluxo de merge é invasivo):
+                    # deixa o fenômeno registrado no log dos experimentos.
+                    logger.warning(
+                        "⚠️  Merge LoRA→base com modelo em 4 bits: o merge dequantiza e "
+                        "REQUANTIZA cada camada, introduzindo erro de quantização nos pesos "
+                        "salvos (fonte do degrau de loss na transição de regime). "
+                        "Para eliminar o efeito, rode as etapas LoRA com nbits: 16."
+                    )
                 self.model.merge_adapter()
                 self.model.save_pretrained(out_dir, safe_serialization=True)
                 self.tokenizer.save_pretrained(out_dir)
@@ -2292,7 +2478,9 @@ class LLMsTrainer:
             _nbits_global_original = self._yaml_config.treinamento.nbits
             self._yaml_config.treinamento.nbits = alvo_nbits
             
-            # Atualiza tipo da etapa ANTES do _load_model (usado para selecionar attn_implementation)
+            # Atualiza tipo da etapa ANTES do _load_model (usado para selecionar attn_implementation).
+            # Redundante com a atribuição após o bloco de reload, mas NÃO removível:
+            # aqui ela precisa acontecer antes de _load_model(); lá ela cobre o caso sem recarga.
             self._tipo_etapa_atual = novo_tipo
             
             # Recarrega o modelo base / adaptadores persistidos na saída
@@ -2316,6 +2504,14 @@ class LLMsTrainer:
             for param in self.model.parameters():
                 if param.dtype in (torch.float32, torch.float16, torch.bfloat16):
                     param.requires_grad = True
+            # Descongelamento progressivo (D19/D20): re-congela os blocos abaixo do
+            # corte da etapa. Aplicado DEPOIS do destravamento total acima, de forma
+            # que cada etapa parta sempre do mesmo estado base (idempotente).
+            # O corte pode vir como índice absoluto ou percentual — a resolução do
+            # percentual (que depende de num_hidden_layers) é feita dentro do método.
+            if getattr(etapa, "unfreeze_layers_from", -1) >= 0 or \
+                    getattr(etapa, "unfreeze_layers_pct", -1.0) >= 0:
+                self._aplicar_unfreeze_parcial(etapa)
             n_total = sum(p.numel() for p in self.model.parameters())
             n_train = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
             if self._lora_applied:
@@ -2383,6 +2579,13 @@ class LLMsTrainer:
         if etapa.batch_size > 0:
             treino.batch_size = etapa.batch_size
             logger.info(f"📦 Etapa '{etapa.alias}': batch_size={etapa.batch_size} (override por etapa)")
+
+        # Override de warmup_steps se especificado (>= 0; -1 = usa global).
+        # A sentinela é -1 porque warmup_steps=0 é legítimo ("sem warmup nesta etapa").
+        # O valor global é restaurado a cada etapa em train() (ver global_defaults).
+        if getattr(etapa, "warmup_steps", -1) >= 0:
+            treino.warmup_steps = etapa.warmup_steps
+            logger.info(f"🔥 Etapa '{etapa.alias}': warmup_steps={etapa.warmup_steps} (override por etapa)")
 
         # Lê info de tokens da etapa (para auto-estimação e exibição de suficiência)
         info_tokens = self._yaml_config._ler_info_tokens_divisao(etapa.arquivo)
@@ -2513,7 +2716,8 @@ class LLMsTrainer:
             "learning_rate": treino_cfg.learning_rate,
             "batch_size": treino_cfg.batch_size,
             "epochs": treino_cfg.epochs,
-            "max_seq_length": treino_cfg.max_seq_length
+            "max_seq_length": treino_cfg.max_seq_length,
+            "warmup_steps": treino_cfg.warmup_steps,
         }
 
         for step_index, etapa_atual in enumerate(self._etapas):
@@ -2531,7 +2735,8 @@ class LLMsTrainer:
             treino_cfg.batch_size = global_defaults["batch_size"]
             treino_cfg.epochs = global_defaults["epochs"]
             treino_cfg.max_seq_length = global_defaults["max_seq_length"]
-            
+            treino_cfg.warmup_steps = global_defaults["warmup_steps"]
+
             if is_curriculum:
                 logger.info(f"<azul>🔄 Etapa {step_index+1}/{total_etapas}: '{etapa_atual.alias}'</azul>")
             from util_sysinfo import MemoryLogger
