@@ -1,4 +1,4 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_b.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_b16.yaml
 
 # ==========================================================================
 # CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
@@ -79,9 +79,9 @@ modelo:
   #| Caminho do modelo pré-treinado usado como fundação
   base_model_name: Qwen2.5-1.5B-Instruct
   #| Diretório final onde os pesos atualizados (adaptador LoRA) serão salvos
-  saida: treinos/Qwen2.5-1.5B-Instruct(b)
+  saida: treinos/Qwen2.5-1.5B-Instruct(b16)
   #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
-  ollama: Qwen2.5-1.5B-Instruct(b):latest
+  ollama: Qwen2.5-1.5B-Instruct(b16):latest
   ollama_base: qwen2.5:1.5b
   ollama_url: 
 
