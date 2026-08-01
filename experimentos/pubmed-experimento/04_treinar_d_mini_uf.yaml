@@ -86,7 +86,7 @@ curriculum:
   #| 300 instâncias: ~70-80 de treino por etapa de dificuldade, 225 na completa.
   #| 1 época por etapa — o suficiente para o loss se mover e validar o mecanismo.
   divisao:
-  - arquivo: compara/divisao_mini_300.csv
+  - arquivo: dados/divisao_mini_300.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-uf75pct"
     tipo: "full"
@@ -94,7 +94,7 @@ curriculum:
     pace_epochs: 1
     batch_size: 1
     learning_rate: 5e-06
-  - arquivo: compara/divisao_mini_300.csv
+  - arquivo: dados/divisao_mini_300.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio-uf50pct"
     tipo: "full"
@@ -102,7 +102,7 @@ curriculum:
     pace_epochs: 1
     batch_size: 1
     learning_rate: 5e-06
-  - arquivo: compara/divisao_mini_300.csv
+  - arquivo: dados/divisao_mini_300.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil-uf25pct"
     tipo: "full"
@@ -110,7 +110,7 @@ curriculum:
     pace_epochs: 1
     batch_size: 1
     learning_rate: 5e-06
-  - arquivo: compara/divisao_mini_300.csv
+  - arquivo: dados/divisao_mini_300.csv
     alias: "completo-uf0pct"
     tipo: "full"
     unfreeze_layers_from: 0%   # 0% congelado = bloco 0: tudo treinável, inclui embeddings/lm_head

@@ -1,17 +1,10 @@
-# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d9.yaml
-# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d9.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_b16r8.yaml
 
 # ==========================================================================
-# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D9)
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Direto / sem Curriculum)
 # ==========================================================================
-# Papel:   Ablação (efeito da ordem do currículo)
-# Modo:    Anti-CL por etapas, LoRA-only
-# Etapas:  LoRA-completo → LoRA-difícil → LoRA-médio → LoRA-fácil
-# Objetivo: Testar se a ordem inversa (difícil→fácil) prejudica o treino.
-#           Espelho reverso de D7 para isolar o efeito da direção do CL.
-# Pergunta: Q4 (a direção do currículo importa?)
-# Comparar: d9 vs d7 (Q4 por etapas), d9 vs b (anti-CL vs baseline)
 # Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (etapa única, treino direto)
 # ==========================================================================
 
 #| =========================================================================
@@ -32,94 +25,105 @@ misc:
 #| =========================================================================
 #| CURRICULUM
 #| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
 curriculum:
   #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
   saida:
+    #| Caminho do arquivo parquet que contém as respostas esperadas
     dataframe: saidas/saida_pubmed_prof.parquet
+    #| Nome da coluna que contém o JSON de resposta
     dataframe_col: resposta
+    #| Nome da coluna que contém o identificador do item
     dataframe_id: chave
+    #| Formato estruturado esperado
     formato: json
     texto_criptografado: false
-
+  
   #| Entrada: Especifica os dados que o modelo vai receber como prompt
   entrada:
+    #| Arquivo parquet com o texto fonte a ser processado
     dataframe: dados/pubmed-rct-20k.parquet
+    #| Nome da coluna que contém o texto (prompt)
     dataframe_col: article
+    #| Nome da coluna que contém o identificador do item
     dataframe_id: pmid
+    #| Arquivo TXT com o template que dita como o texto bruto será empacotado
     prompt_template: dados/prompt_pubmed_rct.txt
     tag_texto: '<<--TEXTO-->>'
     texto_criptografado: false
     prompt_criptografado: false
-
+  
   validacao:
     exigir_json_valido: true
+    #| exigir_ids_pareados: Validação estrita de pares. Se `true`, o treinamento será interrompido com erro se houver IDs na entrada sem correspondente na saída (gold dataset) ou se existirem dados pareados ausentes no arquivo de divisão (CSV). Se `false`, o sistema ignora as sobras e treina apenas com os itens em comum (interseção), útil quando a entrada possui itens extras que ainda não têm gabarito na saída.
     exigir_ids_pareados: false
-
+  
   #| Divisao: Define as etapas do treinamento (o currículo em si)
-  #| Anti-CL por etapas LoRA-only: completo → difícil → médio → fácil
   divisao:
-  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
-    alias: "completo"
-    tipo: "lora"
-    pace_epochs: 4
-  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "dificil"}
-    alias: "difícil"
-    tipo: "lora"
-    pace_epochs: 4
-  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "medio"}
-    alias: "médio"
-    tipo: "lora"
-    pace_epochs: 4
-  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
-    dataset_filtro: {"dificuldade": "facil"}
-    alias: "fácil"
-    tipo: "lora"
-    pace_epochs: 4
+    #| Divisão principal, pois é um treinamento direto de etapa única
+    - arquivo: dados/divisao_Professor_Qwen1_5B.csv
+      #dataset_filtro: {"dificuldade": "facil"}
+      alias: "completo"
+      tipo: "lora"
+      #| Número de vezes que o modelo verá o dataset (epochs)
+      pace_epochs: 4
+      #| Limite de tokens da janela de contexto para este dataset
+      max_seq_length: 8192
 
 #| =========================================================================
 #| MODELO
 #| =========================================================================
+#| Configurações do modelo base e diretório de saída.
 modelo:
+  #| Caminho do modelo pré-treinado usado como fundação
   base_model_name: Qwen2.5-1.5B-Instruct
-  saida: treinos/Qwen2.5-1.5B-Instruct(d9)
-  ollama: Qwen2.5-1.5B-Instruct(d9):latest
+  #| Diretório final onde os pesos atualizados (adaptador LoRA) serão salvos
+  saida: treinos/Qwen2.5-1.5B-Instruct(b16r8)
+  #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
+  ollama: Qwen2.5-1.5B-Instruct(b16r8):latest
   ollama_base: qwen2.5:1.5b
-  ollama_url:
+  ollama_url: 
 
 #| =========================================================================
 #| TREINAMENTO
 #| =========================================================================
+#| Configurações de hiperparâmetros (Unsloth).
 treinamento:
-  flash_attention_2: true
-  liger_kernel: true
-  full_com_sdpa: true
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
+  liger_kernel: true         # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+  full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
 
   eval_steps: 20%
-
+  
+  #| Configuração do tamanho do lote (batch). Lote por GPU é 2, com acumulação de 8.
   batch_size:
     efetivo: 16
     batch_size: 2
   grad_batch_size: 8
-
+  
+  #| Número total de épocas (passagens pelo dataset completo)
   num_train_epochs: 4
-  max_seq_length: 8192
-  validar_max_seq_length: true
-
-  learning_rate: 2e-05
+  max_seq_length: 16384
+  validar_max_seq_length: true 
+  
+  #| Taxa de aprendizado base, otimizada para LoRA
+  learning_rate: 0.0002
   max_grad_norm: 1
   save_checkpoints: true
   resume_from_checkpoint: true
   warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
-
+  
+  #| Curva de decaimento da taxa de aprendizado (suaviza nos passos finais)
   lr_scheduler_type: cosine
   seed: 3407
-
-  nbits: 4
-
+  
+  #| Realiza o treinamento em 4-bits (QLoRA) para maior economia de VRAM
+  nbits: 16
+  
+  #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
   train_on_responses_only: true
 
 #| =========================================================================
@@ -128,11 +132,11 @@ treinamento:
 #| Configura a técnica de Parameter-Efficient Fine-Tuning.
 lora:
   #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
-  r: 16
+  r: 8
   #| Fator de escala, geralmente o dobro do rank.
-  alpha: 32
+  alpha: 16
   dropout: 0.05
-
+  
   #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
   target_modules:
     - q_proj

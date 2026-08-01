@@ -47,7 +47,7 @@ curriculum:
 
   divisao:
     #| 1ª Divisão: Treinamento FULL (Forçará nbits=16)
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-FF"
     tipo: "full"
@@ -55,7 +55,7 @@ curriculum:
     batch_size: 1
     learning_rate: 5e-06 # Padrão para Full FT
     #| 2ª Divisão: Treinamento LORA (Retornará ao nbits global=4)
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"

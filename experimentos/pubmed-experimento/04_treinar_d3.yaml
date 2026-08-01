@@ -69,7 +69,7 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   #| CL acumulado FF→LoRA: FF-fácil → LoRA-(fácil+médio) → LoRA-tudo
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=3"}
     alias: "fácil-FF"
     tipo: "full"
@@ -77,13 +77,13 @@ curriculum:
     #| Etapas 'full' sempre rodam em 16 bits (fixado no código) — não existe chave 'bits' por etapa.
     pace_epochs: 2
     batch_size: 1
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=7"}
     alias: "médio-ac"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo"
     tipo: "lora"
     learning_rate: 2e-05

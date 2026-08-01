@@ -58,17 +58,17 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   #| Anti-CL acumulado LoRA-only: >7 → >3 → tudo (acumulando dados mais fáceis)
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": ">7"}
     alias: "difícil"
     tipo: "lora"
     pace_epochs: 4
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": ">3"}
     alias: "médio-ac"
     tipo: "lora"
     pace_epochs: 4
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo"
     tipo: "lora"
     pace_epochs: 4

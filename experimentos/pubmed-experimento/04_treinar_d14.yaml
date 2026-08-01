@@ -61,34 +61,34 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   #| CL + PT por etapas completo LoRA -> FF-only: completo LoRA -> fácil-FF → médio-FF → difícil-FF → completo-FF
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo"
     tipo: "lora"
     pace_epochs: 4
     batch_size: 2
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-FF"
     tipo: "full"
     pace_epochs: 2
     batch_size: 2
     learning_rate: 5e-06 # Padrão para Full FT
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio-FF"
     tipo: "full"
     pace_epochs: 2
     batch_size: 2
     learning_rate: 5e-06 # Padrão para Full FT
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil-FF"
     tipo: "full"
     pace_epochs: 2
     batch_size: 2
     learning_rate: 5e-06 # Padrão para Full FT
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-FF"
     tipo: "full"
     pace_epochs: 2

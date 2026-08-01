@@ -60,25 +60,25 @@ curriculum:
 
   #| Mesma topologia do D17, com filtro por bloco aleatório no lugar da dificuldade.
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B_blocos.csv
     dataset_filtro: {"bloco": "b1"}
     alias: "bloco-1"
     tipo: "lora"
     pace_epochs: 2
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B_blocos.csv
     dataset_filtro: {"bloco": "b2"}
     alias: "bloco-2"
     tipo: "lora"
     pace_epochs: 2
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B_blocos.csv
     dataset_filtro: {"bloco": "b3"}
     alias: "bloco-3"
     tipo: "lora"
     pace_epochs: 2
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B_blocos.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B_blocos.csv
     alias: "completo"
     tipo: "lora"
     pace_epochs: 2

@@ -69,7 +69,7 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   divisao:
     #| Divisão principal, pois é um treinamento direto de etapa única
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     #dataset_filtro: {"dificuldade": "facil"}
     alias: "completo-FF"
     tipo: "full"
@@ -79,7 +79,7 @@ curriculum:
     #| Etapas 'full' sempre rodam em 16 bits (fixado no código) — não existe chave 'bits' por etapa.
     batch_size: 1
 
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
       #dataset_filtro: {"dificuldade": "medio"}
     alias: "completo"
     tipo: "lora"

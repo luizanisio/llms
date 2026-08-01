@@ -75,28 +75,28 @@ curriculum:
   #| Todas as etapas são "full" (16 bits): nenhuma transição de precisão
   #| ou de técnica em nenhum ponto do pipeline.
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-uf75pct"
     tipo: "full"
     unfreeze_layers_from: 75%  # 75% congelado = bloco 21 (28 blocos): treina 21-27 (25% finais)
     pace_epochs: 2
     learning_rate: 5e-06
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio-uf50pct"
     tipo: "full"
     unfreeze_layers_from: 50%  # 50% congelado = bloco 14 (28 blocos): treina 14-27 (50% finais)
     pace_epochs: 2
     learning_rate: 5e-06
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil-uf25pct"
     tipo: "full"
     unfreeze_layers_from: 25%  # 25% congelado = bloco 7 (28 blocos): treina 7-27 (75% finais)
     pace_epochs: 2
     learning_rate: 5e-06
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-uf0pct"
     tipo: "full"
     unfreeze_layers_from: 0%   # 0% congelado = bloco 0 (28 blocos): tudo treinável, inclui embeddings/lm_head

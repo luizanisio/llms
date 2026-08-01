@@ -63,22 +63,22 @@ curriculum:
   #| A única variável introduzida em relação a B são as 3 fronteiras
   #| (trainer novo → otimizador zerado → scheduler reiniciado → warmup 100).
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-1"
     tipo: "lora"
     pace_epochs: 1
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-2"
     tipo: "lora"
     pace_epochs: 1
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-3"
     tipo: "lora"
     pace_epochs: 1
     learning_rate: 2e-05
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-4"
     tipo: "lora"
     pace_epochs: 1

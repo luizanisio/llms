@@ -69,19 +69,19 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   #| CL acumulado LoRA→FF: LoRA-fácil → LoRA-(fácil+médio) → FF-tudo
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=3"}
     alias: "fácil"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=7"}
     alias: "médio-ac"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-FF"
     tipo: "full"
     learning_rate: 5e-06

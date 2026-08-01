@@ -62,8 +62,7 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   divisao:
     #| Divisão principal, pois é um treinamento direto de etapa única
-    - arquivo: compara/divisao_mini_300.csv
-    #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
+    - arquivo: dados/divisao_mini_300.csv
       dataset_filtro: {"dificuldade": "facil"}
       alias: "facil"
       tipo: "lora"
@@ -71,8 +70,7 @@ curriculum:
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 4096
-    - arquivo: compara/divisao_mini_300.csv
-    #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
+    - arquivo: dados/divisao_mini_300.csv
       dataset_filtro: {"dificuldade": "medio"}
       alias: "médio"
       tipo: "lora"
@@ -80,8 +78,7 @@ curriculum:
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 4096
-    - arquivo: compara/divisao_mini_300.csv
-    #- arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv    
+    - arquivo: dados/divisao_mini_300.csv
       dataset_filtro: {"dificuldade": "dificil"}
       alias: "dificil"
       tipo: "lora"
@@ -89,7 +86,7 @@ curriculum:
       pace_epochs: 1
       #| Limite de tokens da janela de contexto para este dataset
       max_seq_length: 4096
-    - arquivo: compara/divisao_mini_300.csv
+    - arquivo: dados/divisao_mini_300.csv
       #dataset_filtro: {"dificuldade": "dificil"}
       alias: "completo"
       tipo: "lora"

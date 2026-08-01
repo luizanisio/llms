@@ -70,61 +70,61 @@ curriculum:
   #| Divisao: Define as etapas do treinamento (o currículo em si)
   #| CL acumulado granular LoRA→FF: LoRA(≤1) → LoRA(≤2) → ... → LoRA(≤9) → FF-tudo
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=1"}
     alias: "f1"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=2"}
     alias: "f2"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=3"}
     alias: "f3"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=4"}
     alias: "f4"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=5"}
     alias: "f5"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=6"}
     alias: "f6"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=7"}
     alias: "f7"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=8"}
     alias: "f8"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade_int": "<=9"}
     alias: "f9"
     tipo: "lora"
     learning_rate: 2e-05
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-FF"
     tipo: "full"
     learning_rate: 5e-06
