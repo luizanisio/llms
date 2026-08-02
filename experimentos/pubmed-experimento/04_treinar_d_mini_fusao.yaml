@@ -1,0 +1,261 @@
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d_mini_fusao.yaml
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d_mini_fusao.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Mini teste de FUSÃO)
+# ==========================================================================
+# Ambiente: LOCAL — RTX 3060 12GB sob WSL2
+# Modo:     FUSÃO (curriculum.fusao.ativo: true) — Full FT 16 bits com GATING
+#           de learning rate por grupos de camadas (75%→50%→25%→0%)
+# Papel:    SMOKE TEST do mecanismo de fusão, NÃO é um experimento científico.
+#           Par direto do 04_treinar_d_mini_uf.yaml: MESMOS dados, mesma seq,
+#           mesmo batch, mesmos cortes — a única variável é segmentado × fundido.
+#           Rodar os dois lado a lado isola o custo de fronteira antes de
+#           submeter os protocolos fundidos à fila da H100.
+#
+# O que este mini exercita (o que o d_mini_uf NÃO exercita):
+#   1. Parse e validação do bloco 'curriculum.fusao' (contrato: as etapas não
+#      podem declarar tipo/learning_rate/batch_size/warmup_steps/max_seq_length)
+#   2. Stream concatenado: 4 spans na ordem do currículo, com épocas virtuais
+#      (pace_epochs) e shuffle intra-span determinístico (seed_shuffle)
+#   3. Sampler SEQUENCIAL — a ordem do stream É o currículo (sem shuffle global)
+#   4. UM único trainer.train(): otimizador e scheduler NUNCA reiniciam.
+#      NÃO deve aparecer nenhum log de troca de etapa, reload ou warmup repetido.
+#   5. Gating: tabela de 4 grupos no log (faixas 21-27 / 14-20 / 7-13 / 0-6,
+#      cabeça+norm no primeiro grupo), com LR=0 nos adormecidos e rampa ao acordar
+#   6. Cosine ÚNICO do pico a ~0 no run inteiro — grupos tardios rampam até o
+#      valor já decaído (o "LR discriminativo emergente" substitui o 3e-06 que
+#      o d_mini_uf precisava declarar à mão na última etapa)
+#   7. Marcadores virtuais: eventos 'SPAN INICIADO (virtual)' no
+#      treinamento_eventos.md e linhas violeta vindas de fusao_spans.json
+#   8. Gráfico novo: treinamento/treinamento_lr_grupos.png (curva de LR por grupo)
+#   9. Resume: guarda de hash da fusão + fast-forward determinístico do stream
+#      (matar o processo no meio e reexecutar valida os dois)
+#
+# Para validar o item 9, edite qualquer chave de 'fusao' ou 'divisao' após uma
+# interrupção: o resume deve ser RECUSADO com "configuração de fusão mudou
+# desde o checkpoint".
+#
+# ==========================================================================
+# O QUE ESPERAR NO LOG (conferido com --datasets + o scheduler real)
+# ==========================================================================
+# Stream: 71 + 80 + 74 + 225 = 450 instâncias, batch efetivo 8 → ~56 steps.
+# Spans começam em: 0 (fácil) / 8 (médio) / 18 (difícil) / 28 (completo).
+#
+# Com warmup_grupo_steps: 3, cada gate satura DENTRO do seu span, e o cosine
+# global entrega sozinho o LR decrescente por profundidade:
+#
+#   Grupo      Blocos   Acorda   Satura   LR ao saturar    % do pico
+#   gate_75%   21-27      0        3       5.00e-06          100%
+#   gate_50%   14-20      8       11       4.83e-06           97%
+#   gate_25%    7-13     18       21       3.88e-06           78%
+#   gate_0%     0-6      28       31       2.42e-06           48%
+#
+# Note o gate_0%: satura em 2.42e-06 sem que nada seja configurado — é
+# praticamente o 3e-06 que o d_mini_uf precisa declarar à mão na etapa final.
+# É essa a "LR discriminativa emergente" que o modo fundido produz de graça.
+#
+# Checagens rápidas ao rodar:
+#   - tabela "🧩 Grupos de gating" com 4 linhas e ativações 0/8/18/28
+#   - 3 eventos "🪧 SPAN INICIADO (virtual)" (o span 0 não gera marcador)
+#   - NENHUM log de reload, troca de etapa ou "Etapa X/4"
+#   - treinamento_lr_grupos.png com 4 curvas em degraus sob um único cosine
+#
+# ==========================================================================
+# ORÇAMENTO DE VRAM — o que MUDA em relação ao mini segmentado
+# ==========================================================================
+# No modo fundido NADA é congelado: todos os parâmetros entram no otimizador
+# no step 0 e recebem gradiente o run inteiro (os grupos adormecidos apenas têm
+# LR=0). Logo, o ALÍVIO de VRAM das primeiras etapas do d_mini_uf DESAPARECE —
+# o pico do segmentado (etapa 0%, tudo treinável) vira o custo de TODO o run:
+#
+#   pesos bf16 2.88 + grads bf16 2.88 + adamw_8bit 2.88 = 8.63 GiB estáticos
+#
+# Sem o pacote `flash-attn` instalado, o loader DESATIVA a fused cross-entropy
+# do Liger (evita NaN com SDPA), então `outputs.logits` é materializado inteiro
+# (batch × seq × vocab 151936, em bf16 E no upcast fp32 da loss):
+#   seq 1024 → 0.87 GiB (total ~9.5 GiB)
+#   seq 1536 → 1.30 GiB (total ~9.9 GiB)   <<< escolhido (paridade com d_mini_uf)
+#   seq 2048 → 1.74 GiB (total ~10.4 GiB)  <<< arriscado em 12 GiB sob WSL2
+#
+# O pico é o MESMO do d_mini_uf (que coube), mas agora é sustentado do primeiro
+# ao último step — mais tempo perto do teto e mais exposto à fragmentação.
+# SE ESTOURAR: reduza max_seq_length para 1024 (a comparação com o d_mini_uf
+# continua válida se você reduzir nos DOIS), ou troque fusao.tipo para "lora"
+# (em LoRA o custo do gating é irrelevante — só os adapters entram no otimizador).
+#
+# ⚠️  Sob WSL2 o driver WDDM pagina VRAM para a RAM do host via PCIe e pode
+#     retornar `CUDA error: unknown error` em vez de um OOM limpo.
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| -----------------------------------------------------------------------
+  #| MODO FUSÃO — os 4 spans rodam em um único trainer.train()
+  #| -----------------------------------------------------------------------
+  fusao:
+    ativo: true
+    #| Regime ÚNICO do run. "full" mantém a paridade com o d_mini_uf e é o
+    #| caminho mais exigente (gating de pesos plenos + embeddings tied).
+    tipo: "full"
+    #| Pico do cosine global. Substitui treinamento.learning_rate e os LRs por
+    #| etapa do d_mini_uf: o decaimento entrega naturalmente um LR menor aos
+    #| grupos que acordam depois (era o papel do 3e-06 na última etapa de lá).
+    learning_rate: 5e-06
+    #| Rampa de cada grupo ao acordar. ESCALADO PARA O MINI: com ~56 optimizer
+    #| steps no run inteiro e spans a cada ~9 steps, o padrão 100 faria os gates
+    #| ramparem por mais tempo do que o treino inteiro dura — nenhum grupo
+    #| chegaria a saturar e o smoke não validaria o mecanismo.
+    #| Nos protocolos completos (milhares de steps) use 100.
+    warmup_grupo_steps: 3
+    #| Ordem determinística do stream — mudar entre queda e resume dispara a
+    #| guarda de hash (é justamente o que o item 9 do roteiro valida).
+    seed_shuffle: 3407
+
+  #| Mesma topologia do d_mini_uf (CL alinhado à progressão de capacidade),
+  #| sobre a divisão mini de 300 instâncias. Aqui as etapas são SPANS: nenhuma
+  #| pode declarar tipo/learning_rate/batch_size/warmup_steps (são globais).
+  #| pace_epochs: 1 = cada span entra uma vez no stream (mesmo orçamento de lá).
+  divisao:
+  - arquivo: dados/divisao_mini_300.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-uf75pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 75%  # G1, ativo desde o step 0: blocos 21-27 (+ norm/cabeça)
+  - arquivo: dados/divisao_mini_300.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-uf50pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 50%  # G2 acorda aqui: blocos 14-20
+  - arquivo: dados/divisao_mini_300.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-uf25pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 25%  # G3 acorda aqui: blocos 7-13
+  - arquivo: dados/divisao_mini_300.csv
+    alias: "completo-uf0pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 0%   # G4 acorda aqui: blocos 0-6 + embeddings/lm_head (tied no 1.5B)
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  #| Pasta PRÓPRIA: não pode colidir com a do d_mini_uf, senão o run fundido
+  #| tentaria retomar os checkpoints do segmentado.
+  saida: treinos_local/Qwen2.5-1.5B-Instruct(d-mini-fusao)
+  ollama: Qwen2.5-1.5B-Instruct(d-mini-fusao):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true    # Sem o pacote instalado cai em SDPA (full_com_sdpa abaixo)
+  liger_kernel: true         # RoPE/RMSNorm fundidos; a fused CE é desativada sem FA2 real
+  full_com_sdpa: true        # Regime full em todo o run → SDPA liberado com segurança
+
+  #| 10% → eval/log/checkpoint a cada 5 steps ≈ 11 pontos no run de ~56 steps.
+  #| No modo fundido não existe eval por etapa: todas as avaliações são GLOBAIS
+  #| e o melhor checkpoint é o melhor do run inteiro. Esta chave também define a
+  #| frequência de log, que é o que alimenta a curva de LR por grupo — com 20%
+  #| sobrariam ~5 pontos, poucos para ver os degraus dos gates.
+  #| Custo: ~11 salvamentos × ~6 GB (modelo + estados do Adam). A rotação mantém
+  #| só melhor + último em disco (~12 GB), mas são ~68 GB ESCRITOS ao longo do
+  #| run — se o disco WSL2 for o gargalo, use 20%.
+  eval_steps: 10%
+
+  #| batch 1 é o que mantém a cadeia de logits em 1.30 GiB (ver orçamento acima).
+  #| grad_accum compensa para preservar um batch efetivo razoável.
+  batch_size:
+    efetivo: 8
+    batch_size: 1
+  grad_batch_size: 8
+
+  #| IGNORADO no modo fundido (o executor treina 1 época real sobre o stream
+  #| concatenado; as repetições vêm de pace_epochs por span). Mantido em 1
+  #| para não emitir o aviso de "num_train_epochs ignorado".
+  num_train_epochs: 1
+  #| 256 é o ponto de segurança para vram de uma RTX3060 de 12Gb
+  max_seq_length: 256
+  validar_max_seq_length: true
+  #| false de propósito: TRUNCA em vez de descartar. Com filtro ativo em 1536
+  #| sobrariam só 69% das instâncias — para um smoke test é melhor manter todas
+  #| e aceitar truncagem, já que não estamos medindo qualidade.
+  filtrar_max_seq_length: false
+
+  #| Sobreposto por fusao.learning_rate; mantido igual para não poluir o log.
+  learning_rate: 5e-06
+  #| Mesmo clip apertado do d_mini_uf: aqui ele estabiliza os steps logo após
+  #| cada grupo acordar, quando os blocos recém-liberados saem de LR=0.
+  max_grad_norm: 0.3
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  #| Warmup GLOBAL do run (rampa do primeiro grupo, que já nasce ativo).
+  #| Não há mais um warmup por etapa: o otimizador nunca reinicia.
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adafactor  # reduz vram para o smoke teste - adamw_8bit consome muita ram e vram
+
+  #| Com gating o scheduler efetivo é um LambdaLR (cosine global × gate por
+  #| grupo) montado pelo FusaoTrainer — este valor não é usado, mas fica
+  #| declarado porque descreve o envelope global.
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # Full FT: sem quantização (o modo fundido 'full' força 16)
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA — configuração dos adaptadores para fusao.tipo: "lora"
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

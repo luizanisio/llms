@@ -1,0 +1,167 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d22.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d22.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D22)
+# ==========================================================================
+# Papel:   Experimental (CL + PT FUNDIDOS: gating de LR por grupos, LoRA)
+# Modo:    FUSÃO com GATING — um único trainer.train(); os cortes de
+#          unfreeze_layers_from NÃO congelam nada: organizam os adapters em
+#          grupos por faixa de camadas, todos no otimizador desde o step 0,
+#          com LR_grupo(t) = lr × cosine_global(t) × gate_g(t). Grupos
+#          "adormecidos" têm LR=0 (sem update e sem weight decay), mas
+#          acumulam momentos Adam até o span que os liberta.
+# Spans:   fácil-uf75(×2) → médio-uf50(×2) → difícil-uf25(×2) → completo-uf0(×2)
+# Objetivo: D21 + progressão de capacidade sem custo de fronteira. Grupos que
+#           acordam tarde rampam até o valor JÁ DECAÍDO do cosine
+#           (discriminative LR emergente, sem configurar LR por etapa).
+#           Espere curvas de LR por grupo em degraus suaves sob o envelope do
+#           cosine e nenhuma descontinuidade de loss nos marcadores.
+# Orçamento: (fácil+médio+difícil = N) × 2 + completo N × 2 = 4N instâncias.
+# Comparar: d22 vs d21 (valor do gating dado o CL fundido),
+#           d22 vs d19 (gating de LR vs congelamento real com fronteiras).
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte ao modo FUSÃO (Plano_codificacao_fusao.md +
+#            src/treinar_unsloth_unfreeze_fusao.md)
+#
+# NOTAS:
+# - unfreeze com tipo "lora" é PERMITIDO no modo fundido (gating de adapters;
+#   no modo segmentado seria rejeitado). A base segue congelada como sempre.
+# - Cortes devem ser monotônicos não crescentes (75% → 50% → 25% → 0%) e a
+#   PRIMEIRA etapa deve declarar corte (define o grupo ativo desde o step 0).
+# - Qwen 2.5 7B tem 28 blocos: 75/50/25/0% → grupos de camadas
+#   21-27 / 14-20 / 7-13 / 0-6 (cabeça+norm no primeiro grupo).
+# - warmup_grupo_steps: rampa linear de cada grupo ao acordar (padrão 100).
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saida/saida_or_235b.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/integras_experimento_summa_novos.parquet
+    dataset_filtro: {"fold": "<=10"}
+    dataframe_col: integra
+    dataframe_id: seq_documento_acordao
+    prompt_template: dados/prompt_summa_raw.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Modo FUSÃO com gating de LR por grupos de camadas.
+  fusao:
+    ativo: true
+    tipo: "lora"              # gating de ADAPTERS por índice de camada
+    learning_rate: 2e-05      # pico do cosine global
+    warmup_grupo_steps: 100   # rampa de cada grupo de camadas ao acordar
+    seed_shuffle: 3407        # shuffle intra-span determinístico (afeta resume)
+
+  #| CL + PT fundidos: mesmos spans do D21, com cortes decrescentes.
+  divisao:
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-uf75pct"
+    pace_epochs: 2
+    unfreeze_layers_from: 75%  # G1 ativo desde o step 0: camadas 21-27 (+cabeça/norm)
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-uf50pct"
+    pace_epochs: 2
+    unfreeze_layers_from: 50%  # G2 acorda aqui: camadas 14-20
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-uf25pct"
+    pace_epochs: 2
+    unfreeze_layers_from: 25%  # G3 acorda aqui: camadas 7-13
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-uf0pct"
+    pace_epochs: 2
+    unfreeze_layers_from: 0%   # G4 acorda aqui: camadas 0-6
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d22)
+  ollama: Qwen2.5-7B-Instruct(d22):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+
+  #| 5% ≈ 20 avaliações GLOBAIS no run (não existe eval por etapa no fundido)
+  eval_steps: 5%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 8
+
+  #| IGNORADO no modo fundido (1 época real sobre o stream); mantido em 1
+  num_train_epochs: 1
+  max_seq_length: 32768
+  validar_max_seq_length: true
+  filtrar_max_seq_length: true
+
+  #| Sobreposto por fusao.learning_rate no run fundido
+  learning_rate: 2e-05
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # warmup GLOBAL (início do run; rampa do 1º grupo)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  #| Com gating, o scheduler efetivo é LambdaLR (cosine global × gate por
+  #| grupo) — este valor não é usado; mantido por consistência.
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # recomendado no modo fundido (4 gera aviso)
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

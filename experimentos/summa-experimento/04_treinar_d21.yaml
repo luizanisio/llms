@@ -1,0 +1,159 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d21.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d21.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D21)
+# ==========================================================================
+# Papel:   Experimental (CL FUNDIDO sem custo de fronteira, LoRA)
+# Modo:    FUSÃO (curriculum.fusao.ativo: true) — todas as etapas executam em
+#          UM único trainer.train(): as etapas viram spans de um dataset
+#          concatenado; otimizador e scheduler NUNCA reiniciam; as fronteiras
+#          são apenas marcadores virtuais de log/gráfico.
+# Spans:   fácil(×2) → médio(×2) → difícil(×2) → completo(×2), sem gating.
+# Objetivo: Isolar o CUSTO DE FRONTEIRA do curriculum segmentado. D21 vs o
+#           protocolo CL segmentado equivalente mede o efeito de resetar
+#           otimizador/scheduler a cada etapa; um único cosine limpo cobre o
+#           run inteiro e o melhor checkpoint é GLOBAL (eval somente global).
+# Orçamento: (fácil+médio+difícil = N) × 2 + completo N × 2 = 4N instâncias.
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte ao modo FUSÃO (Plano_codificacao_fusao.md +
+#            src/treinar_unsloth_unfreeze_fusao.md)
+#
+# NOTAS:
+# - No modo FUSÃO as etapas NÃO podem declarar tipo/learning_rate/batch_size/
+#   max_seq_length/warmup_steps (são globais em fusao/treinamento) nem
+#   pace_loss/pace_epochs_max (o dataset é pré-materializado).
+# - pace_epochs = épocas VIRTUAIS: o span entra k vezes no stream, com shuffle
+#   independente por repetição (seed derivada de fusao.seed_shuffle).
+# - num_train_epochs do YAML é IGNORADO no modo fundido (1 época real sobre o
+#   stream concatenado); mantido em 1 para não gerar aviso.
+# - eval_steps 5%: ~20 avaliações globais para caracterizar os marcadores.
+# - nbits 16: recomendado no modo fundido (4 bits reintroduz a variável de
+#   quantização e gera aviso).
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saida/saida_or_235b.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/integras_experimento_summa_novos.parquet
+    dataset_filtro: {"fold": "<=10"}
+    dataframe_col: integra
+    dataframe_id: seq_documento_acordao
+    prompt_template: dados/prompt_summa_raw.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Modo FUSÃO: um único trainer.train() para todos os spans.
+  fusao:
+    ativo: true
+    tipo: "lora"              # regime ÚNICO do run: "lora" | "full"
+    learning_rate: 2e-05      # pico do cosine global (LoRA típico)
+    warmup_grupo_steps: 100   # sem efeito aqui (nenhum span declara unfreeze)
+    seed_shuffle: 3407        # shuffle intra-span determinístico (afeta resume)
+
+  #| CL fundido: spans por dificuldade, SEM gating (D21 = fronteira zero pura).
+  divisao:
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil"
+    pace_epochs: 2
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio"
+    pace_epochs: 2
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil"
+    pace_epochs: 2
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo"
+    pace_epochs: 2
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d21)
+  ollama: Qwen2.5-7B-Instruct(d21):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+
+  #| 5% ≈ 20 avaliações GLOBAIS no run (não existe eval por etapa no fundido)
+  eval_steps: 5%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 8
+
+  #| IGNORADO no modo fundido (1 época real sobre o stream); mantido em 1
+  num_train_epochs: 1
+  max_seq_length: 32768
+  validar_max_seq_length: true
+  filtrar_max_seq_length: true
+
+  #| Sobreposto por fusao.learning_rate no run fundido
+  learning_rate: 2e-05
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # warmup GLOBAL (início do run; rampa do 1º grupo)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # recomendado no modo fundido (4 gera aviso)
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

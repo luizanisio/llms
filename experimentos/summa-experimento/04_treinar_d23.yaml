@@ -1,0 +1,158 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d23.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d23.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D23)
+# ==========================================================================
+# Papel:   Controle (PT FUNDIDO puro, sem CL — isola o efeito do gating)
+# Modo:    FUSÃO com GATING — spans IDÊNTICOS (dataset completo em todos),
+#          apenas os cortes de unfreeze progridem. É o análogo fundido do D20:
+#          sem progressão de dificuldade, a única variável é a liberação
+#          gradual dos grupos de camadas via gating de LR.
+# Spans:   completo-uf75(×1) → completo-uf50(×1) → completo-uf25(×1) → completo-uf0(×1)
+# Objetivo: D22 vs D23 mede o CL DADO o gating; D23 vs D21 mede o gating DADO
+#           a fusão. Se D22 > D23 > D21, há evidência de sinergia CL+PT também
+#           no regime fundido (paridade com a comparação D19/D20/C).
+# Orçamento: 4 × 1 época × N = 4N instâncias (igual a D20/D21/D22).
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte ao modo FUSÃO (Plano_codificacao_fusao.md +
+#            src/treinar_unsloth_unfreeze_fusao.md)
+#
+# NOTAS:
+# - pace_epochs: 1 em todos os spans (dataset completo em cada um) mantém o
+#   orçamento 4N comparável aos demais protocolos.
+# - Cortes monotônicos 75% → 50% → 25% → 0%; primeira etapa declara o corte
+#   (grupo ativo desde o step 0). Qwen 2.5 7B (28 blocos): grupos
+#   21-27 / 14-20 / 7-13 / 0-6.
+# - Cada span repete o dataset completo com shuffle próprio (seed derivada de
+#   fusao.seed_shuffle) — os grupos acordam em fronteiras de "época virtual".
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saida/saida_or_235b.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/integras_experimento_summa_novos.parquet
+    dataset_filtro: {"fold": "<=10"}
+    dataframe_col: integra
+    dataframe_id: seq_documento_acordao
+    prompt_template: dados/prompt_summa_raw.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Modo FUSÃO com gating de LR por grupos de camadas.
+  fusao:
+    ativo: true
+    tipo: "lora"              # gating de ADAPTERS por índice de camada
+    learning_rate: 2e-05      # pico do cosine global
+    warmup_grupo_steps: 100   # rampa de cada grupo de camadas ao acordar
+    seed_shuffle: 3407        # shuffle intra-span determinístico (afeta resume)
+
+  #| PT sem CL: spans idênticos (dataset completo), só os cortes progridem.
+  divisao:
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-uf75pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 75%  # G1 ativo desde o step 0: camadas 21-27 (+cabeça/norm)
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-uf50pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 50%  # G2 acorda aqui: camadas 14-20
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-uf25pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 25%  # G3 acorda aqui: camadas 7-13
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-uf0pct"
+    pace_epochs: 1
+    unfreeze_layers_from: 0%   # G4 acorda aqui: camadas 0-6
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d23)
+  ollama: Qwen2.5-7B-Instruct(d23):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+
+  #| 5% ≈ 20 avaliações GLOBAIS no run (não existe eval por etapa no fundido)
+  eval_steps: 5%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 8
+
+  #| IGNORADO no modo fundido (1 época real sobre o stream); mantido em 1
+  num_train_epochs: 1
+  max_seq_length: 32768
+  validar_max_seq_length: true
+  filtrar_max_seq_length: true
+
+  #| Sobreposto por fusao.learning_rate no run fundido
+  learning_rate: 2e-05
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # warmup GLOBAL (início do run; rampa do 1º grupo)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  #| Com gating, o scheduler efetivo é LambdaLR (cosine global × gate por
+  #| grupo) — este valor não é usado; mantido por consistência.
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # recomendado no modo fundido (4 gera aviso)
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

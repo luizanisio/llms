@@ -68,7 +68,8 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
     relatorio_linhas.append("|---|---|---|---|---|---|---|---|---|")
 
     total_etapas = len(etapas)
-    
+    contagens_treino = []  # instâncias de treino por etapa (usado pela seção do modo FUSÃO)
+
     for idx, etapa in enumerate(etapas):
         alias = etapa.alias or f"Etapa {idx}"
         
@@ -128,9 +129,51 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
         filtrar_msl = "Sim" if getattr(yaml_config.treinamento, 'filtrar_max_seq_length', False) else "Não"
         
         relatorio_linhas.append(f"| {alias} | {arquivo_nome} | `{str_filtro}` | {str_msl} | {filtrar_msl} | {qtd_treino} | {qtd_val} | {qtd_teste} | {qtd_ignorados} |")
-        
+
+        contagens_treino.append(qtd_treino if isinstance(qtd_treino, int) else 0)
+
         if print_console:
             print_cores(f"   <verde>✓</verde> Etapa '{alias}': Treino={qtd_treino}, Validação={qtd_val}, Teste={qtd_teste}, Ignorados={qtd_ignorados}", color_auto=False)
+
+    # --- Modo FUSÃO: lista os spans do stream concatenado (dry-run) ---
+    fusao = getattr(yaml_config.curriculum_config, "fusao", None)
+    if fusao and fusao.ativo:
+        from treinar_unsloth_fusao import corte_da_etapa
+        import torch as _torch
+        n_gpus = max(_torch.cuda.device_count(), 1) if _torch.cuda.is_available() else 1
+        batch_efetivo = (yaml_config.treinamento.batch_size *
+                         yaml_config.treinamento.grad_batch_size * n_gpus)
+
+        relatorio_linhas.append("\n## Modo FUSÃO (execução contínua)\n")
+        relatorio_linhas.append(f"- **Tipo (regime único do run)**: `{fusao.tipo}`")
+        relatorio_linhas.append(f"- **learning_rate (pico do cosine)**: {fusao.learning_rate}")
+        relatorio_linhas.append(f"- **warmup_grupo_steps**: {fusao.warmup_grupo_steps}")
+        relatorio_linhas.append(f"- **seed_shuffle**: {fusao.seed_shuffle}")
+        relatorio_linhas.append(f"- **Batch efetivo**: {batch_efetivo} "
+                                f"(batch {yaml_config.treinamento.batch_size} × grad "
+                                f"{yaml_config.treinamento.grad_batch_size} × {n_gpus} GPU(s))\n")
+        relatorio_linhas.append("| Span | Alias | Instâncias | pace_epochs | Stream [início, fim) | step_início (~) | unfreeze_corte |")
+        relatorio_linhas.append("|---|---|---|---|---|---|---|")
+        inst_acum = 0
+        for idx, (etapa, qtd) in enumerate(zip(etapas, contagens_treino)):
+            inicio = inst_acum
+            inst_acum += qtd * max(1, etapa.pace_epochs)
+            corte = corte_da_etapa(etapa)
+            corte_str = (f"{etapa.unfreeze_layers_pct:g}%" if etapa.unfreeze_layers_pct >= 0
+                         else (str(etapa.unfreeze_layers_from) if etapa.unfreeze_layers_from >= 0 else "—"))
+            relatorio_linhas.append(
+                f"| {idx} | {etapa.alias} | {qtd} | {etapa.pace_epochs} | "
+                f"[{inicio}, {inst_acum}) | {inicio // batch_efetivo} | {corte_str} |"
+            )
+        tem_gating = any(corte_da_etapa(e) >= 0 for e in etapas)
+        relatorio_linhas.append(f"\n- **Total do stream (Σ instâncias × pace)**: {inst_acum}")
+        relatorio_linhas.append(f"- **Optimizer steps (~)**: {inst_acum // batch_efetivo}")
+        relatorio_linhas.append(f"- **Gating de LR por grupos**: {'sim (cortes declarados)' if tem_gating else 'não (sem unfreeze — otimizador padrão)'}")
+
+        if print_console:
+            print_cores(f"   <azul>🧬 Modo FUSÃO ({fusao.tipo}): {len(etapas)} span(s), "
+                        f"{inst_acum} instâncias no stream, ~{inst_acum // batch_efetivo} steps, "
+                        f"gating={'sim' if tem_gating else 'não'}</azul>", color_auto=False)
 
     # Simula Avaliação Global
     relatorio_linhas.append("\n## Avaliação Global\n")

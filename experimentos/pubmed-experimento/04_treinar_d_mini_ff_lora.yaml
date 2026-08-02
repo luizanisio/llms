@@ -106,3 +106,20 @@ treinamento:
   nbits: 4
 
   train_on_responses_only: true
+
+
+#| =========================================================================
+#| LORA — configuração dos adaptadores para fusao.tipo: "lora"
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

@@ -1127,8 +1127,27 @@ class LLMsTrainer:
     def __init__(self, cfg_path: str, force_base: bool = False):
         # Carrega configuração YAML
         self._yaml_config = YamlTreinamento(cfg_path)
-        
+
         self.force_base = force_base
+
+        # --- Modo FUSÃO (curriculum.fusao.ativo) ---
+        # O regime (lora/full) e a precisão são ÚNICOS no run fundido; a decisão
+        # de nbits precisa acontecer AQUI, antes de _load_model() carregar o modelo.
+        self._fusao_cfg = getattr(self._yaml_config.curriculum_config, "fusao", None)
+        self._fusao_ativa = bool(self._fusao_cfg and self._fusao_cfg.ativo)
+        if self._fusao_ativa:
+            _treino = self._yaml_config.treinamento
+            if self._fusao_cfg.tipo == "full" and _treino.nbits != 16:
+                logger.info(
+                    f"🔄 Modo FUSÃO 'full': nbits={_treino.nbits} forçado para 16 "
+                    f"(mesma regra do fluxo full segmentado; a fusão exige precisão estável)"
+                )
+                _treino.nbits = 16
+            elif self._fusao_cfg.tipo == "lora" and _treino.nbits == 4:
+                logger.warning(
+                    "⚠️  Modo FUSÃO 'lora' com nbits: 4 — recomendado 16 "
+                    "(a quantização reintroduz uma variável nos experimentos fundidos)"
+                )
         
         # Cria a pasta de saída se não existir
         os.makedirs(self._yaml_config.modelo.saida, exist_ok=True)
@@ -1743,9 +1762,9 @@ class LLMsTrainer:
                        instancias_previas: int = 0, step_offset: int = 0,
                        epoch_offset: float = 0.0, tokens_previos: int = 0,
                        is_retomada: bool = False,
-                       etapa=None) -> SFTTrainer:
+                       etapa=None, fusao_ctx: dict = None) -> SFTTrainer:
         """Constrói o SFTTrainer com callbacks de métricas.
-        
+
         Args:
             etapa_index: Índice da etapa do curriculum (0 para treino simples)
             etapa_alias: Nome da etapa do curriculum ("Principal" para treino simples)
@@ -1754,13 +1773,23 @@ class LLMsTrainer:
             epoch_offset: Épocas acumuladas de etapas anteriores (para epoch_global contínuo)
             tokens_previos: Tokens processados em etapas anteriores (para tokens_acumulados contínuo)
             is_retomada: Se True, preserva arquivos de métricas existentes (retomada de treino interrompido)
+            fusao_ctx: Contexto do modo FUSÃO (dict com grupos de gating, spans_meta etc.).
+                Quando None (padrão), instancia o SFTTrainer atual — compatibilidade
+                total com o fluxo segmentado. Quando presente, instancia FusaoTrainer
+                (sampler sequencial + otimizador/scheduler de gating) e registra o
+                MarcadoresVirtuaisCallback.
         """
         print_cores("<azul>[3/6] Configurando trainer…</azul>", color_auto=False)
         
         # === Formatação do Dataset (garante coluna 'text') ===
         # num_proc não deve exceder o número de registros (causa falha silenciosa)
+        # No modo FUSÃO, CUDA já foi inicializado (regime + gating) antes deste ponto;
+        # forking com num_proc>1 causa "Cannot re-initialize CUDA in forked subprocess".
         import os
-        n_proc = max(1, (os.cpu_count() or 2) // 2)
+        if fusao_ctx:
+            n_proc = 1
+        else:
+            n_proc = max(1, (os.cpu_count() or 2) // 2)
         n_proc_train = min(n_proc, len(self.train_ds)) if len(self.train_ds) > 0 else 1
 
         if "text" not in self.train_ds.column_names:
@@ -1908,7 +1937,12 @@ class LLMsTrainer:
             remove_unused_columns=False,
             dataloader_drop_last=False,
             dataset_text_field="text", # usamos a coluna 'text' formatada
-            dataset_num_proc=2,
+            # No modo FUSÃO, CUDA já foi inicializado (regime + gating) antes do
+            # SFTTrainer.__init__ → _prepare_dataset → dataset.map(num_proc=N).
+            # Com num_proc>=1 a lib datasets (v3+) faz fork(), e o subprocesso falha com
+            # "Cannot re-initialize CUDA in forked subprocess". num_proc=None desativa
+            # o fork inteiramente (roda no processo principal).
+            dataset_num_proc=None if fusao_ctx else 2,
             packing=False,
             per_device_eval_batch_size=1,     # Força batch 1 na validação para economizar VRAM
             eval_accumulation_steps=1,        # Descarrega logits da GPU para CPU a cada passo
@@ -1954,12 +1988,23 @@ class LLMsTrainer:
         else:
             _eval_dataset_arg = self.eval_ds
 
-        trainer = SFTTrainer(
+        # Modo FUSÃO: FusaoTrainer (sampler sequencial + gating de LR por grupos).
+        # Sem fusao_ctx, a classe é o SFTTrainer atual — nenhum comportamento muda.
+        if fusao_ctx is not None:
+            from treinar_unsloth_fusao import get_fusao_trainer_cls
+            _trainer_cls = get_fusao_trainer_cls()
+            _trainer_kwargs = {"fusao_ctx": fusao_ctx}
+        else:
+            _trainer_cls = SFTTrainer
+            _trainer_kwargs = {}
+
+        trainer = _trainer_cls(
             model=self.model,
             processing_class=self.tokenizer,  # processing_class substitui tokenizer no TRL >= 0.12.0
             train_dataset=self.train_ds,
             eval_dataset=_eval_dataset_arg,
             args=args,  # max_length agora está configurado no SFTConfig (TRL >= 0.12.0)
+            **_trainer_kwargs,
         )
         
         # Aplica train_on_responses_only se configurado
@@ -2100,9 +2145,26 @@ class LLMsTrainer:
                         f'{f", máx {etapa.pace_epochs_max} épocas" if etapa.pace_epochs_max > 0 else ""})</cinza>', color_auto=False)
         else:
             self._pace_loss_callback = None
-        
+
+        # 6. MarcadoresVirtuaisCallback (modo FUSÃO): eventos de span ao cruzar
+        # cada fronteira virtual + curva de LR por grupo quando há gating.
+        if fusao_ctx is not None and fusao_ctx.get("spans_meta"):
+            from treinar_unsloth_fusao import get_marcadores_virtuais_cls
+            _lr_log_path = ""
+            if fusao_ctx.get("grupos"):
+                _lr_log_path = os.path.join(self._yaml_config.treinamento_dir, "fusao_lr_grupos.jsonl")
+                if not is_retomada and os.path.isfile(_lr_log_path):
+                    os.remove(_lr_log_path)
+            trainer.add_callback(get_marcadores_virtuais_cls()(
+                fusao_ctx["spans_meta"],
+                historico=self._historico,
+                lr_log_path=_lr_log_path,
+            ))
+            print_cores(f'   <cinza>• marcadores virtuais de span (modo FUSÃO)'
+                        f'{" + LR por grupo (fusao_lr_grupos.jsonl)" if _lr_log_path else ""}</cinza>', color_auto=False)
+
         trainer.model.config.use_cache = False
-        
+
         return trainer
 
     def _verificar_labels_dataset(self, trainer) -> None:
@@ -2646,6 +2708,11 @@ class LLMsTrainer:
 
     # ------------------------- execução ----------------------------------
     def train(self):
+        # Modo FUSÃO: caminho separado, todas as etapas em UM trainer.train().
+        # O loop segmentado abaixo fica intocado (regra de ouro de compatibilidade).
+        if getattr(self, "_fusao_ativa", False):
+            return self._train_fundido()
+
         antes = _print_mem("ANTES")
         is_curriculum = len(self._etapas) > 1
         total_etapas = len(self._etapas)
@@ -3060,7 +3127,326 @@ class LLMsTrainer:
 
         # O treinamento encerrou completamente o pipeline requerido. Registrar trava.
         self._tracker.marcar_conclusao(total_etapas=total_etapas, target_epochs=target_epochs_yaml)
-        
+
+    # ------------------------- modo FUSÃO --------------------------------
+    def _aplicar_regime_fusao(self) -> None:
+        """Prepara o modelo para o regime ÚNICO do run fundido (fusao.tipo).
+
+        - "lora": aplica adaptadores (se ainda não aplicados) e congela a base —
+          mesmo fluxo da etapa LoRA segmentada.
+        - "full": marca requires_grad=True em todos os float params, SEM chamar
+          _aplicar_unfreeze_parcial — congelar aqui seria errado: no modo fundido
+          o gating de LR substitui o congelamento (nada dorme fora do otimizador).
+        """
+        fusao = self._fusao_cfg
+        if fusao.tipo == "lora":
+            if not self._lora_applied:
+                lora_cfg = self._yaml_config.lora
+                if lora_cfg.r in (0, None):
+                    raise ValueError("Modo FUSÃO 'lora' requer lora.r > 0 no YAML")
+                logger.info(f"🔄 Aplicando adaptadores LoRA (r={lora_cfg.r}, alpha={lora_cfg.alpha}) para o run fundido...")
+                self.model = ModelLoader.apply_lora(
+                    model=self.model,
+                    r=lora_cfg.r,
+                    lora_alpha=lora_cfg.alpha,
+                    lora_dropout=lora_cfg.dropout,
+                    target_modules=lora_cfg.target_modules,
+                    bias="none",
+                )
+                self._lora_applied = True
+            for name, param in self.model.named_parameters():
+                param.requires_grad = ("lora_" in name or "modules_to_save" in name)
+        else:  # full
+            for param in self.model.parameters():
+                if param.dtype in (torch.float32, torch.float16, torch.bfloat16):
+                    param.requires_grad = True
+            # Gradient checkpointing: mesma guarda de idempotência do fluxo segmentado
+            if hasattr(self.model, "enable_input_require_grads") and \
+                    getattr(self.model, "_require_grads_hook", None) is None:
+                self.model.enable_input_require_grads()
+
+        n_total = sum(p.numel() for p in self.model.parameters())
+        n_train = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        logger.info(
+            f"{'🔒' if fusao.tipo == 'lora' else '🔓'} Regime FUSÃO '{fusao.tipo}': "
+            f"{n_train:,}/{n_total:,} parâmetros treináveis "
+            f"(gating de LR por grupos, se declarado — nada é congelado por span)"
+        )
+
+    def _carregar_span_fusao(self, etapa) -> Dataset:
+        """Carrega o dataset de treino de UM span (mesma lógica de filtro/divisão
+        do fluxo segmentado: troca arquivo de divisão e dataset_filtro da etapa)."""
+        cfg_div = self._yaml_config.curriculum_config.divisao
+        if etapa.arquivo:
+            cfg_div.arquivo = etapa.arquivo
+        cfg_div.dataset_filtro = (
+            etapa.dataset_filtro if etapa.dataset_filtro is not None
+            else getattr(self, "_global_dataset_filtro_divisao", None)
+        )
+        # Limpa cache de divisão para forçar releitura com o filtro do span
+        self._yaml_config.dataset_manager._dados_divisao = None
+        return self._load_from_pastas(alvo="treino")
+
+    def _train_fundido(self):
+        """Executa TODAS as etapas do curriculum em UM único trainer.train().
+
+        Sequência (ver Plano_codificacao_fusao.md §4):
+        1. Modelo já carregado no __init__ com o nbits do regime (full ⇒ 16).
+        2. Aplica o regime único (LoRA ou full destravado).
+        3. Constrói o dataset fundido (spans + épocas virtuais) e salva
+           fusao_spans.json com hash de configuração (guarda do resume).
+        4. Monta grupos de gating se algum span declara unfreeze_layers_from.
+        5. Overrides globais: learning_rate = fusao.learning_rate; 1 época real.
+        6. FusaoTrainer via _build_trainer(fusao_ctx=...).
+        7. MarcadoresVirtuaisCallback registrado no _build_trainer.
+        8. trainer.train(resume_from_checkpoint=...) — resume padrão HF.
+        9. Salvamento e estatísticas — fluxo existente; curriculum_state.json
+           NÃO é usado no modo fundido (um único run).
+        """
+        from treinar_unsloth_fusao import (
+            construir_dataset_fundido, montar_grupos_gating, tabela_grupos_gating,
+            hash_fusao, salvar_fusao_spans, verificar_hash_resume, corte_da_etapa,
+        )
+        from util_sysinfo import MemoryLogger
+
+        fusao = self._fusao_cfg
+        treino_cfg = self._yaml_config.treinamento
+        antes = _print_mem("ANTES")
+        total_etapas = len(self._etapas)
+
+        print_cores(
+            f"<azul>[4/6] Modo FUSÃO: {total_etapas} etapa(s) como spans de um único "
+            f"treinamento (tipo={fusao.tipo})…</azul>", color_auto=False
+        )
+        logger.info(
+            "<cinza>   ℹ️  curriculum_state.json NÃO é usado no modo fundido "
+            "(resume = checkpoint HF + guarda de hash da fusão)</cinza>"
+        )
+
+        # --- Overrides globais do modo fundido ---
+        if treino_cfg.epochs != 1:
+            logger.warning(
+                f"⚠️  treinamento.num_train_epochs={treino_cfg.epochs} é IGNORADO no modo "
+                f"fundido: o executor treina 1 época real sobre o stream concatenado "
+                f"(as repetições vêm de pace_epochs por span)."
+            )
+            treino_cfg.epochs = 1
+        if treino_cfg.learning_rate != fusao.learning_rate:
+            logger.info(
+                f"ℹ️  learning_rate global: fusao.learning_rate={fusao.learning_rate} "
+                f"sobrepõe treinamento.learning_rate={treino_cfg.learning_rate}"
+            )
+        treino_cfg.learning_rate = fusao.learning_rate
+
+        # --- Regime único do run (modelo já carregado com nbits correto) ---
+        MemoryLogger.set_nome_etapa("FUSÃO: preparando regime do modelo")
+        self._aplicar_regime_fusao()
+
+        # --- Dataset fundido ---
+        MemoryLogger.set_nome_etapa("FUSÃO: construindo dataset fundido")
+        n_gpus = max(torch.cuda.device_count(), 1) if torch.cuda.is_available() else 1
+        batch_efetivo = treino_cfg.batch_size * treino_cfg.grad_batch_size * n_gpus
+        print_cores("<azul>📚 Construindo dataset fundido (spans na ordem do currículo)…</azul>", color_auto=False)
+        self.train_ds, spans_meta = construir_dataset_fundido(
+            self._etapas, fusao, self._carregar_span_fusao, batch_efetivo
+        )
+        # Aproximação do total de optimizer steps (mesma conta dos s_g; o valor
+        # exato vem do Trainer via ceil por época — diferença de no máx. 1 step).
+        _total_steps_estimado = len(self.train_ds) // batch_efetivo
+        logger.info(
+            f"📚 Dataset fundido: {len(self.train_ds)} instâncias no stream, "
+            f"batch_efetivo={batch_efetivo} → ~{_total_steps_estimado} optimizer steps"
+        )
+
+        # --- Eval: SOMENTE global (não existe eval por etapa no modo fundido) ---
+        _eval_global = self.eval_ds_global if (self.eval_ds_global is not None and len(self.eval_ds_global) > 0) else self.eval_ds
+        self.eval_ds = _eval_global
+        self.eval_ds_global = None  # GlobalEvalCallback vira no-op: eval_dataset JÁ é o global
+        logger.info(
+            f"📊 Eval do modo fundido: somente GLOBAL "
+            f"({len(self.eval_ds) if self.eval_ds else 0} instâncias de validação; "
+            f"load_best_model_at_end seleciona sobre o run inteiro)"
+        )
+
+        ts = self._print_dataset_stats(self.train_ds, "Dataset de Treino (fundido)")
+        self._dataset_stats = {
+            "treino_len": len(self.train_ds),
+            "validacao_len": len(self.eval_ds) if self.eval_ds else 0,
+            "token_stats": ts,
+        }
+
+        # --- Checkpoint + guarda de hash (resume) ---
+        checkpoint_path = self._find_latest_checkpoint()
+        resume_from_checkpoint = checkpoint_path is not None
+        _hash = hash_fusao(fusao, spans_meta, batch_efetivo,
+                           fusao.learning_rate, treino_cfg.warmup_steps)
+        verificar_hash_resume(self._yaml_config.modelo.saida, _hash,
+                              tem_checkpoint=resume_from_checkpoint)
+        _spans_path = salvar_fusao_spans(self._yaml_config.modelo.saida, spans_meta, _hash)
+        logger.info(f"💾 Metadados dos spans salvos em: {_spans_path}")
+
+        # --- Grupos de gating (se algum span declara unfreeze) ---
+        grupos = None
+        if any(corte_da_etapa(e) >= 0 for e in self._etapas):
+            n_layers = getattr(self.model.config, "num_hidden_layers", None)
+            if n_layers is None:
+                raise ValueError(
+                    "Modo FUSÃO com gating requer model.config.num_hidden_layers "
+                    "(necessário para resolver cortes em faixas de camadas)."
+                )
+            grupos = montar_grupos_gating(self.model, spans_meta, n_layers,
+                                          fusao.tipo, self._etapas)
+        if grupos:
+            _tabela = tabela_grupos_gating(grupos, fusao.warmup_grupo_steps)
+            logger.info("🧩 Grupos de gating (LR por faixa de camadas):\n" + _tabela)
+            logger.info(
+                f"ℹ️  Scheduler do gating: LambdaLR = cosine global (pico "
+                f"{fusao.learning_rate}, warmup {treino_cfg.warmup_steps} steps) × gate "
+                f"por grupo (rampa {fusao.warmup_grupo_steps} steps) — o "
+                f"lr_scheduler_type '{treino_cfg.lr_scheduler_type}' do YAML não é usado."
+            )
+            self._historico.registrar_evento(
+                "FUSÃO: grupos de gating",
+                _tabela + f"\n\n- **warmup global:** {treino_cfg.warmup_steps} steps"
+                          f"\n- **warmup por grupo:** {fusao.warmup_grupo_steps} steps"
+                          f"\n- **pico do cosine:** {fusao.learning_rate}"
+            )
+
+        fusao_ctx = {
+            "ativa": True,
+            "grupos": grupos,
+            "warmup_grupo": fusao.warmup_grupo_steps,
+            "spans_meta": spans_meta,
+        }
+
+        # --- Trainer fundido ---
+        self.trainer = self._build_trainer(
+            etapa_index=0,
+            etapa_alias="FUSÃO",
+            is_retomada=resume_from_checkpoint,
+            etapa=None,
+            fusao_ctx=fusao_ctx,
+        )
+
+        # Evento de início com resumo dos spans
+        _linhas_spans = ["| Span | Alias | Instâncias (stream) | step_início | pace | corte |",
+                         "|---|---|---|---|---|---|"]
+        for s in spans_meta:
+            _corte = f"{s['unfreeze_corte']:g}" if s["unfreeze_corte"] >= 0 else "—"
+            _linhas_spans.append(
+                f"| {s['idx']} | {s['alias']} | [{s['instancias_inicio']}, {s['instancias_fim']}) "
+                f"| {s['step_inicio']} | {s['pace_epochs']} | {_corte} |"
+            )
+        self._historico.registrar_evento(
+            "TREINO FUNDIDO INICIADO" if not resume_from_checkpoint else "TREINO FUNDIDO RETOMADO",
+            f"- **Tipo:** {fusao.tipo}\n"
+            f"- **Instâncias no stream:** {len(self.train_ds)}\n"
+            f"- **Batch efetivo:** {batch_efetivo}\n"
+            f"- **Hash da fusão:** `{_hash[:16]}…`\n\n" + "\n".join(_linhas_spans)
+        )
+
+        print("\n🔍 STATUS DO MODELO ANTES DO TREINAMENTO:")
+        self.print_modelo_status()
+
+        MemoryLogger.set_nome_etapa("FUSÃO: treinamento contínuo")
+        tempo_inicio = time.time()
+        if resume_from_checkpoint:
+            print_cores(f"<azul>🔄 Retomando o run fundido do checkpoint: {checkpoint_path}</azul>", color_auto=False)
+            try:
+                train_stats = self.trainer.train(resume_from_checkpoint=checkpoint_path)
+                print_cores("<verde>✅ Treinamento continuado com sucesso a partir do checkpoint</verde>", color_auto=False)
+                self._historico.evento_checkpoint_retomado(sucesso=True)
+            except Exception as e:
+                error_msg = str(e)
+                print_cores(f"<vermelho>❌ Erro ao continuar do checkpoint: {error_msg}</vermelho>", color_auto=False)
+                print_cores("<amarelo>🔄 Reiniciando o run fundido do início...</amarelo>", color_auto=False)
+                self._historico.evento_checkpoint_retomado(sucesso=False, erro=error_msg)
+                train_stats = self.trainer.train()
+        else:
+            print_cores("<azul>🆕 Iniciando treinamento fundido</azul>", color_auto=False)
+            train_stats = self.trainer.train()
+
+        depois = _print_mem("DEPOIS")
+        tempo_total = time.time() - tempo_inicio
+        print_cores("<verde>[5/6] Tempo de execução: {:.2f} s</verde>".format(
+            train_stats.metrics["train_runtime"]), color_auto=False)
+
+        # --- Melhor checkpoint (global do run) ---
+        _best_ckpt = getattr(self.trainer.state, 'best_model_checkpoint', None)
+        _best_metric = getattr(self.trainer.state, 'best_metric', None)
+        if self.trainer.args.load_best_model_at_end and _best_ckpt:
+            logger.info(
+                f"🏆 Melhor modelo GLOBAL do run carregado: {os.path.basename(_best_ckpt)}"
+                + (f" (eval_loss={_best_metric:.4f})" if _best_metric is not None else "")
+            )
+        _best_step = None
+        if _best_ckpt:
+            _match = re.search(r"checkpoint-(\d+)", os.path.basename(_best_ckpt))
+            if _match:
+                _best_step = int(_match.group(1))
+
+        print("\n🔍 STATUS DO MODELO APÓS O TREINAMENTO:")
+        info_modelo = self.print_modelo_status()
+
+        stats = {
+            **train_stats.metrics,
+            "global_step": train_stats.global_step,
+            "training_loss": train_stats.training_loss,
+            "mem_gpu_before": antes,
+            "mem_gpu_after": depois,
+            "ds_train_len": len(self.train_ds),
+            "ds_eval_len": len(self.eval_ds) if self.eval_ds else 0,
+            "modelo_info": info_modelo,
+            "etapa_alias": "FUSÃO",
+            "etapa_tipo": fusao.tipo,
+            "parametros_treinaveis": info_modelo.get("parametros_treinaveis", 0) if isinstance(info_modelo, dict) else 0,
+            "best_checkpoint": os.path.basename(_best_ckpt) if _best_ckpt else None,
+            "best_eval_loss": round(_best_metric, 6) if _best_metric is not None else None,
+            "best_checkpoint_step": _best_step,
+            "fusao": {
+                "tipo": fusao.tipo,
+                "hash": _hash,
+                "batch_efetivo": batch_efetivo,
+                "spans": [{"alias": s["alias"], "step_inicio": s["step_inicio"]} for s in spans_meta],
+                "gating": bool(grupos),
+            },
+        }
+
+        # Relatório .md na pasta 'treinamento'
+        try:
+            hardware = Util.dados_hardware()
+        except Exception:
+            hardware = {}
+        gerador = GeradorRelatorio(self._yaml_config)
+        gerador.gerar_relatorio(
+            dataset_stats=self._dataset_stats,
+            train_stats=stats,
+            hardware_info=hardware,
+        )
+        self._historico.evento_geracao_estatisticas()
+
+        # Grava o modelo antes do último eval (pode dar erro de memória no eval)
+        self._save_model(stats=stats)
+
+        # Eval FINAL (global — o único que existe no modo fundido)
+        if self.eval_ds:
+            final_eval = self.trainer.evaluate()
+            stats.update(final_eval)
+            self._save_model(stats=stats)
+
+        self._historico.evento_treinamento_concluido(
+            stats, alias="FUSÃO", tipo=fusao.tipo,
+            instancias_acumuladas=train_stats.global_step * batch_efetivo,
+            tokens_acumulados=round(train_stats.global_step * batch_efetivo
+                                    * getattr(self, "_media_tokens_por_instancia", 0)),
+        )
+        self._historico.atualizar_yaml_se_necessario()
+
+        logger.info(
+            f"<verde>✅ TREINAMENTO FUNDIDO COMPLETO — {total_etapas} span(s), "
+            f"{train_stats.global_step} steps, tempo {tempo_total/3600:.2f}h</verde>"
+        )
+
     # ------------------------- salvamento --------------------------------
     def _save_model(self, stats = None):
         out_dir = self._yaml_config.modelo.saida

@@ -405,12 +405,19 @@ class ConfigValidacao:
 
 @dataclass
 class ConfigCurriculum:
-    """Configuração completa do curriculum (única forma de entrada de dados)."""
+    """Configuração completa do curriculum (única forma de entrada de dados).
+
+    ``fusao`` (bloco ``curriculum.fusao``) controla o modo FUNDIDO: todas as
+    etapas em um único trainer.train() (ver treinar_unsloth_fusao.py). O tipo
+    é Any para manter a carga do YAML leve (import tardio de ConfigFusao);
+    ausente/ativo=False ⇒ comportamento SEGMENTADO atual, byte-a-byte idêntico.
+    """
     predicao: ConfigPredicao = field(default_factory=ConfigPredicao)
     saida: ConfigSaida = field(default_factory=ConfigSaida)
     entrada: ConfigEntrada = field(default_factory=ConfigEntrada)
     divisao: ConfigDivisao = field(default_factory=ConfigDivisao)
     validacao: ConfigValidacao = field(default_factory=ConfigValidacao)
+    fusao: Any = None  # ConfigFusao (treinar_unsloth_fusao); None só até o parse
 
 
 
@@ -476,7 +483,16 @@ class YamlTreinamento:
         # Pipeline Universal: normaliza configuração em lista de etapas
         from treinar_unsloth_pipeline import construir_etapas
         self._curriculum: list = construir_etapas(self)
-        
+
+        # Modo FUSÃO: valida o contrato (chaves proibidas por etapa, pace_epochs,
+        # monotonicidade dos cortes) na carga do YAML, antes de tocar GPU.
+        # Só as etapas TREINÁVEIS participam do stream fundido.
+        _fusao = self.curriculum_config.fusao
+        _fusao_ativa = bool(_fusao and _fusao.ativo)
+        if _fusao_ativa:
+            from treinar_unsloth_fusao import validar_fusao
+            validar_fusao(_fusao, [e for e in self._curriculum if e.is_treinavel])
+
         # Usa o arquivo da primeira etapa treinável como divisao padrão e aplica
         # overrides (max_seq_length, epochs, learning_rate) para que o código
         # downstream reflita os valores efetivos.
@@ -484,12 +500,16 @@ class YamlTreinamento:
         if primeira:
             if primeira.arquivo and not self.curriculum_config.divisao.arquivo:
                 self.curriculum_config.divisao.arquivo = self._resolver_caminho(primeira.arquivo)
-            if primeira.pace_epochs > 0:
-                self.treinamento.epochs = primeira.pace_epochs
-            if primeira.learning_rate > 0:
-                self.treinamento.learning_rate = primeira.learning_rate
-            if primeira.max_seq_length > 0:
-                self.treinamento.max_seq_length = primeira.max_seq_length
+            # No modo FUSÃO, pace_epochs é "épocas virtuais" do span (não épocas
+            # globais) e learning_rate/max_seq_length por etapa são proibidos —
+            # os overrides da primeira etapa não se aplicam.
+            if not _fusao_ativa:
+                if primeira.pace_epochs > 0:
+                    self.treinamento.epochs = primeira.pace_epochs
+                if primeira.learning_rate > 0:
+                    self.treinamento.learning_rate = primeira.learning_rate
+                if primeira.max_seq_length > 0:
+                    self.treinamento.max_seq_length = primeira.max_seq_length
     
     @property
     def curriculum(self) -> list:
@@ -683,13 +703,20 @@ class YamlTreinamento:
             exigir_json_valido=validacao_raw.get("exigir_json_valido", True),
             exigir_ids_pareados=validacao_raw.get("exigir_ids_pareados", True)
         )
-        
+
+        # Modo FUSÃO (curriculum.fusao): default ConfigFusao() com ativo=False
+        # preserva o comportamento segmentado atual. Import tardio para manter
+        # a carga do YAML leve quando a fusão não é usada.
+        from treinar_unsloth_fusao import processar_config_fusao
+        fusao = processar_config_fusao(curriculum_raw)
+
         return ConfigCurriculum(
             predicao=predicao,
             saida=saida,
             entrada=entrada,
             divisao=divisao,
-            validacao=validacao
+            validacao=validacao,
+            fusao=fusao
         )
     
     def _processar_dataset_filtro(self, filtro_raw) -> Optional[Dict[str, Any]]:

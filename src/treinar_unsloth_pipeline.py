@@ -85,6 +85,12 @@ class EtapaCurriculum:
     # Portável entre modelos de profundidades diferentes.
     unfreeze_layers_pct: float = -1.0
 
+    # Conjunto de chaves declaradas LITERALMENTE no item YAML da etapa.
+    # Permite distinguir "não declarado" de "igual ao default" — o validador do
+    # modo FUSÃO proíbe certas chaves por etapa (tipo, learning_rate, ...) e
+    # precisa saber se elas vieram do YAML ou dos defaults.
+    chaves_yaml: set = field(default_factory=set, repr=False)
+
     @property
     def is_treinavel(self) -> bool:
         """Retorna True se a etapa participa do treinamento (tipo não-vazio)."""
@@ -389,6 +395,12 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
     treinamento = yaml_config.treinamento
     lora = yaml_config.lora
     tipo_padrao = "lora" if lora.r not in (0, None, False) else "full"
+
+    # Modo FUSÃO (curriculum.fusao.ativo): as etapas viram spans de um único
+    # trainer.train(). Neste modo, o regime (lora/full) é ÚNICO e vem de
+    # fusao.tipo; unfreeze_layers_from vira gating de LR (válido em lora E full).
+    fusao = getattr(getattr(yaml_config, "curriculum_config", None), "fusao", None)
+    fusao_ativa = bool(fusao and fusao.ativo)
     
     curriculum_raw = raw.get("curriculum", {})
     if not isinstance(curriculum_raw, dict):
@@ -435,9 +447,13 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             arquivo = yaml_config._resolver_caminho(arquivo)
         
         # tipo: se a chave existe no YAML, usa o valor literal (inclusive "")
-        # se a chave não existe, usa tipo_padrao (lora ou full conforme LoRA.r)
+        # se a chave não existe, usa tipo_padrao (lora ou full conforme LoRA.r);
+        # no modo FUSÃO o regime é único e vem de fusao.tipo (declarar 'tipo'
+        # na etapa é rejeitado depois por validar_fusao, exceto "" = só predict)
         if "tipo" in item:
             tipo_etapa = str(item["tipo"] or "")
+        elif fusao_ativa:
+            tipo_etapa = fusao.tipo
         else:
             tipo_etapa = tipo_padrao
 
@@ -471,11 +487,17 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
                     f"Use um inteiro (índice do bloco) ou percentual como '75%'."
                 )
 
+        # No modo FUSÃO, pace_epochs são "épocas virtuais" do span (multiplicam o
+        # span no stream). O default é 1 — herdar treinamento.epochs multiplicaria
+        # os spans silenciosamente, contradizendo o aviso de que num_train_epochs
+        # é ignorado no modo fundido.
+        _pace_default = 1 if fusao_ativa else treinamento.epochs
+
         etapa = EtapaCurriculum(
             alias=alias,
             arquivo=arquivo,
             tipo=tipo_etapa,
-            pace_epochs=int(item.get("pace_epochs", treinamento.epochs)),
+            pace_epochs=int(item.get("pace_epochs", _pace_default)),
             pace_epochs_max=int(item.get("pace_epochs_max", 0)),
             pace_loss=float(item.get("pace_loss", 0.0)),
             max_seq_length=int(item.get("max_seq_length", 0)),
@@ -485,13 +507,17 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
             warmup_steps=int(item.get("warmup_steps", -1)),
             unfreeze_layers_from=_uf_abs,
             unfreeze_layers_pct=_uf_pct,
+            chaves_yaml=set(item.keys()),
         )
 
-        # unfreeze_layers_from só faz sentido com os parâmetros base destravados (full).
-        # Em etapas LoRA a capacidade já é controlada pelo rank do adaptador, e a base
-        # fica integralmente congelada — o corte por camada não teria efeito.
+        # unfreeze_layers_from no modo SEGMENTADO só faz sentido com os parâmetros
+        # base destravados (full): em etapas LoRA a capacidade já é controlada pelo
+        # rank do adaptador, e a base fica integralmente congelada — o corte por
+        # camada não teria efeito. No modo FUSÃO a regra NÃO se aplica: lá o corte
+        # vira gating de LR (nada congela) e é válido em lora E full.
         # A checagem cobre os dois formatos (absoluto e percentual).
-        if (etapa.unfreeze_layers_from >= 0 or etapa.unfreeze_layers_pct >= 0) and etapa.tipo != "full":
+        if (etapa.unfreeze_layers_from >= 0 or etapa.unfreeze_layers_pct >= 0) \
+                and not fusao_ativa and etapa.tipo != "full":
             raise ValueError(
                 f"Etapa '{alias}': 'unfreeze_layers_from' só é válido com tipo: \"full\" "
                 f"(recebido tipo='{etapa.tipo or '(vazio)'}'). Em etapas LoRA a capacidade "
@@ -503,6 +529,8 @@ def construir_etapas(yaml_config) -> List[EtapaCurriculum]:
     treinaveis = [e for e in etapas if e.is_treinavel]
     somente_predict = len(etapas) - len(treinaveis)
     sufixo = f" ({somente_predict} somente predict)" if somente_predict else ""
+    if fusao_ativa:
+        sufixo += f" — modo FUSÃO ({fusao.tipo}, execução contínua em um único trainer.train())"
     logger.info(f"<azul>📋 Curriculum: {len(etapas)} etapa(s) configurada(s){sufixo}</azul>")
     for i, e in enumerate(etapas):
         tag = "" if e.is_treinavel else " <cinza>(somente predict)</cinza>"

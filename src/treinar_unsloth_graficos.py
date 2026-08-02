@@ -358,12 +358,66 @@ class GraficoTreinamento:
                         "etapa_index": etapa_index,
                     })
         
+        # --- Modo FUSÃO: fusao_spans.json é a fonte dos marcadores virtuais ---
+        # No run fundido há um único train_begin (todas as métricas com
+        # etapa_index=0). Os spans do stream substituem as "etapas": as linhas
+        # violeta passam a vir de step_inicio de cada span, e os registros são
+        # re-anotados com o span correspondente para que a tabela "Por etapa"
+        # (eficiência de tokens) derive as janelas dos spans.
+        spans = GraficoTreinamento._carregar_fusao_spans(treinamento_dir)
+        if spans:
+            etapas = [{
+                "step_global": s.get("step_inicio", 0),
+                "alias": f"{s.get('alias', f'span_{i}')} (virtual)",
+                "index": s.get("idx", i),
+            } for i, s in enumerate(spans)]
+
+            def _span_do_step(step):
+                atual = spans[0]
+                for s in spans:
+                    if step >= s.get("step_inicio", 0):
+                        atual = s
+                    else:
+                        break
+                return atual
+
+            for colecao in (train_data, eval_data, eval_global_data):
+                for reg in colecao:
+                    s = _span_do_step(reg.get("step", 0))
+                    reg["etapa_index"] = s.get("idx", 0)
+                    reg["etapa_alias"] = s.get("alias", reg.get("etapa_alias", "Principal"))
+
         return {
             "train_data": train_data,
             "eval_data": eval_data,
             "eval_global_data": eval_global_data,
             "etapas": etapas,
         }
+
+    @staticmethod
+    def _carregar_fusao_spans(treinamento_dir: str) -> Optional[List[Dict[str, Any]]]:
+        """Lê os spans de fusao_spans.json (modo FUSÃO), se existir.
+
+        O arquivo fica na pasta de saída do modelo (pai de 'treinamento/'),
+        mas também é procurado na própria pasta de treinamento por robustez.
+        Retorna a lista de spans ordenada por step_inicio, ou None.
+        """
+        candidatos = [
+            os.path.join(os.path.dirname(os.path.abspath(treinamento_dir)), "fusao_spans.json"),
+            os.path.join(treinamento_dir, "fusao_spans.json"),
+        ]
+        for caminho in candidatos:
+            if not os.path.isfile(caminho):
+                continue
+            try:
+                with open(caminho, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+                spans = dados.get("spans") if isinstance(dados, dict) else None
+                if isinstance(spans, list) and spans:
+                    return sorted(spans, key=lambda s: s.get("step_inicio", 0))
+            except Exception as e:
+                logger.warning(f"Erro ao ler {caminho}: {e}")
+        return None
 
     @staticmethod
     def carregar_trainer_state(checkpoint_dir: str) -> Optional[Dict[str, Any]]:

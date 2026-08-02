@@ -1,0 +1,163 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d21.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d21.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 1.5B (Protocolo D21)
+# ==========================================================================
+# Papel:   Controle (CL fundido — fronteiras virtuais)
+# Modo:    FUSÃO: LoRA 16 bits, CL por spans em um ÚNICO trainer.train()
+# Spans:   fácil ×2 → médio ×2 → difícil ×2 → completo ×2 (concatenados)
+# Objetivo: Espelho exato do D17 com fronteiras VIRTUAIS: mesma progressão de
+#           dados, mesma precisão, mesmo orçamento — mas otimizador, momentos
+#           Adam e cosine atravessam as transições sem reset. O par D17×D21 é
+#           a medida mais limpa de "custo de fronteira" de toda a matriz
+#           (controla também a composição dos dados por trecho do treino).
+# Orçamento: (fácil+médio+difícil = N) × 2 + completo N × 2 = 4N instâncias.
+# Comparar: d21 vs d17 (fronteiras reais vs virtuais), d21 vs b (CL fundido vs direto)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte ao modo FUSÃO (executor de dataset concatenado)
+#
+# SEMÂNTICA DO MODO FUNDIDO:
+# - As etapas viram SPANS de um dataset único concatenado, na ordem declarada.
+# - pace_epochs multiplica o span (épocas virtuais), com shuffle intra-span
+#   independente por repetição (seeds derivadas de fusao.seed_shuffle).
+# - O executor treina 1 época real sobre o dataset concatenado com sampler
+#   sequencial; num_train_epochs do bloco treinamento é IGNORADO neste modo.
+# - Scheduler: warmup global (treinamento.warmup_steps) + UM único cosine
+#   do pico ao zero — sem reinícios (a fase de refinamento final que faltava
+#   nos protocolos segmentados).
+# - eval/checkpoints são posicionais no stream; as transições de span são
+#   MARCADORES VIRTUAIS registrados por callback (logs/gráficos preservados).
+# - tipo, learning_rate, batch_size e max_seq_length são GLOBAIS (bloco
+#   fusao / treinamento) e PROIBIDOS nas etapas (validador rejeita).
+# - pace_loss / pace_epochs_max são INCOMPATÍVEIS com fusão (validador rejeita).
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_pubmed_prof.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/pubmed-rct-20k.parquet
+    dataframe_col: article
+    dataframe_id: pmid
+    prompt_template: dados/prompt_pubmed_rct.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| FUSÃO: parâmetros globais do run único (ver semântica no cabeçalho)
+  fusao:
+    ativo: true
+    tipo: "lora"              # regime único de todo o run (proibido nas etapas)
+    learning_rate: 2e-05      # pico único do cosine global (proibido nas etapas)
+    warmup_grupo_steps: 100   # sem efeito neste protocolo (nenhum gating declarado);
+                              # mantido para paridade de config com D22/D23
+    seed_shuffle: 3407        # shuffle intra-span reprodutível (resume determinístico)
+
+  #| Etapas = spans do dataset concatenado (SEM tipo/learning_rate/batch_size)
+  divisao:
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil"
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio"
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil"
+    pace_epochs: 2
+  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+    alias: "completo"
+    pace_epochs: 2
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-1.5B-Instruct
+  saida: treinos/Qwen2.5-1.5B-Instruct(d21)
+  ollama: Qwen2.5-1.5B-Instruct(d21):latest
+  ollama_base: qwen2.5:1.5b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  #| 5% no modo fundido (~20 avaliações no run): granularidade para
+  #| caracterizar o comportamento ao cruzar cada marcador virtual.
+  eval_steps: 5%
+
+  batch_size:
+    efetivo: 16
+    batch_size: 2
+  grad_batch_size: 8
+
+  #| IGNORADO no modo fundido (o executor treina 1 época real sobre o
+  #| dataset concatenado; as "épocas" vivem nos pace_epochs dos spans).
+  num_train_epochs: 4
+  max_seq_length: 8192
+  validar_max_seq_length: true
+
+  #| learning_rate global é sobrescrito por fusao.learning_rate no modo fundido
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # Warmup GLOBAL (início do run; cobre o grupo sempre-ativo)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine  # UM ciclo, do pico ao zero, sem reinícios
+  seed: 3407
+
+  nbits: 16                  # 16 bits: sem NF4, paridade com D16/D17/D18
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
