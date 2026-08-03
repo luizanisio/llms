@@ -1,18 +1,22 @@
 # ==========================================================================
 # Comparação: Experimento Principal (Q1 + Q2 + Q3 + Q5)
 # ==========================================================================
-# Propósito: Responder as perguntas de pesquisa com os protocolos centrais.
-#   Q1 — Efeito do ajuste fino: A vs {b, c, d1, d2}
+# Propósito: Responder as perguntas de pesquisa com os protocolos centrais
+#   (todos SEGMENTADOS — uma execução de trainer por etapa).
+#   Q1 — Efeito do ajuste fino: A vs {b, c, d1..d4, d11, d12}
 #   Q2 — Efeito do CL: {b, c} vs {d1, d2, d3, d4}
-#   Q3 — Direção do escalonamento: d1 vs d2, d3 vs d4
-#   Q5 — Granularidade do currículo: d11 vs d3, d12 vs d4
-# Modelos: A (baseline), b (LoRA), c (FF), d1-d4 (experimentais), d11-d12 (granulares)
+#   Q3 — Direção do escalonamento: d1 vs d2, d3 vs d4, d11 vs d12
+#   Q5 — Pace do currículo (progressão suave vs saltos): d11 vs d3, d12 vs d4
+#   Complementar: d1/d2 (etapas disjuntas) vs d3/d4 (acumulado com replay)
+# Modelos: A (zero-shot), b (LoRA), c (FF), d1-d4 (CL+escalonamento), d11-d12 (granulares)
+# Ver também: 06_compara_ordem_pt (Q3 completa), 06_compara_ordem_cl (Q4),
+#             06_compara_ablacoes (isolamento), 06_compara_fronteiras (Q6)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_experimentais.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
     - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
@@ -41,55 +45,55 @@ modelo_base:
 
 # Modelos Comparados
 modelos_comparacao:
-  # --- Baseline A: zero-shot ---
+  # --- A: zero-shot (sem ajuste fino) ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     alias: "A"
     familia: "Qwen-1.5B"
     baseline: true
-  # --- Baseline B: LoRA direto ---
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
-  # --- Baseline C: FF direto ---
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
     alias: "C"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
-  # --- Experimental D1: CL por etapas, FF→LoRA ---
+  # --- D1: CL por etapas + escalonamento FF→LoRA ---
   - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
     rotulo: "Qwen1.5B(d1)"
     alias: "D1"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
-  # --- Experimental D2: CL por etapas, LoRA→FF ---
+  # --- D2: CL por etapas + escalonamento LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
     rotulo: "Qwen1.5B(d2)"
     alias: "D2"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d2)"
-  # --- Experimental D3: CL acumulado, FF→LoRA ---
+  # --- D3: CL acumulado (3 etapas) + escalonamento FF→LoRA ---
   - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
     rotulo: "Qwen1.5B(d3)"
     alias: "D3"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d3)"
-  # --- Experimental D4: CL acumulado, LoRA→FF ---
+  # --- D4: CL acumulado (3 etapas) + escalonamento LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
     rotulo: "Qwen1.5B(d4)"
     alias: "D4"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
-  # --- Experimental D11: CL acumulado granular, FF→LoRA ---
+  # --- D11: CL acumulado granular (10 etapas) + FF→LoRA ---
   - arquivo: "saidas/saida_pubmed_1_5b(d11)_teste.parquet"
     rotulo: "Qwen1.5B(d11)"
     alias: "D11"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d11)"
-  # --- Experimental D12: CL acumulado granular, LoRA→FF ---
+  # --- D12: CL acumulado granular (10 etapas) + LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d12)_teste.parquet"
     rotulo: "Qwen1.5B(d12)"
     alias: "D12"
@@ -100,17 +104,15 @@ modelos_comparacao:
 configuracao_comparacao:
   padronizar_simbolos: true
   rouge_stemmer: true
-  
+
   filtro:
     arquivo: "dados/pubmed-rct-20k.parquet"
     campo_id: "pmid"
     dataset_filtro: {"split": "test"}
 
-  # Configuração do campo ID
   nome_campo_id: "id"
   rotulo_campo_id: "ID"
-  
-  # Configuração dos campos do parquet
+
   campos_parquet:
     id: "chave"
     resposta: "resposta"
@@ -118,15 +120,13 @@ configuracao_comparacao:
     avaliacao: ""
     erro: "erro"
 
-  # Modelos customizados (Opcional)
   modelos:
     bertscore_batch_size: 1024
     sbert_batch_size: 1024
 
-  # Máscaras de arquivos (Regex ou Sufixo)
   mascaras:
     extracao: "^(\\d+)\\.json$"
-    tokens: ".tokens.json" 
+    tokens: ".tokens.json"
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
@@ -141,7 +141,6 @@ configuracao_comparacao:
       - rouge_l
       - sbert_grande
 
-  # Mapeamento de campos para métricas
   campos:
     bertscore:
       - "(global)"
@@ -173,7 +172,7 @@ configuracao_comparacao:
       - "results"
       - "conclusions"
       - "Sentencas"
-      - "MetaDados"  
+      - "MetaDados"
 
     levenshtein:
       - "publication"

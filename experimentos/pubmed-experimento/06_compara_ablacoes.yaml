@@ -1,24 +1,33 @@
 # ==========================================================================
-# Comparação: Ablações (decomposição dos componentes do framework)
+# Comparação: Ablações (decomposição dos componentes do framework CL+PT)
 # ==========================================================================
-# Propósito: Isolar a contribuição de cada componente do framework CL+PT.
-#   - d5, d6: Escalonamento sem CL (isola contribuição do escalonamento)
-#   - d7, d8: CL sem escalonamento, LoRA-only (isola contribuição do CL)
-#   - d13: CL sem escalonamento, FF-only (contraparte FF do d7)
+# Propósito: Isolar a contribuição de cada componente, removendo um de cada vez.
+#   - d5, d6: escalonamento SEM CL (isola o eixo PT por troca de regime)
+#   - d7, d8: CL SEM escalonamento, LoRA-only 4b (isola o eixo CL)
+#   - d13:    CL SEM escalonamento, FF-only 16b (contraparte FF do d7)
+#   - d17:    CL SEM escalonamento, LoRA 16b (d7 sem a variável de quantização)
+#   - d14:    warm-up LoRA completo + CL FF-only (PT como pré-treino, não como etapa)
+#   - d15:    d14 + estabilização FF com LR 1e-6 após o merge LoRA→FF
 #   Comparações-chave:
-#     d7 vs b → CL puro (LoRA) melhora sobre FT direto?
-#     d13 vs c → CL puro (FF) melhora sobre FF direto?
-#     d7 vs d13 → CL LoRA-only vs CL FF-only
-#     d5/d6 vs c → Escalonamento sem CL melhora sobre FF direto?
-#     d7 vs d8 → Pace por etapas vs acumulado (sem escalonamento)
-#     d5 vs d6 → Direção do escalonamento sem CL
-# Modelos: A (baseline), b (LoRA), c (FF), d5-d8, d13 (ablações)
+#     Q2  d7 vs b     → CL puro (LoRA 4b) melhora sobre FT direto?
+#     Q2  d17 vs b    → CL puro (LoRA 16b) melhora sobre FT direto? (sem confundir com NF4)
+#     Q2  d13 vs c    → CL puro (FF) melhora sobre FF direto?
+#         d7 vs d17   → quanto do resultado do d7 vinha da quantização 4 bits?
+#         d7 vs d13   → CL LoRA-only vs CL FF-only (regime dado o mesmo CL)
+#     Q3  d5/d6 vs c  → escalonamento sem CL melhora sobre FF direto?
+#     Q3  d5 vs d6    → direção do escalonamento sem CL
+#         d7 vs d8    → pace por etapas disjuntas vs acumulado (sem escalonamento)
+#     Q6  d14 vs d13  → o warm-up LoRA antes do CL ajuda ou custa (transição de regime)?
+#     Q6  d15 vs d14  → a estabilização pós-merge recupera a perda da transição?
+# Modelos: A (zero-shot), b (LoRA), c (FF), d5-d8, d13, d14, d15, d17
+# Ver também: 06_compara_fronteiras (Q6 — custo de fronteira isolado),
+#             06_compara_capacidade (eixo PT sem troca de regime)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ablacoes.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
     - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
@@ -47,66 +56,78 @@ modelo_base:
 
 # Modelos Comparados
 modelos_comparacao:
-  # --- Baseline A: zero-shot ---
+  # --- A: zero-shot (sem ajuste fino) ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     alias: "A"
     familia: "Qwen-1.5B"
     baseline: true
-  # --- Baseline B: LoRA direto ---
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
-  # --- Baseline C: FF direto ---
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
     alias: "C"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
-  # --- Ablação D5: Escalonamento FF→LoRA, sem CL ---
+  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
     rotulo: "Qwen1.5B(d5)"
     alias: "D5"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d5)"
-  # --- Ablação D6: Escalonamento LoRA→FF, sem CL ---
+  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
     rotulo: "Qwen1.5B(d6)"
     alias: "D6"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d6)"
-  # --- Ablação D7: CL por etapas, LoRA-only ---
+  # --- D7: CL por etapas, LoRA-only 4b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d7)_teste.parquet"
     rotulo: "Qwen1.5B(d7)"
     alias: "D7"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d7)"
-  # --- Ablação D8: CL acumulado, LoRA-only ---
+  # --- D8: CL acumulado, LoRA-only 4b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d8)_teste.parquet"
     rotulo: "Qwen1.5B(d8)"
     alias: "D8"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d8)"
-  # --- Ablação D13: CL por etapas, FF-only ---
+  # --- D13: CL por etapas, FF-only 16b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d13)_teste.parquet"
     rotulo: "Qwen1.5B(d13)"
     alias: "D13"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
-  # --- Experimental D14: PT LoRA completo + CL por etapas FF-only ---
+  # --- D14: PT LoRA completo + CL por etapas FF-only ---
   - arquivo: "saidas/saida_pubmed_1_5b(d14)_teste.parquet"
     rotulo: "Qwen1.5B(d14)"
     alias: "D14"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d14)"
+  # --- D15: PT LoRA + estabilização FF (LR 1e-6) + CL FF-only ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d15)_teste.parquet"
+    rotulo: "Qwen1.5B(d15)"
+    alias: "D15"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d15)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d17)_teste.parquet"
+    rotulo: "Qwen1.5B(d17)"
+    alias: "D17"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d17)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   padronizar_simbolos: true
   rouge_stemmer: true
-  
+
   filtro:
     arquivo: "dados/pubmed-rct-20k.parquet"
     campo_id: "pmid"
@@ -114,7 +135,7 @@ configuracao_comparacao:
 
   nome_campo_id: "id"
   rotulo_campo_id: "ID"
-  
+
   campos_parquet:
     id: "chave"
     resposta: "resposta"
@@ -128,7 +149,7 @@ configuracao_comparacao:
 
   mascaras:
     extracao: "^(\\d+)\\.json$"
-    tokens: ".tokens.json" 
+    tokens: ".tokens.json"
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
@@ -174,7 +195,7 @@ configuracao_comparacao:
       - "results"
       - "conclusions"
       - "Sentencas"
-      - "MetaDados"  
+      - "MetaDados"
 
     levenshtein:
       - "publication"

@@ -1,14 +1,27 @@
 # ==========================================================================
 # Comparação: Panorama Completo (todos os protocolos)
 # ==========================================================================
-# Propósito: Visão global de todos os protocolos em um único relatório.
-#   Inclui baselines (A, b, c), experimentais (d1-d4), ablações (d5-d8) e anti-CL (d9-d10).
+# Propósito: Visão global de todos os protocolos em um único relatório —
+#   ranking geral, testes de Friedman/Nemenyi sobre a matriz completa e
+#   verificação de consistência entre os relatórios temáticos.
+#     baselines .......... A (zero-shot), b (LoRA), c (FF)
+#     CL + escalonamento . d1-d4 (etapas/acumulado), d11-d12 (granulares)
+#     ablações ........... d5-d8 (isolamento dos eixos), d13 (CL FF-only)
+#     direção do CL ...... d9-d10 (anti-CL)
+#     PT como warm-up .... d14, d15
+#     controles 16b ...... d16 (fronteira pura), d17 (CL), d18 (blocos aleatórios)
+#     PT por unfreeze .... d19 (com CL), d20 (sem CL)
+#     protocolos fundidos. d21 (CL), d22 (CL+gating), d23 (gating),
+#                          d24 (CL granular+gating, LoRA 4b), d25 (idem, full 16b)
+# NOTA: relatório de panorama — protocolos diferem em precisão (4b/16b), regime
+#   e orçamento; as leituras causais devem sair dos relatórios temáticos, onde
+#   os pares estão controlados.
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/summa-experimento
     - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
     - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
@@ -26,7 +39,7 @@ saida:
 execucao:
   max_workers: 40
   teste_rapido: false
-  gerar_graficos: true 
+  gerar_graficos: true
   llm_as_a_judge: false
   analise_estatistica: true
   ignorar_erro_extracao: false
@@ -35,100 +48,185 @@ execucao:
 modelo_base:
   arquivo: "saida/saida_or_235b.parquet"
   rotulo: "Qwen235b"
+  alias: "Prof"
   familia: "Qwen-235B"
 
 # Modelos Comparados
 modelos_comparacao:
-  # --- Baseline A: zero-shot ---
+  # --- A: zero-shot (sem ajuste fino) ---
   - arquivo: "saida/saida_qwen7b.parquet"
     rotulo: "Qwen7B"
+    alias: "A"
     familia: "Qwen-7B"
-  # --- Baseline B: LoRA direto ---
+    baseline: true
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
   - arquivo: "saida/saida_qwen7b(b)_teste.parquet"
     rotulo: "Qwen7B(b)"
+    alias: "B"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
-  # --- Baseline C: FF direto ---
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
   - arquivo: "saida/saida_qwen7b(c)_teste.parquet"
     rotulo: "Qwen7B(c)"
+    alias: "C"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
-  # --- Experimental D1: CL etapas FF→LoRA ---
+  # --- D1: CL por etapas + escalonamento FF→LoRA ---
   - arquivo: "saida/saida_qwen7b(d1)_teste.parquet"
     rotulo: "Qwen7B(d1)"
+    alias: "D1"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d1)"
-  # --- Experimental D2: CL etapas LoRA→FF ---
+  # --- D2: CL por etapas + escalonamento LoRA→FF ---
   - arquivo: "saida/saida_qwen7b(d2)_teste.parquet"
     rotulo: "Qwen7B(d2)"
+    alias: "D2"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d2)"
-  # --- Experimental D3: CL acum FF→LoRA ---
+  # --- D3: CL acumulado (3 etapas) + escalonamento FF→LoRA ---
   - arquivo: "saida/saida_qwen7b(d3)_teste.parquet"
     rotulo: "Qwen7B(d3)"
+    alias: "D3"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d3)"
-  # --- Experimental D4: CL acum LoRA→FF ---
+  # --- D4: CL acumulado (3 etapas) + escalonamento LoRA→FF ---
   - arquivo: "saida/saida_qwen7b(d4)_teste.parquet"
     rotulo: "Qwen7B(d4)"
+    alias: "D4"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d4)"
-  # --- Ablação D5: Escal FF→LoRA, sem CL ---
+  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
   - arquivo: "saida/saida_qwen7b(d5)_teste.parquet"
     rotulo: "Qwen7B(d5)"
+    alias: "D5"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
-  # --- Ablação D6: Escal LoRA→FF, sem CL ---
+  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
   - arquivo: "saida/saida_qwen7b(d6)_teste.parquet"
     rotulo: "Qwen7B(d6)"
+    alias: "D6"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
-  # --- Ablação D7: CL etapas, LoRA-only ---
+  # --- D7: CL por etapas, LoRA-only 4b ---
   - arquivo: "saida/saida_qwen7b(d7)_teste.parquet"
     rotulo: "Qwen7B(d7)"
+    alias: "D7"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d7)"
-  # --- Ablação D8: CL acum, LoRA-only ---
+  # --- D8: CL acumulado, LoRA-only 4b ---
   - arquivo: "saida/saida_qwen7b(d8)_teste.parquet"
     rotulo: "Qwen7B(d8)"
+    alias: "D8"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d8)"
-  # --- Ablação D9: Anti-CL etapas, LoRA-only ---
+  # --- D9: Anti-CL por etapas, LoRA-only 4b ---
   - arquivo: "saida/saida_qwen7b(d9)_teste.parquet"
     rotulo: "Qwen7B(d9)"
+    alias: "D9"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d9)"
-  # --- Ablação D10: Anti-CL acum, LoRA-only ---
+  # --- D10: Anti-CL acumulado, LoRA-only 4b ---
   - arquivo: "saida/saida_qwen7b(d10)_teste.parquet"
     rotulo: "Qwen7B(d10)"
+    alias: "D10"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d10)"
-  # --- Experimental D11: CL acum granular, FF→LoRA ---
+  # --- D11: CL acumulado granular (10 etapas) + FF→LoRA ---
   - arquivo: "saida/saida_qwen7b(d11)_teste.parquet"
     rotulo: "Qwen7B(d11)"
+    alias: "D11"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d11)"
-  # --- Experimental D12: CL acum granular, LoRA→FF ---
+  # --- D12: CL acumulado granular (10 etapas) + LoRA→FF ---
   - arquivo: "saida/saida_qwen7b(d12)_teste.parquet"
     rotulo: "Qwen7B(d12)"
+    alias: "D12"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d12)"
-  # --- Ablação D13: CL por etapas, FF-only ---
+  # --- D13: CL por etapas, FF-only 16b ---
   - arquivo: "saida/saida_qwen7b(d13)_teste.parquet"
     rotulo: "Qwen7B(d13)"
+    alias: "D13"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d13)"
-  # --- Experimental D14: PT LoRA completo + CL por etapas FF-only ---
+  # --- D14: PT LoRA completo + CL por etapas FF-only ---
   - arquivo: "saida/saida_qwen7b(d14)_teste.parquet"
     rotulo: "Qwen7B(d14)"
+    alias: "D14"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d14)"
+  # --- D15: PT LoRA + estabilização FF (LR 1e-6) + CL FF-only ---
+  - arquivo: "saida/saida_qwen7b(d15)_teste.parquet"
+    rotulo: "Qwen7B(d15)"
+    alias: "D15"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d15)"
+  # --- D16: Sem CL, 4 execuções com dados completos, LoRA 16b (fronteira pura) ---
+  - arquivo: "saida/saida_qwen7b(d16)_teste.parquet"
+    rotulo: "Qwen7B(d16)"
+    alias: "D16"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d16)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saida/saida_qwen7b(d17)_teste.parquet"
+    rotulo: "Qwen7B(d17)"
+    alias: "D17"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d17)"
+  # --- D18: Blocos aleatórios (terços), LoRA 16b (controle de efeito de bloco) ---
+  - arquivo: "saida/saida_qwen7b(d18)_teste.parquet"
+    rotulo: "Qwen7B(d18)"
+    alias: "D18"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d18)"
+  # --- D19: CL por etapas + unfreeze progressivo, FF 16b ---
+  - arquivo: "saida/saida_qwen7b(d19)_teste.parquet"
+    rotulo: "Qwen7B(d19)"
+    alias: "D19"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d19)"
+  # --- D20: Sem CL + unfreeze progressivo, FF 16b (dados completos) ---
+  - arquivo: "saida/saida_qwen7b(d20)_teste.parquet"
+    rotulo: "Qwen7B(d20)"
+    alias: "D20"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d20)"
+  # --- D21: FUSÃO: CL por etapas, LoRA 16b, fronteiras virtuais (espelho do D17) ---
+  - arquivo: "saida/saida_qwen7b(d21)_teste.parquet"
+    rotulo: "Qwen7B(d21)"
+    alias: "D21"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d21)"
+  # --- D22: FUSÃO: CL por etapas + gating de LR por camada, LoRA 16b ---
+  - arquivo: "saida/saida_qwen7b(d22)_teste.parquet"
+    rotulo: "Qwen7B(d22)"
+    alias: "D22"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d22)"
+  # --- D23: FUSÃO: gating de LR sem CL (dados completos), LoRA 16b ---
+  - arquivo: "saida/saida_qwen7b(d23)_teste.parquet"
+    rotulo: "Qwen7B(d23)"
+    alias: "D23"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d23)"
+  # --- D24: FUSÃO: CL granular (10 spans) + gating 10%, LoRA 4b (espelho do D12) ---
+  - arquivo: "saida/saida_qwen7b(d24)_teste.parquet"
+    rotulo: "Qwen7B(d24)"
+    alias: "D24"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d24)"
+  # --- D25: FUSÃO: CL granular (10 spans) + gating 10%, Full FT 16b ---
+  - arquivo: "saida/saida_qwen7b(d25)_teste.parquet"
+    rotulo: "Qwen7B(d25)"
+    alias: "D25"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d25)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   padronizar_simbolos: true
   rouge_stemmer: true
-  
+
   filtro:
     arquivo: "dados/divisao_Qwen235b_Qwen7b.csv"
     campo_id: "id"
@@ -136,7 +234,7 @@ configuracao_comparacao:
 
   nome_campo_id: "id"
   rotulo_campo_id: "ID"
-  
+
   campos_parquet:
     id: "chave"
     resposta: "resposta"
@@ -153,21 +251,34 @@ configuracao_comparacao:
 
   mascaras:
     extracao: "^(.+)\\.json$"
-    tokens: ".tokens.json" 
+    tokens: ".tokens.json"
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  # Sem este bloco o padrao seria apenas "(global)"; os agregados Likert e
+  # MetaDados sao os alvos de interesse para as comparacoes pareadas.
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Likert"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - sbert_medio
+      - sbert_grande
 
   campos:
     bertscore:
       - "(global)"
       - "Materia"
-      - "Dispositivo"      
+      - "Dispositivo"
       - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"
       - "Temas.Conceitos"
-      - "Temas.Explicacao"      
+      - "Temas.Explicacao"
       - "Resumo"
       - "Likert"
       - "MetaDados"
@@ -181,12 +292,12 @@ configuracao_comparacao:
 
     rouge_l:
       - "Materia"
-      - "Dispositivo"      
+      - "Dispositivo"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"
       - "Temas.Conceitos"
-      - "Temas.Explicacao"      
+      - "Temas.Explicacao"
       - "Resumo"
       - "Likert"
       - "MetaDados"
@@ -198,13 +309,13 @@ configuracao_comparacao:
     sbert_medio:
       - "(global)"
       - "Materia"
-      - "Dispositivo"      
+      - "Dispositivo"
       - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"
       - "Temas.Conceitos"
-      - "Temas.Explicacao"      
+      - "Temas.Explicacao"
       - "Resumo"
       - "Likert"
       - "MetaDados"
@@ -212,13 +323,13 @@ configuracao_comparacao:
     sbert_grande:
       - "(global)"
       - "Materia"
-      - "Dispositivo"      
+      - "Dispositivo"
       - "Temas"
       - "Temas.Ponto"
       - "Temas.Argumentos"
       - "Temas.Doutrina"
       - "Temas.Conceitos"
-      - "Temas.Explicacao"      
+      - "Temas.Explicacao"
       - "Resumo"
       - "Likert"
       - "MetaDados"

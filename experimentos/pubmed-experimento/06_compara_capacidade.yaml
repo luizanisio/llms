@@ -1,0 +1,248 @@
+# ==========================================================================
+# Comparação: Eixo PT sem Troca de Regime — unfreeze e gating (Q7)
+# ==========================================================================
+# Propósito: Avaliar a segunda instanciação do eixo PT do framework, na qual a
+#   capacidade cresce DENTRO da mesma parametrização — sem merge LoRA, sem
+#   requantização, sem troca de espaço de busca. Duas implementações:
+#     - descongelamento progressivo de blocos (segmentado, full 16b): d19, d20
+#     - gating de LR por grupo de camadas (fundido, otimizador contínuo):
+#       d22, d23 (granularidade 4) e d24, d25 (granularidade 10)
+#
+#   Fecha o 2×2 {CL, ¬CL} × {PT, ¬PT} em cada implementação:
+#     unfreeze:  d19 (CL+PT) × d20 (PT) × d13 (CL) × c  (nenhum)
+#     gating:    d22 (CL+PT) × d23 (PT) × d21 (CL) × b  (nenhum)
+#
+#   Comparações-chave:
+#     d20 vs c    → unfreeze progressivo puro melhora sobre FF direto?
+#     d19 vs d20  → o CL adiciona valor DADO o unfreeze? (tese central: sinergia)
+#     d19 vs d13  → o PT adiciona valor DADO o CL FF-only?
+#     d23 vs b    → gating puro (PT fundido) já compete com o treino direto?
+#     d22 vs d23  → o CL adiciona valor DADO o gating?
+#     d22 vs d21  → o gating adiciona valor DADO o CL fundido?
+#     d24 vs d22  → granularidade do gating: 10 grupos vs 4 (ambos LoRA fundidos;
+#                   ressalva: d24 roda 4 bits e d22 roda 16 bits)
+#     d25 vs d24  → regime full vs LoRA com a mesma progressão de capacidade
+#     d19 vs d25  → as duas formas de PT em regime full: congelamento REAL
+#                   (com fronteiras) vs gating de LR (fundido, sem fronteiras)
+#
+#   Leitura esperada: d19 > d20 > c e d22 > d23 > b sustentam a sinergia CL+PT;
+#   d19 ≈ d20 (ou d22 ≈ d23) indicaria que o ganho é do escalonamento de
+#   capacidade e que o CL é passageiro.
+#
+# Modelos: A, b, c, d13, d17, d19, d20, d21, d22, d23, d24, d25
+# NOTA (Qwen 2.5 1.5B, 28 blocos): os cortes 75/50/25/0% resolvem para os grupos
+#   de camadas 21-27 / 14-20 / 7-13 / 0-6, com cabeça+norm no primeiro grupo;
+#   nos protocolos granulares (d24/d25) os passos de 10% resolvem para 10
+#   grupos de 3 blocos.
+# NOTA: gating NÃO é congelamento — em d22-d25 todos os grupos estão no
+#   otimizador desde o step 0 (LR 0 até acordarem), sem economia de VRAM;
+#   em d19/d20 os blocos congelados ficam fora do otimizador.
+# LIMITAÇÃO a registrar: d23 usa 1 época por span (dados completos) e d22 usa 2
+#   (fatias), para equalizar o orçamento em 4N — os steps de ativação dos grupos
+#   caem em posições diferentes do stream nos dois protocolos.
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_capacidade.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl/llms/experimentos/pubmed-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_pubmed_capacidade"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_pubmed(capacidade)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_pubmed_prof.parquet"
+  rotulo: "Professor"
+  familia: "PubMed-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- A: zero-shot (sem ajuste fino) ---
+  - arquivo: "saidas/saida_pubmed_1_5b.parquet"
+    rotulo: "Qwen1.5B"
+    alias: "A"
+    familia: "Qwen-1.5B"
+    baseline: true
+  # --- B: LoRA 4b r=16 direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
+    rotulo: "Qwen1.5B(b)"
+    alias: "B"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
+    rotulo: "Qwen1.5B(c)"
+    alias: "C"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
+  # --- D13: CL por etapas, FF-only 16b ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d13)_teste.parquet"
+    rotulo: "Qwen1.5B(d13)"
+    alias: "D13"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d17)_teste.parquet"
+    rotulo: "Qwen1.5B(d17)"
+    alias: "D17"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d17)"
+  # --- D19: CL por etapas + unfreeze progressivo, FF 16b ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d19)_teste.parquet"
+    rotulo: "Qwen1.5B(d19)"
+    alias: "D19"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d19)"
+  # --- D20: Sem CL + unfreeze progressivo, FF 16b (dados completos) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d20)_teste.parquet"
+    rotulo: "Qwen1.5B(d20)"
+    alias: "D20"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d20)"
+  # --- D21: FUSÃO: CL por etapas, LoRA 16b, fronteiras virtuais (espelho do D17) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d21)_teste.parquet"
+    rotulo: "Qwen1.5B(d21)"
+    alias: "D21"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d21)"
+  # --- D22: FUSÃO: CL por etapas + gating de LR por camada, LoRA 16b ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d22)_teste.parquet"
+    rotulo: "Qwen1.5B(d22)"
+    alias: "D22"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d22)"
+  # --- D23: FUSÃO: gating de LR sem CL (dados completos), LoRA 16b ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d23)_teste.parquet"
+    rotulo: "Qwen1.5B(d23)"
+    alias: "D23"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d23)"
+  # --- D24: FUSÃO: CL granular (10 spans) + gating 10%, LoRA 4b (espelho do D12) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d24)_teste.parquet"
+    rotulo: "Qwen1.5B(d24)"
+    alias: "D24"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d24)"
+  # --- D25: FUSÃO: CL granular (10 spans) + gating 10%, Full FT 16b ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d25)_teste.parquet"
+    rotulo: "Qwen1.5B(d25)"
+    alias: "D25"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d25)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/pubmed-rct-20k.parquet"
+    campo_id: "pmid"
+    dataset_filtro: {"split": "test"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  modelos:
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  mascaras:
+    extracao: "^(\\d+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - rouge_l
+      - sbert_grande
+
+  campos:
+    bertscore:
+      - "(global)"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+    rouge_1:
+
+    rouge_2:
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
+
+    rouge_l:
+      - "(global)"
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+    levenshtein:
+      - "publication"
+      - "journal"
+
+    sbert_grande:
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+campos_virtuais:
+  Sentencas:
+    - background
+    - objective
+    - methods
+    - results
+    - conclusions
+  MetaDados:
+    - title
+    - publication
+    - journal
+    - keywords

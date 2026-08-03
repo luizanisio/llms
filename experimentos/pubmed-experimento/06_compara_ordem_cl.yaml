@@ -1,20 +1,29 @@
 # ==========================================================================
-# Comparação: Efeito da Ordem do Currículo (Q4)
+# Comparação: Direção do Currículo (Q4)
 # ==========================================================================
-# Propósito: Responder Q4 — A direção do currículo importa?
-#   Compara CL (fácil→difícil) vs anti-CL (difícil→fácil), ambos LoRA-only.
+# Propósito: Responder Q4 — a ordem fácil→difícil importa, ou basta fatiar os dados?
+#   Contrasta três ordenações sobre a MESMA partição de dados, em LoRA-only:
+#     crescente (CL) × decrescente (anti-CL) × aleatória (controle de bloco).
 #   Comparações-chave:
-#     d7 vs d9 → Efeito da ordem no pacing por etapas
-#     d8 vs d10 → Efeito da ordem no pacing acumulado
-#     d7/d8 vs b → CL melhora sobre baseline?
-#     d9/d10 vs b → Anti-CL melhora sobre baseline?
-# Modelos: A (baseline), b (LoRA), d7 (CL etapas), d8 (CL acum), d9 (anti-CL etapas), d10 (anti-CL acum)
+#     d7 vs d9    → efeito da direção no pace por etapas disjuntas (4 bits)
+#     d8 vs d10   → efeito da direção no pace acumulado (4 bits)
+#     d17 vs d18  → dificuldade crescente vs terços ALEATÓRIOS, 16 bits, mesmas
+#                   fronteiras e mesmo orçamento — o controle que separa
+#                   "ordenar por dificuldade" de "treinar em blocos com recência"
+#     d7/d8 vs b     → CL melhora sobre o baseline direto?
+#     d9/d10 vs b    → anti-CL melhora sobre o baseline direto?
+#     d18 vs b       → só fatiar em blocos (sem ordenar) já muda o resultado?
+# Modelos: A (zero-shot), b (LoRA direto), d7/d8 (CL), d9/d10 (anti-CL),
+#          d17 (CL 16b), d18 (blocos aleatórios 16b)
+# NOTA: d7-d10 rodaram em LoRA 4 bits e d17/d18 em LoRA 16 bits. Comparações
+#       válidas são intra-precisão (d7×d9, d8×d10, d17×d18); cruzamentos entre
+#       os dois grupos carregam {ordem + quantização} como diferença conjunta.
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ordem_cl.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
     - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
@@ -43,48 +52,60 @@ modelo_base:
 
 # Modelos Comparados
 modelos_comparacao:
-  # --- Baseline A: zero-shot ---
+  # --- A: zero-shot (sem ajuste fino) ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     alias: "A"
     familia: "Qwen-1.5B"
     baseline: true
-  # --- Baseline B: LoRA direto ---
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
-  # --- D7: CL por etapas, LoRA-only ---
+  # --- D7: CL por etapas, LoRA-only 4b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d7)_teste.parquet"
     rotulo: "Qwen1.5B(d7)"
     alias: "D7"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d7)"
-  # --- D8: CL acumulado, LoRA-only ---
+  # --- D8: CL acumulado, LoRA-only 4b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d8)_teste.parquet"
     rotulo: "Qwen1.5B(d8)"
     alias: "D8"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d8)"
-  # --- D9: Anti-CL por etapas, LoRA-only ---
+  # --- D9: Anti-CL por etapas, LoRA-only 4b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d9)_teste.parquet"
     rotulo: "Qwen1.5B(d9)"
     alias: "D9"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d9)"
-  # --- D10: Anti-CL acumulado, LoRA-only ---
+  # --- D10: Anti-CL acumulado, LoRA-only 4b ---
   - arquivo: "saidas/saida_pubmed_1_5b(d10)_teste.parquet"
     rotulo: "Qwen1.5B(d10)"
     alias: "D10"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d10)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d17)_teste.parquet"
+    rotulo: "Qwen1.5B(d17)"
+    alias: "D17"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d17)"
+  # --- D18: Blocos aleatórios (terços), LoRA 16b (controle de efeito de bloco) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d18)_teste.parquet"
+    rotulo: "Qwen1.5B(d18)"
+    alias: "D18"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d18)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
   padronizar_simbolos: true
   rouge_stemmer: true
-  
+
   filtro:
     arquivo: "dados/pubmed-rct-20k.parquet"
     campo_id: "pmid"
@@ -92,7 +113,7 @@ configuracao_comparacao:
 
   nome_campo_id: "id"
   rotulo_campo_id: "ID"
-  
+
   campos_parquet:
     id: "chave"
     resposta: "resposta"
@@ -106,7 +127,7 @@ configuracao_comparacao:
 
   mascaras:
     extracao: "^(\\d+)\\.json$"
-    tokens: ".tokens.json" 
+    tokens: ".tokens.json"
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
@@ -152,7 +173,7 @@ configuracao_comparacao:
       - "results"
       - "conclusions"
       - "Sentencas"
-      - "MetaDados"  
+      - "MetaDados"
 
     levenshtein:
       - "publication"

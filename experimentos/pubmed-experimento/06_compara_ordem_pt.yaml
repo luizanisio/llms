@@ -1,20 +1,25 @@
 # ==========================================================================
-# Comparação: Efeito do Progressive Training / Escalonamento (Q3)
+# Comparação: Direção do Escalonamento de Capacidade (Q3)
 # ==========================================================================
-# Propósito: Isolar o efeito do escalonamento de capacidade (PT) sem CL.
-#   Comparações-chave:
-#     c vs d5 → FF→LoRA melhora sobre FF direto?
-#     c vs d6 → LoRA→FF melhora sobre FF direto?
-#     b vs d5 → FF→LoRA melhora sobre LoRA direto?
-#     b vs d6 → LoRA→FF melhora sobre LoRA direto?
-#     d5 vs d6 → Qual direção de escalonamento é melhor?
-# Modelos: A (zero-shot), b (LoRA), c (FF), d5 (FF→LoRA), d6 (LoRA→FF)
+# Propósito: Responder Q3 — FF→LoRA e LoRA→FF produzem desempenhos distintos?
+#   Cobre a pergunta nos dois regimes de dados: COM CL (d1-d4) e SEM CL (d5, d6).
+#   Comparações-chave (direção, pareadas):
+#     d1 vs d2    → direção com CL por etapas disjuntas
+#     d3 vs d4    → direção com CL acumulado
+#     d5 vs d6    → direção sem CL (controle limpo do eixo PT)
+#   Comparações de suporte (o escalonamento vale o custo?):
+#     d5 vs c / d5 vs b → FF→LoRA melhora sobre o treino direto?
+#     d6 vs c / d6 vs b → LoRA→FF melhora sobre o treino direto?
+#     d1 vs d5 / d2 vs d6 → o CL adiciona valor dado a mesma direção de escalonamento?
+# Modelos: A (zero-shot), b (LoRA), c (FF), d1-d4 (com CL), d5-d6 (sem CL)
+# Ver também: 06_compara_capacidade — a mesma pergunta para o eixo PT
+#             implementado DENTRO da parametrização (unfreeze/gating, d19-d23, d25)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ordem_pt.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
 misc:
-  pastas_base: 
+  pastas_base:
     - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
     - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
     - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
@@ -43,31 +48,55 @@ modelo_base:
 
 # Modelos Comparados
 modelos_comparacao:
-  # --- Baseline A: zero-shot ---
+  # --- A: zero-shot (sem ajuste fino) ---
   - arquivo: "saidas/saida_pubmed_1_5b.parquet"
     rotulo: "Qwen1.5B"
     alias: "A"
     familia: "Qwen-1.5B"
     baseline: true
-  # --- Baseline B: LoRA direto ---
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(b)_teste.parquet"
     rotulo: "Qwen1.5B(b)"
     alias: "B"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b)"
-  # --- Baseline C: FF direto ---
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
     alias: "C"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
-  # --- D5: Escalonamento FF→LoRA, sem CL ---
+  # --- D1: CL por etapas + escalonamento FF→LoRA ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
+    rotulo: "Qwen1.5B(d1)"
+    alias: "D1"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
+  # --- D2: CL por etapas + escalonamento LoRA→FF ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
+    rotulo: "Qwen1.5B(d2)"
+    alias: "D2"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d2)"
+  # --- D3: CL acumulado (3 etapas) + escalonamento FF→LoRA ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
+    rotulo: "Qwen1.5B(d3)"
+    alias: "D3"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d3)"
+  # --- D4: CL acumulado (3 etapas) + escalonamento LoRA→FF ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
+    rotulo: "Qwen1.5B(d4)"
+    alias: "D4"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
+  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
     rotulo: "Qwen1.5B(d5)"
     alias: "D5"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d5)"
-  # --- D6: Escalonamento LoRA→FF, sem CL ---
+  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d6)_teste.parquet"
     rotulo: "Qwen1.5B(d6)"
     alias: "D6"
@@ -78,7 +107,7 @@ modelos_comparacao:
 configuracao_comparacao:
   padronizar_simbolos: true
   rouge_stemmer: true
-  
+
   filtro:
     arquivo: "dados/pubmed-rct-20k.parquet"
     campo_id: "pmid"
@@ -86,7 +115,7 @@ configuracao_comparacao:
 
   nome_campo_id: "id"
   rotulo_campo_id: "ID"
-  
+
   campos_parquet:
     id: "chave"
     resposta: "resposta"
@@ -100,7 +129,7 @@ configuracao_comparacao:
 
   mascaras:
     extracao: "^(\\d+)\\.json$"
-    tokens: ".tokens.json" 
+    tokens: ".tokens.json"
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
@@ -146,7 +175,7 @@ configuracao_comparacao:
       - "results"
       - "conclusions"
       - "Sentencas"
-      - "MetaDados"  
+      - "MetaDados"
 
     levenshtein:
       - "publication"

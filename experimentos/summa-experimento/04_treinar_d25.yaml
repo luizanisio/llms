@@ -1,0 +1,237 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d25.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d25.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Protocolo D25)
+# ==========================================================================
+# Papel:   Controle comparativo do D24 (full 16 bits vs LoRA 4 bits)
+# Modo:    FUSÃO: Full FT 16 bits, CL acumulado granular por spans + PT por
+#          gating de LR em passos de 10%, em um ÚNICO trainer.train()
+# Spans:   ≤1(uf 90%) → ≤2(uf 80%) → ... → ≤9(uf 10%) → tudo(uf 0%)
+# Objetivo: Mesma topologia de dados e capacidade do D24, mas em regime full
+#           16 bits em vez de LoRA 4 bits. Isola a variável "regime de treino"
+#           dado o mesmo currículo granular fundido:
+#           - d25 vs d24: efeito do regime (full 16b vs LoRA 4b) dado CL+PT
+#             granular fundido. Mais capacidade expressiva (pesos plenos vs
+#             adapters de posto baixo), porém custo de VRAM muito maior.
+#           - d25 vs d12: full fundido vs LoRA segmentado (mesmos dados).
+#             Se d25 > d12: tanto a eliminação de fronteiras quanto o regime
+#             full contribuem; d25 vs d24 separa os dois efeitos.
+#           - d25 vs d22: granularidade 10 vs 4, ambos fundidos com gating;
+#             d25 é full e d22 é LoRA, mas a granularidade é a variável
+#             primária nesta comparação.
+# Perguntas: Q6 (fronteira), Q7 (sinergia CL+PT), regime full vs LoRA no
+#            contexto fundido.
+# Ambiente: H100 80GB / H200 (1 GPU via Slurm) — ver nota de VRAM abaixo
+# Requisito: código com suporte ao modo FUSÃO + gating de LR por grupos
+#
+# DIFERENÇAS CHAVE EM RELAÇÃO AO D24 (LoRA 4 bits):
+# 1. Regime: Full FT 16 bits → todos os pesos treináveis (vs adapters LoRA).
+#    O gating controla LR por grupo de CAMADAS PLENAS (não adapters).
+# 2. Bits: 16 → sem quantização NF4, mais precisão numérica.
+# 3. VRAM: este é o ponto crítico no 7B. O protocolo C (full FT direto) já
+#    exige batch_size 1 com seq 32768 em 80 GB; aqui somam-se pesos +
+#    gradientes + estados Adam de TODOS os parâmetros. Preferir H200; em
+#    H100 80GB, validar o pico nos primeiros steps antes de submeter a fila.
+#    ATENÇÃO: o gating NÃO reduz memória — grupos adormecidos seguem no
+#    otimizador com LR 0, diferente do congelamento real do D19.
+# 4. LR: 5e-06 (vs 2e-05 do D24) — full FT exige LR menor para
+#    estabilidade (mais parâmetros recebendo gradiente).
+# 5. max_grad_norm: 0.3 (vs 1 do D24) — mesmo valor diagnosticado no D19
+#    para estabilizar full FT com sequências longas e blocos recém-acordados
+#    com momentos Adam zerados.
+# 6. lora.r: 0 → garante tipo_padrao = "full" caso alguma etapa omita 'tipo'.
+#
+# PROGRESSÃO DE CAPACIDADE — idêntica ao D24 (Qwen 2.5 7B: 28 blocos, 0-27):
+#   Span   Dados   unfreeze   Grupo    Blocos liberados    Acumulado
+#   f1     ≤1      90%        G1       25-27 + cabeça      3 blocos
+#   f2     ≤2      80%        G2       22-24               6 blocos
+#   f3     ≤3      70%        G3       19-21               9 blocos
+#   f4     ≤4      60%        G4       16-18               12 blocos
+#   f5     ≤5      50%        G5       13-15               15 blocos
+#   f6     ≤6      40%        G6       10-12               18 blocos
+#   f7     ≤7      30%        G7       7-9                 21 blocos
+#   f8     ≤8      20%        G8       4-6                 24 blocos
+#   f9     ≤9      10%        G9       1-3                 27 blocos
+#   all    tudo    0%         G10      0 + embeddings      28 blocos
+#
+# ORÇAMENTO DE DADOS: idêntico ao D24 e D12.
+# ==========================================================================
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saida/saida_or_235b.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/integras_experimento_summa_novos.parquet
+    dataset_filtro: {"fold": "<=10"}
+    dataframe_col: integra
+    dataframe_id: seq_documento_acordao
+    prompt_template: dados/prompt_summa_raw.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| FUSÃO: parâmetros globais do run único
+  #| Regime FULL 16 bits com gating granular — 10 grupos de camadas plenas.
+  #| O cosine global decai de 5e-06 a ~0; cada grupo rampa até o valor
+  #| já decaído do cosine ao acordar (discriminative LR emergente).
+  fusao:
+    ativo: true
+    tipo: "full"              # gating sobre CAMADAS PLENAS (sem adapters)
+    learning_rate: 5e-06      # pico único do cosine global (padrão full FT)
+    warmup_grupo_steps: 100   # rampa de cada grupo ao acordar (0 → cosine atual)
+    seed_shuffle: 3407
+
+  #| CL acumulado granular com gating de capacidade em passos de 10%.
+  #| Mesma progressão de dados do D12 (dificuldade_int ≤1, ≤2, ..., ≤9, tudo),
+  #| mas cada span libera 10% a mais das camadas plenas via gating.
+  #| pace_epochs: 2 preserva o orçamento de instâncias do D12 segmentado.
+  divisao:
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=1"}
+    alias: "f1-uf90"
+    pace_epochs: 2
+    unfreeze_layers_from: 90%   # G1 ativo do step 0: camadas dos blocos 25-27 + cabeça/norm
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=2"}
+    alias: "f2-uf80"
+    pace_epochs: 2
+    unfreeze_layers_from: 80%   # G2 acorda aqui: camadas dos blocos 22-24
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "f3-uf70"
+    pace_epochs: 2
+    unfreeze_layers_from: 70%   # G3 acorda aqui: camadas dos blocos 19-21
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=4"}
+    alias: "f4-uf60"
+    pace_epochs: 2
+    unfreeze_layers_from: 60%   # G4 acorda aqui: camadas dos blocos 16-18
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=5"}
+    alias: "f5-uf50"
+    pace_epochs: 2
+    unfreeze_layers_from: 50%   # G5 acorda aqui: camadas dos blocos 13-15
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=6"}
+    alias: "f6-uf40"
+    pace_epochs: 2
+    unfreeze_layers_from: 40%   # G6 acorda aqui: camadas dos blocos 10-12
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "f7-uf30"
+    pace_epochs: 2
+    unfreeze_layers_from: 30%   # G7 acorda aqui: camadas dos blocos 7-9
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=8"}
+    alias: "f8-uf20"
+    pace_epochs: 2
+    unfreeze_layers_from: 20%   # G8 acorda aqui: camadas dos blocos 4-6
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    dataset_filtro: {"dificuldade_int": "<=9"}
+    alias: "f9-uf10"
+    pace_epochs: 2
+    unfreeze_layers_from: 10%   # G9 acorda aqui: camadas dos blocos 1-3
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+    alias: "completo-uf0"
+    pace_epochs: 2
+    unfreeze_layers_from: 0%    # G10 acorda aqui: camadas do bloco 0 + embeddings
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d25)
+  ollama: Qwen2.5-7B-Instruct(d25):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  #| 5% → alta resolução de avaliação para capturar os 10 marcadores virtuais
+  #| e observar a curva de LR por grupo com detalhe suficiente.
+  eval_steps: 5%
+
+  #| batch_size 1 com acumulação: exigido pelo contexto de 32768 do summa.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 8
+
+  #| IGNORADO no modo fundido (1 época real sobre o stream concatenado;
+  #| as repetições vêm de pace_epochs por span). Mantido em 4 para
+  #| documentar o orçamento equivalente ao D12 segmentado.
+  num_train_epochs: 4
+  max_seq_length: 32768
+  validar_max_seq_length: true
+  filtrar_max_seq_length: true
+
+  #| Sobrescrito por fusao.learning_rate; mantido igual para documentação.
+  learning_rate: 5e-06
+  #| max_grad_norm apertado (mesmo valor do D19): estabiliza full FT com
+  #| sequências longas e blocos que acordam com momentos Adam zerados.
+  max_grad_norm: 0.3
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  #| Warmup GLOBAL do run (rampa do G1, sempre ativo). O otimizador
+  #| nunca reinicia — não há warmup por etapa.
+  warmup_steps: 100
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine  # UM ciclo; gates multiplicam o envelope por grupo
+  seed: 3407
+
+  #| Full FT: sempre 16 bits. No modo fundido com tipo "full" o código
+  #| força nbits 16 mesmo que outro valor seja declarado.
+  nbits: 16
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA — NÃO UTILIZADO (regime full em todo o run)
+#| =========================================================================
+#| r: 0 garante tipo_padrao = "full" caso alguma etapa omita 'tipo'.
+lora:
+  r: 0
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

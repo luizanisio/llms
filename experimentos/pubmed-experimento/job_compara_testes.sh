@@ -57,23 +57,32 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
-# não roda o 03 pois já fez a divisão de dificuldade e incorporou a divisão de treino/teste/validação
-#echo "1/6 - Executando 03_compara_prof_full.yaml..."
+# não roda o 03_compara_prof_full.yaml pois já fez a divisão de dificuldade e incorporou a divisão de treino/teste/validação
+#echo "1/9 - Executando 03_compara_prof_full.yaml..."
 #python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/03_compara_prof_full.yaml"
 
-echo "2/6 - Executando 06_compara_experimentais.yaml..."
+echo "2/9 - Executando 06_compara_controle_b.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_controle_b.yaml"
+
+echo "3/9 - Executando 06_compara_experimentais.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_experimentais.yaml"
 
-echo "3/6 - Executando 06_compara_ablacoes.yaml..."
+echo "4/9 - Executando 06_compara_ablacoes.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ablacoes.yaml"
 
-echo "4/6 - Executando 06_compara_ordem_cl.yaml..."
+echo "5/9 - Executando 06_compara_ordem_cl.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_cl.yaml"
 
-echo "5/6 - Executando 06_compara_ordem_pt.yaml..."
+echo "6/9 - Executando 06_compara_ordem_pt.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_pt.yaml"
 
-echo "6/6 - Executando 06_compara_todos.yaml..."
+echo "7/9 - Executando 06_compara_fronteiras.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_fronteiras.yaml"
+
+echo "8/9 - Executando 06_compara_capacidade.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_capacidade.yaml"
+
+echo "9/9 - Executando 06_compara_todos.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_todos.yaml"
 
 echo "=== Job finalizado: $(date) ==="

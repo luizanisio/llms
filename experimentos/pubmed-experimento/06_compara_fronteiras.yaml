@@ -1,23 +1,38 @@
 # ==========================================================================
-# Comparação: Panorama Completo (todos os protocolos)
+# Comparação: Custo de Fronteira e de Transição de Regime (Q6)
 # ==========================================================================
-# Propósito: Visão global de todos os protocolos em um único relatório —
-#   ranking geral, testes de Friedman/Nemenyi sobre a matriz completa e
-#   verificação de consistência entre os relatórios temáticos.
-#     baselines .......... A (zero-shot), b (LoRA), c (FF)
-#     controles de B ..... b16 (16 bits), b16r8 (16 bits, r=8)
-#     CL + escalonamento . d1-d4 (etapas/acumulado), d11-d12 (granulares)
-#     ablações ........... d5-d8 (isolamento dos eixos), d13 (CL FF-only)
-#     direção do CL ...... d9-d10 (anti-CL)
-#     PT como warm-up .... d14, d15
-#     controles 16b ...... d16 (fronteira pura), d17 (CL), d18 (blocos aleatórios)
-#     PT por unfreeze .... d19 (com CL), d20 (sem CL)
-#     protocolos fundidos. d21 (CL), d22 (CL+gating), d23 (gating),
-#                          d24 (CL granular+gating, LoRA 4b), d25 (idem, full 16b)
-# NOTA: relatório de panorama — protocolos diferem em precisão (4b/16b), regime
-#   e orçamento; as leituras causais devem sair dos relatórios temáticos, onde
-#   os pares estão controlados.
-# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
+# Propósito: Responder Q6 — há perda de eficiência ao transitar entre etapas
+#   LoRA/Full e durante a progressão de dificuldade?
+#   A pergunta tem duas metades, e este relatório cobre as duas:
+#
+#   (a) TRANSIÇÃO DE REGIME (LoRA ↔ Full): o merge/requantização entre etapas
+#       custa qualidade?
+#         d5 vs c, d5 vs b → FF→LoRA contra os diretos (sem CL, sem confundir com dados)
+#         d6 vs c, d6 vs b → LoRA→FF contra os diretos
+#         d25 vs d24       → mesma topologia fundida, full 16b vs LoRA 4b
+#
+#   (b) FRONTEIRA DE ETAPA (reset do otimizador Adam + reinício do cosine),
+#       mesmo sem mudar regime nem dados:
+#         d16 vs b16  → FRONTEIRA PURA: b16 é a execução única em LoRA 16b r=16,
+#                       exatamente a configuração do d16 sem as 3 fronteiras.
+#                       Este é o par correto (d16 vs b carregaria também a
+#                       quantização, pois b roda NF4 — ver 06_compara_controle_b).
+#         d17 vs d16  → ordenação curricular com fronteiras controladas
+#         d18 vs d16  → efeito de bloco sem ordenação
+#         d21 vs d17  → MEDIDA MAIS LIMPA: mesma progressão de dados, mesma
+#                       precisão, mesmo orçamento — fronteiras VIRTUAIS (fusão)
+#                       vs REAIS (segmentado). Diferença = custo de fronteira.
+#         d24 vs d12  → mesma leitura na granularidade 10 (CL acumulado unitário)
+#         d24 vs d21  → granularidade 10 vs 4 DENTRO do modo fundido
+#
+#   Leitura esperada: se d21 > d17 e d24 > d12, parte do "custo do CL" medido
+#   nos protocolos segmentados era custo de fronteira, não da ordenação.
+#
+# Modelos: A, b, b16, c, d5, d6, d12, d16, d17, d18, d21, d24, d25
+# NOTA: as curvas de treino (pasta_treinamento → training_metrics.jsonl) são a
+#       evidência primária desta pergunta — observar o spike de loss em cada
+#       fronteira dos segmentados e sua ausência nos fundidos (d21-d25).
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_fronteiras.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -30,9 +45,9 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "compara/analises_comparacao_pubmed_todos"
+  pasta: "compara/analises_comparacao_pubmed_fronteiras"
   pasta_parquet: "compara/"
-  arquivo_base: "comparacao_pubmed(todos)"
+  arquivo_base: "comparacao_pubmed(fronteiras)"
   regerar_planilha_base: true
   linguagem_graficos: "en"
 
@@ -69,42 +84,12 @@ modelos_comparacao:
     alias: "B16"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b16)"
-  # --- B16R8: Controle do B — LoRA 16b r=8 direto (isola o posto do adaptador) ---
-  - arquivo: "saidas/saida_pubmed_1_5b(b16r8)_teste.parquet"
-    rotulo: "Qwen1.5B(b16r8)"
-    alias: "B16R8"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b16r8)"
   # --- C: Full FT 16b direto, dados completos (sem CL) ---
   - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
     rotulo: "Qwen1.5B(c)"
     alias: "C"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
-  # --- D1: CL por etapas + escalonamento FF→LoRA ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
-    rotulo: "Qwen1.5B(d1)"
-    alias: "D1"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
-  # --- D2: CL por etapas + escalonamento LoRA→FF ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d2)_teste.parquet"
-    rotulo: "Qwen1.5B(d2)"
-    alias: "D2"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d2)"
-  # --- D3: CL acumulado (3 etapas) + escalonamento FF→LoRA ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d3)_teste.parquet"
-    rotulo: "Qwen1.5B(d3)"
-    alias: "D3"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d3)"
-  # --- D4: CL acumulado (3 etapas) + escalonamento LoRA→FF ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d4)_teste.parquet"
-    rotulo: "Qwen1.5B(d4)"
-    alias: "D4"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d4)"
   # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d5)_teste.parquet"
     rotulo: "Qwen1.5B(d5)"
@@ -117,60 +102,12 @@ modelos_comparacao:
     alias: "D6"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d6)"
-  # --- D7: CL por etapas, LoRA-only 4b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d7)_teste.parquet"
-    rotulo: "Qwen1.5B(d7)"
-    alias: "D7"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d7)"
-  # --- D8: CL acumulado, LoRA-only 4b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d8)_teste.parquet"
-    rotulo: "Qwen1.5B(d8)"
-    alias: "D8"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d8)"
-  # --- D9: Anti-CL por etapas, LoRA-only 4b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d9)_teste.parquet"
-    rotulo: "Qwen1.5B(d9)"
-    alias: "D9"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d9)"
-  # --- D10: Anti-CL acumulado, LoRA-only 4b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d10)_teste.parquet"
-    rotulo: "Qwen1.5B(d10)"
-    alias: "D10"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d10)"
-  # --- D11: CL acumulado granular (10 etapas) + FF→LoRA ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d11)_teste.parquet"
-    rotulo: "Qwen1.5B(d11)"
-    alias: "D11"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d11)"
   # --- D12: CL acumulado granular (10 etapas) + LoRA→FF ---
   - arquivo: "saidas/saida_pubmed_1_5b(d12)_teste.parquet"
     rotulo: "Qwen1.5B(d12)"
     alias: "D12"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d12)"
-  # --- D13: CL por etapas, FF-only 16b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d13)_teste.parquet"
-    rotulo: "Qwen1.5B(d13)"
-    alias: "D13"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d13)"
-  # --- D14: PT LoRA completo + CL por etapas FF-only ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d14)_teste.parquet"
-    rotulo: "Qwen1.5B(d14)"
-    alias: "D14"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d14)"
-  # --- D15: PT LoRA + estabilização FF (LR 1e-6) + CL FF-only ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d15)_teste.parquet"
-    rotulo: "Qwen1.5B(d15)"
-    alias: "D15"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d15)"
   # --- D16: Sem CL, 4 execuções com dados completos, LoRA 16b (fronteira pura) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d16)_teste.parquet"
     rotulo: "Qwen1.5B(d16)"
@@ -189,36 +126,12 @@ modelos_comparacao:
     alias: "D18"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d18)"
-  # --- D19: CL por etapas + unfreeze progressivo, FF 16b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d19)_teste.parquet"
-    rotulo: "Qwen1.5B(d19)"
-    alias: "D19"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d19)"
-  # --- D20: Sem CL + unfreeze progressivo, FF 16b (dados completos) ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d20)_teste.parquet"
-    rotulo: "Qwen1.5B(d20)"
-    alias: "D20"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d20)"
   # --- D21: FUSÃO: CL por etapas, LoRA 16b, fronteiras virtuais (espelho do D17) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d21)_teste.parquet"
     rotulo: "Qwen1.5B(d21)"
     alias: "D21"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d21)"
-  # --- D22: FUSÃO: CL por etapas + gating de LR por camada, LoRA 16b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d22)_teste.parquet"
-    rotulo: "Qwen1.5B(d22)"
-    alias: "D22"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d22)"
-  # --- D23: FUSÃO: gating de LR sem CL (dados completos), LoRA 16b ---
-  - arquivo: "saidas/saida_pubmed_1_5b(d23)_teste.parquet"
-    rotulo: "Qwen1.5B(d23)"
-    alias: "D23"
-    familia: "Qwen-1.5B"
-    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d23)"
   # --- D24: FUSÃO: CL granular (10 spans) + gating 10%, LoRA 4b (espelho do D12) ---
   - arquivo: "saidas/saida_pubmed_1_5b(d24)_teste.parquet"
     rotulo: "Qwen1.5B(d24)"

@@ -1,28 +1,43 @@
 # ==========================================================================
-# Comparação: Ablações (decomposição dos componentes do framework CL+PT)
+# Comparação: Eixo PT sem Troca de Regime — unfreeze e gating (Q7)
 # ==========================================================================
-# Propósito: Isolar a contribuição de cada componente, removendo um de cada vez.
-#   - d5, d6: escalonamento SEM CL (isola o eixo PT por troca de regime)
-#   - d7, d8: CL SEM escalonamento, LoRA-only 4b (isola o eixo CL)
-#   - d13:    CL SEM escalonamento, FF-only 16b (contraparte FF do d7)
-#   - d17:    CL SEM escalonamento, LoRA 16b (d7 sem a variável de quantização)
-#   - d14:    warm-up LoRA completo + CL FF-only (PT como pré-treino, não como etapa)
-#   - d15:    d14 + estabilização FF com LR 1e-6 após o merge LoRA→FF
+# Propósito: Avaliar a segunda instanciação do eixo PT do framework, na qual a
+#   capacidade cresce DENTRO da mesma parametrização — sem merge LoRA, sem
+#   requantização, sem troca de espaço de busca. Duas implementações:
+#     - descongelamento progressivo de blocos (segmentado, full 16b): d19, d20
+#     - gating de LR por grupo de camadas (fundido, otimizador contínuo):
+#       d22, d23 (granularidade 4) e d24, d25 (granularidade 10)
+#
+#   Fecha o 2×2 {CL, ¬CL} × {PT, ¬PT} em cada implementação:
+#     unfreeze:  d19 (CL+PT) × d20 (PT) × d13 (CL) × c  (nenhum)
+#     gating:    d22 (CL+PT) × d23 (PT) × d21 (CL) × b  (nenhum)
+#
 #   Comparações-chave:
-#     Q2  d7 vs b     → CL puro (LoRA 4b) melhora sobre FT direto?
-#     Q2  d17 vs b    → CL puro (LoRA 16b) melhora sobre FT direto? (sem confundir com NF4)
-#     Q2  d13 vs c    → CL puro (FF) melhora sobre FF direto?
-#         d7 vs d17   → quanto do resultado do d7 vinha da quantização 4 bits?
-#         d7 vs d13   → CL LoRA-only vs CL FF-only (regime dado o mesmo CL)
-#     Q3  d5/d6 vs c  → escalonamento sem CL melhora sobre FF direto?
-#     Q3  d5 vs d6    → direção do escalonamento sem CL
-#         d7 vs d8    → pace por etapas disjuntas vs acumulado (sem escalonamento)
-#     Q6  d14 vs d13  → o warm-up LoRA antes do CL ajuda ou custa (transição de regime)?
-#     Q6  d15 vs d14  → a estabilização pós-merge recupera a perda da transição?
-# Modelos: A (zero-shot), b (LoRA), c (FF), d5-d8, d13, d14, d15, d17
-# Ver também: 06_compara_fronteiras (Q6 — custo de fronteira isolado),
-#             06_compara_capacidade (eixo PT sem troca de regime)
-# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ablacoes.yaml
+#     d20 vs c    → unfreeze progressivo puro melhora sobre FF direto?
+#     d19 vs d20  → o CL adiciona valor DADO o unfreeze? (tese central: sinergia)
+#     d19 vs d13  → o PT adiciona valor DADO o CL FF-only?
+#     d23 vs b    → gating puro (PT fundido) já compete com o treino direto?
+#     d22 vs d23  → o CL adiciona valor DADO o gating?
+#     d22 vs d21  → o gating adiciona valor DADO o CL fundido?
+#     d24 vs d22  → granularidade do gating: 10 grupos vs 4 (ambos LoRA fundidos;
+#                   ressalva: d24 roda 4 bits e d22 roda 16 bits)
+#     d25 vs d24  → regime full vs LoRA com a mesma progressão de capacidade
+#     d19 vs d25  → as duas formas de PT em regime full: congelamento REAL
+#                   (com fronteiras) vs gating de LR (fundido, sem fronteiras)
+#
+#   Leitura esperada: d19 > d20 > c e d22 > d23 > b sustentam a sinergia CL+PT;
+#   d19 ≈ d20 (ou d22 ≈ d23) indicaria que o ganho é do escalonamento de
+#   capacidade e que o CL é passageiro.
+#
+# Modelos: A, b, c, d13, d17, d19, d20, d21, d22, d23, d24, d25
+# NOTA (Qwen 2.5 7B, 28 blocos): os cortes 75/50/25/0% resolvem para os grupos
+#   de camadas 21-27 / 14-20 / 7-13 / 0-6, com cabeça+norm no primeiro grupo;
+#   nos protocolos granulares (d24/d25) os passos de 10% resolvem para 10
+#   grupos de 3 blocos.
+# LIMITAÇÃO a registrar: d23 usa 1 época por span (dados completos) e d22 usa 2
+#   (fatias), para equalizar o orçamento em 4N — os steps de ativação dos grupos
+#   caem em posições diferentes do stream nos dois protocolos.
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_capacidade.yaml
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -35,9 +50,9 @@ misc:
 
 # Configuração Global de Saída
 saida:
-  pasta: "compara/analises_comparacao_summa_ablacoes"
+  pasta: "compara/analises_comparacao_summa_capacidade"
   pasta_parquet: "compara/"
-  arquivo_base: "comparacao_summa(ablacoes)"
+  arquivo_base: "comparacao_summa(capacidade)"
   regerar_planilha_base: true
   linguagem_graficos: "en"
 
@@ -77,54 +92,60 @@ modelos_comparacao:
     alias: "C"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
-  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
-  - arquivo: "saida/saida_qwen7b(d5)_teste.parquet"
-    rotulo: "Qwen7B(d5)"
-    alias: "D5"
-    familia: "Qwen-7B"
-    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
-  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
-  - arquivo: "saida/saida_qwen7b(d6)_teste.parquet"
-    rotulo: "Qwen7B(d6)"
-    alias: "D6"
-    familia: "Qwen-7B"
-    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
-  # --- D7: CL por etapas, LoRA-only 4b ---
-  - arquivo: "saida/saida_qwen7b(d7)_teste.parquet"
-    rotulo: "Qwen7B(d7)"
-    alias: "D7"
-    familia: "Qwen-7B"
-    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d7)"
-  # --- D8: CL acumulado, LoRA-only 4b ---
-  - arquivo: "saida/saida_qwen7b(d8)_teste.parquet"
-    rotulo: "Qwen7B(d8)"
-    alias: "D8"
-    familia: "Qwen-7B"
-    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d8)"
   # --- D13: CL por etapas, FF-only 16b ---
   - arquivo: "saida/saida_qwen7b(d13)_teste.parquet"
     rotulo: "Qwen7B(d13)"
     alias: "D13"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d13)"
-  # --- D14: PT LoRA completo + CL por etapas FF-only ---
-  - arquivo: "saida/saida_qwen7b(d14)_teste.parquet"
-    rotulo: "Qwen7B(d14)"
-    alias: "D14"
-    familia: "Qwen-7B"
-    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d14)"
-  # --- D15: PT LoRA + estabilização FF (LR 1e-6) + CL FF-only ---
-  - arquivo: "saida/saida_qwen7b(d15)_teste.parquet"
-    rotulo: "Qwen7B(d15)"
-    alias: "D15"
-    familia: "Qwen-7B"
-    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d15)"
   # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
   - arquivo: "saida/saida_qwen7b(d17)_teste.parquet"
     rotulo: "Qwen7B(d17)"
     alias: "D17"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d17)"
+  # --- D19: CL por etapas + unfreeze progressivo, FF 16b ---
+  - arquivo: "saida/saida_qwen7b(d19)_teste.parquet"
+    rotulo: "Qwen7B(d19)"
+    alias: "D19"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d19)"
+  # --- D20: Sem CL + unfreeze progressivo, FF 16b (dados completos) ---
+  - arquivo: "saida/saida_qwen7b(d20)_teste.parquet"
+    rotulo: "Qwen7B(d20)"
+    alias: "D20"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d20)"
+  # --- D21: FUSÃO: CL por etapas, LoRA 16b, fronteiras virtuais (espelho do D17) ---
+  - arquivo: "saida/saida_qwen7b(d21)_teste.parquet"
+    rotulo: "Qwen7B(d21)"
+    alias: "D21"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d21)"
+  # --- D22: FUSÃO: CL por etapas + gating de LR por camada, LoRA 16b ---
+  - arquivo: "saida/saida_qwen7b(d22)_teste.parquet"
+    rotulo: "Qwen7B(d22)"
+    alias: "D22"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d22)"
+  # --- D23: FUSÃO: gating de LR sem CL (dados completos), LoRA 16b ---
+  - arquivo: "saida/saida_qwen7b(d23)_teste.parquet"
+    rotulo: "Qwen7B(d23)"
+    alias: "D23"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d23)"
+  # --- D24: FUSÃO: CL granular (10 spans) + gating 10%, LoRA 4b (espelho do D12) ---
+  - arquivo: "saida/saida_qwen7b(d24)_teste.parquet"
+    rotulo: "Qwen7B(d24)"
+    alias: "D24"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d24)"
+  # --- D25: FUSÃO: CL granular (10 spans) + gating 10%, Full FT 16b ---
+  - arquivo: "saida/saida_qwen7b(d25)_teste.parquet"
+    rotulo: "Qwen7B(d25)"
+    alias: "D25"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d25)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:

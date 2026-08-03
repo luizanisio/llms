@@ -4,26 +4,24 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=summa-extracao-testes
+#SBATCH --job-name=summa-compara-testes
 
 # Partição de execução:
 #   gpu    — GPU exclusiva, VRAM completa (80 GB), sem limite de tempo padrão (produção)
 #   shared — GPU compartilhada via MPS, limite de 4 h, VRAM não reservada (testes)
 #SBATCH --partition=gpu
 
-# Recurso de GPU:
-#   gpu:1  — 1 GPU exclusiva (partição gpu)
-#   mps:50 — 50 % de compute compartilhado (partição shared — NÃO usar aqui)
+# Recurso de GPU (BERTScore e SBERT rodam em GPU no pré-cálculo das métricas)
 #SBATCH --gres=gpu:1
 
-# CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
-#SBATCH --cpus-per-task=8
+# CPUs disponíveis para o processo Python (ROUGE/Levenshtein em max_workers=40)
+#SBATCH --cpus-per-task=20
 
-# RAM do sistema (CPU). vLLM com 20 k prompts e contexto de 32 k precisa de folga
+# RAM do sistema (CPU)
 #SBATCH --mem=64G
 
 # Tempo máximo de execução (HH:MM:SS). Job é cancelado ao atingir o limite.
-#SBATCH --time=72:00:00
+#SBATCH --time=99:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
 #SBATCH --output=jobs_logs/%x_%j.out
@@ -48,10 +46,6 @@ SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat02
 
-# echo "Configurando variáveis de ambiente..."
-# export CUDA_HOME=$CONDA_PREFIX
-# export PATH=$CUDA_HOME/bin:$PATH
-
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
@@ -60,33 +54,30 @@ echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
 echo "==============================="
 
+# não roda o 03_compara_q235_full.yaml pois já fez a divisão de dificuldade e
+# incorporou a divisão de treino/teste/validação (ver job_compara_full.sh)
+#echo "1/8 - Executando 03_compara_q235_full.yaml..."
+#python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/03_compara_q235_full.yaml"
 
-PROTOCOLS=("b" "c" "d1" "d2" "d3" "d4" "d5" "d6" "d7" "d8" "d9" "d10" "d11" "d12" "d13" "d14" "d15" "d16" "d17" "d18" "d19" "d20" "d21" "d22" "d23" "d24" "d25")
+echo "2/8 - Executando 06_compara_experimentais.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_experimentais.yaml"
 
-for PROTOCOL in "${PROTOCOLS[@]}"; do
-    CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
-    ARQUIVO_SAIDA="$BASE_DIR/saida/saida_qwen7b(${PROTOCOL})_teste.parquet"
-                          
-    if [ -f "$ARQUIVO_SAIDA" ]; then
-        echo "=== Arquivo $ARQUIVO_SAIDA já existe. Pulando extração do protocolo $PROTOCOL. ==="
-        continue
-    fi
+echo "3/8 - Executando 06_compara_ablacoes.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ablacoes.yaml"
 
-    echo ""
-    echo "============================================================"
-    echo "=== Iniciando extração do protocolo: $PROTOCOL ==="
-    echo "=== Config: $CONFIG_FILE ==="
-    echo "=== Hora: $(date) ==="
-    echo "============================================================"
+echo "4/8 - Executando 06_compara_ordem_cl.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_cl.yaml"
 
-    # Roda a extração 20 vezes (útil para repescagem de erros)
-    for i in $(seq 1 20); do
-        echo "--- Rodada $i/20 para o protocolo $PROTOCOL --- $(date)"
-        python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
-    done
+echo "5/8 - Executando 06_compara_ordem_pt.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_pt.yaml"
 
-    echo "=== Protocolo $PROTOCOL finalizado: $(date) ==="
-done
+echo "6/8 - Executando 06_compara_fronteiras.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_fronteiras.yaml"
 
+echo "7/8 - Executando 06_compara_capacidade.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_capacidade.yaml"
+
+echo "8/8 - Executando 06_compara_todos.yaml..."
+python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_todos.yaml"
 
 echo "=== Job finalizado: $(date) ==="
