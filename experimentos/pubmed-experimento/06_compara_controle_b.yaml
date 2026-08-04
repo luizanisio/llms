@@ -10,6 +10,7 @@
 #     b       LoRA NF4 (4 bits), r = 16   ← baseline usado nas demais comparações
 #     b16     LoRA 16 bits,      r = 16   ← mesma capacidade, sem quantização
 #     b16r8   LoRA 16 bits,      r =  8   ← mesma precisão, metade do posto
+#     c       FF controle
 #
 #   Comparações-chave:
 #     b vs b16      → quanto do desempenho de B é limitado pelo erro de
@@ -75,6 +76,12 @@ modelos_comparacao:
     alias: "B16R8"
     familia: "Qwen-1.5B"
     pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(b16r8)"
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(c)_teste.parquet"
+    rotulo: "Qwen1.5B(c)"
+    alias: "C"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(c)"
 
 # Configuração das Métricas e Campos
 configuracao_comparacao:
