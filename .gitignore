@@ -260,3 +260,6 @@ src/_teste_estatistica/**
 src/dummy_input.csv
 experimentos/pubmed-experimento/README_ANOTACOES_UNFREEZE_FUSAO.md
 experimentos/summa-experimento/Plano_codificacao_fusao.md
+
+experimentos/summa-experimento/avaliacao_llm_humana/analise_llm/*
+experimentos/summa-experimento/avaliacao_llm_humana/saida_**

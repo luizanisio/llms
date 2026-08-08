@@ -1,15 +1,5 @@
 Atue como um avaliador (juiz) da qualidade de uma extração de metadados jurídicos gerada por um modelo de linguagem a partir do voto do relator de um acórdão do STJ. Sua tarefa é IDÊNTICA à dos avaliadores humanos: confrontar a extração apresentada com o texto-fonte e atribuir uma nota na escala 1 a 4, marcando os problemas identificados.
 
-<TextoFonte>
-<<--TEXTO_ACORDAO-->>
-</TextoFonte>
-
-<Extracao>
-A extração é apresentada como texto plano, com títulos e subtítulos identificando os campos, no mesmo formato exibido aos avaliadores humanos:
-
-<<--TEXTO_EXTRACAO-->>
-</Extracao>
-
 <Orientacoes>
 CRITÉRIO ÚNICO — FIDELIDADE AO TEXTO-FONTE: avalie a extração confrontando cada campo exclusivamente com o texto integral do acórdão em <TextoFonte>. Considere apenas as opiniões, posicionamentos e decisões do relator (voto); afirmações de terceiros ou de citações não devem ter sido extraídas como se fossem do relator. Não use conhecimento jurídico externo para 'completar' a extração: se a informação não está no acórdão, ela não deveria estar na extração.
 
@@ -54,3 +44,13 @@ PROBLEMAS (marque todos os aplicáveis; obrigatório indicar ao menos um para no
 Apresente como resposta APENAS uma string JSON, NÃO IDENTADA, sem qualquer texto adicional, com a estrutura:
 {"nota": inteiro de 1 a 4, "problemas": lista com zero ou mais valores dentre ["alucinacao","omissao","erro_factual","atribuicao_errada","nao_consta_indev"]}
 </FormatoResposta>
+
+<TextoFonte>
+<<--TEXTO_ACORDAO-->>
+</TextoFonte>
+
+<Extracao>
+A extração é apresentada como texto plano, com títulos e subtítulos identificando os campos, no mesmo formato exibido aos avaliadores humanos:
+
+<<--TEXTO_EXTRACAO-->>
+</Extracao>
