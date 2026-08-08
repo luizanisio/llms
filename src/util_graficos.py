@@ -457,9 +457,11 @@ class UtilGraficos:
         
         if not arquivo_saida:
             plt.show()
+            return None
         else:
             plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
             plt.close()
+            return arquivo_saida
 
     @classmethod
     def gerar_grafico_empilhado(cls, df: pd.DataFrame, titulo: str,
@@ -519,9 +521,11 @@ class UtilGraficos:
         
         if not arquivo_saida:
             plt.show()
+            return None
         else:
             plt.savefig(arquivo_saida, dpi=300, bbox_inches='tight')
             plt.close()
+            return arquivo_saida
 
     @classmethod
     def gerar_boxplot(cls, dados: dict, titulo: str, 
@@ -855,6 +859,307 @@ class UtilGraficos:
             plt.savefig(arquivo_saida, dpi=dpi, bbox_inches='tight')
             plt.close(fig)
             return arquivo_saida
+
+    # ==========================================================================
+    # Métodos adicionados para análise de escalas ordinais / LLM-as-a-Judge
+    # (aditivos: não alteram assinaturas nem comportamento dos métodos acima)
+    # ==========================================================================
+
+    @classmethod
+    def grafico_grade_distribuicao(cls, grade: dict,
+                                   categorias: list = None,
+                                   x: str = '', y: str = '',
+                                   titulo_geral: str = None,
+                                   arquivo_saida: str = None,
+                                   paleta_cores=Cores.RdYlGn,
+                                   percentual: bool = True,
+                                   mostrar_estatisticas: bool = True,
+                                   compartilhar_y: bool = True,
+                                   figsize_celula: tuple = (4.6, 3.4),
+                                   dpi: int = 200):
+        """
+        Gera uma grade (linhas x colunas) de distribuições de uma variável discreta.
+
+        Indicado para escalas ordinais (ex.: Likert 1--4), em que o histograma
+        contínuo (bins) distorce a leitura. Cada célula é um gráfico de barras
+        com uma barra por categoria, cor fixa por categoria em toda a grade.
+
+        Args:
+            grade: dict aninhado e ORDENADO {rotulo_linha: {rotulo_coluna: iterável_de_valores}}.
+                   Ex.: {'Rodada 1': {'gpt5': [4,3,4], 'qwen7b': [2,3,3]}, 'Rodada 2': {...}}
+            categorias: lista ordenada de categorias do eixo X. None = inferidas dos dados.
+            x: rótulo do eixo X
+            y: rótulo do eixo Y (padrão automático: '% de documentos' ou 'Documentos')
+            titulo_geral: título da figura (suptitle)
+            arquivo_saida: caminho para salvar (None = exibir)
+            paleta_cores: paleta aplicada às categorias (Cores ou string)
+            percentual: True = eixo Y em % dentro da célula; False = contagem absoluta
+            mostrar_estatisticas: exibe caixa com n, média e mediana em cada célula
+            compartilhar_y: usa o mesmo limite de Y em todas as células (comparação justa)
+            figsize_celula: (largura, altura) de cada célula em polegadas
+            dpi: DPI da imagem salva
+
+        Returns:
+            str: caminho do arquivo salvo, ou None
+        """
+        if not grade:
+            print("⚠️  Aviso: Sem dados para gerar grade de distribuição")
+            return None
+
+        linhas = list(grade.keys())
+        # colunas na ordem de aparição (preserva a ordem lógica dos modelos)
+        colunas = []
+        for lin in linhas:
+            for col in grade[lin].keys():
+                if col not in colunas:
+                    colunas.append(col)
+
+        # Categorias inferidas do conjunto completo, se não informadas
+        if categorias is None:
+            vistos = set()
+            for lin in linhas:
+                for col in colunas:
+                    vistos.update(pd.Series(list(grade[lin].get(col, []))).dropna().unique())
+            categorias = sorted(vistos)
+
+        nrows, ncols = len(linhas), len(colunas)
+        pal = paleta_cores.value if isinstance(paleta_cores, Cores) else paleta_cores
+        cores = sns.color_palette(pal, len(categorias))
+
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols,
+                                 figsize=(ncols * figsize_celula[0], nrows * figsize_celula[1]),
+                                 squeeze=False)
+
+        # 1ª passada: calcula alturas para permitir eixo Y compartilhado
+        alturas = {}
+        for i, lin in enumerate(linhas):
+            for j, col in enumerate(colunas):
+                s = pd.Series(list(grade[lin].get(col, []))).dropna()
+                cont = [(s == c).sum() for c in categorias]
+                total = sum(cont)
+                if percentual and total > 0:
+                    alturas[(i, j)] = ([100.0 * c / total for c in cont], s, total)
+                else:
+                    alturas[(i, j)] = ([float(c) for c in cont], s, total)
+        ymax = max([max(v[0]) if v[0] else 0 for v in alturas.values()] + [0]) * 1.20 or 1.0
+
+        for i, lin in enumerate(linhas):
+            for j, col in enumerate(colunas):
+                ax = axes[i][j]
+                valores, serie, total = alturas[(i, j)]
+
+                for spine in ax.spines.values():
+                    spine.set_edgecolor('#CCCCCC')
+                    spine.set_linewidth(1.0)
+
+                if total == 0:
+                    ax.text(0.5, 0.5, 'Sem dados disponíveis',
+                            ha='center', va='center', transform=ax.transAxes)
+                    ax.set_title(f"{lin} · {col}", fontsize=11, fontweight='bold')
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    continue
+
+                barras = ax.bar([str(c) for c in categorias], valores,
+                                color=cores, edgecolor='black', linewidth=0.5)
+
+                for bar, v in zip(barras, valores):
+                    if v <= 0:
+                        continue
+                    rotulo = f"{v:.1f}%" if percentual else str(int(v))
+                    ax.annotate(rotulo,
+                                xy=(bar.get_x() + bar.get_width() / 2, v),
+                                xytext=(0, 2), textcoords="offset points",
+                                ha='center', va='bottom', fontsize=8)
+
+                if mostrar_estatisticas:
+                    try:
+                        num = pd.to_numeric(serie, errors='coerce').dropna()
+                        nota = (f"n={total}\nx̄={num.mean():.2f}\nmed={num.median():.1f}"
+                                if len(num) else f"n={total}")
+                    except Exception:
+                        nota = f"n={total}"
+                    ax.text(0.02, 0.98, nota, transform=ax.transAxes, fontsize=8,
+                            va='top', ha='left',
+                            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+                ax.set_title(f"{lin} · {col}", fontsize=11, fontweight='bold')
+                ax.set_xlabel(x, fontsize=9)
+                ax.set_ylabel(y or ('% de itens' if percentual else 'Itens'), fontsize=9)
+                if compartilhar_y:
+                    ax.set_ylim(0, ymax)
+                ax.set_axisbelow(True)
+                ax.grid(axis='y', linestyle='--', alpha=0.4)
+
+        if titulo_geral:
+            fig.suptitle(titulo_geral, fontsize=14, fontweight='bold')
+            plt.tight_layout(rect=[0, 0, 1, 0.97])
+        else:
+            plt.tight_layout()
+
+        if not arquivo_saida:
+            plt.show()
+            return None
+        plt.savefig(arquivo_saida, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        return arquivo_saida
+
+    @classmethod
+    def gerar_heatmap(cls, df: pd.DataFrame, titulo: str,
+                      arquivo_saida: str = None,
+                      paleta_cores=Cores.RdYlGn,
+                      vmin: float = None, vmax: float = None,
+                      fmt: str = '.2f',
+                      xlabel: str = '', ylabel: str = '',
+                      rotulo_barra: str = '',
+                      anotar: bool = True,
+                      mascarar_diagonal: bool = False,
+                      rotacao_labels: int = 0,
+                      figsize: tuple = None,
+                      dpi: int = 200):
+        """
+        Gera um heatmap anotado a partir de um DataFrame (índice = linhas, colunas = colunas).
+
+        Útil para matrizes de concordância (Kappa), matrizes de confusão entre rodadas
+        e matrizes de p-valores de contrastes pareados.
+
+        Args:
+            df: DataFrame numérico (índice e colunas viram os eixos)
+            titulo: título do gráfico
+            arquivo_saida: caminho para salvar (None = exibir)
+            paleta_cores: paleta (Cores ou string aceita pelo seaborn)
+            vmin, vmax: limites da escala de cor (None = automático)
+            fmt: formato das anotações (ex.: '.2f', '.3f', 'd')
+            xlabel, ylabel: rótulos dos eixos
+            rotulo_barra: rótulo da barra de cores
+            anotar: exibe o valor em cada célula
+            mascarar_diagonal: oculta a diagonal principal (matrizes quadradas)
+            rotacao_labels: rotação dos rótulos do eixo X
+            figsize: tamanho da figura (None = calculado a partir da dimensão)
+            dpi: DPI da imagem salva
+
+        Returns:
+            str: caminho do arquivo salvo, ou None
+        """
+        if df is None or df.empty:
+            print(f"⚠️  Aviso: DataFrame vazio para heatmap: {titulo}")
+            return None
+
+        pal = paleta_cores.value if isinstance(paleta_cores, Cores) else paleta_cores
+        if figsize is None:
+            figsize = (max(6.0, 1.35 * len(df.columns) + 3.0),
+                       max(4.0, 0.75 * len(df.index) + 2.0))
+
+        mascara = None
+        if mascarar_diagonal and df.shape[0] == df.shape[1]:
+            import numpy as _np
+            mascara = _np.eye(df.shape[0], dtype=bool)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        sns.heatmap(df, ax=ax, cmap=pal, vmin=vmin, vmax=vmax,
+                    annot=anotar, fmt=fmt, mask=mascara,
+                    linewidths=0.6, linecolor='white',
+                    annot_kws={'fontsize': 9},
+                    cbar_kws={'label': rotulo_barra} if rotulo_barra else None)
+
+        ax.set_title(titulo, fontsize=12, fontweight='bold')
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.tick_params(axis='x', rotation=rotacao_labels)
+        ax.tick_params(axis='y', rotation=0)
+
+        plt.tight_layout()
+        if not arquivo_saida:
+            plt.show()
+            return None
+        plt.savefig(arquivo_saida, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        return arquivo_saida
+
+    @classmethod
+    def gerar_barras_ic(cls, categorias: list, valores: list,
+                        ic_inferior: list, ic_superior: list,
+                        titulo: str,
+                        ylabel: str = '', xlabel: str = '',
+                        arquivo_saida: str = None,
+                        paleta_cores=Cores.PuBuGn,
+                        linha_referencia: float = None,
+                        rotulo_referencia: str = '',
+                        ylim: tuple = None,
+                        formato_valor: str = '.3f',
+                        rotacao_labels: int = 0,
+                        figsize: tuple = (10, 6),
+                        dpi: int = 200):
+        """
+        Gera gráfico de barras com barras de erro assimétricas (intervalos de confiança).
+
+        Indicado para proporções com IC 95% (ex.: Wilson) em análises descritivas
+        de viabilidade, em que o limite inferior do IC é o critério de decisão.
+
+        Args:
+            categorias: rótulos do eixo X
+            valores: estimativas pontuais
+            ic_inferior: limites inferiores do IC (mesmo tamanho de `valores`)
+            ic_superior: limites superiores do IC
+            titulo: título do gráfico
+            ylabel, xlabel: rótulos dos eixos
+            arquivo_saida: caminho para salvar (None = exibir)
+            paleta_cores: paleta de cores
+            linha_referencia: valor de corte desenhado como linha tracejada (ex.: 0.80)
+            rotulo_referencia: rótulo da linha de referência na legenda
+            ylim: limites do eixo Y
+            formato_valor: formato do rótulo numérico sobre a barra
+            rotacao_labels: rotação dos rótulos do eixo X
+            figsize: tamanho da figura
+            dpi: DPI da imagem salva
+
+        Returns:
+            str: caminho do arquivo salvo, ou None
+        """
+        if not categorias or not valores:
+            print(f"⚠️  Aviso: Sem dados para barras com IC: {titulo}")
+            return None
+
+        erro_inf = [max(0.0, v - li) for v, li in zip(valores, ic_inferior)]
+        erro_sup = [max(0.0, ls - v) for v, ls in zip(valores, ic_superior)]
+
+        pal = paleta_cores.value if isinstance(paleta_cores, Cores) else paleta_cores
+        cores = sns.color_palette(pal, len(categorias))
+
+        fig, ax = plt.subplots(figsize=figsize)
+        barras = ax.bar([str(c) for c in categorias], valores, color=cores,
+                        edgecolor='black', linewidth=0.5,
+                        yerr=[erro_inf, erro_sup], capsize=6,
+                        error_kw=dict(ecolor='#333333', lw=1.2))
+
+        for bar, v, li in zip(barras, valores, ic_inferior):
+            ax.annotate(f"{v:{formato_valor}}\n(LI {li:{formato_valor}})",
+                        xy=(bar.get_x() + bar.get_width() / 2, v),
+                        xytext=(0, 12), textcoords="offset points",
+                        ha='center', va='bottom', fontsize=8)
+
+        if linha_referencia is not None:
+            ax.axhline(y=linha_referencia, color='red', linestyle='--', alpha=0.7,
+                       linewidth=1.5,
+                       label=rotulo_referencia or f"Referência = {linha_referencia:{formato_valor}}")
+            ax.legend(loc='lower right', frameon=True, framealpha=0.9, fontsize=9)
+
+        ax.set_title(titulo, fontsize=12, fontweight='bold')
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        if ylim:
+            ax.set_ylim(ylim)
+        ax.tick_params(axis='x', rotation=rotacao_labels)
+        ax.set_axisbelow(True)
+        ax.grid(axis='y', linestyle='--', alpha=0.5)
+
+        plt.tight_layout()
+        if not arquivo_saida:
+            plt.show()
+            return None
+        plt.savefig(arquivo_saida, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        return arquivo_saida
 
     @classmethod
     def _corrige_rotulos(cls, r):

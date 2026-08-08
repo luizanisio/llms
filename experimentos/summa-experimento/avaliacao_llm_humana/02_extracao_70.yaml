@@ -1,7 +1,7 @@
 # ==========================================================================
 # Configuração do Juiz LLM — Avaliação de Extrações SUMMA
-# Executar com: python ../../../src/util_vllm_batch.py --config 01_extracao_70.yaml
-# Visualizar com: python ../../../src/util_vllm_batch.py --config 01_extracao_70.yaml --view
+# Executar com: python ../../../src/util_vllm_batch.py --config 02_extracao_70.yaml
+# Visualizar com: python ../../../src/util_vllm_batch.py --config 02_extracao_70.yaml --view
 # ==========================================================================
 #
 # IMPORTANTE: Antes de executar este YAML, gere o parquet de entrada com:
@@ -17,8 +17,8 @@
 misc:
   pastas_base: 
     - /students/luiz.abatitucci/llms/experimentos/summa-experimento/avaliacao_llm_humana
-    - /mnt/d/wsl/llms/experimentos/summa-experimento/avaliacao_llm_humana
     - /mnt/d/wsl_dev/llms/experimentos/summa-experimento/avaliacao_llm_humana
+    - /mnt/c/wsl_git/gitluiz/llms/experimentos/summa-experimento/avaliacao_llm_humana
     - /opt/app-root/src/luiz/llms/experimentos/summa-experimento/avaliacao_llm_humana
   pastas_modelos:  
     - /students/luiz.abatitucci/models
@@ -27,18 +27,21 @@ misc:
 
 # --- Modelo ---
 modelo:
-  caminho: "oa:gpt5:h:l"
+  #caminho: "oa:gpt5:h:l"
+  caminho: "mt:sabia-4"
   lora: ""
 
 # --- Parâmetros de Geração ---
 # Resposta esperada: JSON compacto {"nota": int, "problemas": [...]}
 # temperature baixa para avaliação determinística/consistente
 geracao:
-  max_tokens: 512
+  max_tokens: 8192 # tokens de raciocínio contam
   temperature: 0.01
   top_k: 2
   top_p: 0.9
   batch_size: 20
+  tentativas: 20      # tentativas de extração (em caso de erro, tenta novamente apenas para os que tiveram falha)
+  pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
 
 # --- Entrada ---
 # O parquet de entrada já contém o prompt completo na coluna 'texto'.

@@ -122,6 +122,9 @@ vllm:
 # batch_size: quantos prompts enviar por vez (controla salvamento parcial). Opcional.
 #   Para APIs remotas: define o número de chamadas concorrentes (threads).
 # max_itens: limite máximo de itens a processar (útil para testes). Opcional.
+# tentativas: número de rodadas de reprocessamento para itens com erro (padrão: 1 = sem retry).
+#   Após cada rodada, apenas os itens que falharam são reprocessados.
+# pausa_tentativas: segundos de pausa entre rodadas de tentativas (padrão: 5).
 # think: controle de reasoning para APIs remotas (opcional).
 #   Valores: "low", "medium", "high", "minimal" ou combinação "high:medium" (reasoning:verbosity)
 #   Deixe vazio ou omita para desabilitar reasoning.
@@ -132,6 +135,8 @@ geracao:
   top_p: 0.9
   # batch_size: 64
   # max_itens: 10
+  # tentativas: 3
+  # pausa_tentativas: 5
   # think: "low"
 
 # --- Entrada ---
@@ -275,6 +280,8 @@ def carregar_config(yaml_path: str) -> Dict[str, Any]:
     geracao.setdefault("top_p", 0.9)
     geracao.setdefault("batch_size", 64)
     geracao.setdefault("max_itens", 0)
+    geracao.setdefault("tentativas", 1)
+    geracao.setdefault("pausa_tentativas", 5)
     # think: controle de reasoning para APIs remotas (None = sem reasoning)
     if "think" not in geracao or geracao["think"] is None:
         geracao["think"] = None
@@ -1158,6 +1165,17 @@ class BatchLog:
         )
         self._escrever(bloco)
 
+    def registrar_tentativa(
+        self, tentativa: int, total: int, pendentes: int
+    ) -> None:
+        bloco = (
+            "\n---------------------------------------------\n"
+            f"🔁 Tentativa {tentativa}/{total}\n"
+            f"Itens pendentes: {pendentes}\n"
+            f"Início: {self._agora()}\n"
+        )
+        self._escrever(bloco)
+
     def registrar_final(
         self,
         itens_processados: int,
@@ -1484,6 +1502,33 @@ def processar_batch(
         )
 
     return stats
+
+
+def _acumular_stats(
+    acumulado: Optional[Dict[str, Any]], novo: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Combina stats de múltiplas rodadas de tentativas.
+
+    Soma contadores numéricos e tempos. Na primeira chamada (acumulado=None),
+    retorna uma cópia do novo.
+
+    Args:
+        acumulado: stats acumulados até agora (None na primeira rodada)
+        novo: stats da rodada atual
+
+    Returns:
+        Dicionário com stats combinados
+    """
+    if acumulado is None:
+        return dict(novo)
+    for chave in (
+        "processados_ok", "processados_erro", "tokens_entrada",
+        "tokens_saida", "corrigidos", "erros_mantidos", "erros_novos",
+    ):
+        acumulado[chave] = acumulado.get(chave, 0) + novo.get(chave, 0)
+    acumulado["tempo_total"] = acumulado.get("tempo_total", 0) + novo.get("tempo_total", 0)
+    return acumulado
+
 
 # ---------------------------------------------------------------------------
 # Processamento em Batch via API remota (or:, tg:, vl:, oa:)
@@ -2338,6 +2383,11 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
     print(f"   Batch size: {cfg_geracao.get('batch_size', 64)}")
     if cfg_geracao.get('max_itens', 0) > 0:
         print(f"   Max itens: {cfg_geracao['max_itens']}")
+    tentativas = cfg_geracao.get('tentativas', 1)
+    pausa_tentativas = cfg_geracao.get('pausa_tentativas', 5)
+    if tentativas > 1:
+        print(f"   Tentativas: {tentativas}")
+        print(f"   Pausa entre tentativas: {pausa_tentativas}s")
     if modo_api and cfg_geracao.get('think'):
         print(f"   Think: {cfg_geracao['think']}")
 
@@ -2354,101 +2404,103 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         itens_concluidos=len(chaves_ok),
     )
 
-    # --- Processamento: API remota ou vLLM local ---
-    if modo_api:
-        # Modo API remota — não precisa de engine vLLM
-        try:
-            stats = processar_batch_api(
-                itens_pendentes, config,
-                batch_log=batch_log,
-                chaves_erro_anteriores=chaves_erro,
-            )
+    # --- Processamento com loop de tentativas ---
+    stats_acumulado = None
+    tentativa_realizada = 0
+    engine = None
 
-            # --- Resumo final ---
-            print("\n" + "=" * 70)
-            print("📊 RESUMO FINAL")
-            print("=" * 70)
-            print(f"   ✅ Processados com sucesso: {stats['processados_ok']}")
-            if stats.get('corrigidos', 0) > 0:
-                print(f"   🔧 Erros corrigidos: {stats['corrigidos']}")
-            if stats["processados_erro"] > 0:
-                print(f"   ❌ Processados com erro: {stats['processados_erro']}")
-            if stats.get('erros_mantidos', 0) > 0:
-                print(f"   🔁 Erros mantidos: {stats['erros_mantidos']}")
-            if stats.get('erros_novos', 0) > 0:
-                print(f"   🆕 Erros novos: {stats['erros_novos']}")
-            print(f"   🔢 Tokens entrada: {stats['tokens_entrada']:,}")
-            print(f"   🔢 Tokens saída: {stats['tokens_saida']:,}")
-            print(f"   ⏱️  Tempo total: {_formatar_tempo(stats['tempo_total'])}")
-            if stats["processados_ok"] > 0 and stats["tempo_total"] > 0:
-                throughput = stats["tokens_saida"] / stats["tempo_total"]
-                print(f"   🚀 Throughput: {throughput:.0f} tokens/s")
-            print(f"   💾 Saída: {config['saida']['arquivo']}")
-
-            # Gera resumo final e gráficos
-            _gerar_resumo_e_graficos(config, stats)
-
-            print("=" * 70)
-
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Interrompido pelo usuário.")
-            print("   Os resultados parciais foram salvos.")
-            print(f"   Execute novamente para continuar de onde parou.")
-        except Exception as e:
-            print(f"\n❌ Erro: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        # Modo vLLM local
-        engine = None
-        try:
+    try:
+        # Inicializa engine vLLM apenas no modo local (antes do loop)
+        if not modo_api:
             engine, tokenizer = inicializar_engine(config)
 
-            # --- Processa ---
-            stats = processar_batch(
-                engine, tokenizer, itens_pendentes, config,
-                batch_log=batch_log,
-                chaves_erro_anteriores=chaves_erro,
-            )
+        for tentativa_atual in range(1, tentativas + 1):
+            tentativa_realizada = tentativa_atual
 
-            # --- Resumo final ---
-            print("\n" + "=" * 70)
-            print("📊 RESUMO FINAL")
-            print("=" * 70)
-            print(f"   ✅ Processados com sucesso: {stats['processados_ok']}")
-            if stats.get('corrigidos', 0) > 0:
-                print(f"   🔧 Erros corrigidos: {stats['corrigidos']}")
-            if stats["processados_erro"] > 0:
-                print(f"   ❌ Processados com erro: {stats['processados_erro']}")
-            if stats.get('erros_mantidos', 0) > 0:
-                print(f"   🔁 Erros mantidos: {stats['erros_mantidos']}")
-            if stats.get('erros_novos', 0) > 0:
-                print(f"   🆕 Erros novos: {stats['erros_novos']}")
-            print(f"   🔢 Tokens entrada: {stats['tokens_entrada']:,}")
-            print(f"   🔢 Tokens saída: {stats['tokens_saida']:,}")
-            print(f"   ⏱️  Tempo total: {_formatar_tempo(stats['tempo_total'])}")
-            if stats["processados_ok"] > 0:
-                throughput = stats["tokens_saida"] / stats["tempo_total"]
-                print(f"   🚀 Throughput: {throughput:.0f} tokens/s")
-            print(f"   💾 Saída: {config['saida']['arquivo']}")
+            if tentativa_atual > 1:
+                # Recarrega chaves OK e com erro para a nova rodada
+                chaves_ok = carregar_saida_existente(config)
+                chaves_erro = carregar_chaves_com_erro(config)
+                itens_pendentes = [item for item in itens if item["chave"] not in chaves_ok]
 
-            # Gera resumo final e gráficos
-            _gerar_resumo_e_graficos(config, stats)
+                if not itens_pendentes:
+                    print(f"\n✅ Todos os itens já processados com sucesso!")
+                    break
 
-            print("=" * 70)
+                print(
+                    f"\n🔁 Tentativa {tentativa_atual}/{tentativas} — "
+                    f"{len(itens_pendentes)} itens com erro para reprocessar "
+                    f"(pausa de {pausa_tentativas}s)"
+                )
+                batch_log.registrar_tentativa(
+                    tentativa_atual, tentativas, len(itens_pendentes)
+                )
+                time.sleep(pausa_tentativas)
 
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Interrompido pelo usuário.")
-            print("   Os resultados parciais foram salvos.")
-            print(f"   Execute novamente para continuar de onde parou.")
-        except Exception as e:
-            print(f"\n❌ Erro: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            if engine is not None:
-                print("\n🛑 Finalizando engine vLLM...")
-                finalizar_engine(engine)
+            # Processamento da rodada
+            if modo_api:
+                stats = processar_batch_api(
+                    itens_pendentes, config,
+                    batch_log=batch_log,
+                    chaves_erro_anteriores=chaves_erro,
+                )
+            else:
+                stats = processar_batch(
+                    engine, tokenizer, itens_pendentes, config,
+                    batch_log=batch_log,
+                    chaves_erro_anteriores=chaves_erro,
+                )
+
+            # Acumula stats de todas as rodadas
+            stats_acumulado = _acumular_stats(stats_acumulado, stats)
+
+            # Se não houve erros nesta rodada, não precisa continuar
+            if stats["processados_erro"] == 0:
+                break
+
+        # --- Resumo final ---
+        if stats_acumulado is None:
+            stats_acumulado = stats
+
+        print("\n" + "=" * 70)
+        print("📊 RESUMO FINAL")
+        print("=" * 70)
+        if tentativas > 1:
+            print(f"   🔁 Tentativas realizadas: {tentativa_realizada}/{tentativas}")
+        print(f"   ✅ Processados com sucesso: {stats_acumulado['processados_ok']}")
+        if stats_acumulado.get('corrigidos', 0) > 0:
+            print(f"   🔧 Erros corrigidos: {stats_acumulado['corrigidos']}")
+        if stats_acumulado["processados_erro"] > 0:
+            print(f"   ❌ Processados com erro: {stats_acumulado['processados_erro']}")
+        if stats_acumulado.get('erros_mantidos', 0) > 0:
+            print(f"   🔁 Erros mantidos: {stats_acumulado['erros_mantidos']}")
+        if stats_acumulado.get('erros_novos', 0) > 0:
+            print(f"   🆕 Erros novos: {stats_acumulado['erros_novos']}")
+        print(f"   🔢 Tokens entrada: {stats_acumulado['tokens_entrada']:,}")
+        print(f"   🔢 Tokens saída: {stats_acumulado['tokens_saida']:,}")
+        print(f"   ⏱️  Tempo total: {_formatar_tempo(stats_acumulado['tempo_total'])}")
+        if stats_acumulado["processados_ok"] > 0 and stats_acumulado["tempo_total"] > 0:
+            throughput = stats_acumulado["tokens_saida"] / stats_acumulado["tempo_total"]
+            print(f"   🚀 Throughput: {throughput:.0f} tokens/s")
+        print(f"   💾 Saída: {config['saida']['arquivo']}")
+
+        # Gera resumo final e gráficos
+        _gerar_resumo_e_graficos(config, stats_acumulado)
+
+        print("=" * 70)
+
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Interrompido pelo usuário.")
+        print("   Os resultados parciais foram salvos.")
+        print(f"   Execute novamente para continuar de onde parou.")
+    except Exception as e:
+        print(f"\n❌ Erro: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if engine is not None:
+            print("\n🛑 Finalizando engine vLLM...")
+            finalizar_engine(engine)
 
 
 if __name__ == "__main__":
