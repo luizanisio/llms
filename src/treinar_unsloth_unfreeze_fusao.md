@@ -151,6 +151,10 @@ Válido com `fusao.tipo: "lora"` **e** `"full"`.
 **Custo:** o backward computa gradientes de **todos** os parâmetros desde o step 0 (LR=0 não
 economiza compute). Irrelevante em LoRA; aceitável em FF no 1.5B.
 
+### 3.4 Por que o LR zero simula o congelamento — e onde a simulação difere
+
+No modo segmentado com `tipo: "full"`, o congelamento é **real**: `requires_grad=False` exclui os parâmetros do grafo computacional, de modo que nenhum gradiente é calculado, nenhum estado de otimizador é alocado e nenhuma atualização de peso ocorre — o parâmetro é tratado como constante pelo autograd. Na transição entre etapas, novos parâmetros são descongelados e um **novo otimizador** é instanciado, o que implica momentos Adam zerados e a necessidade de warmup para reconstruir o pré-condicionador. No modo fundido, o mecanismo é diferente: todos os parâmetros treináveis entram no otimizador desde o step 0, mas o gate multiplica a learning rate do grupo por zero (`gate(t)=0`), o que anula a atualização `θ ← θ − lr·m̂/√v̂` sem alterar o cálculo de `m̂` e `v̂`. Isso significa que o backward ainda computa gradientes para esses parâmetros (custo de compute idêntico ao full sem freeze), os momentos do Adam acumulam estatísticas mesmo durante o "sono", e ao acordar o grupo já possui um pré-condicionador aquecido — eliminando a descontinuidade de fronteira que o segmentado introduz. Em LoRA, a distinção é mais sutil: no segmentado, o congelamento real de camadas não se aplica (o validador rejeita `unfreeze_layers_from` em etapas LoRA, pois a capacidade já é restrita pelo rank dos adapters); no fundido, o gating de LR agrupa os **adapters** por índice de camada do modelo base, permitindo o descongelamento progressivo dos adapters sem tocar na base — algo que o modo segmentado não suporta com LoRA. A consequência prática é que o modo fundido sacrifica economia de memória (todos os estados de otimizador existem desde o início) em troca de continuidade total na otimização.
+
 ---
 
 ## 4. O bloco `fusao` — referência de configuração
