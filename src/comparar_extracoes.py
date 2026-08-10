@@ -291,9 +291,9 @@ def extrair_campos_unicos(config_metricas):
 # MAIN
 # ============================================================================
 
-def resolver_caminho(caminho_relativo, base_dir, pasta_base=""):
+def resolver_caminho(caminho_relativo, base_dir, pasta_base="", obrigatorio=True):
     """Resolve caminhos relativos baseado no diretório do arquivo de configuração ou pasta_base."""
-    return util.Util.resolver_caminho(caminho_relativo, base_dir, pasta_base)
+    return util.Util.resolver_caminho(caminho_relativo, base_dir, pasta_base, obrigatorio=obrigatorio)
 
 # As funções de geração de gráficos foram extraídas para comparar_extracoes_graficos.py
 
