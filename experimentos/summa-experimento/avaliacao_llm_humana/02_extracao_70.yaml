@@ -28,7 +28,11 @@ misc:
 # --- Modelo ---
 modelo:
   #caminho: "oa:gpt5:h:l"
-  caminho: "mt:sabia-4"
+  #caminho: "mt:sabia-4"
+  #caminho: "or:nvidia/nemotron-3-ultra-550b-a55b"
+  #caminho: "or:z-ai/glm-5.2"
+  caminho: "tg:zai-org/GLM-5.2"
+  #caminho: "tg:MiniMaxAI/MiniMax-M3"
   lora: ""
 
 # --- Parâmetros de Geração ---
@@ -57,5 +61,5 @@ entrada:
 # --- Saída ---
 # tipo_saida: json — parseia automaticamente a resposta como JSON
 saida:
-  arquivo: "./saida/saida_juiz_llm.parquet"
+  arquivo: "./saida_glm_01/saida_juiz_llm.parquet"
   tipo_saida: "json"
