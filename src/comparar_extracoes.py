@@ -222,19 +222,25 @@ def configurar_metricas(config_yaml, base_dir="", pasta_modelos_ativa=""):
         'bertscore': (a_bert, v_bert)
     }
     
-    # Resolve modelos locais
+    # Resolve modelos locais (tenta encontrar cópia local; se não existir, será baixado do HuggingFace)
     if config_final['modelos_sbert']:
         for k, v in config_final['modelos_sbert'].items():
             if v and not os.path.isabs(v) and not v.startswith(("hf://", "huggingface://")):
-                v_res = resolver_caminho(v, base_dir, pasta_modelos_ativa)
+                v_res = resolver_caminho(v, base_dir, pasta_modelos_ativa, obrigatorio=False)
                 if os.path.exists(v_res):
                     config_final['modelos_sbert'][k] = v_res
+                    print(f"   ✅ SBERT [{k}]: cópia local encontrada em {v_res}")
+                else:
+                    print(f"   ℹ️  SBERT [{k}]: modelo '{v}' não encontrado localmente, será baixado do HuggingFace Hub")
                     
     v_bert = config_final['modelo_bertscore']
     if v_bert and not os.path.isabs(v_bert) and not v_bert.startswith(("hf://", "huggingface://")):
-        v_res = resolver_caminho(v_bert, base_dir, pasta_modelos_ativa)
+        v_res = resolver_caminho(v_bert, base_dir, pasta_modelos_ativa, obrigatorio=False)
         if os.path.exists(v_res):
             config_final['modelo_bertscore'] = v_res
+            print(f"   ✅ BERTScore: cópia local encontrada em {v_res}")
+        else:
+            print(f"   ℹ️  BERTScore: modelo '{v_bert}' não encontrado localmente, será baixado do HuggingFace Hub")
     
     
     # Ajuste para teste rápido (desativa BERTScore e SBERT)

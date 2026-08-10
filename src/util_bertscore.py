@@ -478,11 +478,14 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
                 s.score = thread_safe_score
 
         # Cria novo scorer
+        _modelo_id = model_type or f"lang={lang}"
+        _is_local = model_type and os.path.isdir(model_type)
+        _origem = "local" if _is_local else "HuggingFace Hub"
         try:
             # SOLUÇÃO: Usa BERTScorer que carrega o modelo corretamente
             # Se model_type foi especificado, usa-o em vez de lang
             if model_type:
-                print(f"🔧 [BERTScore] Carregando modelo personalizado: {model_type}")
+                print(f"🔧 [BERTScore] Carregando modelo personalizado: {model_type} (fonte: {_origem})")
                 
                 # Modelos customizados precisam ter 'num_layers' explícito se não 
                 # estiverem na lista interna do bert_score
@@ -515,35 +518,63 @@ def _get_bert_scorer(lang='pt', device=None, model_type=None):
             # Armazena metadados para verificação
             scorer._cache_key = cache_key
             _bert_scorer_cache[cache_key] = scorer
+            if _is_local:
+                print(f"✅ [BERTScore] Modelo carregado (local): {_modelo_id}")
+            else:
+                print(f"✅ [BERTScore] Modelo carregado (baixado do HuggingFace Hub): {_modelo_id}")
             return scorer
         except Exception as e:
-            # Fallback para CPU em caso de erro
+            # Fallback para CPU em caso de erro de device
             if _device != 'cpu':
                 print(f"⚠️ Erro ao carregar BERTScorer em {_device}, tentando CPU: {str(e)[:100]}")
                 cache_key_cpu = f"{model_type or lang}_cpu"
-                if model_type:
-                    scorer = BERTScorer(
-                        model_type=model_type,
-                        num_layers=num_layers, # Usa o mesmo num_layers extraído acima
-                        device='cpu',
-                        rescale_with_baseline=False,
-                        batch_size=32
-                    )
-                else:
-                    scorer = BERTScorer(
-                        lang=lang,
-                        device='cpu',
-                        rescale_with_baseline=False,
-                        batch_size=32
-                    )
-                
-                _fix_tokenizer_max_length(scorer)
-                _make_thread_safe(scorer)
-                
-                scorer._cache_key = cache_key_cpu
-                _bert_scorer_cache[cache_key_cpu] = scorer
-                return scorer
-            raise
+                try:
+                    if model_type:
+                        scorer = BERTScorer(
+                            model_type=model_type,
+                            num_layers=num_layers, # Usa o mesmo num_layers extraído acima
+                            device='cpu',
+                            rescale_with_baseline=False,
+                            batch_size=32
+                        )
+                    else:
+                        scorer = BERTScorer(
+                            lang=lang,
+                            device='cpu',
+                            rescale_with_baseline=False,
+                            batch_size=32
+                        )
+                    
+                    _fix_tokenizer_max_length(scorer)
+                    _make_thread_safe(scorer)
+                    
+                    scorer._cache_key = cache_key_cpu
+                    _bert_scorer_cache[cache_key_cpu] = scorer
+                    print(f"✅ [BERTScore] Modelo carregado em CPU (fallback): {_modelo_id}")
+                    return scorer
+                except Exception as e2:
+                    print(f"\n❌ ERRO FATAL: Não foi possível carregar o modelo BERTScore '{_modelo_id}'.")
+                    if _is_local:
+                        print(f"   O caminho local existe mas o modelo não pôde ser carregado.")
+                    else:
+                        print(f"   O modelo não foi encontrado localmente e não pôde ser baixado do HuggingFace Hub.")
+                        print(f"   Verifique: 1) Nome do modelo correto  2) Conexão com a internet  3) Acesso ao HuggingFace")
+                    print(f"   Erro original ({_device}): {e}")
+                    print(f"   Erro fallback (CPU): {e2}")
+                    raise RuntimeError(
+                        f"Não foi possível carregar o modelo BERTScore '{_modelo_id}': {e2}"
+                    ) from e2
+            # Já estava em CPU ou device inválido — erro fatal
+            print(f"\n❌ ERRO FATAL: Não foi possível carregar o modelo BERTScore '{_modelo_id}'.")
+            if _is_local:
+                print(f"   O caminho local existe mas o modelo não pôde ser carregado.")
+            else:
+                print(f"   O modelo não foi encontrado localmente e não pôde ser baixado do HuggingFace Hub.")
+                print(f"   Verifique: 1) Nome do modelo correto  2) Conexão com a internet  3) Acesso ao HuggingFace")
+            print(f"   Erro original: {e}")
+            raise RuntimeError(
+                f"Não foi possível carregar o modelo BERTScore '{_modelo_id}': {e}"
+            ) from e
 
 class BERTScoreCache:
     """

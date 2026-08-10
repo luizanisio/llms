@@ -63,6 +63,8 @@ class UtilPandasExcel:
     RE_MAIUSCULAS = re.compile('[A-Z]')
 
     def __str_size__(self,texto):
+        if not isinstance(texto, str):
+            texto = str(texto) if texto is not None and texto == texto else ''
         sz = 0.0
         for lt in texto:
             sz = sz + (1.33 if self.RE_MAIUSCULAS.search(lt) else 1)
@@ -184,8 +186,11 @@ class UtilPandasExcel:
                     # Obtém nome da coluna de forma segura
                     col_name = str(series.name) if hasattr(series, 'name') else str(col)
                     
+                    series_max = series.astype(str).map(self.__str_size__, na_action='ignore').max()  # len of largest item
+                    if pd.isna(series_max):
+                        series_max = 0
                     max_len = max((
-                        series.astype(str).map(self.__str_size__).max(),  # len of largest item
+                        series_max,
                         self.__str_size__(col_name)  # len of column name/header
                         )) + 2  # adding a little extra space
                     if (columns_titles is not None) and (len(columns_titles)>=idx-1):

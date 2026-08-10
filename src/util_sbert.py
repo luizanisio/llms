@@ -547,9 +547,26 @@ class BERTScoreLike:
         import threading
         self._instance_lock = threading.Lock()
         self.nome_modelo = self.MODELOS.get(modelo.lower(), modelo)
-        print(f"Carregando modelo SBERT: {self.nome_modelo} ...")
-        self.model = SentenceTransformer(self.nome_modelo)
-        print("Modelo SBERT carregado.")
+        _is_local = os.path.isdir(self.nome_modelo)
+        _origem = "local" if _is_local else "HuggingFace Hub"
+        print(f"Carregando modelo SBERT: {self.nome_modelo} (fonte: {_origem}) ...")
+        try:
+            self.model = SentenceTransformer(self.nome_modelo)
+        except Exception as e:
+            print(f"\n❌ ERRO FATAL: Não foi possível carregar o modelo SBERT '{self.nome_modelo}'.")
+            if _is_local:
+                print(f"   O caminho local existe mas o modelo não pôde ser carregado.")
+            else:
+                print(f"   O modelo não foi encontrado localmente e não pôde ser baixado do HuggingFace Hub.")
+                print(f"   Verifique: 1) Nome do modelo correto  2) Conexão com a internet  3) Acesso ao HuggingFace")
+            print(f"   Erro original: {e}")
+            raise RuntimeError(
+                f"Não foi possível carregar o modelo SBERT '{self.nome_modelo}' ({_origem}): {e}"
+            ) from e
+        if _is_local:
+            print(f"✅ Modelo SBERT carregado (local): {self.nome_modelo}")
+        else:
+            print(f"✅ Modelo SBERT carregado (baixado do HuggingFace Hub): {self.nome_modelo}")
         self._emb_cache: Dict[str, np.ndarray] = {}
 
     # -------------------------
