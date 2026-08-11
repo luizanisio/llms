@@ -61,7 +61,7 @@ Uso
         --alias qwen7b=a --saida analise
     python realizar_avaliacoes.py --pastas saida_01 saida_02 saida_03
 
-Requisitos: pandas, numpy, scipy, pyarrow; matplotlib e ``util_graficos`` para as
+Requisitos: pandas, numpy, scipy, pyarrow, scikit-learn, statsmodels; matplotlib e ``util_graficos`` para as
 figuras (a estatística roda mesmo sem eles).
 
 Autor: Luiz Anísio
@@ -86,6 +86,37 @@ import pandas as pd
 from scipy import stats
 
 import realizar_avaliacoes_graficos as viz
+
+# -----------------------------------------------------------------------------
+# Bibliotecas de referência
+# -----------------------------------------------------------------------------
+# Os coeficientes e testes com implementação consolidada em pacotes amplamente
+# usados são calculados por eles, favorecendo a replicabilidade por terceiros.
+# As definições operacionais (fórmulas internas) estão em
+# `realizar_avaliacoes_teste.py`, que verifica que coincidem com os pacotes.
+
+from sklearn.metrics import cohen_kappa_score
+from statsmodels.stats.contingency_tables import mcnemar as sm_mcnemar
+from statsmodels.stats.multitest import multipletests
+from statsmodels.stats.proportion import proportion_confint
+
+
+def dependencias() -> dict:
+    """Origem efetiva de cada estatística nesta execução (vai ao relatório)."""
+    import sklearn
+    import statsmodels
+    sk = sklearn.__version__
+    sm = statsmodels.__version__
+    return {
+        "Kappa de Cohen ponderado": f"scikit-learn {sk}",
+        "Correção de Holm": f"statsmodels {sm}",
+        "Teste de McNemar": f"statsmodels {sm}",
+        "IC de Wilson": f"statsmodels {sm}",
+        "Kappa de Fleiss ponderado": "implementação interna (sem equivalente "
+                                     "ponderado em pacote consolidado)",
+        "Friedman, Wilcoxon, Shapiro-Wilk": f"scipy {__import__('scipy').__version__}",
+        "Bootstrap (reamostragem de documentos)": "implementação interna",
+    }
 
 # =============================================================================
 # 1. Configuração
@@ -461,7 +492,13 @@ def fleiss_ponderado(notas: np.ndarray, categorias: list) -> dict:
 
 
 def cohen_ponderado(a: Iterable, b: Iterable, categorias: list) -> dict:
-    """Kappa de Cohen ponderado (2 avaliadores) com pesos quadráticos."""
+    """Kappa de Cohen ponderado (2 avaliadores) com pesos quadráticos.
+
+    O coeficiente vem de ``sklearn.metrics.cohen_kappa_score``. A concordância
+    observada (``p_o``) e a esperada por acaso (``p_e``) são calculadas aqui
+    porque a API do sklearn não as expõe separadamente, e o relatório as
+    reporta ao lado do κ.
+    """
     a, b = np.asarray(list(a)), np.asarray(list(b))
     vazio = {"p_o": np.nan, "p_e": np.nan, "kappa": np.nan, "n": len(a)}
     if len(a) < 2 or len(a) != len(b):
@@ -481,7 +518,13 @@ def cohen_ponderado(a: Iterable, b: Iterable, categorias: list) -> dict:
     pesos = _matriz_pesos(k)
     p_o = float((pesos * observado).sum())
     p_e = float((pesos * esperado).sum())
-    kappa = np.nan if np.isclose(p_e, 1.0) else float((p_o - p_e) / (1.0 - p_e))
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        try:
+            kappa = float(cohen_kappa_score(a, b, labels=list(categorias),
+                                            weights="quadratic"))
+        except (ValueError, ZeroDivisionError):
+            kappa = np.nan
     return {"p_o": p_o, "p_e": p_e, "kappa": kappa, "n": len(a)}
 
 
@@ -562,30 +605,29 @@ def ic_bootstrap(dados: pd.DataFrame, estatistica: Callable[[pd.DataFrame], floa
 # =============================================================================
 
 def ic_wilson(sucessos: int, total: int, confianca: float = 0.95) -> tuple:
-    """Intervalo de confiança de Wilson para uma proporção."""
+    """Intervalo de confiança de Wilson para uma proporção.
+
+    Calculado por ``statsmodels.stats.proportion.proportion_confint``.
+    """
     if total == 0:
         return (np.nan, np.nan, np.nan)
-    z = stats.norm.ppf(1 - (1 - confianca) / 2)
     p = sucessos / total
-    denom = 1 + z ** 2 / total
-    centro = (p + z ** 2 / (2 * total)) / denom
-    margem = z * np.sqrt(p * (1 - p) / total + z ** 2 / (4 * total ** 2)) / denom
-    return (p, max(0.0, centro - margem), min(1.0, centro + margem))
+    inferior, superior = proportion_confint(sucessos, total,
+                                            alpha=1 - confianca, method="wilson")
+    return (p, float(inferior), float(superior))
 
 
 def correcao_holm(p_valores: Sequence[float]) -> list:
-    """Correção de Holm-Bonferroni (step-down), preservando a monotonicidade."""
+    """Correção de Holm-Bonferroni (step-down), preservando a monotonicidade.
+
+    Calculada por ``statsmodels.stats.multitest.multipletests``.
+    p-valores ausentes são tratados como 1,0 antes da correção.
+    """
     m = len(p_valores)
     if m == 0:
         return []
     limpos = [1.0 if (v is None or v != v) else float(v) for v in p_valores]
-    ordem = np.argsort(limpos)
-    ajustados = np.empty(m, dtype=float)
-    corrente = 0.0
-    for posicao, indice in enumerate(ordem):
-        corrente = max(corrente, (m - posicao) * limpos[indice])
-        ajustados[indice] = min(1.0, corrente)
-    return ajustados.tolist()
+    return [float(v) for v in multipletests(limpos, method="holm")[1]]
 
 
 def interpretar_efeito(r: float) -> str:
@@ -654,7 +696,9 @@ def mcnemar(a_binario, b_binario) -> dict:
     """Teste de McNemar para viés direcional em classificação binária pareada.
 
     Usa o teste binomial exato quando há poucos discordantes (< 25), que é o
-    cenário esperado com um Gold Set de dezenas de itens.
+    cenário esperado com um Gold Set de dezenas de itens; acima disso, aproximação
+    qui-quadrado com correção de continuidade. Executado por
+    ``statsmodels.stats.contingency_tables.mcnemar``.
     """
     a = np.asarray(list(a_binario)).astype(bool)
     b = np.asarray(list(b_binario)).astype(bool)
@@ -666,12 +710,12 @@ def mcnemar(a_binario, b_binario) -> dict:
     if discordantes == 0:
         saida.update(p=1.0, metodo="sem discordâncias")
         return saida
-    if discordantes < 25:
-        saida.update(p=float(stats.binomtest(b01, discordantes, 0.5).pvalue),
-                     metodo="binomial exato")
-    else:
-        estat = (abs(b01 - b10) - 1) ** 2 / discordantes
-        saida.update(p=float(stats.chi2.sf(estat, 1)), metodo="qui-quadrado com correção")
+
+    exato = discordantes < 25
+    metodo = "binomial exato" if exato else "qui-quadrado com correção"
+    tabela = [[int(np.sum(a & b)), b01], [b10, int(np.sum(~a & ~b))]]
+    resultado = sm_mcnemar(tabela, exact=exato, correction=not exato)
+    saida.update(p=float(resultado.pvalue), metodo=metodo)
     return saida
 
 
@@ -1814,17 +1858,29 @@ def _tabela_decisao(gates: list, lateral: bool = False) -> pd.DataFrame:
 
 def _bloco_reprodutibilidade() -> str:
     """Rodapé com versões e convenções usadas."""
+    import sklearn
+    import statsmodels
     return "\n".join([
         "---\n", "## Reprodutibilidade\n",
         "| Item | Valor |", "|---|---|",
         f"| Python | {sys.version.split()[0]} |",
         f"| pandas / numpy / scipy | {pd.__version__} / {np.__version__} "
         f"/ {__import__('scipy').__version__} |",
+        f"| scikit-learn / statsmodels | {sklearn.__version__} / "
+        f"{statsmodels.__version__} |",
         "| Pesos do Kappa | quadráticos |",
         "| Faixas de interpretação | McHugh (2012) |",
         "| Correção múltipla | Holm-Bonferroni |",
         "| Margem de relevância prática | 0,5 DP da referência (meia-DP) |",
         f"| Bootstrap | {BOOTSTRAP_REPLICAS} réplicas de documentos, semente {SEMENTE} |",
+        "",
+        "### Origem das estatísticas\n",
+        "| Estatística | Implementação |",
+        "|---|---|",
+    ] + [f"| {nome} | {origem} |" for nome, origem in dependencias().items()] + [
+        "",
+        "As definições operacionais (fórmulas internas) constam em "
+        "`realizar_avaliacoes_teste.py`, que verifica que coincidem com os pacotes.",
         "",
     ])
 

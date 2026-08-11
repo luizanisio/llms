@@ -8,6 +8,7 @@ validado para aplicação em massa.
 |---|---|
 | `realizar_avaliacoes.py` | carga, estatística, relatórios e CLI (único ponto de entrada) |
 | `realizar_avaliacoes_graficos.py` | apenas as figuras; não faz nenhuma conta |
+| `realizar_avaliacoes_teste.py` | verifica as estatísticas contra `scikit-learn`, `statsmodels` e casos analíticos |
 | `realizar_avaliacoes.md` | este documento |
 
 ---
@@ -336,9 +337,40 @@ saída à lista.
 
 ---
 
-## 10. Dependências
+## 10. Dependências e verificação das estatísticas
 
-`pandas`, `numpy`, `scipy`, `pyarrow` e `matplotlib`. O pacote `util_graficos`
-(usado nos gráficos herdados do pipeline anterior) é opcional: se não estiver no
-`sys.path`, essas figuras são puladas com aviso e toda a estatística — inclusive
-as duas figuras da validação, feitas em matplotlib puro — segue normalmente.
+**Obrigatórias:** `pandas`, `numpy`, `scipy`, `pyarrow`, `scikit-learn`, `statsmodels`.
+
+Os coeficientes com implementação consolidada em pacote são calculados por eles,
+favorecendo a replicabilidade por terceiros:
+
+| Estatística | Pacote |
+|---|---|
+| Kappa de Cohen ponderado | `sklearn.metrics.cohen_kappa_score` |
+| Correção de Holm | `statsmodels.stats.multitest.multipletests` |
+| Teste de McNemar | `statsmodels.stats.contingency_tables.mcnemar` |
+| IC de Wilson | `statsmodels.stats.proportion.proportion_confint` |
+| Friedman, Wilcoxon, Shapiro-Wilk | `scipy.stats` |
+| Kappa de Fleiss **ponderado** | implementação interna — não há equivalente ponderado em pacote consolidado |
+| Bootstrap com reamostragem de documentos | implementação interna — `scipy.stats.bootstrap` reamostra observações, não clusters |
+
+Cada relatório registra, na seção "Origem das estatísticas" do rodapé, qual
+pacote e versão calculou cada estatística.
+
+**Verificação.** `realizar_avaliacoes_teste.py` contém as definições
+operacionais (fórmulas internas) de cada estatística e verifica que coincidem
+com os pacotes usados pelo pipeline (tolerância 1e-9). Também testa
+propriedades analíticas conhecidas — concordância perfeita → κ = 1,
+discordâncias simétricas → McNemar p = 1, Wilson dentro de [0, 1], IC
+bootstrap contendo a estimativa pontual.
+
+```bash
+python realizar_avaliacoes_teste.py           # resumo legível + testes
+python -m unittest realizar_avaliacoes_teste  # saída padrão
+```
+
+**Opcional:** `matplotlib` e `util_graficos` para as figuras. Sem
+`util_graficos`, os gráficos herdados são pulados com aviso e toda a estatística
+— inclusive as figuras da validação, feitas em matplotlib puro — segue
+normalmente.
+
