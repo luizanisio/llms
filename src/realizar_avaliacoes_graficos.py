@@ -14,6 +14,9 @@ Duas fontes de gráficos:
   esses gráficos são pulados com aviso e a estatística segue normalmente.
 * ``matplotlib`` direto — matriz de confusão e distribuição das diferenças, as
   duas figuras da validação.
+* ``util_est_bayesiana`` — heatmap da comparação bayesiana, quando a etapa é
+  ativada. O desenho mora lá porque a mesma figura serve à comparação entre
+  protocolos de treinamento, que não passa por este pipeline.
 
 Cada função recebe o dicionário de resultados e a pasta de saída, e devolve a
 lista de arquivos gerados.
@@ -42,6 +45,13 @@ try:
 except ImportError:  # o pipeline estatístico não depende deste pacote
     Cores = UtilGraficos = None
     UTIL_DISPONIVEL = False
+
+try:
+    import util_est_bayesiana as est
+    BAYES_DISPONIVEL = True
+except ImportError:  # só é exigido quando a etapa bayesiana é ativada
+    est = None
+    BAYES_DISPONIVEL = False
 
 PISO_ADEQUACAO = 3
 
@@ -259,6 +269,71 @@ def _complementares(r: dict, saida: str, gerados: list) -> None:
             ylabel="Falhas (%)", xlabel="Fonte",
             paleta_cores=Cores.Plasma, mostrar_valores=True,
             arquivo_saida=os.path.join(saida, "09_falhas.png")), gerados)
+
+
+# =============================================================================
+# Heatmap da comparação bayesiana
+# =============================================================================
+
+def grafico_bayes(matriz, caminho: str, titulo: str, limiar: float = None,
+                  subtitulo: str = None, referencia: str = None,
+                  rotulo_entidade: str = "protocolo") -> list:
+    """Heatmap das relações posteriores entre protocolos/fontes/avaliadores.
+
+    O desenho vive em ``util_est_bayesiana`` porque a mesma figura é usada pela
+    comparação entre protocolos de treinamento, que não passa por este pipeline.
+    Aqui fica apenas a ponte: nome do arquivo, rótulos e registro do que foi
+    gerado, mantendo a regra do módulo — desenhar, nunca calcular.
+
+    Args:
+        referencia: nome do grupo de referência; quando informado, aparece em
+            negrito nos eixos e como anotação no subtítulo do heatmap.
+        rotulo_entidade: label do eixo Y e do título automático. Ex.:
+            ``"protocolo"``, ``"avaliador"``, ``"fonte"``.
+
+    Returns:
+        Lista com o nome do arquivo gerado, ou vazia se o módulo não estiver
+        disponível ou a matriz vier vazia.
+    """
+    if not BAYES_DISPONIVEL:
+        _aviso_util("heatmap bayesiano")
+        return []
+    if matriz is None or len(matriz) == 0:
+        return []
+    rotulos = list(dict.fromkeys(matriz["linha"]))
+    rotacao = 30 if max(len(str(r)) for r in rotulos) > 8 else 0
+    _, gerado = est.heatmap_relacoes(
+        matriz, arquivo_saida=caminho, titulo=titulo, subtitulo=subtitulo,
+        limiar=limiar, dpi=FIG_DPI, rotacao_x=rotacao,
+        referencia=referencia, rotulo_entidade=rotulo_entidade)
+    return [os.path.basename(gerado)] if gerado else []
+
+
+def grafico_curva_eps(matriz, caminho: str, eps_ref: float = None,
+                      limiar_linha: float = 0.95) -> list:
+    """Curvas P(equivalência) × ε para todos os pares únicos da matriz.
+
+    Complementa o heatmap bayesiano: enquanto o heatmap mostra a decisão no
+    ε operacional, este gráfico exibe como P(equivalência) varia para toda a
+    faixa de ε, permitindo avaliar se a conclusão depende da escolha da margem.
+
+    Args:
+        eps_ref: ε operacional da análise (linha vertical pontilhada). Quando
+            ``None``, lê de ``matriz.attrs['eps']``.
+        limiar_linha: limiar de equivalência (linha horizontal). Padrão 0,95.
+
+    Returns:
+        Lista com o nome do arquivo gerado, ou vazia se indisponível.
+    """
+    if not BAYES_DISPONIVEL:
+        _aviso_util("curva de sensibilidade ao ε")
+        return []
+    if matriz is None or len(matriz) == 0:
+        return []
+    _, gerado = est.grafico_curva_sensibilidade_eps(
+        matriz, arquivo_saida=caminho, eps_ref=eps_ref,
+        limiar_linha=limiar_linha, dpi=FIG_DPI)
+    return [os.path.basename(gerado)] if gerado else []
 
 
 # =============================================================================

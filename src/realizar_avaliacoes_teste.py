@@ -577,6 +577,481 @@ class TesteMetricasBinarias(unittest.TestCase):
         self.assertAlmostEqual(m["especificidade"], 0.0)
 
 
+class TesteBayesiana(unittest.TestCase):
+    """Camada bayesiana: partição da posterior, simetria e classificação.
+
+    A etapa é opcional; sem `util_est_bayesiana` disponível os testes são
+    pulados, do mesmo modo que o pipeline pula a etapa sem `--bayes`.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if not ra.BAYES_DISPONIVEL:
+            raise unittest.SkipTest("util_est_bayesiana não disponível")
+        cls.ub = ra.bayes
+        rng = np.random.default_rng(17)
+        base = rng.normal(0, 1, 300)
+        cls.dados = {
+            "A": base + rng.normal(0, 0.30, 300),
+            "B": base + 0.01 + rng.normal(0, 0.30, 300),   # ~igual a A
+            "C": base + 0.60 + rng.normal(0, 0.30, 300),   # claramente melhor
+        }
+        cls.kw = {"nsamples": 20_000, "seed": 42}
+
+    # ---------------------------------------------------------------- partição
+    def test_tres_probabilidades_somam_um(self):
+        """São uma partição do espaço amostral, não três números normalizados."""
+        for eps in (0.0, 0.05, 0.20):
+            cmp = self.ub.ComparacaoPareada(self.dados["A"], self.dados["C"], **self.kw)
+            p = cmp.probabilidades_relacao(eps)
+            self.assertAlmostEqual(
+                p["p_inferior"] + p["p_equivalente"] + p["p_superior"], 1.0, places=9)
+
+    def test_equivalencia_coincide_com_p_equiv(self):
+        """A faixa central é o mesmo ε aplicado sobre a posterior."""
+        cmp = self.ub.ComparacaoPareada(self.dados["A"], self.dados["B"], **self.kw)
+        self.assertAlmostEqual(cmp.probabilidades_relacao(0.10)["p_equivalente"],
+                               cmp.p_equiv(0.10), places=3)
+
+    def test_eps_zero_nao_deixa_massa_no_centro(self):
+        """Sem margem não existe equivalência: a decomposição vira P(δ>0)/P(δ<0)."""
+        cmp = self.ub.ComparacaoPareada(self.dados["A"], self.dados["C"], **self.kw)
+        p = cmp.probabilidades_relacao(0.0)
+        self.assertAlmostEqual(p["p_equivalente"], 0.0, places=6)
+        self.assertAlmostEqual(p["p_superior"], cmp.p_dom, places=6)
+
+    def test_direcao_correta(self):
+        """C domina A: a leitura de A em relação a C é `inferior`."""
+        cmp = self.ub.ComparacaoPareada(self.dados["A"], self.dados["C"], **self.kw)
+        p = cmp.probabilidades_relacao(0.05)
+        self.assertGreater(p["p_inferior"], 0.99)
+
+    def test_serie_identica_e_equivalente(self):
+        """Comparar uma série consigo mesma não pode produzir direção."""
+        cmp = self.ub.ComparacaoPareada(self.dados["A"], self.dados["A"], **self.kw)
+        p = cmp.probabilidades_relacao(0.05)
+        self.assertAlmostEqual(p["p_equivalente"], 1.0, places=6)
+
+    # ----------------------------------------------------------------- simetria
+    def test_matriz_e_simetrica(self):
+        """A célula espelhada é derivada, não reestimada: igualdade exata."""
+        matriz = self.ub.matriz_relacoes(self.dados, eps=0.05, limiar=0.80, **self.kw)
+        for _, linha in matriz.iterrows():
+            espelho = matriz[(matriz["linha"] == linha["coluna"])
+                             & (matriz["coluna"] == linha["linha"])].iloc[0]
+            self.assertEqual(linha["p_superior"], espelho["p_inferior"])
+            self.assertEqual(linha["p_inferior"], espelho["p_superior"])
+            self.assertEqual(linha["p_equivalente"], espelho["p_equivalente"])
+            self.assertAlmostEqual(linha["delta"], -espelho["delta"], places=9)
+
+    def test_matriz_cobre_todos_os_pares_ordenados(self):
+        matriz = self.ub.matriz_relacoes(self.dados, eps=0.05, **self.kw)
+        k = len(self.dados)
+        self.assertEqual(len(matriz), k * (k - 1))
+        self.assertTrue((matriz["linha"] != matriz["coluna"]).all())
+
+    def test_matriz_reprodutivel(self):
+        """Mesma semente, mesmos números — exigência do protocolo de análise."""
+        a = self.ub.matriz_relacoes(self.dados, eps=0.05, **self.kw)
+        b = self.ub.matriz_relacoes(self.dados, eps=0.05, **self.kw)
+        np.testing.assert_array_equal(a["p_superior"].to_numpy(),
+                                      b["p_superior"].to_numpy())
+
+    # ------------------------------------------------------------ classificação
+    def test_classificacao_respeita_o_limiar(self):
+        classificar = self.ub.classificar_relacao
+        self.assertEqual(classificar(0.02, 0.05, 0.93, 0.80)[0], "superior")
+        self.assertEqual(classificar(0.95, 0.03, 0.02, 0.80)[0], "inferior")
+        self.assertEqual(classificar(0.06, 0.88, 0.06, 0.80)[0], "equivalente")
+        self.assertEqual(classificar(0.20, 0.74, 0.06, 0.80)[0], "incerto")
+
+    def test_incerto_reporta_a_dominante(self):
+        """No estado incerto o número mostra quão perto do limiar a evidência chegou."""
+        classe, valor = self.ub.classificar_relacao(0.20, 0.74, 0.06, 0.80)
+        self.assertEqual(classe, "incerto")
+        self.assertAlmostEqual(valor, 0.74)
+
+    def test_empate_exato_resolve_para_incerto(self):
+        """Situação limítrofe recebe leitura neutra, não uma relação inventada."""
+        self.assertEqual(self.ub.classificar_relacao(0.5, 0.0, 0.5, 0.40)[0], "incerto")
+
+    def test_limiar_mais_exigente_produz_mais_incertos(self):
+        conta = lambda limiar: sum(
+            self.ub.classificar_relacao(l["p_inferior"], l["p_equivalente"],
+                                        l["p_superior"], limiar)[0] == "incerto"
+            for _, l in self.ub.matriz_relacoes(self.dados, eps=0.05, **self.kw).iterrows())
+        self.assertGreaterEqual(conta(0.99), conta(0.80))
+
+    # -------------------------------------------------------- integração ao gate
+    def test_veredito_julga_magnitude_e_nao_direcao(self):
+        """Direção certa com margem trivial não pode ser lida como viés."""
+        import pandas as pd
+        rng = np.random.default_rng(9)
+        n = 600
+        ref = np.clip(np.round(rng.normal(2.9, 0.9, n)), 1, 4).astype(int)
+        juiz = ref.copy()
+        # viés minúsculo, sempre no mesmo sentido: P(dominância) satura em 1,
+        # mas a magnitude cabe folgadamente dentro de ε
+        alvos = np.flatnonzero(ref == 3)[:12]
+        juiz[alvos] = 4
+        longo = pd.DataFrame({"documento": [f"d{i}" for i in range(n)],
+                              "juiz": juiz, "ref": ref})
+        cfg = ra.ConfigBayes(ativo=True, eps=0.20, amostras=20_000, semente=42)
+        resultado = ra.bayes_par(longo, "juiz", "ref", cfg)
+        self.assertGreater(resultado["p_dom"], 0.95)          # direção certa
+        self.assertGreater(resultado["p_equiv"], 0.95)        # magnitude trivial
+        self.assertEqual(resultado["status"], "SEM VIÉS RELEVANTE")
+
+    def test_calibracao_do_eps_arredonda_para_cima(self):
+        """O ε empírico nunca fica abaixo da divergência observada."""
+        import pandas as pd
+        rng = np.random.default_rng(4)
+        n = 200
+        notas = np.clip(np.round(rng.normal(2.8, 0.9, n)), 1, 4).astype(int)
+        registros = []
+        for avaliador, deslocamento in ((1, 0), (2, 1)):
+            valores = np.clip(notas + (deslocamento if avaliador == 2 else 0), 1, 4)
+            registros += [{"documento": f"d{i}", "fonte": "a",
+                           "avaliador": avaliador, "nota": int(v)}
+                          for i, v in enumerate(valores)]
+        cfg = ra.ConfigBayes(ativo=True, amostras=20_000, semente=42)
+        eps, origem = ra.calibrar_eps(pd.DataFrame(registros), [1, 2], cfg)
+        self.assertGreater(eps, 0.0)
+        self.assertAlmostEqual(eps, np.ceil(eps * 100) / 100, places=9)
+        self.assertIn("calibrado", origem)
+
+    def test_grupo_sem_pares_nao_calibra(self):
+        """Com um avaliador só, o ε precisa vir por flag — e o pipeline avisa."""
+        import pandas as pd
+        registros = [{"documento": f"d{i}", "fonte": "a", "avaliador": 1, "nota": 3}
+                     for i in range(10)]
+        cfg = ra.ConfigBayes(ativo=True, amostras=1_000, semente=42)
+        eps, _ = ra.calibrar_eps(pd.DataFrame(registros), [1], cfg)
+        self.assertTrue(np.isnan(eps))
+        self.assertFalse(ra.resolver_eps(cfg, pd.DataFrame(registros), [1], "x").ativo)
+
+
+class TesteFlagsBayes(unittest.TestCase):
+    """A etapa só existe quando pedida, e a CLI explica quando não roda."""
+
+    @staticmethod
+    def _args(**mudancas):
+        padrao = {"bayes": False, "bayes_eps": None,
+                  "bayes_rope": ra.BAYES_ROPE_PADRAO,
+                  "bayes_limiar": ra.BAYES_LIMIAR_PADRAO,
+                  "bayes_limiar_veredito": ra.BAYES_VEREDITO_PADRAO,
+                  "bayes_amostras": ra.BAYES_AMOSTRAS_PADRAO,
+                  "bayes_semente": ra.SEMENTE}
+        return type("Args", (), padrao | mudancas)()
+
+    @staticmethod
+    def _erro(mensagem):
+        raise ValueError(mensagem)
+
+    def test_sem_flag_a_etapa_nao_roda(self):
+        cfg = ra.montar_config_bayes(self._args(), self._erro)
+        self.assertFalse(cfg.ativo)
+        self.assertFalse(cfg.resolvido)
+
+    def test_ajuste_sem_bayes_e_erro_explicito(self):
+        """Silenciar aqui devolveria um relatório sem a seção pedida, sem aviso."""
+        with self.assertRaises(ValueError) as contexto:
+            ra.montar_config_bayes(self._args(bayes_eps=0.08), self._erro)
+        self.assertIn("--bayes", str(contexto.exception))
+
+    def test_limiar_fora_da_faixa(self):
+        with self.assertRaises(ValueError):
+            ra.montar_config_bayes(self._args(bayes=True, bayes_limiar=1.5), self._erro)
+
+    def test_amostras_insuficientes(self):
+        with self.assertRaises(ValueError):
+            ra.montar_config_bayes(self._args(bayes=True, bayes_amostras=10), self._erro)
+
+    def test_configuracao_completa(self):
+        cfg = ra.montar_config_bayes(
+            self._args(bayes=True, bayes_eps=0.08, bayes_rope=0.01,
+                       bayes_limiar=0.85, bayes_amostras=50_000), self._erro)
+        self.assertTrue(cfg.resolvido)
+        self.assertEqual((cfg.eps, cfg.rope, cfg.limiar), (0.08, 0.01, 0.85))
+        self.assertEqual(cfg.kw_posterior, {"nsamples": 50_000, "seed": ra.SEMENTE})
+
+    def test_ordem_de_calibracao_prioriza_a_referencia(self):
+        """O grupo que ancora o ε é analisado primeiro, para valer em toda a execução."""
+        grupos = [ra.Grupo("gpt5", "llm"), ra.Grupo("humanos", "humano")]
+        cfg = ra.ConfigBayes(ativo=True)
+        self.assertEqual([g.nome for g in ra.ordenar_para_calibracao(grupos, cfg)],
+                         ["humanos", "gpt5"])
+        fixo = ra.ConfigBayes(ativo=True, eps=0.08)
+        self.assertEqual([g.nome for g in ra.ordenar_para_calibracao(grupos, fixo)],
+                         ["gpt5", "humanos"])
+        self.assertEqual([g.nome for g in ra.ordenar_para_calibracao(grupos, None)],
+                         ["gpt5", "humanos"])
+
+
+class TesteModosBayesianos(unittest.TestCase):
+    """Os dois caminhos de extração das probabilidades — e a distinção entre eles.
+
+    O ponto central: `proporcao` e `baycomp` produzem rótulos iguais para
+    afirmações diferentes. Os testes fixam essa diferença para que nenhuma
+    refatoração futura os trate como intercambiáveis.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if not ra.BAYES_DISPONIVEL:
+            raise unittest.SkipTest("util_est_bayesiana não disponível")
+        cls.ub = ra.bayes
+        rng = np.random.default_rng(23)
+        base = rng.normal(0, 1, 400)
+        cls.continuo = {
+            "A": base + rng.normal(0, 0.20, 400),
+            "B": base + 0.02 + rng.normal(0, 0.20, 400),
+            "C": base + 0.50 + rng.normal(0, 0.20, 400),
+        }
+        cls.kw = {"nsamples": 20_000, "seed": 42}
+
+    def test_baycomp_exige_rope(self):
+        """Com rope = 0 o triplet degenera em (0,1,0): 'equivalente' sem significar nada."""
+        cmp = self.ub.ComparacaoPareada(self.continuo["A"], self.continuo["C"],
+                                        rope=0.0, **self.kw)
+        with self.assertRaises(ValueError) as contexto:
+            cmp.probabilidades_relacao(modo="baycomp")
+        self.assertIn("rope", str(contexto.exception).lower())
+
+    def test_baycomp_ignora_eps_com_aviso(self):
+        """A única margem do modo baycomp é a ROPE; o ε não participa."""
+        cmp = self.ub.ComparacaoPareada(self.continuo["A"], self.continuo["C"],
+                                        rope=0.05, **self.kw)
+        with self.assertWarns(UserWarning):
+            com_eps = cmp.probabilidades_relacao(eps=0.30, modo="baycomp")
+        sem_eps = cmp.probabilidades_relacao(modo="baycomp")
+        self.assertEqual(com_eps, sem_eps)
+
+    def test_proporcao_avisa_com_eps_zero(self):
+        """Faixa de equivalência de medida nula: nenhuma célula poderá ser azul."""
+        with self.assertWarns(UserWarning):
+            self.ub.matriz_relacoes(self.continuo, eps=0.0, **self.kw)
+
+    def test_modo_desconhecido(self):
+        cmp = self.ub.ComparacaoPareada(self.continuo["A"], self.continuo["B"], **self.kw)
+        with self.assertRaises(ValueError):
+            cmp.probabilidades_relacao(modo="qualquer")
+
+    def test_ambos_os_modos_somam_um(self):
+        cmp = self.ub.ComparacaoPareada(self.continuo["A"], self.continuo["C"],
+                                        rope=0.05, **self.kw)
+        for modo, eps in (("proporcao", 0.10), ("baycomp", None)):
+            p = cmp.probabilidades_relacao(eps, modo=modo)
+            self.assertAlmostEqual(
+                p["p_inferior"] + p["p_equivalente"] + p["p_superior"], 1.0,
+                places=6, msg=f"modo {modo}")
+
+    def test_modos_afirmam_coisas_diferentes(self):
+        """Zona central maioritária ≠ magnitude dentro da margem.
+
+        Construído para o caso descrito na documentação: massa relevante na
+        ROPE, porém com dominância clara de um lado.
+        """
+        rng = np.random.default_rng(11)
+        n = 800
+        x = rng.normal(0, 1, n)
+        y = x - rng.choice([0.0, 0.30], size=n, p=[0.65, 0.35])
+        cmp = self.ub.ComparacaoPareada(x, y, rope=0.10, **self.kw)
+        proporcao = cmp.probabilidades_relacao(0.05, modo="proporcao")
+        baycomp = cmp.probabilidades_relacao(modo="baycomp")
+        # as duas leituras não coincidem: é isso que a legenda precisa distinguir
+        self.assertNotAlmostEqual(proporcao["p_equivalente"],
+                                  baycomp["p_equivalente"], places=2)
+
+    def test_simetria_preservada_no_modo_baycomp(self):
+        matriz = self.ub.matriz_relacoes(self.continuo, rope=0.05, modo="baycomp",
+                                         **self.kw)
+        for _, linha in matriz.iterrows():
+            espelho = matriz[(matriz["linha"] == linha["coluna"])
+                             & (matriz["coluna"] == linha["linha"])].iloc[0]
+            self.assertEqual(linha["p_superior"], espelho["p_inferior"])
+            self.assertEqual(linha["p_equivalente"], espelho["p_equivalente"])
+
+    def test_atributos_identificam_a_figura(self):
+        """Modo, métrica e papel viajam na matriz: é o que impede confundir figuras."""
+        matriz = self.ub.matriz_relacoes(self.continuo, rope=0.05, modo="baycomp",
+                                         metrica="BERTScore F1", papel="complementar",
+                                         **self.kw)
+        self.assertEqual(matriz.attrs["modo"], "baycomp")
+        self.assertEqual(matriz.attrs["metrica"], "BERTScore F1")
+        self.assertEqual(matriz.attrs["papel"], "complementar")
+        self.assertIsNone(matriz.attrs["eps"])
+
+    def test_rotulo_central_muda_com_o_modo(self):
+        proporcao = self.ub._rotulos_legenda("proporcao", 0.80)
+        baycomp = self.ub._rotulos_legenda("baycomp", 0.80)
+        self.assertEqual(proporcao["equivalente"], "equivalente")
+        self.assertEqual(baycomp["equivalente"], "ROPE maioritária")
+
+    def test_massa_de_empate_limita_delta(self):
+        """δ ∈ ±(1 − massa de empate): é o que torna o ε interpretável."""
+        rng = np.random.default_rng(3)
+        notas = rng.integers(1, 5, 500).astype(float)
+        cmp = self.ub.ComparacaoPareada(notas, notas.copy(), rope=0.0, **self.kw)
+        self.assertAlmostEqual(cmp.massa_empate, 1.0)
+        self.assertLessEqual(abs(float(cmp.delta.mean())), 1e-9)
+
+
+class TesteRopeCalibrada(unittest.TestCase):
+    """Calibração da ROPE pela variação entre execuções do mesmo protocolo."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not ra.BAYES_DISPONIVEL:
+            raise unittest.SkipTest("util_est_bayesiana não disponível")
+        cls.ub = ra.bayes
+
+    def test_percentil_e_nao_amplitude(self):
+        """Um outlier isolado não pode ditar a margem."""
+        base = np.zeros(1000)
+        outra = base.copy()
+        outra[0] = 10.0                       # caso patológico
+        outra[1:] = np.linspace(0, 0.01, 999)
+        rope, detalhe = self.ub.calibrar_rope({"e1": base, "e2": outra}, percentil=90)
+        self.assertLess(rope, 0.02)           # a amplitude daria 10,0
+        self.assertEqual(detalhe["percentil"], 90)
+
+    def test_usa_o_maior_entre_os_pares(self):
+        """A ROPE precisa cobrir o pior caso observado entre as execuções."""
+        rng = np.random.default_rng(8)
+        n = 500
+        base = rng.normal(0, 1, n)
+        execucoes = {"e1": base,
+                     "e2": base + rng.normal(0, 0.01, n),
+                     "e3": base + rng.normal(0, 0.05, n)}   # a mais divergente
+        rope, detalhe = self.ub.calibrar_rope(execucoes)
+        self.assertAlmostEqual(rope, max(detalhe["por_par"].values()))
+        self.assertEqual(len(detalhe["por_par"]), 3)
+
+    def test_execucoes_identicas_avisam(self):
+        """Decodificação gulosa mede determinismo do decoder, não incerteza."""
+        serie = np.linspace(0, 1, 100)
+        with self.assertWarns(UserWarning):
+            rope, _ = self.ub.calibrar_rope({"e1": serie, "e2": serie.copy()})
+        self.assertEqual(rope, 0.0)
+
+    def test_exige_duas_execucoes(self):
+        with self.assertRaises(ValueError):
+            self.ub.calibrar_rope({"e1": np.zeros(10)})
+
+    def test_exige_pareamento(self):
+        with self.assertRaises(ValueError):
+            self.ub.calibrar_rope({"e1": np.zeros(10), "e2": np.zeros(11)})
+
+    def test_controle_negativo_aprova_rope_adequada(self):
+        """O modelo comparado consigo mesmo tem de sair equivalente."""
+        rng = np.random.default_rng(15)
+        n = 600
+        base = rng.normal(0, 1, n)
+        a, b = base + rng.normal(0, 0.01, n), base + rng.normal(0, 0.01, n)
+        rope, _ = self.ub.calibrar_rope({"e1": a, "e2": b}, percentil=90)
+        resultado = self.ub.controle_negativo(a, b, rope=rope, nsamples=20_000, seed=42)
+        self.assertTrue(resultado["aprovado"])
+        self.assertEqual(resultado["classificacao"], "equivalente")
+
+    def test_controle_negativo_reprova_rope_pequena(self):
+        """Uma ROPE apertada demais é detectada ANTES de olhar os protocolos."""
+        rng = np.random.default_rng(15)
+        n = 600
+        base = rng.normal(0, 1, n)
+        a, b = base + rng.normal(0, 0.05, n), base + rng.normal(0, 0.05, n)
+        resultado = self.ub.controle_negativo(a, b, rope=1e-6, nsamples=20_000, seed=42)
+        self.assertFalse(resultado["aprovado"])
+        self.assertIn("pequena demais", resultado["diagnostico"])
+
+
+class TesteLeituraConjunta(unittest.TestCase):
+    """Convergência entre métricas e as duas análises de sensibilidade."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not ra.BAYES_DISPONIVEL:
+            raise unittest.SkipTest("util_est_bayesiana não disponível")
+        cls.ub = ra.bayes
+        rng = np.random.default_rng(31)
+        base = rng.normal(0, 1, 400)
+        efeitos = {"P1": 0.0, "P2": 0.02, "P3": 0.60}
+        cls.likert = {p: cls.ub.discretizar(base + v + rng.normal(0, 0.35, 400))
+                      for p, v in efeitos.items()}
+        cls.f1 = {p: np.clip(0.9 + 0.05 * (base + v) + rng.normal(0, 0.02, 400), 0, 1)
+                  for p, v in efeitos.items()}
+        cls.kw = {"nsamples": 20_000, "seed": 42}
+        cls.m_likert = cls.ub.matriz_relacoes(
+            cls.likert, eps=0.10, modo="proporcao", metrica="Likert",
+            papel="principal", **cls.kw)
+        cls.m_f1 = cls.ub.matriz_relacoes(
+            cls.f1, rope=0.02, modo="baycomp", metrica="F1",
+            papel="complementar", nomes=list(efeitos), **cls.kw)
+
+    def test_convergencia_uma_linha_por_par_nao_ordenado(self):
+        tabela = self.ub.tabela_convergencia(self.m_likert, self.m_f1)
+        self.assertEqual(len(tabela), 3)          # 3 protocolos = 3 pares
+
+    def test_situacoes_possiveis(self):
+        tabela = self.ub.tabela_convergencia(self.m_likert, self.m_f1)
+        self.assertTrue(set(tabela["Situação"]) <=
+                        {"convergente", "divergente", "sem decisão"})
+
+    def test_incerto_vira_sem_decisao(self):
+        """Sem classificação em uma das métricas, não há o que convergir."""
+        # ε apertado: o par de efeito quase nulo não alcança o limiar
+        m_incerto = self.ub.matriz_relacoes(self.likert, eps=0.02, limiar=0.80,
+                                            modo="proporcao", **self.kw)
+        tabela = self.ub.tabela_convergencia(m_incerto, self.m_f1)
+        self.assertIn("sem decisão", set(tabela["Situação"]))
+
+    def test_convergencia_consigo_mesma_e_total(self):
+        tabela = self.ub.tabela_convergencia(self.m_likert, self.m_likert)
+        self.assertTrue((tabela["Situação"] == "convergente").all())
+
+    def test_sensibilidade_limiar_conta_mudancas(self):
+        tabela = self.ub.sensibilidade_limiar(self.m_likert, limiares=(0.70, 0.90),
+                                              referencia=0.80)
+        self.assertIn(0.80, list(tabela["Limiar"]))
+        # a linha de referência não muda em relação a si mesma
+        referencia = tabela[tabela["Referência"] == "sim"].iloc[0]
+        self.assertEqual(referencia["Muda vs. referência"], 0)
+
+    def test_sensibilidade_limiar_mais_exigente_gera_mais_incertos(self):
+        tabela = self.ub.sensibilidade_limiar(self.m_likert, limiares=(0.60, 0.999))
+        incertos = dict(zip(tabela["Limiar"], tabela["incerto"]))
+        self.assertGreaterEqual(incertos[0.999], incertos[0.60])
+
+    def test_sensibilidade_margem_inclui_a_referencia(self):
+        tabela = self.ub.sensibilidade_margem(
+            self.likert, valores=(0.05, 0.20), modo="proporcao",
+            referencia=0.10, **self.kw)
+        self.assertEqual(list(tabela["Referência"]).count("sim"), 1)
+        self.assertIn(0.10, list(tabela["ε"]))
+
+    def test_sensibilidade_margem_rope_reamostra(self):
+        """No modo baycomp a coluna é ROPE, e margens maiores engolem as relações."""
+        tabela = self.ub.sensibilidade_margem(
+            self.f1, valores=(0.01, 0.50), modo="baycomp", referencia=0.01,
+            nomes=["P1", "P2", "P3"], **self.kw)
+        self.assertIn("ROPE", tabela.columns)
+        equivalentes = dict(zip(tabela["ROPE"], tabela["equivalente"]))
+        self.assertGreater(equivalentes[0.50], equivalentes[0.01])
+
+    def test_sensibilidade_margem_proporcao_reaproveita_posterior(self):
+        """Reaproveitar as amostras precisa dar o MESMO resultado de recalcular."""
+        tabela = self.ub.sensibilidade_margem(
+            self.likert, valores=(0.10,), modo="proporcao", referencia=0.10,
+            limiar=0.80, **self.kw)
+        direto = self.ub.matriz_relacoes(self.likert, eps=0.10, limiar=0.80,
+                                         modo="proporcao", **self.kw)
+        classes = [l["classificacao"] for l in self.ub._pares_unicos(direto)]
+        linha = tabela.iloc[0]
+        self.assertEqual(int(linha["superior"]), classes.count("superior"))
+        self.assertEqual(int(linha["equivalente"]), classes.count("equivalente"))
+        self.assertEqual(int(linha["inferior"]), classes.count("inferior"))
+
+
 # =============================================================================
 # Execução
 # =============================================================================

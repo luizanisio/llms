@@ -9,6 +9,7 @@ validado para aplicação em massa.
 | `realizar_avaliacoes.py` | carga, estatística, relatórios e CLI (único ponto de entrada) |
 | `realizar_avaliacoes_graficos.py` | apenas as figuras; não faz nenhuma conta |
 | `realizar_avaliacoes_teste.py` | verifica as estatísticas contra `scikit-learn`, `statsmodels` e casos analíticos |
+| `util_est_bayesiana.py` | comparação bayesiana pareada e heatmap; opcional, só com `--bayes` |
 | `realizar_avaliacoes.md` | este documento |
 
 ---
@@ -73,6 +74,13 @@ python realizar_avaliacoes.py --grupos gpt5:llm
 python realizar_avaliacoes.py --grupos gpt5:llm sabia4:llm humanos:humano \
     --alias qwen7b=a --saida analise
 
+# com a camada bayesiana (ε calibrado pelos avaliadores da referência)
+python realizar_avaliacoes.py --grupos gpt5:llm humanos:humano --bayes
+
+# com a camada bayesiana e ε pré-registrado (recomendado na análise definitiva)
+python realizar_avaliacoes.py --grupos gpt5:llm humanos:humano \
+    --bayes --bayes-eps 0.08
+
 # modo direto retrocompatível: cada pasta é uma rodada de um único grupo LLM
 python realizar_avaliacoes.py --pastas saida_01 saida_02 saida_03
 ```
@@ -86,6 +94,23 @@ python realizar_avaliacoes.py --pastas saida_01 saida_02 saida_03
 | `--escala MIN MAX` | limites da escala Likert (padrão `1 4`); expande sozinha se houver notas fora |
 | `--alias ORIGEM=DESTINO ...` | normaliza nomes de fonte entre grupos |
 | `--referencia GRUPO` | padrão de referência (padrão: primeiro grupo `humano`) |
+
+Flags da camada bayesiana — **sem `--bayes` nenhuma delas é lida** e o pipeline
+roda exatamente como antes:
+
+| Parâmetro | Padrão | Efeito |
+|---|---|---|
+| `--bayes` | desligado | ativa a etapa; é a única chave que decide se ela existe |
+| `--bayes-eps ε` | calibrado | margem de equivalência sobre a **posterior**, em proporção de itens |
+| `--bayes-rope R` | `0.0` | margem sobre os **escores brutos**: \|x − y\| ≤ R conta como empate |
+| `--bayes-limiar P` | `0.80` | probabilidade mínima para classificar uma célula do heatmap |
+| `--bayes-limiar-veredito P` | `0.95` | probabilidade mínima para o veredito juiz × referência |
+| `--bayes-amostras N` | `200000` | amostras da posterior |
+| `--bayes-semente S` | `42` | semente da amostragem |
+
+Informar um `--bayes-*` sem `--bayes` é **erro**, não silêncio: quem escreveu
+`--bayes-eps 0.08` esperava a seção no relatório, e ignorar a flag devolveria um
+documento sem ela e sem nenhum aviso.
 
 Um grupo → análise interna. Dois ou mais → análise interna de cada um **mais** a
 validação dos juízes contra a referência.
@@ -173,6 +198,10 @@ analise/
 └── 03_distribuicao_por_grupo.png
 ```
 
+Com `--bayes`, acrescentam-se `<grupo>/10_bayes_fontes.png`,
+`<grupo>/bayes_fontes.csv`, `04_bayes_grupos.png`, `bayes_grupos.csv` e
+`tabela_bayes_juizes.csv`.
+
 Com um único grupo, a análise interna é escrita direto na raiz de `--saida`.
 
 ### `<grupo>/estatisticas.md`
@@ -207,7 +236,191 @@ das notas por avaliador.
 
 ---
 
-## 7. Convenções
+## 7. Camada bayesiana (opcional)
+
+Complementa o gate, **não o substitui**: κw, Wilcoxon e McNemar continuam
+decidindo. O que a camada acrescenta é a quantidade que o teste de hipótese nula
+não consegue produzir — a probabilidade posterior de **equivalência prática**.
+"Não rejeitar H₀" significa apenas que não se detectou diferença naquele *n*;
+uma posterior concentrada dentro de uma margem ε é evidência positiva a favor da
+equivalência, e é reportável como achado.
+
+Método: teste de sinais bayesiano (Benavoli et al., 2017), com o `baycomp` como
+implementação de referência. A amostragem foi reimplementada em
+`util_est_bayesiana.py` para expor as amostras da posterior e honrar `prior`,
+`prior_place` e semente — sem isso a análise de sensibilidade ao prior mediria
+apenas ruído Monte Carlo.
+
+### As duas margens
+
+Não são intercambiáveis, e confundi-las produz resultados sem sentido:
+
+| Margem | Onde atua | Uso aqui |
+|---|---|---|
+| `rope` | sobre os **escores brutos**, antes da posterior | 0 na escala Likert (diferenças inteiras); obrigatória nos escores contínuos |
+| `ε` | sobre a **posterior** de δ, em proporção de itens | separa `equivalente` de `superior`/`inferior` |
+
+### Os dois modos — e por que os rótulos enganam
+
+`util_est_bayesiana` extrai as três probabilidades por dois caminhos. Os rótulos
+coincidem; **as afirmações não**.
+
+| Modo | `equivalente` significa | Métrica |
+|---|---|---|
+| `proporcao` | P(\|δ\| ≤ ε) — a vantagem, **medida em proporção de documentos**, não passa de ε | Likert (ordinal, `rope = 0`) |
+| `baycomp` | P(a zona ROPE ser a **maioritária**) — cálculo padrão do pacote | F1 (contínuo, `rope > 0`) |
+
+O primeiro afirma algo sobre **magnitude do efeito**; o segundo, sobre **qual
+região concentra mais documentos**. A diferença é observável: com 40% acima, 35%
+na ROPE e 25% abaixo, o modo `baycomp` devolve `superior` ainda que um terço dos
+documentos esteja dentro da margem de irrelevância, enquanto o modo `proporcao`,
+com ε = 0,20, diria `equivalente`. Nenhum está errado — respondem perguntas
+diferentes.
+
+Por isso o modo é gravado na matriz, impresso na legenda (a faixa central vira
+"ROPE maioritária" no modo `baycomp`) e **não tem padrão implícito seguro**. Este
+pipeline usa sempre `proporcao`: a etapa LLM × humanos é integralmente ordinal.
+
+Duas guardas impedem o uso acidental: `modo="baycomp"` com `rope = 0` levanta
+erro — o triplet degeneraria em (0, 1, 0), devolvendo "tudo equivalente" com
+aparência de resultado — e `modo="proporcao"` com `ε = 0` avisa que a faixa de
+equivalência tem medida nula.
+
+### O ε só se lê contra a massa de empates
+
+δ fica limitado a ±(1 − massa de empates). Com 70% de empates, δ ∈ ±0,30 e um ε
+de 0,08 já consome mais de um quarto da faixa disponível. Por isso a massa de
+empates entra na tabela de parâmetros, na figura e num parágrafo que calcula
+quanto da faixa útil o ε ocupa: sem esse número, o valor de ε é ininterpretável.
+
+Sem `--bayes-eps`, o ε é calibrado pela **maior divergência observada entre os
+avaliadores do grupo de referência**. O argumento: se dois especialistas
+qualificados divergem em X% dos itens, uma divergência dessa ordem é o piso de
+ruído da avaliação — não é sinal. A frase que isso autoriza no texto: *a região
+de equivalência foi calibrada pela divergência entre avaliadores humanos, e não
+fixada arbitrariamente*.
+
+Para a análise definitiva, **fixe o ε por flag e registre o valor**. Escolher o ε
+depois de ver o resultado é escolher a conclusão e inventar o critério depois — a
+versão bayesiana do *p-hacking*, e detectável. Quando o ε é calibrado, o grupo de
+referência é analisado primeiro e o valor obtido vale para toda a execução,
+mantendo os relatórios comparáveis entre si.
+
+### O que é produzido
+
+| Onde | Conteúdo |
+|---|---|
+| `<grupo>/estatisticas.md` | relações par a par entre as **fontes**, síntese por fonte, sensibilidade ao limiar |
+| `<grupo>/10_bayes_fontes.png` | heatmap fonte × fonte |
+| `<grupo>/bayes_sensibilidade_limiar.csv` | quantas células mudam de categoria ao variar o limiar |
+| `validacao.md` | leitura bayesiana dos critérios 2 e 3, por juiz; matriz entre avaliadores |
+| `04_bayes_grupos.png` | heatmap grupo × grupo |
+| `bayes_fontes.csv`, `bayes_grupos.csv`, `tabela_bayes_juizes.csv` | dados completos |
+
+### A etapa dos protocolos (fora deste pipeline)
+
+`util_est_bayesiana.py` também alimenta a comparação entre protocolos de
+treinamento, que roda no framework de comparação e recebe os parâmetros por
+YAML. Ali há **duas** métricas, com papéis declarados:
+
+| Métrica | Papel | Modo | Margem |
+|---|---|---|---|
+| Likert (juiz LLM, rodada única) | principal | `proporcao` | ε sobre a posterior |
+| BERTScore F1 | complementar | `baycomp` | ROPE sobre os escores |
+
+Heatmaps **separados**, com estrutura visual semelhante para facilitar a
+comparação exploratória, mas sem pressupor equivalência entre as métricas.
+`tabela_convergencia` confronta as duas par a par e classifica cada um como
+`convergente`, `divergente` ou `sem decisão` — porque tratar divergência como
+achado exige reportá-la, não deixá-la para o leitor extrair comparando duas
+figuras a olho. Trave a ordem de linhas e colunas com o argumento `nomes`: sem
+isso, a comparação visual induz leitura errada.
+
+### Calibração da ROPE do F1
+
+Com escores comprimidos, a ROPE não é um parâmetro de ajuste fino — é o que
+**determina** o resultado. Pequena demais esvazia a zona central e o heatmap
+satura em verde e vermelho; grande demais engole tudo e ele fica azul. A
+transição entre os extremos é rápida, e por isso `sensibilidade_margem` não é
+complemento: reportar a matriz em três ROPEs é o mínimo defensável.
+
+`calibrar_rope` ancora a margem na variação entre execuções do **mesmo**
+protocolo — mesmo argumento do ε calibrado pelos avaliadores humanos. Três
+cuidados que a implementação embute:
+
+1. **Percentil (90 por padrão), não amplitude** — máximo menos mínimo é dominado
+   por outliers e cresce com *n*.
+2. **Diferença pareada por documento**, não diferença de médias — a segunda é
+   ordens de grandeza menor e produziria uma ROPE inútil.
+3. **Protocolo treinado, não o modelo base** — a instabilidade do zero-shot
+   (falhas de formato, saídas fora do esquema) não representa a variação dos
+   artefatos comparados.
+
+⚠️ Com decodificação gulosa as execuções saem quase idênticas e a ROPE tende a
+zero: mediria determinismo do decoder, não incerteza relevante. A função avisa
+quando isso ocorre. Alternativas de âncora, em ordem de força: sementes de
+**treino** do mesmo protocolo (mais forte, custa retreinar); reexecução da
+extração (barata, exige amostragem estocástica); ou a distribuição de |ΔF1|
+entre itens que o juiz classificou com a **mesma nota Likert** — custo zero, e
+amarra a margem da métrica complementar à principal.
+
+`controle_negativo` fecha a calibração: compara um protocolo **consigo mesmo** e
+verifica que sai equivalente. Se não sair, a ROPE está pequena demais — e é
+melhor descobrir antes de olhar os protocolos, não depois.
+
+### Consistência entre datasets
+
+A análise é independente por dataset: o resultado de um não influencia o
+seguinte. Isso é deliberado, e permite avaliar se as relações entre protocolos
+**se repetem** em conjuntos diferentes. A limitação a declarar é que a
+abordagem não modela a variabilidade compartilhada entre datasets, não faz
+atualização sequencial e mantém as inferências separadas.
+
+Vale acrescentar o motivo prático, mais forte que "fica como trabalho futuro":
+com **dois** datasets um modelo hierárquico seria mal identificado de qualquer
+forma — não há como estimar variância entre grupos com *k* = 2. As duas razões
+devem aparecer juntas.
+
+### Como ler o heatmap
+
+A figura é categórica **e** quantitativa: a cor comunica a relação (verde
+superior, azul equivalente, vermelho inferior, cinza incerto), a intensidade e o
+número comunicam a magnitude da probabilidade posterior. A diagonal é neutra —
+`(Pi, Pi)` não é comparação.
+
+`incerto` é categoria explícita, não uma quarta relação: significa que nenhuma
+das três probabilidades alcançou o limiar. É desfecho legítimo, e a resposta
+honesta é ampliar a amostra, não afrouxar o ε até a conclusão caber.
+
+Cada par não ordenado é amostrado **uma única vez** e a célula espelhada é
+derivada trocando inferior por superior. `P(Pi > Pj)` e `P(Pj < Pi)` são então o
+mesmo número por construção, não duas estimativas Monte Carlo que por acaso
+coincidem — o que também torna o heatmap útil para detectar inconsistências nos
+dados de entrada.
+
+### Os dois limiares
+
+O heatmap classifica ao limiar `--bayes-limiar` (0,80) e o veredito juiz ×
+referência exige `--bayes-limiar-veredito` (0,95). Um mesmo par pode aparecer
+`equivalente` na matriz e `INCONCLUSIVO` na tabela do juiz: são perguntas com
+exigências diferentes — a matriz descreve o panorama, o veredito decide.
+
+### O veredito julga magnitude, não direção
+
+| Leitura | Condição |
+|---|---|
+| **SEM VIÉS RELEVANTE** | equivalência nas notas **e** na decisão binária atinge o limiar |
+| **VIÉS RELEVANTE** | é quase certo que a divergência **excede** ε |
+| **INCONCLUSIVO** | nenhuma das duas leituras se sustenta |
+
+`P(juiz > referência)` próximo de 1 com `P(equivalência)` também alto não é
+contradição: o juiz é confiavelmente mais leniente, porém por uma margem sem
+relevância prática. Ler direção como viés transformaria essa situação — que é
+favorável ao juiz — em reprovação.
+
+---
+
+## 8. Convenções
 
 | Item | Escolha |
 |---|---|
@@ -223,12 +436,80 @@ das notas por avaliador.
 | Shapiro-Wilk | confirmatório; a opção não paramétrica é primariamente ordinal |
 | McNemar | binomial exato com < 25 discordantes, qui-quadrado com correção acima |
 | Binarização | `{1,2}` inadequado, `{3,4}` adequado |
+| Posterior bayesiana | teste de sinais de Benavoli et al. (2017); 200.000 amostras, semente 42 |
+| Modo na escala Likert | `proporcao` (ROPE = 0; as diferenças são inteiras) |
+| Modo nos escores contínuos (F1) | `baycomp` (cálculo padrão do pacote; exige ROPE > 0) |
+| ε bayesiano | pré-registrado por flag; na ausência, calibrado pela divergência entre os avaliadores da referência |
+| Limiar de classificação / de veredito | 0,80 / 0,95 |
 
 ---
 
-## 8. Observações para a dissertação
+## 9. Observações para a dissertação
 
 Pontos que precisam constar no texto ou aparecer na defesa.
+
+**A camada bayesiana é complemento declarado, não substituição.** O gate
+continua sendo κw + Wilcoxon + McNemar, e é isso que o texto deve dizer. A
+leitura bayesiana entra para afirmar o que o frequentista não afirma: que a
+divergência entre juiz e humano **cabe** dentro de uma margem de irrelevância
+prática. Onde o relatório frequentista escreve "não se detectou viés
+sistemático", o bayesiano pode escrever "P(equivalência | ε) = 0,97" — que é uma
+afirmação positiva, e mais forte. Se as duas divergirem, reporte as duas e
+explique a divergência; não escolha a que favorece o resultado.
+
+**Registre ε, ROPE, número de amostras e semente antes de rodar.** Todos os
+quatro entram no rodapé de reprodutibilidade dos relatórios, mas a decisão
+precisa ser anterior ao resultado. A curva P(equivalência) × ε de
+`util_est_bayesiana` existe para o uso legítimo: demonstrar que a conclusão
+**não** depende de um número escolhido a dedo. Usá-la para encontrar o ε que
+produz a conclusão desejada é o oposto disso, e é detectável.
+
+**Direção e magnitude são perguntas distintas, e ambas devem ser reportadas.**
+Com n grande, P(dominância) satura em 0 ou 1 e deixa de informar: sabe-se com
+certeza quem é mais leniente, e nada sobre se isso importa. O conteúdo
+científico está no Δ com intervalo de credibilidade, nas contagens das três
+zonas e no ε crítico. Nunca reporte P(dominância) sozinho.
+
+**A análise é independente por conjunto de dados.** Não modela a variabilidade
+compartilhada entre datasets nem faz atualização sequencial do conhecimento —
+o resultado de um dataset não influencia o seguinte, o que é deliberado e
+permite avaliar a **consistência** das relações entre protocolos. A limitação
+precisa constar: modelos hierárquicos ou multinível, que estimariam efeitos
+globais e específicos por dataset e avaliariam formalmente a heterogeneidade,
+ficam como trabalho futuro.
+
+**"Incerto" e "inconclusivo" são resultados, não lacunas.** Aparecem no heatmap
+e nos vereditos quando os dados não sustentam nenhuma leitura ao limiar
+adotado. Reporte-os como tais. A alternativa — afrouxar o limiar ou o ε até a
+célula mudar de cor — troca uma resposta honesta por uma inventada.
+
+**Likert é a métrica principal; o F1 é complementar, e isso precisa estar
+escrito.** A Likert mede qualidade percebida, o F1 mede fidelidade de extração
+contra o professor — um protocolo que reproduz fielmente um erro do professor é
+premiado pelo F1 e punido pela Likert. Convergências e divergências entre as
+duas são **achados**, não inconsistências, porque as métricas capturam
+propriedades distintas. Mas a hierarquia tem de ser declarada antes dos
+resultados: se o F1 favorecer uma conclusão e a Likert outra, é a Likert que
+decide, e o texto deve ter dito isso antes de saber qual favorecia o quê.
+
+**As duas "equivalências" não são a mesma afirmação.** Na Likert, equivalência é
+P(|δ| ≤ ε) — magnitude do efeito medida em proporção de documentos. No F1, é
+P(a zona ROPE ser a maioritária) — qual região concentra mais casos. O texto
+precisa definir cada uma onde a reporta; usar a mesma palavra sem distinguir é o
+erro mais fácil de cometer aqui, e o mais difícil de defender se apontado.
+
+**A ROPE do F1 determina o resultado, e a sensibilidade é resultado principal.**
+Com BERTScore entre protocolos destilados do mesmo professor, os escores são
+comprimidos e a classificação vira função da ROPE. Reporte a matriz em pelo
+menos três valores e mostre onde as categorias trocam. E registre o controle
+negativo — o protocolo comparado consigo mesmo saindo equivalente é o que
+demonstra que a margem não foi escolhida para produzir o resultado.
+
+**A rodada única nos 4.000 se apoia na etapa de validação.** Não há evidência de
+estabilidade teste-reteste dentro da etapa dos protocolos; ela vem inteiramente
+dos 210 pares, e é por isso que aquela etapa usa a **pior** rodada do juiz, não
+a média. Faça a ponte explícita no texto: sem ela, a rodada única parece
+escolhida por economia.
 
 **O critério é o valor pontual, e isso foi decidido a priori.** Exigir que o
 limite inferior do IC alcançasse 0,60 reprovaria o juiz por tamanho de amostra,
@@ -322,7 +603,7 @@ decidir isso antes de rodar, não depois.
 
 ---
 
-## 9. Taxonomia de problemas
+## 10. Taxonomia de problemas
 
 A lista fechada espelha o template do Label Studio:
 
@@ -337,7 +618,7 @@ saída à lista.
 
 ---
 
-## 10. Dependências e verificação das estatísticas
+## 11. Dependências e verificação das estatísticas
 
 **Obrigatórias:** `pandas`, `numpy`, `scipy`, `pyarrow`, `scikit-learn`, `statsmodels`.
 
@@ -353,6 +634,8 @@ favorecendo a replicabilidade por terceiros:
 | Friedman, Wilcoxon, Shapiro-Wilk | `scipy.stats` |
 | Kappa de Fleiss **ponderado** | implementação interna — não há equivalente ponderado em pacote consolidado |
 | Bootstrap com reamostragem de documentos | implementação interna — `scipy.stats.bootstrap` reamostra observações, não clusters |
+| Comparação bayesiana pareada | `util_est_bayesiana` — método de Benavoli et al. (2017), `baycomp` como referência |
+| Calibração da ROPE | percentil das diferenças pareadas entre execuções do mesmo protocolo |
 
 Cada relatório registra, na seção "Origem das estatísticas" do rodapé, qual
 pacote e versão calculou cada estatística.
@@ -373,4 +656,11 @@ python -m unittest realizar_avaliacoes_teste  # saída padrão
 `util_graficos`, os gráficos herdados são pulados com aviso e toda a estatística
 — inclusive as figuras da validação, feitas em matplotlib puro — segue
 normalmente.
+
+**Opcional, só com `--bayes`:** `util_est_bayesiana.py` na mesma pasta (ou no
+`PYTHONPATH`). O `baycomp` é dispensável — o módulo cai no gerador próprio, que
+é numericamente equivalente (divergência máxima verificada de 10⁻⁵, compatível
+com ruído Monte Carlo) e, ao contrário do pacote, honra `prior`, `prior_place` e
+semente. Sem o módulo, `--bayes` aborta com mensagem explícita; sem a flag, nada
+disso é importado.
 
