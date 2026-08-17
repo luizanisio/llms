@@ -12,6 +12,7 @@
 # Ver também: 06_compara_ordem_pt (Q3 completa), 06_compara_ordem_cl (Q4),
 #             06_compara_ablacoes (isolamento), 06_compara_fronteiras (Q6)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_experimentais.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_experimentais.yaml --bayesiana
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -199,3 +200,88 @@ campos_virtuais:
     - publication
     - journal
     - keywords
+
+# ==========================================================================
+# Comparacao Bayesiana Pareada (camada COMPLEMENTAR)
+# ==========================================================================
+# Friedman/Wilcoxon/Nemenyi acima continuam sendo a analise principal. Esta
+# camada acrescenta o que o teste de hipotese nula nao expressa: a
+# probabilidade posterior de EQUIVALENCIA PRATICA. "Equivalente" vira achado,
+# nao falha em rejeitar H0; "inconclusivo" e desfecho legitimo.
+# Metodo: teste de sinais bayesiano (Benavoli et al., 2017), via
+#   util_est_bayesiana.py (baycomp como implementacao de referencia).
+# Saida: compara/analises_comparacao_pubmed_experimentais/bayesiana/
+# Reexecutar SO esta etapa (nao refaz a comparacao pesada):
+#   python ../../src/comparar_extracoes.py --config 06_compara_experimentais.yaml --bayesiana
+# ==========================================================================
+estatistica_bayesiana:
+  ativo: true
+
+  # --- eps: margem sobre a POSTERIOR, em proporcao de documentos ---
+  # Usado APENAS na Likert do juiz LLM (escala ordinal, modo 'proporcao').
+  # E PRE-REGISTRADO: nao ha como calibra-lo aqui — o piso de ruido vem da
+  # divergencia entre avaliadores qualificados, medida na Fase A
+  # (realizar_avaliacoes.py --bayes). Escolher o eps depois de ver a curva de
+  # sensibilidade e escolher a conclusao e inventar o criterio depois.
+  # NOTA: enquanto campos_parquet.avaliacao estiver vazio nao ha notas do juiz
+  #   e a secao principal e omitida com aviso; so as metricas automaticas rodam.
+  eps: 0.02
+  origem_eps: "pre-registrado; substituir pelo eps calibrado na Fase A (divergencia entre avaliadores)"
+
+  limiar: 0.80                   # probabilidade minima p/ classificar uma celula do heatmap
+  limiar_equivalencia: 0.95      # limiar do veredito, na curva de sensibilidade ao eps
+
+  # 50.000 e suficiente para iterar (mesmo valor do notebook demo_bayes_fases).
+  # ELEVE PARA 200000 NA ANALISE DEFINITIVA e registre o valor na dissertacao,
+  # junto com a semente.
+  amostras: 50000
+  semente: 42
+
+  incluir_base: false            # o Professor e a referencia, nao um protocolo sob teste
+
+  # --- Recortes por questao de pesquisa ---
+  # Espelham as questoes declaradas no cabecalho deste arquivo. Cada entrada
+  # gera um conjunto proprio de figuras/tabelas, com o nome virando prefixo dos
+  # arquivos (ex.: bayes_q3_escalonamento_Sentencas_bertscore_heatmap.png) e
+  # uma secao propria no relatorio.
+  # Aceita alias ou rotulo; a ORDEM declarada e a ordem das linhas/colunas —
+  # o que permite ler os heatmaps das varias metricas lado a lado.
+  # Ajustar as listas e rodar com --bayesiana NAO refaz a comparacao.
+  # NOTA: nao ha recorte com os 9 protocolos de uma vez — seriam 36 pares e um
+  #   heatmap ilegivel. O panorama completo ja esta no ranking de estatisticas/.
+  protocolos:
+    # Q1 — efeito do ajuste fino: zero-shot vs LoRA vs Full FT
+    Q1_ajuste_fino: ["A", "B", "C"]
+    # Q2 — efeito do CL: FT direto vs CL por etapas (d1) / acumulado (d3)
+    Q2_curriculo: ["B", "C", "D1", "D3"]
+    # Q3 — direcao do escalonamento: FF->LoRA (d1,d3,d11) vs LoRA->FF (d2,d4,d12)
+    Q3_escalonamento: ["D1", "D2", "D3", "D4", "D11", "D12"]
+    # Q5 — pace do curriculo: granular 10 etapas (d11,d12) vs 3 etapas (d3,d4)
+    Q5_pace: ["D3", "D4", "D11", "D12"]
+    # Complementar — etapas disjuntas (d1,d2) vs acumulado com replay (d3,d4)
+    Comp_replay: ["D1", "D2", "D3", "D4"]
+
+  # --- Metricas automaticas (secao COMPLEMENTAR) ---
+  # Medem similaridade com o Professor, ou seja FIDELIDADE DE DESTILACAO, nao
+  # qualidade: um protocolo que reproduz fielmente um erro do professor e
+  # premiado por elas. Servem como triangulacao, nunca como veredito.
+  metricas_automaticas:
+    # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
+    # Obrigatoria (> 0) no modo 'baycomp'. Com escores comprimidos e a ROPE que
+    # determina o resultado: pequena demais satura o heatmap em verde/vermelho,
+    # grande demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria
+    # de reportar — a matriz em tres ROPEs e o minimo defensavel.
+    # O valor abaixo e um ponto de partida: confira na varredura se a transicao
+    # entre os extremos cai dentro da faixa testada e ajuste se nao cair.
+    rope: 0.01
+    rope_sensibilidade: [0.005, 0.01, 0.02]
+
+    # Os dois agregados de campos_virtuais — Sentencas (o corpo do abstract) e
+    # MetaDados (title/publication/journal/keywords). Ambos existem nas listas
+    # de bertscore e sbert_grande em configuracao_comparacao.campos.
+    campos:
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - rouge
+      - bertscore

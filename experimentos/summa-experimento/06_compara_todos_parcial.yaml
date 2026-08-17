@@ -1,0 +1,429 @@
+# ==========================================================================
+# Comparação: Panorama Completo (todos os protocolos)
+# ==========================================================================
+# Propósito: Visão global de todos os protocolos em um único relatório —
+#   ranking geral, testes de Friedman/Nemenyi sobre a matriz completa e
+#   verificação de consistência entre os relatórios temáticos.
+#     baselines .......... A (zero-shot), b (LoRA), c (FF)
+#     CL + escalonamento . d1-d4 (etapas/acumulado), d11-d12 (granulares)
+#     ablações ........... d5-d8 (isolamento dos eixos), d13 (CL FF-only)
+#     direção do CL ...... d9-d10 (anti-CL)
+#     PT como warm-up .... d14, d15
+#     controles 16b ...... d16 (fronteira pura), d17 (CL), d18 (blocos aleatórios)
+#     PT por unfreeze .... d19 (com CL), d20 (sem CL)
+#     protocolos fundidos. d21 (CL), d22 (CL+gating), d23 (gating),
+#                          d24 (CL granular+gating, LoRA 4b), d25 (idem, full 16b)
+# NOTA: relatório de panorama — protocolos diferem em precisão (4b/16b), regime
+#   e orçamento; as leituras causais devem sair dos relatórios temáticos, onde
+#   os pares estão controlados.
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --bayesiana
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+    - /mnt/d/wsl/llms/experimentos/summa-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_summa_todos"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_summa(todos)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 40
+  teste_rapido: false
+  gerar_graficos: true
+  llm_as_a_judge: false
+  analise_estatistica: true
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saida/saida_or_235b.parquet"
+  rotulo: "Qwen235b"
+  alias: "Prof"
+  familia: "Qwen-235B"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- A: zero-shot (sem ajuste fino) ---
+  - arquivo: "saida/saida_qwen7b.parquet"
+    rotulo: "Qwen7B"
+    alias: "A"
+    familia: "Qwen-7B"
+    baseline: true
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
+  - arquivo: "saida/saida_qwen7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    alias: "B"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
+  - arquivo: "saida/saida_qwen7b(c)_teste.parquet"
+    rotulo: "Qwen7B(c)"
+    alias: "C"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
+  # --- D1: CL por etapas + escalonamento FF→LoRA ---
+  - arquivo: "saida/saida_qwen7b(d1)_teste.parquet"
+    rotulo: "Qwen7B(d1)"
+    alias: "D1"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d1)"
+  # --- D2: CL por etapas + escalonamento LoRA→FF ---
+  - arquivo: "saida/saida_qwen7b(d2)_teste.parquet"
+    rotulo: "Qwen7B(d2)"
+    alias: "D2"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d2)"
+  # --- D3: CL acumulado (3 etapas) + escalonamento FF→LoRA ---
+  - arquivo: "saida/saida_qwen7b(d3)_teste.parquet"
+    rotulo: "Qwen7B(d3)"
+    alias: "D3"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d3)"
+  # --- D4: CL acumulado (3 etapas) + escalonamento LoRA→FF ---
+  - arquivo: "saida/saida_qwen7b(d4)_teste.parquet"
+    rotulo: "Qwen7B(d4)"
+    alias: "D4"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d4)"
+  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
+  - arquivo: "saida/saida_qwen7b(d5)_teste.parquet"
+    rotulo: "Qwen7B(d5)"
+    alias: "D5"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
+  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
+  - arquivo: "saida/saida_qwen7b(d6)_teste.parquet"
+    rotulo: "Qwen7B(d6)"
+    alias: "D6"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
+  # --- D7: CL por etapas, LoRA-only 4b ---
+  - arquivo: "saida/saida_qwen7b(d7)_teste.parquet"
+    rotulo: "Qwen7B(d7)"
+    alias: "D7"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d7)"
+  # --- D8: CL acumulado, LoRA-only 4b ---
+  - arquivo: "saida/saida_qwen7b(d8)_teste.parquet"
+    rotulo: "Qwen7B(d8)"
+    alias: "D8"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d8)"
+  # --- D9: Anti-CL por etapas, LoRA-only 4b ---
+  - arquivo: "saida/saida_qwen7b(d9)_teste.parquet"
+    rotulo: "Qwen7B(d9)"
+    alias: "D9"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d9)"
+  # --- D10: Anti-CL acumulado, LoRA-only 4b ---
+  - arquivo: "saida/saida_qwen7b(d10)_teste.parquet"
+    rotulo: "Qwen7B(d10)"
+    alias: "D10"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d10)"
+  # --- D11: CL acumulado granular (10 etapas) + FF→LoRA ---
+  # - arquivo: "saida/saida_qwen7b(d11)_teste.parquet"
+  #   rotulo: "Qwen7B(d11)"
+  #   alias: "D11"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d11)"
+  # # --- D12: CL acumulado granular (10 etapas) + LoRA→FF ---
+  # - arquivo: "saida/saida_qwen7b(d12)_teste.parquet"
+  #   rotulo: "Qwen7B(d12)"
+  #   alias: "D12"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d12)"
+  # # --- D13: CL por etapas, FF-only 16b ---
+  # - arquivo: "saida/saida_qwen7b(d13)_teste.parquet"
+  #   rotulo: "Qwen7B(d13)"
+  #   alias: "D13"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d13)"
+  # # --- D14: PT LoRA completo + CL por etapas FF-only ---
+  # - arquivo: "saida/saida_qwen7b(d14)_teste.parquet"
+  #   rotulo: "Qwen7B(d14)"
+  #   alias: "D14"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d14)"
+  # # --- D15: PT LoRA + estabilização FF (LR 1e-6) + CL FF-only ---
+  # - arquivo: "saida/saida_qwen7b(d15)_teste.parquet"
+  #   rotulo: "Qwen7B(d15)"
+  #   alias: "D15"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d15)"
+  # # --- D16: Sem CL, 4 execuções com dados completos, LoRA 16b (fronteira pura) ---
+  # - arquivo: "saida/saida_qwen7b(d16)_teste.parquet"
+  #   rotulo: "Qwen7B(d16)"
+  #   alias: "D16"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d16)"
+  # # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  # - arquivo: "saida/saida_qwen7b(d17)_teste.parquet"
+  #   rotulo: "Qwen7B(d17)"
+  #   alias: "D17"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d17)"
+  # # --- D18: Blocos aleatórios (terços), LoRA 16b (controle de efeito de bloco) ---
+  # - arquivo: "saida/saida_qwen7b(d18)_teste.parquet"
+  #   rotulo: "Qwen7B(d18)"
+  #   alias: "D18"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d18)"
+  # # --- D19: CL por etapas + unfreeze progressivo, FF 16b ---
+  # - arquivo: "saida/saida_qwen7b(d19)_teste.parquet"
+  #   rotulo: "Qwen7B(d19)"
+  #   alias: "D19"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d19)"
+  # # --- D20: Sem CL + unfreeze progressivo, FF 16b (dados completos) ---
+  # - arquivo: "saida/saida_qwen7b(d20)_teste.parquet"
+  #   rotulo: "Qwen7B(d20)"
+  #   alias: "D20"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d20)"
+  # --- D21: FUSÃO: CL por etapas, LoRA 16b, fronteiras virtuais (espelho do D17) ---
+  - arquivo: "saida/saida_qwen7b(d21)_teste.parquet"
+    rotulo: "Qwen7B(d21)"
+    alias: "D21"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d21)"
+  # --- D22: FUSÃO: CL por etapas + gating de LR por camada, LoRA 16b ---
+  - arquivo: "saida/saida_qwen7b(d22)_teste.parquet"
+    rotulo: "Qwen7B(d22)"
+    alias: "D22"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d22)"
+  # --- D23: FUSÃO: gating de LR sem CL (dados completos), LoRA 16b ---
+  - arquivo: "saida/saida_qwen7b(d23)_teste.parquet"
+    rotulo: "Qwen7B(d23)"
+    alias: "D23"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d23)"
+  # --- D24: FUSÃO: CL granular (10 spans) + gating 10%, LoRA 4b (espelho do D12) ---
+  # - arquivo: "saida/saida_qwen7b(d24)_teste.parquet"
+  #   rotulo: "Qwen7B(d24)"
+  #   alias: "D24"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d24)"
+  # --- D25: FUSÃO: CL granular (10 spans) + gating 10%, Full FT 16b ---
+  # - arquivo: "saida/saida_qwen7b(d25)_teste.parquet"
+  #   rotulo: "Qwen7B(d25)"
+  #   alias: "D25"
+  #   familia: "Qwen-7B"
+  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d25)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/divisao_Qwen235b_Qwen7b.csv"
+    campo_id: "id"
+    dataset_filtro: {"alvo": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  modelos:
+    sbert:
+      medio: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+    bertscore: "stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1"
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  # Sem este bloco o padrao seria apenas "(global)"; os agregados Likert e
+  # MetaDados sao os alvos de interesse para as comparacoes pareadas.
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Likert"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - sbert_medio
+      - sbert_grande
+
+  campos:
+    bertscore:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    rouge_1:
+
+    rouge_2:
+      - "Partes"
+      - "Partes.Tipo"
+      - "Partes.Nome"
+
+    rouge_l:
+      - "Materia"
+      - "Dispositivo"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    levenshtein:
+      - "Tipo"
+      - "DataJulgamento"
+
+    sbert_medio:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+    sbert_grande:
+      - "(global)"
+      - "Materia"
+      - "Dispositivo"
+      - "Temas"
+      - "Temas.Ponto"
+      - "Temas.Argumentos"
+      - "Temas.Doutrina"
+      - "Temas.Conceitos"
+      - "Temas.Explicacao"
+      - "Resumo"
+      - "Likert"
+      - "MetaDados"
+
+campos_virtuais:
+  Likert:
+    - Materia
+    - Temas.Ponto
+    - Temas.Argumentos
+    - Temas.Doutrina
+    - Temas.Conceitos
+    - Resumo
+  MetaDados:
+    - Partes.Tipo
+    - Partes.Nome
+    - Temas.Normas
+    - Temas.Jurisprudencia
+
+# ==========================================================================
+# Comparacao Bayesiana Pareada (camada COMPLEMENTAR)
+# ==========================================================================
+# Friedman/Wilcoxon/Nemenyi acima continuam sendo a analise principal. Esta
+# camada acrescenta o que o teste de hipotese nula nao expressa: a
+# probabilidade posterior de EQUIVALENCIA PRATICA. "Equivalente" vira achado,
+# nao falha em rejeitar H0; "inconclusivo" e desfecho legitimo.
+# Metodo: teste de sinais bayesiano (Benavoli et al., 2017), via
+#   util_est_bayesiana.py (baycomp como implementacao de referencia).
+# Saida: compara/analises_comparacao_summa_todos/bayesiana/
+# Reexecutar SO esta etapa (nao refaz a comparacao pesada):
+#   python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --bayesiana
+# ==========================================================================
+estatistica_bayesiana:
+  ativo: true
+
+  # --- eps: margem sobre a POSTERIOR, em proporcao de documentos ---
+  # Usado APENAS na Likert do juiz LLM (escala ordinal, modo 'proporcao').
+  # E PRE-REGISTRADO: deve vir calibrado da Fase A (avaliacao_llm_humana/,
+  # realizar_avaliacoes.py --bayes), pela divergencia entre os especialistas.
+  # Escolher o eps depois de ver a curva de sensibilidade e escolher a
+  # conclusao e inventar o criterio depois — e detectavel.
+  # NOTA: enquanto campos_parquet.avaliacao estiver vazio nao ha notas do juiz
+  #   e a secao principal e omitida com aviso; so as metricas automaticas rodam.
+  eps: 0.02
+  origem_eps: "pre-registrado; substituir pelo eps calibrado na Fase A (divergencia entre especialistas)"
+
+  limiar: 0.80                   # probabilidade minima p/ classificar uma celula do heatmap
+  limiar_equivalencia: 0.95      # limiar do veredito, na curva de sensibilidade ao eps
+  amostras: 200000               # amostras da posterior (200000 na analise definitiva)
+  semente: 42                    # reprodutibilidade — registrar na dissertacao
+  incluir_base: false            # ignorado quando 'protocolos' abaixo e um dicionario
+
+  # --- Recortes por questao de pesquisa ---
+  # 16 protocolos ativos = 120 pares e um heatmap ilegivel. Cada entrada abaixo
+  # gera um conjunto proprio de figuras/tabelas, com o nome virando prefixo dos
+  # arquivos (ex.: bayes_q1_ajuste_fino_likert_bertscore_heatmap.png) e uma
+  # secao propria no relatorio.
+  # Aceita alias ou rotulo; a ORDEM declarada e a ordem das linhas/colunas —
+  # o que permite ler os heatmaps das varias metricas lado a lado.
+  # Ajustar as listas e rodar com --bayesiana NAO refaz a comparacao.
+  # Para um recorte unico e sem prefixo, use uma lista simples:
+  #   protocolos: ["A", "B", "C", "D1"]
+  protocolos:
+    # Q1 — efeito do ajuste fino: zero-shot vs LoRA vs Full FT
+    Q1_ajuste_fino: ["A", "B", "C"]
+    # Q2 — efeito do CL: FT direto vs CL por etapas / acumulado
+    Q2_curriculo: ["B", "C", "D1", "D3"]
+    # Q3 — direcao do escalonamento: FF->LoRA vs LoRA->FF
+    Q3_escalonamento: ["D1", "D2", "D3", "D4"]
+    # Q4 — ablacoes: escalonamento sem CL, CL LoRA-only
+    Q4_ablacoes: ["C", "D5", "D6", "D7", "D8"]
+    # Q5 — direcao do curriculo: CL vs anti-CL (mesma base LoRA-only 4b)
+    Q5_anti_cl: ["D7", "D8", "D9", "D10"]
+    # Q6 — protocolos fundidos vs baselines
+    Q6_fusao: ["B", "C", "D21", "D22", "D23"]
+
+  # --- Metricas automaticas (secao COMPLEMENTAR) ---
+  # Medem similaridade com o modelo base (Prof), ou seja FIDELIDADE DE
+  # DESTILACAO, nao qualidade: um protocolo que reproduz fielmente um erro do
+  # professor e premiado por elas. Servem como triangulacao, nunca como veredito.
+  metricas_automaticas:
+    # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
+    # Obrigatoria (> 0) no modo 'baycomp'. Com escores comprimidos e a ROPE que
+    # determina o resultado: pequena demais satura o heatmap em verde/vermelho,
+    # grande demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria
+    # de reportar — a matriz em tres ROPEs e o minimo defensavel.
+    rope: 0.01
+    rope_sensibilidade: [0.005, 0.01, 0.02]
+
+    # Mesmos agregados de campos_estatisticas, sem o "(global)": Likert e
+    # MetaDados sao os alvos de interesse das comparacoes pareadas.
+    campos:
+      - "Likert"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - sbert_medio
