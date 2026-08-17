@@ -113,6 +113,27 @@ def processar_analise_estatistica(analisador, dados_analise, pasta_saida, config
         lang=lang
     )
 
+def processar_analise_bayesiana(analisador, dados_analise, pasta_saida, config):
+    """
+    Executa a comparação bayesiana pareada entre protocolos (heatmap, curva de
+    sensibilidade ao ε, varredura da ROPE e relatório Markdown).
+
+    Camada complementar à análise frequentista: só roda quando a chave
+    'estatistica_bayesiana' existe no YAML e está ativa.
+    """
+    try:
+        from comparar_extracoes_baycomp import executar_analise_bayesiana
+    except ImportError as e:
+        print(f"❌ Módulo comparar_extracoes_baycomp não disponível: {e}")
+        return {}
+
+    return executar_analise_bayesiana(
+        analisador=analisador,
+        dados_analise=dados_analise,
+        config=config,
+        pasta_saida=pasta_saida
+    )
+
 def calcular_divisao_grupos(config):
     """
     Calcula os percentuais de divisão de grupos baseado no yaml e aplica regras
@@ -307,10 +328,11 @@ def main():
     parser.add_argument('--config', dest='config_file', default=None, help="Caminho do arquivo de configuração YAML")
     parser.add_argument('--graficos', action='store_true', help="Apenas atualiza os gráficos a partir de uma comparação já realizada")
     parser.add_argument('--estatisticas', action='store_true', help="Apenas atualiza as estatísticas a partir de uma comparação já realizada")
+    parser.add_argument('--bayesiana', action='store_true', help="Apenas atualiza a análise bayesiana a partir de uma comparação já realizada")
     parser.add_argument('--planilha', action='store_true', help="Apenas atualiza a formatação da planilha base a partir de uma comparação já realizada")
     args = parser.parse_args()
 
-    qualquer_flag_parcial = args.graficos or args.estatisticas or args.planilha
+    qualquer_flag_parcial = args.graficos or args.estatisticas or args.bayesiana or args.planilha
 
     # 1. Carregar configuração
     caminho_yaml_abs = ""
@@ -680,11 +702,12 @@ def main():
         if not os.path.isfile(arquivo_excel):
             print("\n❌ ERRO: Planilha de comparação não encontrada.")
             print(f"Esperado: {arquivo_excel}")
-            print("Execute a comparação completa primeiro (sem usar as flags --graficos, --estatisticas ou --planilha).")
+            print("Execute a comparação completa primeiro (sem usar as flags --graficos, --estatisticas, --bayesiana ou --planilha).")
             sys.exit(1)
 
         flag_graficos = args.graficos
         flag_estatisticas = args.estatisticas
+        flag_bayesiana = args.bayesiana
         flag_planilha = args.planilha
         flag_llm = False # Se for execução parcial, pulamos LLM por envolver custo de API
         regerar = False
@@ -692,6 +715,7 @@ def main():
         # Execução Padrão: faz tudo!
         flag_graficos = True
         flag_estatisticas = True
+        flag_bayesiana = True
         flag_planilha = False
         regerar = True
         flag_llm = config.get('execucao', {}).get('llm_as_a_judge', False)
@@ -707,7 +731,7 @@ def main():
         print(f"\n⚠️  Execução Parcial Solicitada via CLI.")
         print(f"   Pulando re-análise pesada. Usando arquivo existente: {arquivo_excel}")
         
-        if flag_graficos or flag_estatisticas or flag_planilha or flag_llm:
+        if flag_graficos or flag_estatisticas or flag_bayesiana or flag_planilha or flag_llm:
             print("   Instanciando analisador para operações em arquivo existente...")
             pasta_jsons = os.path.join(pasta_saida, 'jsons')
             analisador = JsonAnaliseDataFrame(
@@ -722,9 +746,20 @@ def main():
             )
             analisador_instanciado = True
             
-            if flag_planilha or flag_estatisticas:
-                print("📊 Carregando DataFrame de resultados...")
-                analisador.to_df()
+            # a análise bayesiana também consome analisador._resultados
+            if flag_planilha or flag_estatisticas or flag_bayesiana:
+                print("📊 Carregando DataFrame de resultados do arquivo existente...")
+                import pandas as pd
+                nome_arquivo_base = config['saida'].get('arquivo_base', 'comparacao_resultados')
+                arquivo_csv = os.path.join(pasta_saida, f'{nome_arquivo_base}.csv')
+                try:
+                    if os.path.isfile(arquivo_csv):
+                        analisador._resultados = pd.read_csv(arquivo_csv)
+                    else:
+                        analisador._resultados = pd.read_excel(arquivo_excel, sheet_name='Resultados')
+                except Exception as e:
+                    print(f"   ⚠️  Erro ao carregar resultados ({arquivo_csv} ou Excel): {e}. Gerando DataFrame novamente...")
+                    analisador.to_df()
                 
             if flag_planilha:
                 print("📊 Regerando Excel e formatação...")
@@ -815,6 +850,11 @@ def main():
 
     if flag_estatisticas and analisador_instanciado:
         processar_analise_estatistica(analisador, dados_analise, pasta_saida, config, lang=lang_graficos)
+
+    # Camada bayesiana: complementar à análise frequentista acima. Roda depois
+    # dela para que o relatório em bayesiana/ possa remeter ao de estatisticas/.
+    if flag_bayesiana and analisador_instanciado:
+        processar_analise_bayesiana(analisador, dados_analise, pasta_saida, config)
 
     # 8. Divisão dos Dados (Treino/Teste/Validação) (pula se for execução parcial)
     if qualquer_flag_parcial:

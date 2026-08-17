@@ -41,6 +41,43 @@ def _get_plt():
 
 
 # ============================================================================
+# Mapas de métrica (compartilhados com comparar_extracoes_baycomp.py)
+# ============================================================================
+# Traduzem o nome da métrica no YAML (chave de configuracao_comparacao.campos)
+# para o sufixo usado nas colunas do DataFrame de resultados e para o rótulo
+# exibido em relatórios/figuras. Ficam no nível do módulo — e não dentro de
+# executar_analise_estatistica — porque a análise bayesiana precisa da MESMA
+# tradução; duplicar os dicionários faria os dois relatórios divergirem ao
+# incluir uma métrica nova.
+
+#: nome no YAML → sufixo da coluna `{protocolo}_{campo}_{sufixo}_F1`
+MAPA_METRICA_SUFIXO = {
+    'bertscore': 'bertscore',
+    'rouge_l': 'rouge',  # ROUGE-L usa 'rouge' no sufixo
+    'rouge_1': 'rouge1',
+    'rouge_2': 'rouge2',
+    'levenshtein': 'levenshtein',
+    'sbert': 'sbert',
+    'sbert_pequeno': 'sbert_pequeno',
+    'sbert_medio': 'sbert_medio',
+    'sbert_grande': 'sbert_grande',
+}
+
+#: nome no YAML → rótulo legível em relatórios e títulos de figura
+MAPA_METRICA_DISPLAY = {
+    'bertscore': 'BERTScore',
+    'rouge_l': 'ROUGE-L',
+    'rouge_1': 'ROUGE-1',
+    'rouge_2': 'ROUGE-2',
+    'levenshtein': 'Levenshtein',
+    'sbert': 'SBERT',
+    'sbert_pequeno': 'SBERT-Small',
+    'sbert_medio': 'SBERT-Medium',
+    'sbert_grande': 'SBERT-Large',
+}
+
+
+# ============================================================================
 # Textos i18n
 # ============================================================================
 
@@ -797,6 +834,28 @@ class AnaliseEstatistica:
 # Função de conveniência para o pipeline comparar_extracoes.py
 # ============================================================================
 
+def montar_mapa_aliases(config):
+    """Mapa {rotulo: alias} do modelo base e dos modelos de comparação ativos.
+
+    Compartilhado com comparar_extracoes_baycomp.py para que as duas análises
+    rotulem os mesmos protocolos de forma idêntica em tabelas e figuras.
+    """
+    mapa_aliases = {}
+    modelo_base = config.get('modelo_base', {})
+    alias_base = modelo_base.get('alias', modelo_base.get('rotulo', ''))
+    if alias_base:
+        mapa_aliases[modelo_base.get('rotulo', '')] = alias_base
+
+    for m in config.get('modelos_comparacao', []):
+        if not m.get('ativo', True):
+            continue
+        rotulo = m.get('rotulo', '')
+        alias = m.get('alias', rotulo)
+        mapa_aliases[rotulo] = alias
+
+    return mapa_aliases
+
+
 def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida, lang='en'):
     """
     Função principal chamada por comparar_extracoes.py.
@@ -859,45 +918,13 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
             print("   ⚠️  Nenhuma métrica com (global) encontrada. Sem análise estatística.")
             return []
     
-    # Mapa de aliases: {rotulo: alias}
-    mapa_aliases = {}
-    modelo_base = config.get('modelo_base', {})
-    alias_base = modelo_base.get('alias', modelo_base.get('rotulo', ''))
-    if alias_base:
-        mapa_aliases[modelo_base.get('rotulo', '')] = alias_base
-    
-    for m in config.get('modelos_comparacao', []):
-        if not m.get('ativo', True):
-            continue
-        rotulo = m.get('rotulo', '')
-        alias = m.get('alias', rotulo)
-        mapa_aliases[rotulo] = alias
-    
-    # Mapa de nomes de métrica para sufixo nas colunas do DataFrame
-    mapa_metrica_sufixo = {
-        'bertscore': 'bertscore',
-        'rouge_l': 'rouge',  # ROUGE-L usa 'rouge' no sufixo
-        'rouge_1': 'rouge1',
-        'rouge_2': 'rouge2',
-        'levenshtein': 'levenshtein',
-        'sbert': 'sbert',
-        'sbert_pequeno': 'sbert_pequeno',
-        'sbert_medio': 'sbert_medio',
-        'sbert_grande': 'sbert_grande',
-    }
-    
-    mapa_metrica_display = {
-        'bertscore': 'BERTScore',
-        'rouge_l': 'ROUGE-L',
-        'rouge_1': 'ROUGE-1',
-        'rouge_2': 'ROUGE-2',
-        'levenshtein': 'Levenshtein',
-        'sbert': 'SBERT',
-        'sbert_pequeno': 'SBERT-Small',
-        'sbert_medio': 'SBERT-Medium',
-        'sbert_grande': 'SBERT-Large',
-    }
-    
+    mapa_aliases = montar_mapa_aliases(config)
+
+    # Mapas de métrica → sufixo de coluna / rótulo (constantes do módulo,
+    # compartilhadas com comparar_extracoes_baycomp.py)
+    mapa_metrica_sufixo = MAPA_METRICA_SUFIXO
+    mapa_metrica_display = MAPA_METRICA_DISPLAY
+
     # Identifica protocolos (modelos) disponíveis
     rotulo_true = analisador.rotulos[1] if len(analisador.rotulos) > 1 else ''
     protocolos = list(analisador.rotulos[2:]) if len(analisador.rotulos) > 2 else []
@@ -975,18 +1002,34 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
     return resumos
 
 
-def _processar_llm_estatisticas(dados_analise, config, protocolos, mapa_aliases, pasta_estat, lang, resumos):
-    """Processa análise estatística para LLM-as-a-Judge (separada das métricas de similaridade)."""
+def montar_dataframes_llm(dados_analise, protocolos, mapa_aliases):
+    """Monta os DataFrames largos (documentos × protocolos) da avaliação LLM-as-a-Judge.
+
+    Fonte única dos escores do juiz para TODAS as análises (frequentista e
+    bayesiana): os arquivos `{id}.avaliacao.json` carregados por
+    `CargaDadosComparacao` e indexados em `dados_analise.get_avaliacao()`. Esses
+    arquivos vêm da coluna `configuracao_comparacao.campos_dataset.avaliacao`
+    (entrada parquet/csv) ou já existem na pasta de JSONs — os dois caminhos
+    convergem no mesmo loader, então não há caminho de código separado.
+
+    Args:
+        dados_analise: instância de JsonAnaliseDados.
+        protocolos: rótulos dos modelos a extrair (na ordem desejada).
+        mapa_aliases: {rotulo: alias} — as colunas saem já com o alias.
+
+    Returns:
+        tuple(df_f1, df_nota): DataFrames indexados pelo id do documento. Vazios
+        quando o juiz não produziu a métrica correspondente.
+    """
     pk = dados_analise.config.nome_campo_id
-    
-    # Tenta extrair F1 e nota por protocolo
+
     df_f1 = pd.DataFrame()
     df_nota = pd.DataFrame()
-    
+
     for proto in protocolos:
         f1_vals = {}
         nota_vals = {}
-        
+
         for item in dados_analise.dados_completos:
             id_doc = item.get(pk)
             if not id_doc:
@@ -994,21 +1037,28 @@ def _processar_llm_estatisticas(dados_analise, config, protocolos, mapa_aliases,
             evals = dados_analise.get_avaliacao(str(id_doc))
             if not evals:
                 continue
-            
+
             f1 = evals.get(f'{proto}_F1')
             nota = evals.get(f'{proto}_nota')
-            
+
             if f1 is not None:
                 f1_vals[id_doc] = f1
             if nota is not None:
                 nota_vals[id_doc] = nota
-        
+
         alias = mapa_aliases.get(proto, proto)
         if f1_vals:
             df_f1[alias] = pd.Series(f1_vals)
         if nota_vals:
             df_nota[alias] = pd.Series(nota_vals)
-    
+
+    return df_f1, df_nota
+
+
+def _processar_llm_estatisticas(dados_analise, config, protocolos, mapa_aliases, pasta_estat, lang, resumos):
+    """Processa análise estatística para LLM-as-a-Judge (separada das métricas de similaridade)."""
+    df_f1, df_nota = montar_dataframes_llm(dados_analise, protocolos, mapa_aliases)
+
     # Processa F1 LLM
     if len(df_f1.columns) >= 2:
         df_f1 = df_f1.dropna()

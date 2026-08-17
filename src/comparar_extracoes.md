@@ -19,9 +19,9 @@ python src/comparar_extracoes.py --config ./experimento_revisoes/meu_config_comp
 # Para utilizar o console guiado (sem parâmetros informados):
 python src/comparar_extracoes.py
 
-# Para REGERAR apenas os gráficos, estatísticas ou a planilha base (sem refazer a análise pesada via NLP):
-# (Exige que a análise principal já tenha sido processada previamente)
-python src/comparar_extracoes.py --config ./experimento_revisoes/meu_config_comparacao.yaml --graficos --estatisticas --planilha
+# Para REGERAR apenas os gráficos, estatísticas, análise bayesiana ou a planilha base
+# (sem refazer a análise pesada via NLP; exige que a análise principal já tenha rodado)
+python src/comparar_extracoes.py --config ./experimento_revisoes/meu_config_comparacao.yaml --graficos --estatisticas --bayesiana --planilha
 ```
 
 ## ⚙️ Configuração (O Arquivo YAML)
@@ -72,6 +72,136 @@ Todas as manobras e experimentos de comparação prescindem da necessidade de en
       - Resumo
   ```
   **Nota:** Campos virtuais são omitidos dinamicamente nas métricas `(global)` e `(estrutura)` para evitar inflar contagens estruturais ou duplicar textos que já existam nas chaves originais.
+- **`estatistica_bayesiana`**: (Opcional) Ativa a comparação bayesiana pareada entre protocolos — ver a seção dedicada abaixo. Também é aceita dentro de `configuracao_comparacao`.
+
+## 🎲 Comparação Bayesiana Pareada (Opcional)
+
+Camada **complementar** à análise estatística frequentista (Friedman, Wilcoxon + Holm, Nemenyi), implementada em `comparar_extracoes_baycomp.py` sobre o motor de `util_est_bayesiana.py` (teste de sinais bayesiano de Benavoli et al., 2017; `baycomp` como implementação de referência).
+
+O que ela acrescenta é o que o teste de hipótese nula não consegue expressar: a probabilidade posterior de **equivalência prática**. "Equivalente" vira achado, e não falha em rejeitar H₀; "inconclusivo" é desfecho legítimo.
+
+### Ativação
+
+```yaml
+estatistica_bayesiana:
+  ativo: true
+  eps: 0.05
+  metricas_automaticas:
+    rope: 0.01
+    campos: ["(global)"]
+    metricas: [bertscore, sbert_medio]
+```
+
+Sem a chave (ou com `ativo: false`) o pipeline se comporta exatamente como antes.
+
+### Os dois alvos
+
+| Alvo | Fonte | Modo | Margem | O que mede |
+|---|---|---|---|---|
+| **Likert do juiz LLM** (principal) | `{protocolo}_nota` dos arquivos `.avaliacao.json` | `proporcao` | `eps` sobre a posterior | qualidade percebida |
+| **Métricas automáticas** (complementar) | colunas `{protocolo}_{campo}_{métrica}_F1` | `baycomp` | `rope` sobre os escores brutos | fidelidade ao modelo base |
+
+Os rótulos coincidem sem que o significado coincida. No modo `proporcao`, equivalência é `P(|δ| ≤ ε)` — uma afirmação sobre **magnitude**, medida em proporção de documentos. No modo `baycomp`, é `P(a zona ROPE ser a maioritária)` — uma afirmação sobre **qual região concentra mais documentos**. O modo aparece na legenda de cada figura e no cabeçalho de cada seção do relatório.
+
+⚠️ As métricas automáticas comparam cada protocolo com o **modelo base**, portanto medem fidelidade de destilação, **não qualidade**: um protocolo que reproduz fielmente um erro do modelo base é premiado por elas. Entram como triangulação da Likert, nunca como veredito.
+
+### Dados do juiz LLM
+
+A seção principal consome os mesmos dados que a análise frequentista já usa — não há mecanismo novo. As notas vêm dos arquivos `{id}.avaliacao.json`, que chegam por um de dois caminhos convergentes:
+
+- **entrada `.parquet`/`.csv`**: preencha `configuracao_comparacao.campos_parquet.avaliacao` com o nome da coluna que contém o JSON da avaliação (o padrão é `""`, ou seja, desligado);
+- **entrada por pasta**: deixe os arquivos `{id}.avaliacao.json` junto dos `{id}.json`, seguindo `configuracao_comparacao.mascaras.avaliacao`.
+
+O JSON da avaliação precisa ter ao menos a chave `nota` (Likert). `precision`/`recall`/`f1`, `explicacao` e `metricas_por_campo` são opcionais e alimentam as abas de avaliação LLM do Excel. Sem notas para ao menos dois protocolos, a seção principal é omitida com aviso registrado no próprio relatório.
+
+### Parâmetros
+
+| Chave | Padrão | Efeito |
+|---|---|---|
+| `ativo` | — | única chave que decide se a etapa existe |
+| `eps` | — | **obrigatório** para a Likert; margem sobre a posterior, em proporção de documentos |
+| `origem_eps` | `""` | texto livre citado no relatório para justificar o ε |
+| `limiar` | `0.80` | probabilidade mínima para classificar uma célula do heatmap |
+| `limiar_equivalencia` | `0.95` | limiar do veredito, na curva de sensibilidade ao ε |
+| `amostras` | `200000` | amostras da posterior |
+| `semente` | `42` | reprodutibilidade |
+| `incluir_base` | `false` | inclui o modelo base na matriz da Likert (ignorado quando `protocolos` é usado) |
+| `protocolos` | todos | recorte(s) **e ordem** dos protocolos; lista simples ou `{nome: [protocolos]}` — ver abaixo |
+| `metricas_automaticas.rope` | `0.0` | **obrigatória** (> 0) para a seção complementar |
+| `metricas_automaticas.rope_sensibilidade` | `rope/2, rope, 2·rope` | valores da varredura |
+| `metricas_automaticas.campos` | — | campos declarados em `configuracao_comparacao.campos` |
+| `metricas_automaticas.metricas` | — | `bertscore`, `rouge_l`, `rouge_1`, `rouge_2`, `levenshtein`, `sbert_*` |
+
+**O ε e a ROPE são pré-registrados.** Este pipeline não tem avaliadores humanos para calibrar o ε — isso pertence à Fase A (`realizar_avaliacoes.py --bayes`), de onde o valor deve ser trazido e fixado aqui. As curvas e varreduras de sensibilidade existem para demonstrar que a conclusão **não** depende de um número escolhido a dedo; lê-las e então adotar o valor que produz o resultado desejado é a versão bayesiana do *p-hacking*, e é detectável. Sem `eps` informado, a seção da Likert é omitida em vez de rodar com um valor de conveniência.
+
+### Saída
+
+Subpasta `bayesiana/` na pasta de saída, limpa a cada execução:
+
+```
+bayesiana/
+├── analise_bayesiana.md                     relatório consolidado (tabelas + leitura descritiva)
+├── bayes_<recorte>_likert_juiz.csv          matriz de relações (formato longo)
+├── bayes_<recorte>_likert_juiz_heatmap.png
+├── bayes_<recorte>_likert_juiz_curva_eps.png          P(equivalência) × ε, com o ε operacional marcado
+├── bayes_<recorte>_likert_juiz_sensibilidade_limiar.csv
+├── bayes_<recorte>_<campo>_<metrica>.csv
+├── bayes_<recorte>_<campo>_<metrica>_heatmap.png
+└── bayes_<recorte>_<campo>_<metrica>_sensibilidade_rope.csv
+```
+
+`<recorte>` é o nome declarado em `protocolos`, normalizado (`Q1_ajuste_fino` → `q1_ajuste_fino_`). Sem recortes nomeados o prefixo é vazio: `bayes_likert_juiz_heatmap.png`.
+
+**Como ler o heatmap:** a cor comunica a categoria (verde = superior, azul = equivalente, vermelho = inferior, cinza = incerto), a intensidade comunica a magnitude da probabilidade posterior, e o número traz essa probabilidade explícita. `incerto` é categoria própria — ausência de evidência suficiente, não uma quarta relação. A diagonal é neutra porque `(Pi, Pi)` não é comparação.
+
+**Dois limiares, dois usos:** `0.80` classifica o panorama do heatmap; `0.95` é a exigência do veredito na curva de ε. Um par pode aparecer `equivalente` no heatmap e não alcançar equivalência na curva — são perguntas com exigências diferentes, não uma inconsistência.
+
+### Recortes de protocolos
+
+16 protocolos geram 120 pares, e o heatmap deixa de ser legível bem antes disso. A chave `protocolos` recorta a comparação sem tocar no resto do YAML, em duas formas.
+
+**Lista simples** — um recorte único, arquivos sem prefixo:
+
+```yaml
+estatistica_bayesiana:
+  protocolos: ["A", "C", "D1", "D2"]   # alias ou rótulo, na ordem desejada
+```
+
+**Dicionário** — um recorte por questão de pesquisa, cada um com o seu conjunto de figuras, tabelas e seção no relatório:
+
+```yaml
+estatistica_bayesiana:
+  protocolos:
+    Q1_ajuste_fino:    ["A", "B", "C"]
+    Q3_escalonamento:  ["D1", "D2", "D3", "D4"]
+    Q6_fusao:          ["B", "C", "D21", "D22", "D23"]
+```
+
+O nome vira **prefixo dos arquivos** (`bayes_q1_ajuste_fino_likert_juiz_heatmap.png`) e título da seção. É o caminho recomendado para o YAML de panorama: uma única comparação processada rende várias figuras focadas, cada uma com os protocolos que aquela questão de fato contrasta.
+
+```bash
+# ajustar as listas e reexecutar SÓ esta etapa — não refaz a comparação pesada
+python src/comparar_extracoes.py --config meu_config.yaml --bayesiana
+```
+
+Cada recorte faz **duas** coisas:
+
+- **recorte** — só os protocolos listados entram na matriz;
+- **ordem** — linhas e colunas saem na sequência declarada. Isso importa porque os heatmaps da Likert e das métricas automáticas são lidos lado a lado: com as linhas em ordens diferentes, a comparação visual induz leitura errada.
+
+Detalhes de comportamento:
+
+- aceita o **alias** (o nome que aparece nas figuras e tabelas) ou o **rótulo** do YAML, sem diferenciar maiúsculas nem espaços em volta; em caso de colisão entre o alias de um modelo e o rótulo de outro, o rótulo vence;
+- nomes que não casam com nenhum modelo viram **aviso explícito**, no console e no relatório — um erro de digitação não pode encolher o heatmap em silêncio;
+- um recorte que resolva menos de dois protocolos é **pulado com um aviso**, sem interromper os demais;
+- o mesmo protocolo pode aparecer em vários recortes — é o caso normal quando uma baseline serve de referência para mais de uma questão;
+- o **modelo base** só entra se você o listar (aí `incluir_base` é ignorado), e ainda assim apenas na Likert: nas métricas automáticas as colunas medem similaridade *com* a base, e base contra si mesma é 1,0 por construção;
+- o pareamento por documento é **por recorte**: um protocolo com escores faltando não derruba documentos dos recortes em que não aparece;
+- os recortes ficam registrados no cabeçalho de `analise_bayesiana.md`, para que as figuras continuem interpretáveis meses depois.
+
+Omitida a chave, entram todos os modelos ativos, na ordem do YAML — e o módulo avisa acima de 8 protocolos.
+
+**Sobre o volume de saída:** o número de arquivos é `recortes × campos × métricas`. O exemplo em `experimentos/summa-experimento/06_compara_todos_parcial.yaml` (6 recortes × 2 campos × 2 métricas, mais a Likert de cada recorte) gera 30 análises e ~97 arquivos. Vale dimensionar `campos`/`metricas` de `metricas_automaticas` com isso em mente — elas são triangulação, e raramente valem todas as combinações.
 
 ## 📦 Suporte a Entrada via Parquet
 

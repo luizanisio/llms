@@ -131,6 +131,55 @@ configuracao_comparacao:
     levenshtein:
       - "Tipo"
       - "DataJulgamento"
+
+# ---- Comparação Bayesiana Pareada (Opcional) ----
+# Camada COMPLEMENTAR à análise estatística (Friedman/Wilcoxon/Nemenyi): responde
+# "qual a probabilidade de A superar B?" e "qual a probabilidade de serem
+# praticamente equivalentes?" — que o teste de hipótese nula não expressa.
+# Gera bayesiana/analise_bayesiana.md, heatmaps e curvas de sensibilidade.
+# Remova o bloco (ou use ativo: false) para desligar a etapa por completo.
+estatistica_bayesiana:
+  ativo: true
+  eps: 0.05                      # OBRIGATÓRIO p/ Likert. Margem sobre a POSTERIOR,
+                                 #   em proporção de documentos. Deve ser PRÉ-REGISTRADO:
+                                 #   calibre na Fase A (realizar_avaliacoes.py --bayes) e
+                                 #   fixe aqui. Escolher o ε depois de ver a curva de
+                                 #   sensibilidade é a versão bayesiana do p-hacking.
+  origem_eps: "calibrado pela divergência entre os 3 especialistas (Fase A)"  # (Opcional) citado no relatório
+  limiar: 0.80                   # Probabilidade mínima p/ classificar uma célula do heatmap
+  limiar_equivalencia: 0.95      # Limiar do veredito, na curva de sensibilidade ao ε
+  amostras: 200000               # Amostras da posterior (use 200000 na análise definitiva)
+  semente: 42                    # Reprodutibilidade — registre o valor na dissertação
+  incluir_base: false            # true = inclui o modelo base na matriz da Likert
+                                 #   (ignorado quando 'protocolos' abaixo é usado)
+
+  # (Opcional) Recorte(s) E ORDEM dos protocolos comparados. Aceita o alias
+  # (o que aparece nas figuras) ou o rótulo. Filtrar aqui NÃO exige refazer a
+  # comparação: ajuste as listas e rode com --bayesiana.
+  #   - recorte: com muitos protocolos o heatmap fica ilegível (16 = 120 pares)
+  #   - ordem:   linhas/colunas saem na sequência declarada, para que os heatmaps
+  #              da Likert e das métricas automáticas possam ser lidos lado a lado
+  # Omitido = todos os modelos ativos, na ordem do YAML.
+  #
+  # Forma 1 — lista simples: um recorte único, arquivos sem prefixo.
+  # protocolos: ["A", "B", "D1", "D2"]
+  #
+  # Forma 2 — dicionário: um recorte por questão de pesquisa. O nome vira
+  #   prefixo dos arquivos (bayes_q1_ajuste_fino_...) e seção do relatório.
+  #   Recomendado no YAML de panorama: uma comparação, várias figuras focadas.
+  # protocolos:
+  #   Q1_ajuste_fino:   ["A", "B", "C"]
+  #   Q3_escalonamento: ["D1", "D2", "D3", "D4"]
+
+  # Métricas automáticas: seção COMPLEMENTAR. Medem similaridade com o modelo base,
+  # ou seja fidelidade de destilação — NÃO qualidade. Servem como triangulação.
+  metricas_automaticas:
+    rope: 0.01                   # OBRIGATÓRIA (> 0). Margem sobre os ESCORES BRUTOS:
+                                 #   |x - y| <= rope conta como empate. Com escores
+                                 #   comprimidos é a ROPE que determina o resultado.
+    rope_sensibilidade: [0.005, 0.01, 0.02]   # (Opcional) padrão: rope/2, rope, 2*rope
+    campos: ["(global)"]         # Mesmos nomes usados em configuracao_comparacao.campos
+    metricas: [bertscore]        # bertscore, rouge_l, rouge_1, rouge_2, levenshtein, sbert_*
 '''
 
 # =============================================================================
