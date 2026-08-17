@@ -1958,70 +1958,84 @@ def _bloco_como_ler_bayes(cfg, pares_info: list, rotulo_entidade: str = "fonte",
         f"categoria seria a dominante** — não qual direção vence.\n"
     )
 
-    # --- exemplo dinâmico: o par mais próximo da fronteira de decisão ---
-    exemplo = _par_didatico(pares_info, cfg.limiar)
-    if exemplo:
-        import math
-        nome_a = exemplo.get("juiz") or exemplo.get("nome_a", "A")
-        nome_b = referencia or exemplo.get("nome_b", "B")
-        p_eq   = exemplo.get("p_equiv", float("nan"))
-        e_crit = exemplo.get("eps_critico", float("nan"))
-        acima  = exemplo.get("acima", "?");  empate = exemplo.get("empate", "?")
-        abaixo = exemplo.get("abaixo", "?"); n_obs  = exemplo.get("n", "?")
-
-        indefinido = isinstance(e_crit, float) and math.isnan(e_crit)
-        p_eq_str = ("n/a" if isinstance(p_eq, float) and math.isnan(p_eq) else _num(p_eq))
-        e_crit_str = "n/a" if indefinido else _num(e_crit, 3)
-        posicao = (f"abaixo do limiar de {_num(cfg.limiar, 2)}"
-                   if p_eq < cfg.limiar else f"acima do limiar de {_num(cfg.limiar, 2)}")
-
-        if indefinido:
-            # a curva P(equivalência) × ε não alcança o limiar em nenhuma margem
-            # da faixa varrida: a divergência é grande demais para ela
-            veredito = (
-                f"a equivalência **não é estabelecida**, e o ε crítico é indefinido: a "
-                f"probabilidade de equivalência não alcança {_num(LIMIAR_EPS_CRITICO, 2)} em "
-                f"nenhuma margem da faixa varrida. A divergência excede qualquer margem "
-                f"defensável nesta escala."
-            )
-        elif e_crit > cfg.eps:
-            veredito = (
-                f"a equivalência **não é estabelecida** ao ε adotado. Seriam necessários "
-                f"ε = {e_crit_str} para concluí-la — a distância que ainda separa os dois "
-                f"{plural}, e não uma sugestão de ampliar a margem."
-            )
-        else:
-            veredito = (
-                f"a equivalência **está estabelecida**: o ε crítico ({e_crit_str}) fica abaixo "
-                f"do ε adotado, com folga de {_num(cfg.eps - e_crit, 3)}."
-            )
-
-        L.append(
-            f"**Exemplo de leitura** — `{nome_a}` em relação a `{nome_b}`, o par mais próximo "
-            f"da fronteira de decisão: em {n_obs} itens pareados, `{nome_a}` ficou acima em "
-            f"{acima}, empatou em {empate} e ficou abaixo em {abaixo}. A probabilidade "
-            f"posterior de a vantagem líquida caber em ε = {_num(cfg.eps, 3)} é "
-            f"**{p_eq_str}** ({posicao}); {veredito}\n"
-        )
+    # --- exemplos dinâmicos: os dois extremos da distribuição de pares ---
+    # Dois exemplos, e não um: o par mais próximo da equivalência ensina a ler um
+    # resultado favorável (e a diferença entre "equivalente" e "só não distante"),
+    # enquanto o mais distante ensina a ler a recusa — inclusive o caso em que o
+    # ε crítico é indefinido, que um exemplo só nunca cobriria.
+    favoravel, desafiador = _pares_didaticos(pares_info)
+    for rotulo, exemplo in (("mais favorável", favoravel),
+                            ("mais desafiador", desafiador)):
+        if exemplo is not None:
+            L.append(_texto_exemplo(exemplo, cfg, plural, referencia, rotulo))
     return L
 
 
-def _par_didatico(pares_info: list, limiar: float):
-    """O par que melhor ensina a leitura: o mais próximo da fronteira de decisão.
+def _pares_didaticos(pares_info: list) -> tuple:
+    """Os dois extremos: (maior P(equivalência), menor P(equivalência)).
 
-    Prioriza o maior P(equivalência) **entre os que não alcançaram o limiar** —
-    o caso em que a distância até a equivalência é informativa. Se todos
-    alcançaram, devolve o de menor P(equivalência), que é o mais justo. Um par
-    saturado em zero não ensina nada: só diz "são muito diferentes".
+    Devolve ``(None, None)`` sem pares utilizáveis e ``(par, None)`` quando há um
+    só — repetir o mesmo par sob dois rótulos confundiria em vez de esclarecer.
     """
-    if not pares_info:
-        return None
-    validos = [p for p in pares_info if p.get("p_equiv") == p.get("p_equiv")]
+    validos = [p for p in pares_info or []
+               if p.get("p_equiv") == p.get("p_equiv")]      # descarta NaN
     if not validos:
-        return None
-    abaixo = [p for p in validos if p.get("p_equiv", 1.0) < limiar]
-    return (max(abaixo, key=lambda p: p["p_equiv"]) if abaixo
-            else min(validos, key=lambda p: p["p_equiv"]))
+        return None, None
+    favoravel = max(validos, key=lambda p: p["p_equiv"])
+    desafiador = min(validos, key=lambda p: p["p_equiv"])
+    if favoravel is desafiador:
+        return favoravel, None
+    return favoravel, desafiador
+
+
+def _texto_exemplo(exemplo: dict, cfg, plural: str, referencia: str,
+                   rotulo: str) -> str:
+    """Um parágrafo de leitura guiada para um par concreto.
+
+    Todos os números vêm da execução: o texto é o mesmo que um leitor deveria
+    conseguir escrever olhando a tabela e o heatmap.
+    """
+    import math
+
+    nome_a = exemplo.get("juiz") or exemplo.get("nome_a", "A")
+    nome_b = referencia or exemplo.get("nome_b", "B")
+    p_eq   = exemplo.get("p_equiv", float("nan"))
+    e_crit = exemplo.get("eps_critico", float("nan"))
+    acima  = exemplo.get("acima", "?");  empate = exemplo.get("empate", "?")
+    abaixo = exemplo.get("abaixo", "?"); n_obs  = exemplo.get("n", "?")
+
+    indefinido = isinstance(e_crit, float) and math.isnan(e_crit)
+    e_crit_str = "n/a" if indefinido else _num(e_crit, 3)
+    atinge = p_eq >= cfg.limiar
+    posicao = (f"{'acima' if atinge else 'abaixo'} do limiar de {_num(cfg.limiar, 2)}")
+
+    if indefinido:
+        # a curva P(equivalência) × ε não alcança o limiar em nenhuma margem da
+        # faixa varrida: a divergência é grande demais para ela
+        veredito = (
+            f"a equivalência **não é estabelecida**, e o ε crítico é indefinido: a "
+            f"probabilidade de equivalência não alcança {_num(LIMIAR_EPS_CRITICO, 2)} em "
+            f"nenhuma margem da faixa varrida. A divergência excede qualquer margem "
+            f"defensável nesta escala."
+        )
+    elif e_crit > cfg.eps:
+        veredito = (
+            f"a equivalência **não é estabelecida** ao ε adotado. Seriam necessários "
+            f"ε = {e_crit_str} para concluí-la — a distância que ainda separa os dois "
+            f"{plural}, e não uma sugestão de ampliar a margem."
+        )
+    else:
+        veredito = (
+            f"a equivalência **está estabelecida**: o ε crítico ({e_crit_str}) fica abaixo "
+            f"do ε adotado, com folga de {_num(cfg.eps - e_crit, 3)}."
+        )
+
+    return (
+        f"**Exemplo de leitura — cenário {rotulo}:** `{nome_a}` em relação a `{nome_b}`. "
+        f"Em {n_obs} itens pareados, `{nome_a}` ficou acima em {acima}, empatou em {empate} "
+        f"e ficou abaixo em {abaixo}. A probabilidade posterior de a vantagem líquida caber "
+        f"em ε = {_num(cfg.eps, 3)} é **{_num(p_eq)}** ({posicao}); {veredito}\n"
+    )
 
 
 def _pares_info_de_tabela(tabela) -> list:
