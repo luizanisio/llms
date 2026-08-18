@@ -136,18 +136,19 @@ configuracao_comparacao:
 # Camada COMPLEMENTAR à análise estatística (Friedman/Wilcoxon/Nemenyi): responde
 # "qual a probabilidade de A superar B?" e "qual a probabilidade de serem
 # praticamente equivalentes?" — que o teste de hipótese nula não expressa.
-# Gera bayesiana/analise_bayesiana.md, heatmaps e curvas de sensibilidade.
+# Gera bayesiana/analise_bayesiana.md, heatmaps e varreduras de sensibilidade.
+# Cada escala usa o teste do baycomp adequado: Likert (ordinal) -> SignTest;
+# metricas automaticas (continuas) -> CorrelatedTTest.
 # Remova o bloco (ou use ativo: false) para desligar a etapa por completo.
 estatistica_bayesiana:
   ativo: true
-  eps: 0.05                      # OBRIGATÓRIO p/ Likert. Margem sobre a POSTERIOR,
-                                 #   em proporção de documentos. Deve ser PRÉ-REGISTRADO:
-                                 #   calibre na Fase A (realizar_avaliacoes.py --bayes) e
-                                 #   fixe aqui. Escolher o ε depois de ver a curva de
-                                 #   sensibilidade é a versão bayesiana do p-hacking.
-  origem_eps: "calibrado pela divergência entre os 3 especialistas (Fase A)"  # (Opcional) citado no relatório
   limiar: 0.80                   # Probabilidade mínima p/ classificar uma célula do heatmap
-  limiar_equivalencia: 0.95      # Limiar do veredito, na curva de sensibilidade ao ε
+  rope_likert: 0.5               # (Opcional) Margem sobre as NOTAS. Na escala Likert inteira,
+                                 #   0,5 significa exatamente "notas iguais" — não é margem
+                                 #   arbitrada, é a tradução da escala. Deve ser > 0: com ROPE
+                                 #   zero o baycomp não devolve a probabilidade de equivalência.
+  metodo_likert: sinais          # (Opcional) sinais = baycomp.SignTest (ordinal, padrão)
+                                 #   postos = SignedRankTest · t = CorrelatedTTest
   amostras: 200000               # Amostras da posterior (use 200000 na análise definitiva)
   semente: 42                    # Reprodutibilidade — registre o valor na dissertação
   incluir_base: false            # true = inclui o modelo base na matriz da Likert
@@ -176,7 +177,11 @@ estatistica_bayesiana:
   metricas_automaticas:
     rope: 0.01                   # OBRIGATÓRIA (> 0). Margem sobre os ESCORES BRUTOS:
                                  #   |x - y| <= rope conta como empate. Com escores
-                                 #   comprimidos é a ROPE que determina o resultado.
+                                 #   comprimidos é a ROPE que determina o resultado,
+                                 #   por isso a varredura de sensibilidade é obrigatória.
+    metodo: t                    # (Opcional) t = baycomp.CorrelatedTTest (padrão): usa a
+                                 #   MAGNITUDE das diferenças, adequado a escore contínuo.
+                                 #   sinais/postos só contam direções.
     rope_sensibilidade: [0.005, 0.01, 0.02]   # (Opcional) padrão: rope/2, rope, 2*rope
     campos: ["(global)"]         # Mesmos nomes usados em configuracao_comparacao.campos
     metricas: [bertscore]        # bertscore, rouge_l, rouge_1, rouge_2, levenshtein, sbert_*

@@ -275,21 +275,14 @@ def _complementares(r: dict, saida: str, gerados: list) -> None:
 # Heatmap da comparação bayesiana
 # =============================================================================
 
-def grafico_bayes(matriz, caminho: str, titulo: str, limiar: float = None,
-                  subtitulo: str = None, referencia: str = None,
+def grafico_bayes(matriz, caminho: str, titulo: str,
                   rotulo_entidade: str = "protocolo") -> list:
-    """Heatmap das relações posteriores entre protocolos/fontes/avaliadores.
+    """Heatmap das relações posteriores — desenho delegado ao `util_est_bayesiana`.
 
-    O desenho vive em ``util_est_bayesiana`` porque a mesma figura é usada pela
-    comparação entre protocolos de treinamento, que não passa por este pipeline.
-    Aqui fica apenas a ponte: nome do arquivo, rótulos e registro do que foi
-    gerado, mantendo a regra do módulo — desenhar, nunca calcular.
-
-    Args:
-        referencia: nome do grupo de referência; quando informado, aparece em
-            negrito nos eixos e como anotação no subtítulo do heatmap.
-        rotulo_entidade: label do eixo Y e do título automático. Ex.:
-            ``"protocolo"``, ``"avaliador"``, ``"fonte"``.
+    A figura vive lá porque a mesma é usada pela comparação entre protocolos de
+    treinamento, que não passa por este pipeline. Aqui fica só a ponte: nome do
+    arquivo, rótulo do eixo e registro do que foi gerado — mantendo a regra do
+    módulo: desenhar, nunca calcular.
 
     Returns:
         Lista com o nome do arquivo gerado, ou vazia se o módulo não estiver
@@ -300,39 +293,9 @@ def grafico_bayes(matriz, caminho: str, titulo: str, limiar: float = None,
         return []
     if matriz is None or len(matriz) == 0:
         return []
-    rotulos = list(dict.fromkeys(matriz["linha"]))
-    rotacao = 30 if max(len(str(r)) for r in rotulos) > 8 else 0
-    _, gerado = est.heatmap_relacoes(
-        matriz, arquivo_saida=caminho, titulo=titulo, subtitulo=subtitulo,
-        limiar=limiar, dpi=FIG_DPI, rotacao_x=rotacao,
-        referencia=referencia, rotulo_entidade=rotulo_entidade)
-    return [os.path.basename(gerado)] if gerado else []
-
-
-def grafico_curva_eps(matriz, caminho: str, eps_ref: float = None,
-                      limiar_linha: float = 0.95) -> list:
-    """Curvas P(equivalência) × ε para todos os pares únicos da matriz.
-
-    Complementa o heatmap bayesiano: enquanto o heatmap mostra a decisão no
-    ε operacional, este gráfico exibe como P(equivalência) varia para toda a
-    faixa de ε, permitindo avaliar se a conclusão depende da escolha da margem.
-
-    Args:
-        eps_ref: ε operacional da análise (linha vertical pontilhada). Quando
-            ``None``, lê de ``matriz.attrs['eps']``.
-        limiar_linha: limiar de equivalência (linha horizontal). Padrão 0,95.
-
-    Returns:
-        Lista com o nome do arquivo gerado, ou vazia se indisponível.
-    """
-    if not BAYES_DISPONIVEL:
-        _aviso_util("curva de sensibilidade ao ε")
-        return []
-    if matriz is None or len(matriz) == 0:
-        return []
-    _, gerado = est.grafico_curva_sensibilidade_eps(
-        matriz, arquivo_saida=caminho, eps_ref=eps_ref,
-        limiar_linha=limiar_linha, dpi=FIG_DPI)
+    _, gerado = est.heatmap(matriz, arquivo_saida=caminho, titulo=titulo,
+                            rotulo=rotulo_entidade, dpi=FIG_DPI)
+    plt.close("all")
     return [os.path.basename(gerado)] if gerado else []
 
 

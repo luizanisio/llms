@@ -362,22 +362,28 @@ campos_virtuais:
 # Reexecutar SO esta etapa (nao refaz a comparacao pesada):
 #   python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --bayesiana
 # ==========================================================================
+
 estatistica_bayesiana:
   ativo: true
 
-  # --- eps: margem sobre a POSTERIOR, em proporcao de documentos ---
-  # Usado APENAS na Likert do juiz LLM (escala ordinal, modo 'proporcao').
-  # E PRE-REGISTRADO: deve vir calibrado da Fase A (avaliacao_llm_humana/,
-  # realizar_avaliacoes.py --bayes), pela divergencia entre os especialistas.
-  # Escolher o eps depois de ver a curva de sensibilidade e escolher a
-  # conclusao e inventar o criterio depois — e detectavel.
+  # --- Likert do juiz LLM (secao PRINCIPAL) ---
+  # Escala ORDINAL de 4 pontos -> baycomp.SignTest, que conta direcoes e
+  # descarta magnitude. Adequado porque a distancia entre as notas 2 e 3 nao e
+  # comparavel a distancia entre 3 e 4.
+  #
   # NOTA: enquanto campos_parquet.avaliacao estiver vazio nao ha notas do juiz
   #   e a secao principal e omitida com aviso; so as metricas automaticas rodam.
-  eps: 0.02
-  origem_eps: "pre-registrado; substituir pelo eps calibrado na Fase A (divergencia entre especialistas)"
+  rope_likert: 0.5               # Margem sobre as NOTAS. Como a escala e inteira,
+                                 #   0,5 significa exatamente "notas iguais" — nao e
+                                 #   margem arbitrada nem calibrada, e a traducao
+                                 #   direta da escala. Nao ha analise de sensibilidade
+                                 #   a ela: alterar deixaria de representar a escala.
+                                 #   Deve ser > 0: com ROPE zero o baycomp devolve so
+                                 #   (p_esquerda, p_direita), sem a equivalencia.
+  metodo_likert: sinais          # sinais = SignTest (padrao) | postos = SignedRankTest
+                                 #        | t = CorrelatedTTest
 
   limiar: 0.80                   # probabilidade minima p/ classificar uma celula do heatmap
-  limiar_equivalencia: 0.95      # limiar do veredito, na curva de sensibilidade ao eps
   amostras: 200000               # amostras da posterior (200000 na analise definitiva)
   semente: 42                    # reprodutibilidade — registrar na dissertacao
   incluir_base: false            # ignorado quando 'protocolos' abaixo e um dicionario
@@ -411,11 +417,17 @@ estatistica_bayesiana:
   # DESTILACAO, nao qualidade: um protocolo que reproduz fielmente um erro do
   # professor e premiado por elas. Servem como triangulacao, nunca como veredito.
   metricas_automaticas:
+    # Escala CONTINUA -> baycomp.CorrelatedTTest, que usa a MAGNITUDE das
+    # diferencas e responde diretamente "qual protocolo chega mais perto do
+    # professor". O SignTest responderia "qual zona concentra mais documentos",
+    # que nao e a pergunta desta etapa.
+    metodo: t                    # t = CorrelatedTTest (padrao) | sinais | postos
+
     # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
-    # Obrigatoria (> 0) no modo 'baycomp'. Com escores comprimidos e a ROPE que
-    # determina o resultado: pequena demais satura o heatmap em verde/vermelho,
-    # grande demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria
-    # de reportar — a matriz em tres ROPEs e o minimo defensavel.
+    # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
+    # resultado: pequena demais satura o heatmap em verde/vermelho, grande
+    # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
+    # reportar — a matriz em tres ROPEs e o minimo defensavel.
     rope: 0.01
     rope_sensibilidade: [0.005, 0.01, 0.02]
 
