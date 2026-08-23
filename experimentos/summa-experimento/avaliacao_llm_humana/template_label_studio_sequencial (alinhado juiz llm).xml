@@ -1,312 +1,216 @@
-<View>
-  <Style>
-    /* ── Cabeçalho ── */
-    .ctx { background:#f0f4f8; padding:10px 16px; border-radius:6px;
-           margin-bottom:14px; font-family:Arial,sans-serif; font-size:0.9em; }
-    .ctx-title { font-size:1.05em; font-weight:bold; color:#1a3a5c; margin-bottom:6px; }
-
-    /* ── Acórdão (referência) - sticky para consulta contínua ── */
-    .acordao-wrapper { position:sticky; top:0; z-index:10; background:#fff;
-                       padding-bottom:8px; border-bottom:2px solid #3a7abf; }
-    .acordao-box { max-height:300px; overflow-y:auto; border:1px solid #bbb;
-                   padding:10px 14px; border-radius:4px; background:#fafafa;
-                   font-size:0.82em; white-space:pre-wrap; font-family:monospace;
-                   margin-top:6px; }
-
-    /* ── Blocos de extração — layout 2 colunas ── */
-    .extracao-bloco  { border:1px solid #ddd; border-radius:6px;
-                       padding:14px; background:#fff; margin-top:18px;
-                       width:100%; box-sizing:border-box; }
-    .extr-header     { font-weight:bold; font-size:1em; color:#1a3a5c;
-                       border-bottom:2px solid #3a7abf; margin-bottom:10px;
-                       padding-bottom:4px; }
-    .extr-body       { display:flex; gap:20px; align-items:flex-start; }
-    .extr-conteudo   { flex:1; min-width:0; }
-    .extr-avaliacao  { flex:0 0 320px; display:flex; flex-direction:column; gap:10px; }
-    .extr-nota   { background:#f8f8ff; border-radius:4px; padding:8px 10px; }
-    .extr-prob   { background:#fffaf0; border-radius:4px; padding:8px 10px; }
-    .extr-justif { background:#f0f8ff; border-radius:4px; padding:8px 10px; }
-    .label-sm    { font-size:0.8em; font-weight:bold; color:#555;
-                   text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
-
-    /* ── Indicador de progresso ── */
-    .progresso { background:#e8f5e9; border:1px solid #81c784; border-radius:5px;
-                 padding:8px 14px; margin-top:14px; font-family:Arial,sans-serif;
-                 font-size:0.85em; color:#2e7d32; font-weight:bold; }
-
-    /* ═══════════════════════════════════════════════════════════
-       Instrução colapsável — compacta por padrão, expande ao hover.
-       ═══════════════════════════════════════════════════════════ */
-    .instrucao {
-      background:#fffbe6; border:1px solid #f0c040; border-left:4px solid #e6a800;
-      border-radius:5px; padding:0; margin-top:16px;
-      font-family:Arial,sans-serif;
-      max-height:44px; overflow:hidden;
-      transition: max-height 0.35s ease-in-out, padding 0.2s ease;
-      position:relative; cursor:pointer;
-    }
-    .instrucao::after {
-      content:''; position:absolute; bottom:0; left:0; right:0; height:18px;
-      background:linear-gradient(transparent, #fffbe6); pointer-events:none;
-    }
-    .instrucao:hover {
-      max-height:3000px; padding-bottom:12px; overflow-y:auto;
-    }
-    .instrucao:hover::after { display:none; }
-
-    .instrucao-titulo {
-      font-weight:bold; color:#7a5a00; font-size:0.9em;
-      text-transform:uppercase; letter-spacing:.5px;
-      padding:12px 16px 6px 16px;
-    }
-    .instrucao-texto  {
-      font-size:0.84em; color:#4a3800; line-height:1.55;
-      padding:0 16px 4px 16px;
-    }
-
-    /* ═══════════════════════════════════════════════════════════
-       CSS PURO para controlar checkboxes de conclusão.
-       Toda a lógica abaixo usa apenas :has(input:checked),
-       sem nenhum visibleWhen — zero risco de crash React.
-       ═══════════════════════════════════════════════════════════ */
-
-    /* 1) Esconder conclusão por padrão (fora da tela) */
-    .wrapper-conc1,
-    .wrapper-conc2,
-    .wrapper-conc3 {
-      position: absolute !important;
-      left: -9999px !important;
-      width: 1px !important;
-      height: 1px !important;
-      overflow: hidden !important;
-    }
-
-    /* 2) Mostrar conclusão SOMENTE quando uma nota foi selecionada
-          E a própria conclusão ainda NÃO foi marcada */
-    .extracao-bloco:has(.nota-gate-1 input:checked) .wrapper-conc1:not(:has(input:checked)),
-    .extracao-bloco:has(.nota-gate-2 input:checked) .wrapper-conc2:not(:has(input:checked)),
-    .extracao-bloco:has(.nota-gate-3 input:checked) .wrapper-conc3:not(:has(input:checked)) {
-      position: static !important;
-      left: auto !important;
-      width: auto !important;
-      height: auto !important;
-      overflow: visible !important;
-    }
-  </Style>
-
-  <!-- ══════════════════════════════════════════
+<View className="raiz">
+<Style> /* ── Cabeçalho ── */ .ctx { background:#f0f4f8; padding:10px 16px; border-radius:6px; margin-bottom:14px; font-family:Arial,sans-serif; font-size:0.9em; } .ctx-title { font-size:1.05em; font-weight:bold; color:#1a3a5c; margin-bottom:6px; } /* ── Acórdão (referência) - sticky para consulta contínua ── */ .acordao-wrapper { position:sticky; top:0; z-index:10; background:#fff; padding-bottom:8px; border-bottom:2px solid #3a7abf; } .acordao-box { max-height:300px; overflow-y:auto; border:1px solid #bbb; padding:10px 14px; border-radius:4px; background:#fafafa; font-size:0.82em; white-space:pre-wrap; font-family:monospace; margin-top:6px; } /* ── Blocos de extração — layout 2 colunas ── */ .extracao-bloco { border:1px solid #ddd; border-radius:6px; padding:14px; background:#fff; margin-top:18px; width:100%; box-sizing:border-box; } .extr-header { font-weight:bold; font-size:1em; color:#1a3a5c; border-bottom:2px solid #3a7abf; margin-bottom:10px; padding-bottom:4px; } .extr-body { display:flex; gap:20px; align-items:flex-start; } .extr-conteudo { flex:1; min-width:0; } .extr-avaliacao { flex:0 0 320px; display:flex; flex-direction:column; gap:10px; } .extr-nota { background:#f8f8ff; border-radius:4px; padding:8px 10px; } .extr-prob { background:#fffaf0; border-radius:4px; padding:8px 10px; } .extr-justif { background:#f0f8ff; border-radius:4px; padding:8px 10px; } .label-sm { font-size:0.8em; font-weight:bold; color:#555; text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; } /* ── Indicador de progresso ── */ .progresso { background:#e8f5e9; border:1px solid #81c784; border-radius:5px; padding:8px 14px; margin-top:14px; font-family:Arial,sans-serif; font-size:0.85em; color:#2e7d32; font-weight:bold; } /* ═══════════════════════════════════════════════════════════ Instrução colapsável — compacta por padrão, expande ao hover. ═══════════════════════════════════════════════════════════ */ .instrucao { background:#fffbe6; border:1px solid #f0c040; border-left:4px solid #e6a800; border-radius:5px; padding:0; margin-top:16px; font-family:Arial,sans-serif; max-height:44px; overflow:hidden; transition: max-height 0.35s ease-in-out, padding 0.2s ease; position:relative; cursor:pointer; } .instrucao::after { content:''; position:absolute; bottom:0; left:0; right:0; height:18px; background:linear-gradient(transparent, #fffbe6); pointer-events:none; } .instrucao:hover { max-height:3000px; padding-bottom:12px; overflow-y:auto; } .instrucao:hover::after { display:none; } .instrucao-titulo { font-weight:bold; color:#7a5a00; font-size:0.9em; text-transform:uppercase; letter-spacing:.5px; padding:12px 16px 6px 16px; } .instrucao-texto { font-size:0.84em; color:#4a3800; line-height:1.55; padding:0 16px 4px 16px; } /* ═══════════════════════════════════════════════════════════ CSS PURO para controlar checkboxes de conclusão. Toda a lógica abaixo usa apenas :has(input:checked), sem nenhum visibleWhen — zero risco de crash React. ═══════════════════════════════════════════════════════════ */ /* 1) Esconder conclusão por padrão (fora da tela) */ .wrapper-conc1, .wrapper-conc2, .wrapper-conc3 { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; overflow: hidden !important; } /* 2) Mostrar conclusão SOMENTE quando uma nota foi selecionada E a própria conclusão ainda NÃO foi marcada */ .extracao-bloco:has(.nota-gate-1 input:checked) .wrapper-conc1:not(:has(input:checked)), .extracao-bloco:has(.nota-gate-2 input:checked) .wrapper-conc2:not(:has(input:checked)) { position: static !important; left: auto !important; width: auto !important; height: auto !important; overflow: visible !important; } .raiz:has(.nota-gate-3 input:checked) .wrapper-conc3:not(:has(input:checked)) { position: static !important; left: auto !important; width: auto !important; height: auto !important; overflow: visible !important; } /* 3) Esconder o corpo das extrações quando concluídas, para não perder os dados no Submit (Label Studio limpa campos de visibleWhen que estão escondidos) */
+.extracao-1:has(.wrapper-conc1 input:checked) .extr-body,
+.extracao-2:has(.wrapper-conc2 input:checked) .extr-body,
+.raiz:has(.wrapper-conc3 input:checked) .extracao-3 .extr-body {
+  display: none;
+}
+</Style>
+<!--  ══════════════════════════════════════════
        CABEÇALHO DO DOCUMENTO
-       ══════════════════════════════════════════ -->
-  <View className="ctx">
-    <View className="ctx-title">
-      <Text name="titulo" value="Documento : $doc_id  ·  Classe: $metadados_doc_classe  ·  Ramo: $metadados_doc_ramo"/>
-    </View>
-  </View>
-
-  <!-- ══════════════════════════════════════════
+       ══════════════════════════════════════════  -->
+<View className="ctx">
+<View className="ctx-title">
+<Text name="titulo" value="Documento : $doc_id · Classe: $metadados_doc_classe · Ramo: $metadados_doc_ramo"/>
+</View>
+</View>
+<!--  ══════════════════════════════════════════
        ACÓRDÃO FONTE (sticky - sempre visível)
-       ══════════════════════════════════════════ -->
-  <View className="acordao-wrapper">
-    <Header value="Texto integral do acórdão — consulte durante toda a avaliação"/>
-    <View className="acordao-box">
-      <Text name="acordao" value="$texto_acordao_fonte"/>
-    </View>
-  </View>
-
-  <!-- ══════════════════════════════════════════
+       ══════════════════════════════════════════  -->
+<View className="acordao-wrapper">
+<Header value="Texto integral do acórdão — consulte durante toda a avaliação"/>
+<View className="acordao-box">
+<Text name="acordao" value="$texto_acordao_fonte"/>
+</View>
+</View>
+<!--  ══════════════════════════════════════════
        INSTRUÇÃO METODOLÓGICA (colapsável)
-       ══════════════════════════════════════════ -->
-  <View className="instrucao">
-    <View className="instrucao-titulo">
-      <Text name="instr_titulo" value="▸ Orientações de avaliação  —  passe o mouse para expandir"/>
-    </View>
-    <View className="instrucao-texto">
-
-      <Text name="instr_criterio" value="CRITÉRIO ÚNICO — FIDELIDADE AO TEXTO-FONTE: você verá três extrações em sequência. Avalie cada uma de forma independente, confrontando cada campo exclusivamente com o texto integral do acórdão acima. Considere apenas as opiniões, posicionamentos e decisões do relator (voto); afirmações de terceiros ou de citações não devem ter sido extraídas como se fossem do relator. Não use conhecimento jurídico externo para 'completar' a extração: se a informação não está no acórdão, ela não deveria estar na extração."/>
-
-      <Text name="instr_campos" value="CAMPOS AVALIADOS: • Matéria: uma frase com a questão de fundo discutida no processo, nas palavras do relator. • Ponto (título de cada tema): o tema jurídico tratado pelo relator, nomeado com as palavras do próprio relator; questões de ordem pública tratadas no voto (competência absoluta, legitimidade das partes, condições da ação, prescrição/decadência, honorários, nulidades absolutas, coisa julgada etc.) devem sempre aparecer como temas. • Argumentos (por tema): transcrições das frases do relator que fundamentam sua posição no tema — interpretação/negativa de vigência de leis, princípios, precedentes, Súmulas e Temas do STF/STJ; não incluem afirmações de terceiros nem trechos de citações. • Doutrina (por tema): obras e autores citados pelo relator como base doutrinária do tema (normalmente entre aspas ou em citações). • Conceitos (por tema): definições apresentadas pelo relator relevantes para a análise do tema (ex.: definição de um princípio ou instituto jurídico). • Resumo: texto fluido que agrega todos os temas, relatando as decisões, as normas efetivamente aplicadas, os argumentos do relator e as referências de páginas (fls.); no Resumo, nomes de partes NÃO devem aparecer — o correto é o papel processual ('apelante', 'recorrido' etc.); não penalize o uso do papel no lugar do nome, penalize o inverso."/>
-
-      <Text name="instr_convencoes" value="CONVENÇÕES DA EXTRAÇÃO (não penalize): a extração foi gerada sob instruções que você deve conhecer para não descontar pontos indevidamente. • Estilo: o texto segue redação jurídica formal e detalhista; avalie o conteúdo, não o estilo. • Siglas de normas: ao mencionar uma norma, a extração acrescenta a sigla após o nome (ex.: 'Código de Defesa do Consumidor (CDC)'), ainda que a sigla apareça em outro trecho do acórdão — não é alucinação. • Colegialidade: a extração deliberadamente NÃO registra que o relator mudou de entendimento em razão do princípio da colegialidade — não marque omissão por isso. • Páginas: as referências de páginas (fls.) seguem a paginação estrutural interna do documento, que pode divergir da numeração impressa no texto do acórdão — divergências de paginação não são erro factual."/>
-
-      <Text name="instr_escala" value="ESCALA (1 a 4): • 4 - Excelente: campos precisos, completos e fiéis ao acórdão; sem alucinação e sem omissão relevante; viabiliza plenamente a recuperação semântica. • 3 - Adequado: correto e útil; apenas pequenas imprecisões (redação, granularidade, página aproximada) que não distorcem o conteúdo. • 2 - Ruim: erros relevantes, omissões importantes (ex.: tema tratado pelo relator ausente; argumento central faltando) ou trechos alucinados; utilidade comprometida. • 1 - Inaceitável: factualmente errado, extensivamente alucinado ou lacunoso; inviabiliza a recuperação. Avalie o conjunto dos campos: um único erro grave (ex.: tema inventado, matéria que não corresponde à questão de fundo, resumo que contradiz o decidido) já limita a nota a 2 ou 1. 'Não consta' é CORRETO quando a informação de fato não existe no acórdão (ex.: voto sem doutrina) — não penalize."/>
-
-      <Text name="instr_problemas" value="PROBLEMAS (marque todos os aplicáveis; obrigatório para notas 1 e 2, opcional para 3 e 4): • alucinacao: informação inventada, ausente no acórdão. • omissao: campo vazio ou incompleto quando a informação existe no acórdão. • erro_factual: conteúdo divergente do acórdão — dado, valor ou entendimento distorcidos. • atribuicao_errada: conteúdo real mas vinculado ao tema errado ou atribuído ao relator quando é de terceiro/citação. • nao_consta_indev: 'Não consta' ou campo vazio onde a informação claramente existe."/>
-
-      <Text name="instr_justif" value="JUSTIFICATIVA (opcional): campo de texto livre para registrar observações que fundamentem sua nota. Útil especialmente para notas 1 e 2 — indique onde está o problema no acórdão."/>
-
-      <Text name="instr_fluxo" value="FLUXO: ao finalizar cada avaliação, marque 'Extração concluída' para avançar. O botão só aparece após selecionar a nota e trava permanentemente. As três extrações podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
-
-    </View>
-  </View>
-
-  <!-- ══════════════════════════════════════════
+       ══════════════════════════════════════════  -->
+<View className="instrucao">
+<View className="instrucao-titulo">
+<Text name="instr_titulo" value="▸ Orientações de avaliação — passe o mouse para expandir"/>
+</View>
+<View className="instrucao-texto">
+<Text name="instr_criterio" value="CRITÉRIO ÚNICO — FIDELIDADE AO TEXTO-FONTE: você verá três extrações em sequência. Avalie cada uma de forma independente, confrontando cada campo exclusivamente com o texto integral do acórdão acima. Considere apenas as opiniões, posicionamentos e decisões do relator (voto); afirmações de terceiros ou de citações não devem ter sido extraídas como se fossem do relator. Não use conhecimento jurídico externo para 'completar' a extração: se a informação não está no acórdão, ela não deveria estar na extração."/>
+<Text name="instr_campos" value="CAMPOS AVALIADOS: • Matéria: uma frase com a questão de fundo discutida no processo, nas palavras do relator. • Ponto (título de cada tema): o tema jurídico tratado pelo relator, nomeado com as palavras do próprio relator; questões de ordem pública tratadas no voto (competência absoluta, legitimidade das partes, condições da ação, prescrição/decadência, honorários, nulidades absolutas, coisa julgada etc.) devem sempre aparecer como temas. • Argumentos (por tema): transcrições das frases do relator que fundamentam sua posição no tema — interpretação/negativa de vigência de leis, princípios, precedentes, Súmulas e Temas do STF/STJ; não incluem afirmações de terceiros nem trechos de citações. • Doutrina (por tema): obras e autores citados pelo relator como base doutrinária do tema (normalmente entre aspas ou em citações). • Conceitos (por tema): definições apresentadas pelo relator relevantes para a análise do tema (ex.: definição de um princípio ou instituto jurídico). • Resumo: texto fluido que agrega todos os temas, relatando as decisões, as normas efetivamente aplicadas, os argumentos do relator e as referências de páginas (fls.); no Resumo, nomes de partes NÃO devem aparecer — o correto é o papel processual ('apelante', 'recorrido' etc.); não penalize o uso do papel no lugar do nome, penalize o inverso."/>
+<Text name="instr_convencoes" value="CONVENÇÕES DA EXTRAÇÃO (não penalize): a extração foi gerada sob instruções que você deve conhecer para não descontar pontos indevidamente. • Estilo: o texto segue redação jurídica formal e detalhista; avalie o conteúdo, não o estilo. • Siglas de normas: ao mencionar uma norma, a extração acrescenta a sigla após o nome (ex.: 'Código de Defesa do Consumidor (CDC)'), ainda que a sigla apareça em outro trecho do acórdão — não é alucinação. • Colegialidade: a extração deliberadamente NÃO registra que o relator mudou de entendimento em razão do princípio da colegialidade — não marque omissão por isso. • Páginas: as referências de páginas (fls.) seguem a paginação estrutural interna do documento, que pode divergir da numeração impressa no texto do acórdão — divergências de paginação não são erro factual."/>
+<Text name="instr_escala" value="ESCALA (1 a 4): • 4 - Excelente: campos precisos, completos e fiéis ao acórdão; sem alucinação e sem omissão relevante; viabiliza plenamente a recuperação semântica. • 3 - Adequado: correto e útil; apenas pequenas imprecisões (redação, granularidade, página aproximada) que não distorcem o conteúdo. • 2 - Ruim: erros relevantes, omissões importantes (ex.: tema tratado pelo relator ausente; argumento central faltando) ou trechos alucinados; utilidade comprometida. • 1 - Inaceitável: factualmente errado, extensivamente alucinado ou lacunoso; inviabiliza a recuperação. Avalie o conjunto dos campos: um único erro grave (ex.: tema inventado, matéria que não corresponde à questão de fundo, resumo que contradiz o decidido) já limita a nota a 2 ou 1. 'Não consta' é CORRETO quando a informação de fato não existe no acórdão (ex.: voto sem doutrina) — não penalize."/>
+<Text name="instr_problemas" value="PROBLEMAS (marque todos os aplicáveis; obrigatório para notas 1 e 2, opcional para 3 e 4): • alucinacao: informação inventada, ausente no acórdão. • omissao: campo vazio ou incompleto quando a informação existe no acórdão. • erro_factual: conteúdo divergente do acórdão — dado, valor ou entendimento distorcidos. • atribuicao_errada: conteúdo real mas vinculado ao tema errado ou atribuído ao relator quando é de terceiro/citação. • nao_consta_indev: 'Não consta' ou campo vazio onde a informação claramente existe."/>
+<Text name="instr_justif" value="JUSTIFICATIVA (opcional): campo de texto livre para registrar observações que fundamentem sua nota. Útil especialmente para notas 1 e 2 — indique onde está o problema no acórdão."/>
+<Text name="instr_fluxo" value="FLUXO: ao finalizar cada avaliação, marque 'Extração concluída' para avançar. O botão só aparece após selecionar a nota e trava permanentemente. As três extrações podem receber notas iguais ou diferentes — não há hierarquia implícita."/>
+</View>
+</View>
+<!--  ══════════════════════════════════════════
        EXTRAÇÃO I
-       ══════════════════════════════════════════ -->
-  <View className="extracao-bloco">
-    <View className="extr-header">
-      <Text name="h1" value="Extração I  (1 de 3)"/>
-    </View>
-    
-    <View visibleWhen="choice-unselected" whenTagName="conclusao_col1">
-      <View className="extr-body">
-        <View className="extr-conteudo">
-          <HyperText name="bloco1" value="$bloco_html_col1" inline="true"/>
-        </View>
-        <View className="extr-avaliacao">
-          <View className="extr-nota nota-gate-1">
-            <View className="label-sm"><Text name="l_nota1" value="Avaliação (obrigatória)"/></View>
-            <Choices name="nota_col1" toName="bloco1" choice="single" required="true">
-              <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
-              <Choice value="3 - Adequado"  hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
-              <Choice value="2 - Ruim"      hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
-              <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
-            </Choices>
-          </View>
-          <View className="extr-prob">
-            <View className="label-sm"><Text name="l_prob1" value="Problemas identificados"/></View>
-            <Choices name="problemas_col1" toName="bloco1" choice="multiple">
-              <Choice value="alucinacao"        hint="Informação inventada, ausente no acórdão"/>
-              <Choice value="omissao"           hint="Campo ausente sendo que existe no acórdão"/>
-              <Choice value="erro_factual"      hint="Data, parte, valor ou norma incorretos"/>
-              <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
-              <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
-            </Choices>
-          </View>
-          <View className="extr-justif">
-            <View className="label-sm"><Text name="l_just1" value="Justificativa (opcional)"/></View>
-            <TextArea name="justificativa_col1" toName="bloco1"
-                      placeholder="Descreva brevemente o que motivou sua nota..."
-                      rows="3" maxSubmissions="1"/>
-          </View>
-        </View>
-      </View>
-    </View>
-
-    <!-- Conclusão: controlada 100% por CSS, sem visibleWhen -->
-    <View className="wrapper-conc1" style="margin-top: 5px;">
-      <Choices name="conclusao_col1" toName="bloco1" choice="single">
-        <Choice value="Extração 1 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
-      </Choices>
-    </View>
-    <View visibleWhen="choice-selected" whenTagName="conclusao_col1">
-      <View className="progresso">
-        <Text name="prog2" value="✓ Extração I concluída — prossiga para a Extração II"/>
-      </View>
-    </View>
-  </View>
-
-  <!-- ══════════════════════════════════════════
+       ══════════════════════════════════════════  -->
+<View className="extracao-bloco extracao-1">
+<View className="extr-header">
+<Text name="h1" value="Extração I (1 de 3)"/>
+</View>
+<View className="extr-body">
+<View className="extr-conteudo">
+<HyperText name="bloco1" value="$bloco_html_col1" inline="true"/>
+</View>
+<View className="extr-avaliacao">
+<View className="extr-nota nota-gate-1">
+<View className="label-sm">
+<Text name="l_nota1" value="Avaliação (obrigatória)"/>
+</View>
+<Choices name="nota_col1" toName="bloco1" choice="single" required="true">
+<Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
+<Choice value="3 - Adequado" hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
+<Choice value="2 - Ruim" hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
+<Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
+</Choices>
+</View>
+<View className="extr-prob">
+<View className="label-sm">
+<Text name="l_prob1" value="Problemas identificados"/>
+</View>
+<Choices name="problemas_col1" toName="bloco1" choice="multiple">
+<Choice value="alucinacao" hint="Informação inventada, ausente no acórdão"/>
+<Choice value="omissao" hint="Campo ausente sendo que existe no acórdão"/>
+<Choice value="erro_factual" hint="Data, parte, valor ou norma incorretos"/>
+<Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
+<Choice value="nao_consta_indev" hint="'Não consta' onde a informação claramente existe"/>
+</Choices>
+</View>
+<View className="extr-justif">
+<View className="label-sm">
+<Text name="l_just1" value="Justificativa (opcional)"/>
+</View>
+<TextArea name="justificativa_col1" toName="bloco1" placeholder="Descreva brevemente o que motivou sua nota..." rows="3" maxSubmissions="1"/>
+</View>
+</View>
+</View>
+<!--  Conclusão: controlada 100% por CSS, sem visibleWhen  -->
+<View className="wrapper-conc1" style="margin-top: 5px;">
+<Choices name="conclusao_col1" toName="bloco1" choice="single">
+<Choice value="Extração 1 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
+</Choices>
+</View>
+<View visibleWhen="choice-selected" whenTagName="conclusao_col1">
+<View className="progresso">
+<Text name="prog2" value="✓ Extração I concluída — prossiga para a Extração II"/>
+</View>
+</View>
+</View>
+<!--  ══════════════════════════════════════════
        EXTRAÇÃO II
-       ══════════════════════════════════════════ -->
-  <View visibleWhen="choice-selected" whenTagName="conclusao_col1">
-    <View className="extracao-bloco">
-      <View className="extr-header">
-        <Text name="h2" value="Extração II  (2 de 3)"/>
-      </View>
-      
-      <View visibleWhen="choice-unselected" whenTagName="conclusao_col2">
-        <View className="extr-body">
-          <View className="extr-conteudo">
-            <HyperText name="bloco2" value="$bloco_html_col2" inline="true"/>
-          </View>
-          <View className="extr-avaliacao">
-            <View className="extr-nota nota-gate-2">
-              <View className="label-sm"><Text name="l_nota2" value="Avaliação (obrigatória)"/></View>
-              <Choices name="nota_col2" toName="bloco2" choice="single" required="true">
-                <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
-                <Choice value="3 - Adequado"  hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
-                <Choice value="2 - Ruim"      hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
-                <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
-              </Choices>
-            </View>
-            <View className="extr-prob">
-              <View className="label-sm"><Text name="l_prob2" value="Problemas identificados"/></View>
-              <Choices name="problemas_col2" toName="bloco2" choice="multiple">
-                <Choice value="alucinacao"        hint="Informação inventada, ausente no acórdão"/>
-                <Choice value="omissao"           hint="Campo ausente sendo que existe no acórdão"/>
-                <Choice value="erro_factual"      hint="Data, parte, valor ou norma incorretos"/>
-                <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
-                <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
-              </Choices>
-            </View>
-            <View className="extr-justif">
-              <View className="label-sm"><Text name="l_just2" value="Justificativa (opcional)"/></View>
-              <TextArea name="justificativa_col2" toName="bloco2"
-                        placeholder="Descreva brevemente o que motivou sua nota..."
-                        rows="3" maxSubmissions="1"/>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <View className="wrapper-conc2" style="margin-top: 5px;">
-        <Choices name="conclusao_col2" toName="bloco2" choice="single">
-          <Choice value="Extração 2 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
-        </Choices>
-      </View>
-      <View visibleWhen="choice-selected" whenTagName="conclusao_col2">
-        <View className="progresso">
-          <Text name="prog3" value="✓ Extração II concluída — prossiga para a Extração III"/>
-        </View>
-      </View>
-    </View>
-  </View>
-
-  <!-- ══════════════════════════════════════════
+       ══════════════════════════════════════════  -->
+<View visibleWhen="choice-selected" whenTagName="conclusao_col1">
+<View className="extracao-bloco extracao-2">
+<View className="extr-header">
+<Text name="h2" value="Extração II (2 de 3)"/>
+</View>
+<View className="extr-body">
+<View className="extr-conteudo">
+<HyperText name="bloco2" value="$bloco_html_col2" inline="true"/>
+</View>
+<View className="extr-avaliacao">
+<View className="extr-nota nota-gate-2">
+<View className="label-sm">
+<Text name="l_nota2" value="Avaliação (obrigatória)"/>
+</View>
+<Choices name="nota_col2" toName="bloco2" choice="single" required="true">
+<Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
+<Choice value="3 - Adequado" hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
+<Choice value="2 - Ruim" hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
+<Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
+</Choices>
+</View>
+<View className="extr-prob">
+<View className="label-sm">
+<Text name="l_prob2" value="Problemas identificados"/>
+</View>
+<Choices name="problemas_col2" toName="bloco2" choice="multiple">
+<Choice value="alucinacao" hint="Informação inventada, ausente no acórdão"/>
+<Choice value="omissao" hint="Campo ausente sendo que existe no acórdão"/>
+<Choice value="erro_factual" hint="Data, parte, valor ou norma incorretos"/>
+<Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
+<Choice value="nao_consta_indev" hint="'Não consta' onde a informação claramente existe"/>
+</Choices>
+</View>
+<View className="extr-justif">
+<View className="label-sm">
+<Text name="l_just2" value="Justificativa (opcional)"/>
+</View>
+<TextArea name="justificativa_col2" toName="bloco2" placeholder="Descreva brevemente o que motivou sua nota..." rows="3" maxSubmissions="1"/>
+</View>
+</View>
+</View>
+<View className="wrapper-conc2" style="margin-top: 5px;">
+<Choices name="conclusao_col2" toName="bloco2" choice="single">
+<Choice value="Extração 2 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
+</Choices>
+</View>
+<View visibleWhen="choice-selected" whenTagName="conclusao_col2">
+<View className="progresso">
+<Text name="prog3" value="✓ Extração II concluída — prossiga para a Extração III"/>
+</View>
+</View>
+</View>
+</View>
+<!--  ══════════════════════════════════════════
        EXTRAÇÃO III
-       ══════════════════════════════════════════ -->
-  <View visibleWhen="choice-selected" whenTagName="conclusao_col2">
-    <View className="extracao-bloco">
-      <View className="extr-header">
-        <Text name="h3" value="Extração III  (3 de 3)"/>
-      </View>
-      
-      <View visibleWhen="choice-unselected" whenTagName="conclusao_col3">
-        <View className="extr-body">
-          <View className="extr-conteudo">
-            <HyperText name="bloco3" value="$bloco_html_col3" inline="true"/>
-          </View>
-          <View className="extr-avaliacao">
-            <View className="extr-nota nota-gate-3">
-              <View className="label-sm"><Text name="l_nota3" value="Avaliação (obrigatória)"/></View>
-              <Choices name="nota_col3" toName="bloco3" choice="single" required="true">
-                <Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
-                <Choice value="3 - Adequado"  hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
-                <Choice value="2 - Ruim"      hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
-                <Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
-              </Choices>
-            </View>
-            <View className="extr-prob">
-              <View className="label-sm"><Text name="l_prob3" value="Problemas identificados"/></View>
-              <Choices name="problemas_col3" toName="bloco3" choice="multiple">
-                <Choice value="alucinacao"        hint="Informação inventada, ausente no acórdão"/>
-                <Choice value="omissao"           hint="Campo ausente sendo que existe no acórdão"/>
-                <Choice value="erro_factual"      hint="Data, parte, valor ou norma incorretos"/>
-                <Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
-                <Choice value="nao_consta_indev"  hint="'Não consta' onde a informação claramente existe"/>
-              </Choices>
-            </View>
-            <View className="extr-justif">
-              <View className="label-sm"><Text name="l_just3" value="Justificativa (opcional)"/></View>
-              <TextArea name="justificativa_col3" toName="bloco3"
-                        placeholder="Descreva brevemente o que motivou sua nota..."
-                        rows="3" maxSubmissions="1"/>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <View className="wrapper-conc3" style="margin-top: 5px;">
-        <Choices name="conclusao_col3" toName="bloco3" choice="single">
-          <Choice value="Extração 3 concluída" hint="Atenção: Ao concluir, o conteúdo acima será fechado e o botão travado permanentemente."/>
-        </Choices>
-      </View>
-      <View visibleWhen="choice-selected" whenTagName="conclusao_col3">
-        <View className="progresso">
-          <Text name="prog_fim" value="✓ Todas as extrações concluídas — pode submeter."/>
-        </View>
-      </View>
-    </View>
-  </View>
-
+       ══════════════════════════════════════════  -->
+<View visibleWhen="choice-selected" whenTagName="conclusao_col2">
+<View className="extracao-bloco extracao-3">
+<View className="extr-header">
+<Text name="h3" value="Extração III (3 de 3)"/>
+</View>
+<View className="extr-body">
+<View className="extr-conteudo">
+<HyperText name="bloco3" value="$bloco_html_col3" inline="true"/>
+</View>
+<View className="extr-avaliacao">
+<View className="extr-nota nota-gate-3">
+<View className="label-sm">
+<Text name="l_nota3" value="Avaliação (obrigatória)"/>
+</View>
+<Choices name="nota_col3" toName="bloco3" choice="single" required="true">
+<Choice value="4 - Excelente" hint="Preciso, completo e fiel ao texto-fonte. Viabiliza plenamente a recuperação semântica." alias="4"/>
+<Choice value="3 - Adequado" hint="Correto e útil, pequenas imprecisões aceitáveis. Viabiliza recuperação com qualidade." alias="3"/>
+<Choice value="2 - Ruim" hint="Erros relevantes, omissões importantes ou trechos alucinados. Utilidade comprometida." alias="2"/>
+<Choice value="1 - Inaceitável" hint="Factualmente errado, extensivamente alucinado ou lacunoso. Inviabiliza recuperação." alias="1"/>
+</Choices>
+</View>
+<View className="extr-prob">
+<View className="label-sm">
+<Text name="l_prob3" value="Problemas identificados"/>
+</View>
+<Choices name="problemas_col3" toName="bloco3" choice="multiple">
+<Choice value="alucinacao" hint="Informação inventada, ausente no acórdão"/>
+<Choice value="omissao" hint="Campo ausente sendo que existe no acórdão"/>
+<Choice value="erro_factual" hint="Data, parte, valor ou norma incorretos"/>
+<Choice value="atribuicao_errada" hint="Conteúdo atribuído ao tema errado"/>
+<Choice value="nao_consta_indev" hint="'Não consta' onde a informação claramente existe"/>
+</Choices>
+</View>
+<View className="extr-justif">
+<View className="label-sm">
+<Text name="l_just3" value="Justificativa (opcional)"/>
+</View>
+<TextArea name="justificativa_col3" toName="bloco3" placeholder="Descreva brevemente o que motivou sua nota..." rows="3" maxSubmissions="1"/>
+</View>
+</View>
+</View>
+</View>
+</View>
+<!--  ══════════════════════════════════════════
+       GATE FINAL — sempre renderizado, escondido por CSS.
+       Trava o Submit até que as três extrações estejam
+       avaliadas e concluídas.
+       conclusao_col3 é required e serve como gate final.
+       ══════════════════════════════════════════  -->
+<View className="wrapper-conc3">
+<View className="final-box">
+<View className="final-titulo">
+<Text name="txt_final" value="Todas as três extrações foram avaliadas"/>
+</View>
+<Choices name="conclusao_col3" toName="bloco3" choice="single" required="true">
+<Choice value="Avaliação completa — liberar envio" hint="Marque para habilitar o botão Submit. Sem esta marcação o envio é bloqueado."/>
+</Choices>
+</View>
+</View>
 </View>
