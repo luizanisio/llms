@@ -15,6 +15,7 @@ QTD_ITENS = 70
 
 PROJETOS = ['Teste', 'Rafael','Amilar','Monty']    
 
+# Para gerar um secret key para o label studio no railway:  python -c "import secrets; print(secrets.token_urlsafe(50))"
 
 # Caminhos dos arquivos
 # ARQUIVO_DIVISOES_QWEN: CSV gerado na fase de curadoria/avaliação, que contém o ID do documento ('id' ou 'seq_documento_acordao')
