@@ -19,6 +19,9 @@ echo "Iniciando verificação no diretório: $(pwd)"
 # Cria uma lista de pastas no diretório atual
 pastas=(*/)
 
+# Lista de termos para ignorar (as pastas que contenham algum destes itens em seus nomes não serão processadas)
+IGNORAR=("(b)" "(c)" "(d1)" "(d2)" "(d3)" "(d4)" "(d5)" "(d6)" "(d7)" "(d8)")
+
 # Verifica se encontrou alguma pasta
 if [ "${#pastas[@]}" -eq 0 ] || [ "${pastas[0]}" = "*/" ]; then
     echo "Nenhuma pasta encontrada no diretório atual."
@@ -32,6 +35,20 @@ for pasta in "${pastas[@]}"; do
     
     # Pula se não for um diretório válido
     [ ! -d "$nome" ] && continue
+    
+    # Verifica se a pasta contém algum termo da lista IGNORAR
+    ignorar_pasta=0
+    for termo in "${IGNORAR[@]}"; do
+        if [[ "$nome" == *"$termo"* ]]; then
+            ignorar_pasta=1
+            break
+        fi
+    done
+    
+    if [ "$ignorar_pasta" -eq 1 ]; then
+        echo "Pasta '$nome' contém termo ignorado. Pulando."
+        continue
+    fi
     
     arquivo_zip="${nome}.zip"
     
