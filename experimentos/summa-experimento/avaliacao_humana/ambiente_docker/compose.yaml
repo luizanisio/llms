@@ -1,0 +1,108 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────
+#  Label Studio — 4 instâncias isoladas
+#  Credenciais fixas, definidas abaixo. Sem arquivo .env.
+#
+#  Instância      Porta   Login                        Senha
+#  ─────────────  ─────   ──────────────────────────   ──────────────────
+#  TESTE          8081    teste@summa.pesquisa         Summa2026-Teste
+#  AVALIADOR 1    8082    avaliador1@summa.pesquisa    Summa2026-Aval1
+#  AVALIADOR 2    8083    avaliador2@summa.pesquisa    Summa2026-Aval2
+#  AVALIADOR 3    8084    avaliador3@summa.pesquisa    Summa2026-Aval3
+#
+#  Fluxo:
+#  1. docker compose up -d
+#  2. Em cada porta: login → criar projeto → colar o template XML
+#     → importar tasks_gold_set.json
+#  3. Enviar credenciais + link a cada avaliador
+#  4. Ao final: login em cada instância → Export → JSON
+#  5. (opcional) python consolidar_exports.py
+#
+#  Para trocar uma senha, edite LABEL_STUDIO_PASSWORD do serviço
+#  ANTES do primeiro `up`. Depois que o usuário é criado no banco,
+#  a variável não tem mais efeito — a troca passa a ser pela UI.
+# ─────────────────────────────────────────────────────────────
+
+x-ls: &ls
+  image: heartexlabs/label-studio:latest
+  restart: unless-stopped
+
+services:
+
+  # ── TESTE / calibração ────────────────────────────────────
+  ls-teste:
+    <<: *ls
+    container_name: ls-teste
+    ports:
+      - "8081:8080"
+    volumes:
+      - data-teste:/label-studio/data
+    environment:
+      LABEL_STUDIO_USERNAME: teste@summa.pesquisa
+      LABEL_STUDIO_PASSWORD: Summa2026-Teste
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      COLLECT_ANALYTICS: "false"
+
+  # ── AVALIADOR 1 ───────────────────────────────────────────
+  ls-aval1:
+    <<: *ls
+    container_name: ls-aval1
+    ports:
+      - "8082:8080"
+    volumes:
+      - data-aval1:/label-studio/data
+    environment:
+      LABEL_STUDIO_USERNAME: avaliador1@summa.pesquisa
+      LABEL_STUDIO_PASSWORD: Summa2026-Aval1
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      COLLECT_ANALYTICS: "false"
+
+  # ── AVALIADOR 2 ───────────────────────────────────────────
+  ls-aval2:
+    <<: *ls
+    container_name: ls-aval2
+    ports:
+      - "8083:8080"
+    volumes:
+      - data-aval2:/label-studio/data
+    environment:
+      LABEL_STUDIO_USERNAME: avaliador2@summa.pesquisa
+      LABEL_STUDIO_PASSWORD: Summa2026-Aval2
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      COLLECT_ANALYTICS: "false"
+
+  # ── AVALIADOR 3 ───────────────────────────────────────────
+  ls-aval3:
+    <<: *ls
+    container_name: ls-aval3
+    ports:
+      - "8084:8080"
+    volumes:
+      - data-aval3:/label-studio/data
+    environment:
+      LABEL_STUDIO_USERNAME: avaliador3@summa.pesquisa
+      LABEL_STUDIO_PASSWORD: Summa2026-Aval3
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      COLLECT_ANALYTICS: "false"
+
+volumes:
+  data-teste:
+  data-aval1:
+  data-aval2:
+  data-aval3:
+
+# ─────────────────────────────────────────────────────────────
+#  NO RAILWAY — 4 serviços no mesmo projeto
+#
+#  Para cada serviço:
+#    Source          : Docker Image → heartexlabs/label-studio:latest
+#    Volume          : mount path /label-studio/data
+#    Variables       : LABEL_STUDIO_USERNAME, LABEL_STUDIO_PASSWORD,
+#                      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK=true
+#    Networking      : Generate Domain (URL própria por serviço)
+#    Settings        : Enable App Sleeping
+#
+#  As portas 8081–8084 são só para o teste local. No Railway cada
+#  serviço expõe a 8080 internamente e recebe seu próprio domínio.
+# ─────────────────────────────────────────────────────────────
