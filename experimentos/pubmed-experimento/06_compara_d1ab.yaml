@@ -1,0 +1,162 @@
+# ==========================================================================
+# Comparação: Consistência do Protocolo D1 (Réplicas D1, D1a, D1b)
+# ==========================================================================
+# Propósito: Medir a variância não-determinística do treinamento.
+#   Três réplicas idênticas do protocolo D1 (mesmos hiperparâmetros, mesmo seed),
+#   variando apenas o diretório de saída, para quantificar a estabilidade dos
+#   resultados frente ao não-determinismo do hardware/framework.
+#   Comparações-chave:
+#     D1 vs D1a vs D1b → variância entre réplicas (consistência)
+# Modelos: D1 (réplica 1), D1a (réplica 2), D1b (réplica 3)
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/pubmed-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/pubmed-experimento
+    - /mnt/d/wsl/llms/experimentos/pubmed-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_pubmed_d1ab"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_pubmed(d1ab)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_pubmed_prof.parquet"
+  rotulo: "Professor"
+  familia: "PubMed-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- D1: Réplica 1 (original) ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d1)_teste.parquet"
+    rotulo: "Qwen1.5B(d1)"
+    alias: "D1"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1)"
+  # --- D1a: Réplica 2 ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d1a)_teste.parquet"
+    rotulo: "Qwen1.5B(d1a)"
+    alias: "D1a"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1a)"
+  # --- D1b: Réplica 3 ---
+  - arquivo: "saidas/saida_pubmed_1_5b(d1b)_teste.parquet"
+    rotulo: "Qwen1.5B(d1b)"
+    alias: "D1b"
+    familia: "Qwen-1.5B"
+    pasta_treinamento: "treinos/Qwen2.5-1.5B-Instruct(d1b)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/pubmed-rct-20k.parquet"
+    campo_id: "pmid"
+    dataset_filtro: {"split": "test"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  modelos:
+    bertscore_batch_size: 1024
+    sbert_batch_size: 1024
+
+  mascaras:
+    extracao: "^(\\d+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - bertscore
+      - rouge_l
+      - sbert_grande
+
+  campos:
+    bertscore:
+      - "(global)"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+    rouge_1:
+
+    rouge_2:
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
+
+    rouge_l:
+      - "(global)"
+      - "title"
+      - "publication"
+      - "journal"
+      - "keywords"
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+    levenshtein:
+      - "publication"
+      - "journal"
+
+    sbert_grande:
+      - "background"
+      - "objective"
+      - "methods"
+      - "results"
+      - "conclusions"
+      - "Sentencas"
+      - "MetaDados"
+
+campos_virtuais:
+  Sentencas:
+    - background
+    - objective
+    - methods
+    - results
+    - conclusions
+  MetaDados:
+    - title
+    - publication
+    - journal
+    - keywords
