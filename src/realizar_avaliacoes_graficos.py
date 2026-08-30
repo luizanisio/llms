@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 realizar_avaliacoes_graficos.py
 ===============================
 
@@ -295,6 +298,29 @@ def grafico_bayes(matriz, caminho: str, titulo: str,
         return []
     _, gerado = est.heatmap(matriz, arquivo_saida=caminho, titulo=titulo,
                             rotulo=rotulo_entidade, dpi=FIG_DPI)
+    plt.close("all")
+    return [os.path.basename(gerado)] if gerado else []
+
+
+def grafico_diferencas_bayes(matriz, caminho: str, titulo: str) -> list:
+    """"Medindo as diferenças" (forest plot) — desenho delegado ao `util_est_bayesiana`.
+
+    Uma linha por par: ponto na diferença média, barra do IC 95%, faixa da
+    ROPE ao fundo, cor pela classificação e P(equivalência) anotada. Mesma
+    regra do heatmap: a figura vive no módulo bayesiano porque também serve à
+    comparação entre protocolos; aqui fica só a ponte.
+
+    Returns:
+        Lista com o nome do arquivo gerado, ou vazia se o módulo não estiver
+        disponível ou a matriz vier vazia.
+    """
+    if not BAYES_DISPONIVEL:
+        _aviso_util("forest plot bayesiano")
+        return []
+    if matriz is None or len(matriz) == 0:
+        return []
+    _, gerado = est.grafico_diferencas(matriz, arquivo_saida=caminho,
+                                       titulo=titulo, dpi=FIG_DPI)
     plt.close("all")
     return [os.path.basename(gerado)] if gerado else []
 

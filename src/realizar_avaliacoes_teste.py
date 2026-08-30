@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 realizar_avaliacoes_teste.py
 ============================
 
@@ -19,10 +22,10 @@ Estatísticas cobertas:
 estatística                      referência de comparação
 ===============================  ===================================================
 Kappa de Cohen ponderado         ``sklearn.metrics.cohen_kappa_score``
-Kappa de Fleiss (não ponderado)  ``statsmodels.stats.inter_rater.fleiss_kappa``
+Kappa de Fleiss (sem pesos)      ``statsmodels.stats.inter_rater.fleiss_kappa``
+Kappa de Light                   média de ``sklearn.metrics.cohen_kappa_score``
 Kappa de Fleiss ponderado        casos analíticos (sem equivalente em pacote)
 Correção de Holm                 ``statsmodels.stats.multitest.multipletests``
-Teste de McNemar                 ``statsmodels.stats.contingency_tables.mcnemar``
 IC de Wilson                     ``statsmodels.stats.proportion.proportion_confint``
 Wilcoxon, Friedman, Shapiro      ``scipy.stats`` (usados diretamente)
 Bootstrap de documentos          propriedades estruturais e reprodutibilidade
@@ -50,11 +53,21 @@ import realizar_avaliacoes as ra
 TOLERANCIA = 1e-9
 CATEGORIAS = [1, 2, 3, 4]
 
-from sklearn.metrics import cohen_kappa_score
-from statsmodels.stats.contingency_tables import mcnemar as sm_mcnemar
-from statsmodels.stats.inter_rater import aggregate_raters, fleiss_kappa
-from statsmodels.stats.multitest import multipletests
-from statsmodels.stats.proportion import proportion_confint
+# As bibliotecas de referência são opcionais: sem elas, os testes de
+# equivalência com sklearn/statsmodels são pulados (as fórmulas internas do
+# pipeline continuam testadas contra valores conhecidos e propriedades).
+try:
+    from sklearn.metrics import cohen_kappa_score
+    SKLEARN_OK = True
+except ImportError:                                       # pragma: no cover
+    SKLEARN_OK = False
+try:
+    from statsmodels.stats.inter_rater import aggregate_raters, fleiss_kappa
+    from statsmodels.stats.multitest import multipletests
+    from statsmodels.stats.proportion import proportion_confint
+    STATSMODELS_OK = True
+except ImportError:                                       # pragma: no cover
+    STATSMODELS_OK = False
 
 
 # =============================================================================
@@ -202,12 +215,14 @@ class TesteCohen(unittest.TestCase):
         self.assertAlmostEqual(ra.cohen_kappa(self.a, self.b, CATEGORIAS),
                                cohen_formula(self.a, self.b, CATEGORIAS), places=9)
 
+    @unittest.skipUnless(SKLEARN_OK, "scikit-learn ausente")
     def test_formula_igual_ao_sklearn(self):
         self.assertAlmostEqual(
             cohen_formula(self.a, self.b, CATEGORIAS),
             cohen_kappa_score(self.a, self.b, labels=CATEGORIAS, weights="quadratic"),
             places=9)
 
+    @unittest.skipUnless(SKLEARN_OK, "scikit-learn ausente")
     def test_binario_igual_ao_sklearn(self):
         """Caso usado na Camada 4: binarização adequado/inadequado."""
         bin_a = (self.a >= ra.PISO_ADEQUACAO).astype(int)
@@ -217,6 +232,7 @@ class TesteCohen(unittest.TestCase):
             cohen_kappa_score(bin_a, bin_b, labels=[0, 1], weights="quadratic"),
             places=9)
 
+    @unittest.skipUnless(SKLEARN_OK, "scikit-learn ausente")
     def test_multiplas_sementes(self):
         for semente in range(5):
             a, b = gerar_pareado(semente=semente)
@@ -248,43 +264,103 @@ class TesteCohen(unittest.TestCase):
 
 
 class TesteFleiss(unittest.TestCase):
-    """Kappa de Fleiss ponderado — confiabilidade interna dos grupos."""
+    """κ de Fleiss (sem pesos) — piso conservador reportado para registro."""
 
     def setUp(self):
         self.matriz = gerar_matriz()
 
-    def test_pipeline_igual_a_formula(self):
+    @unittest.skipUnless(STATSMODELS_OK, "statsmodels ausente")
+    def test_pipeline_igual_ao_statsmodels(self):
+        """O valor reportado é o do statsmodels, não uma conta nossa."""
+        tabela, _ = aggregate_raters(self.matriz)
         self.assertAlmostEqual(
-            ra.fleiss_ponderado(self.matriz, CATEGORIAS)["kappa"],
-            fleiss_formula(self.matriz, CATEGORIAS), places=9)
+            ra.fleiss_nao_ponderado(self.matriz, CATEGORIAS)["kappa"],
+            fleiss_kappa(tabela, method="fleiss"), places=9)
+
+    @unittest.skipUnless(STATSMODELS_OK, "statsmodels ausente")
+    def test_reserva_igual_a_biblioteca(self):
+        """A fórmula de reserva (sem statsmodels) precisa dar o mesmo número."""
+        tabela, _ = aggregate_raters(self.matriz)
+        self.assertAlmostEqual(
+            ra._fleiss_interno(self.matriz, CATEGORIAS)["kappa"],
+            fleiss_kappa(tabela, method="fleiss"), places=9)
 
     def test_concordancia_perfeita(self):
         matriz = np.repeat(self.matriz[:, [0]], 3, axis=1)
         self.assertAlmostEqual(
-            ra.fleiss_ponderado(matriz, CATEGORIAS)["kappa"], 1.0, places=9)
+            ra.fleiss_nao_ponderado(matriz, CATEGORIAS)["kappa"], 1.0, places=9)
 
-    def test_sem_pesos_igual_ao_statsmodels(self):
-        """Com pesos identidade, o κw deve reduzir-se ao Fleiss clássico.
-
-        É a única comparação possível com pacote: não há implementação
-        consolidada do Fleiss **ponderado** em Python.
-        """
-        identidade = np.eye(len(CATEGORIAS))
-        nosso = fleiss_formula(self.matriz, CATEGORIAS, pesos=identidade)
-        tabela, _ = aggregate_raters(self.matriz)
-        self.assertAlmostEqual(nosso, fleiss_kappa(tabela, method="fleiss"), places=9)
-
-    def test_dois_avaliadores_igual_a_cohen(self):
-        """Com m = 2, Fleiss e Cohen medem a mesma coisa e ficam próximos."""
-        a, b = self.matriz[:, 0], self.matriz[:, 1]
-        fleiss = ra.fleiss_ponderado(np.column_stack([a, b]), CATEGORIAS)["kappa"]
-        cohen = ra.cohen_kappa(a, b, CATEGORIAS)
-        self.assertAlmostEqual(fleiss, cohen, delta=0.05)
+    def test_reserva_igual_a_formula_independente(self):
+        """Vale mesmo sem statsmodels: a reserva bate com a fórmula do livro."""
+        self.assertAlmostEqual(
+            ra._fleiss_interno(self.matriz, CATEGORIAS)["kappa"],
+            fleiss_formula(self.matriz, CATEGORIAS, pesos=np.eye(len(CATEGORIAS))),
+            places=9)
 
     def test_componentes_coerentes(self):
-        r = ra.fleiss_ponderado(self.matriz, CATEGORIAS)
+        r = ra._fleiss_interno(self.matriz, CATEGORIAS)
         self.assertAlmostEqual(r["kappa"], (r["p_o"] - r["p_e"]) / (1 - r["p_e"]),
                                places=9)
+
+
+class TesteLight(unittest.TestCase):
+    """κ de Light — coeficiente principal de confiabilidade interna.
+
+    É a média dos κw de Cohen par a par; os testes garantem que a definição é
+    exatamente essa e que o valor herda o lastro do `sklearn`.
+    """
+
+    def setUp(self):
+        self.matriz = pd.DataFrame(gerar_matriz(), columns=[1, 2, 3])
+        self.avaliadores = [1, 2, 3]
+
+    def test_e_a_media_dos_cohen_par_a_par(self):
+        esperado = np.mean([ra.cohen_kappa(self.matriz[a], self.matriz[b], CATEGORIAS)
+                            for a, b in combinations(self.avaliadores, 2)])
+        self.assertAlmostEqual(
+            ra.kappa_light(self.matriz, self.avaliadores, CATEGORIAS)["kappa"],
+            float(esperado), places=9)
+
+    def test_dois_avaliadores_reduz_a_cohen(self):
+        """Com m = 2 não há média a tirar: Light É o κw de Cohen."""
+        r = ra.kappa_light(self.matriz[[1, 2]], [1, 2], CATEGORIAS)
+        self.assertAlmostEqual(
+            r["kappa"], ra.cohen_kappa(self.matriz[1], self.matriz[2], CATEGORIAS),
+            places=9)
+        self.assertEqual(r["pares"], 1)
+
+    def test_concordancia_perfeita(self):
+        matriz = pd.DataFrame({a: self.matriz[1] for a in self.avaliadores})
+        self.assertAlmostEqual(
+            ra.kappa_light(matriz, self.avaliadores, CATEGORIAS)["kappa"], 1.0,
+            places=9)
+
+    def test_ponderado_nao_pune_divergencia_de_um_ponto(self):
+        """A razão de ser da escolha: Light > Fleiss quando o desacordo é vizinho.
+
+        Avaliadores que só divergem em 1 ponto têm confiabilidade alta numa
+        escala ordinal; o Fleiss clássico, sem pesos, não enxerga isso.
+        """
+        rng = np.random.default_rng(7)
+        n = 300
+        base = np.clip(np.round(rng.normal(2.5, 0.9, n)), 1, 4).astype(int)
+        colunas = {}
+        for a in self.avaliadores:
+            notas = base.copy()
+            desloca = rng.random(n) < 0.35
+            notas[desloca] = np.clip(
+                notas[desloca] + rng.choice([-1, 1], desloca.sum()), 1, 4)
+            colunas[a] = notas
+        matriz = pd.DataFrame(colunas)
+        light = ra.kappa_light(matriz, self.avaliadores, CATEGORIAS)["kappa"]
+        fleiss = ra.fleiss_nao_ponderado(matriz.to_numpy(), CATEGORIAS)["kappa"]
+        self.assertGreater(light, fleiss)
+
+    def test_matriz_vazia_ou_um_avaliador(self):
+        self.assertTrue(np.isnan(
+            ra.kappa_light(self.matriz, [1], CATEGORIAS)["kappa"]))
+        self.assertTrue(np.isnan(
+            ra.kappa_light(pd.DataFrame(), self.avaliadores, CATEGORIAS)["kappa"]))
 
 
 class TesteHolm(unittest.TestCase):
@@ -297,6 +373,7 @@ class TesteHolm(unittest.TestCase):
         np.testing.assert_allclose(ra.correcao_holm(self.p), holm_formula(self.p),
                                    atol=TOLERANCIA)
 
+    @unittest.skipUnless(STATSMODELS_OK, "statsmodels ausente")
     def test_formula_igual_ao_statsmodels(self):
         np.testing.assert_allclose(holm_formula(self.p),
                                    multipletests(self.p, method="holm")[1],
@@ -322,50 +399,6 @@ class TesteHolm(unittest.TestCase):
         self.assertEqual(ra.correcao_holm([]), [])
 
 
-class TesteMcNemar(unittest.TestCase):
-    """McNemar — critério 3 do gate (viés direcional na decisão binária)."""
-
-    def test_pipeline_igual_a_formula_exato(self):
-        a = np.array([True] * 30 + [False] * 20)
-        b = np.array([True] * 22 + [False] * 8 + [True] * 3 + [False] * 17)
-        resultado = ra.mcnemar(a, b)
-        p, metodo = mcnemar_formula(resultado["b01"], resultado["b10"])
-        self.assertAlmostEqual(resultado["p"], p, places=9)
-        self.assertEqual(resultado["metodo"], metodo)
-
-    def test_formula_igual_ao_statsmodels(self):
-        for b01, b10 in [(8, 2), (12, 5), (30, 14), (46, 1), (23, 5)]:
-            with self.subTest(b01=b01, b10=b10):
-                p_nosso, _ = mcnemar_formula(b01, b10)
-                exato = (b01 + b10) < 25
-                tabela = [[40, b01], [b10, 40]]
-                p_lib = sm_mcnemar(tabela, exact=exato, correction=not exato).pvalue
-                self.assertAlmostEqual(p_nosso, float(p_lib), places=9)
-
-    def test_sem_discordancia(self):
-        a = np.array([True, False, True, False])
-        self.assertEqual(ra.mcnemar(a, a)["p"], 1.0)
-
-    def test_troca_de_metodo_em_25(self):
-        self.assertEqual(mcnemar_formula(12, 12)[1], "binomial exato")
-        self.assertEqual(mcnemar_formula(13, 12)[1], "qui-quadrado com correção")
-
-    def test_simetria_maxima_nao_rejeita(self):
-        """Discordâncias equilibradas: p = 1 (nenhuma direção preferencial)."""
-        self.assertAlmostEqual(mcnemar_formula(10, 10)[0], 1.0, places=9)
-
-    def test_assimetria_extrema_rejeita(self):
-        self.assertLess(mcnemar_formula(46, 1)[0], 0.001)
-
-    def test_contagem_direcional(self):
-        """b01 = juiz aprova e referência reprova; b10 = o inverso."""
-        juiz = np.array([True, True, True, False])
-        referencia = np.array([False, False, True, True])
-        resultado = ra.mcnemar(juiz, referencia)
-        self.assertEqual(resultado["b01"], 2)
-        self.assertEqual(resultado["b10"], 1)
-
-
 class TesteWilson(unittest.TestCase):
     """IC de Wilson — usado na análise descritiva de viabilidade."""
 
@@ -377,6 +410,7 @@ class TesteWilson(unittest.TestCase):
                 self.assertAlmostEqual(li, esperado[0], places=9)
                 self.assertAlmostEqual(ls, esperado[1], places=9)
 
+    @unittest.skipUnless(STATSMODELS_OK, "statsmodels ausente")
     def test_formula_igual_ao_statsmodels(self):
         for sucessos, total in [(45, 50), (150, 210), (1, 20), (0, 30), (30, 30)]:
             with self.subTest(sucessos=sucessos, total=total):
@@ -529,35 +563,6 @@ class TesteTaxonomia(unittest.TestCase):
                          ra.CATEGORIAS_PROBLEMA)
 
 
-class TesteMargem(unittest.TestCase):
-    """Margem de relevância prática = 0,5 DP (Norman, Sloan & Wyrwich, 2003)."""
-
-    def test_meia_dp(self):
-        notas = np.array([1, 2, 2, 3, 3, 3, 4, 4, 4, 4], dtype=float)
-        self.assertAlmostEqual(0.5 * notas.std(ddof=1),
-                               0.5 * np.std(notas, ddof=1), places=9)
-
-    def test_status_intermediario(self):
-        """Viés significativo abaixo da margem → validado com ressalva."""
-        import pandas as pd
-        rng = np.random.default_rng(3)
-        n = 300
-        base = rng.normal(2.9, 0.9, n)
-        b = np.clip(np.round(base), 1, 4).astype(int)
-        a = b.copy()
-        # viés pequeno, consistente e **dentro** da faixa adequada (3 -> 4):
-        # a decisão binária não muda, então o McNemar não acusa direção
-        candidatos = np.flatnonzero(b == 3)
-        a[rng.choice(candidatos, min(45, len(candidatos)), replace=False)] = 4
-        longo = pd.DataFrame({"documento": [f"d{i}" for i in range(n)],
-                              "juiz": a, "ref": b})
-        margem = 0.5 * float(longo["ref"].std(ddof=1))
-        resultado = ra.avaliar_par(longo, "juiz", "ref", CATEGORIAS, margem=margem)
-        self.assertLess(resultado["p_wilcoxon"], ra.LIMIAR_ALFA)
-        self.assertLess(abs(resultado["media_dif"]), margem)
-        self.assertEqual(resultado["status"], "VALIDADO COM RESSALVA")
-
-
 class TesteMetricasBinarias(unittest.TestCase):
     """Acurácia, sensibilidade e especificidade com a referência como padrão."""
 
@@ -581,8 +586,8 @@ class TesteMetricasBinarias(unittest.TestCase):
 class TesteBayesiana(unittest.TestCase):
     """Camada bayesiana: a integração com o `baycomp` via `util_est_bayesiana`.
 
-    A etapa é opcional; sem o módulo (ou sem o `baycomp`) os testes são pulados,
-    do mesmo modo que o pipeline pula a etapa sem `--bayes`.
+    O gate exige o módulo; sem ele (ou sem o `baycomp`) os testes desta classe
+    são pulados — e a validação, na prática, falha com RuntimeError.
     """
 
     @classmethod
@@ -598,7 +603,7 @@ class TesteBayesiana(unittest.TestCase):
             "B": np.clip(np.round(2.6 + base + 0.02 + rng.normal(0, 0.4, 200)), 1, 4),
             "C": np.clip(np.round(2.6 + base + 1.20 + rng.normal(0, 0.4, 200)), 1, 4),
         })
-        cls.kw = {"rope": 0.5, "nsamples": 20_000, "seed": 42}
+        cls.kw = {"rope": 0.5}
 
     # ------------------------------------------------------------ Comparacao
     def test_tres_probabilidades_somam_um(self):
@@ -610,11 +615,6 @@ class TesteBayesiana(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             self.ub.Comparacao(self.dados["A"], self.dados["B"], rope=0.0)
         self.assertIn("rope", str(ctx.exception).lower())
-
-    def test_metodo_desconhecido(self):
-        with self.assertRaises(ValueError):
-            self.ub.Comparacao(self.dados["A"], self.dados["B"],
-                               rope=0.5, metodo="qualquer")
 
     def test_direcao_correta(self):
         """C domina A: a leitura de A em relação a C é `inferior`."""
@@ -629,27 +629,39 @@ class TesteBayesiana(unittest.TestCase):
         self.assertAlmostEqual(c.probabilidades["p_rope"], 1.0, places=6)
 
     def test_nao_altera_o_baycomp(self):
-        """O pacote é camada fina: o resultado tem de ser o do baycomp."""
+        """O módulo é camada fina: o resultado tem de ser o do baycomp."""
         import baycomp
         c = self.ub.Comparacao(self.dados["A"], self.dados["C"], **self.kw)
-        direto = baycomp.SignTest.probs(
+        direto = baycomp.CorrelatedTTest.probs(
             self.dados["A"].to_numpy(float), self.dados["C"].to_numpy(float),
-            rope=0.5, nsamples=20_000, random_state=42)
+            rope=0.5)
         self.assertAlmostEqual(c.probabilidades["p_esquerda"], direto[0], places=9)
         self.assertAlmostEqual(c.probabilidades["p_rope"], direto[1], places=9)
         self.assertAlmostEqual(c.probabilidades["p_direita"], direto[2], places=9)
 
-    def test_contagens_conferem_com_a_rope(self):
-        c = self.ub.Comparacao(self.dados["A"], self.dados["C"], **self.kw)
-        self.assertEqual(sum(c.contagens.values()), len(self.dados))
-
-    def test_metodo_t_e_deterministico(self):
-        """CorrelatedTTest é analítico: sementes diferentes, mesmo resultado."""
-        a = self.ub.Comparacao(self.dados["A"], self.dados["C"], rope=0.5,
-                               metodo="t", seed=1)
-        b = self.ub.Comparacao(self.dados["A"], self.dados["C"], rope=0.5,
-                               metodo="t", seed=999)
+    def test_deterministico(self):
+        """CorrelatedTTest é analítico: duas chamadas, resultados idênticos."""
+        a = self.ub.Comparacao(self.dados["A"], self.dados["C"], **self.kw)
+        b = self.ub.Comparacao(self.dados["A"], self.dados["C"], **self.kw)
         self.assertEqual(a.probabilidades, b.probabilidades)
+
+    def test_contagens_sao_ordinais_puras(self):
+        """As contagens (d>0, d=0, d<0) não dependem da ROPE."""
+        estreita = self.ub.Comparacao(self.dados["A"], self.dados["C"], rope=0.05)
+        larga = self.ub.Comparacao(self.dados["A"], self.dados["C"], rope=1.5)
+        self.assertEqual(estreita.contagens, larga.contagens)
+        self.assertEqual(sum(estreita.contagens.values()), len(self.dados))
+        d = (self.dados["A"] - self.dados["C"]).to_numpy(float)
+        self.assertEqual(estreita.contagens["x_melhor"], int((d > 0).sum()))
+        self.assertEqual(estreita.contagens["empate"], int((d == 0).sum()))
+        self.assertEqual(estreita.contagens["y_melhor"], int((d < 0).sum()))
+
+    def test_ic95_contem_a_diferenca_media(self):
+        c = self.ub.Comparacao(self.dados["A"], self.dados["C"], **self.kw)
+        inf, sup = c.ic95
+        self.assertLessEqual(inf, c.diferenca_media)
+        self.assertLessEqual(c.diferenca_media, sup)
+        self.assertLess(inf, sup)
 
     # ---------------------------------------------------------- matriz_pares
     def test_matriz_cobre_todos_os_pares_ordenados(self):
@@ -659,7 +671,7 @@ class TesteBayesiana(unittest.TestCase):
         self.assertTrue((m["linha"] != m["coluna"]).all())
 
     def test_matriz_e_simetrica(self):
-        """A célula espelhada é derivada, não reestimada: igualdade exata."""
+        """A célula espelhada é derivada, não recalculada: igualdade exata."""
         m = self.ub.matriz_pares(self.dados, **self.kw)
         for _, linha in m.iterrows():
             esp = m[(m["linha"] == linha["coluna"])
@@ -668,6 +680,7 @@ class TesteBayesiana(unittest.TestCase):
             self.assertEqual(linha["p_rope"], esp["p_rope"])
             self.assertAlmostEqual(linha["diferenca_media"],
                                    -esp["diferenca_media"], places=9)
+            self.assertAlmostEqual(linha["ic_inf"], -esp["ic_sup"], places=9)
 
     def test_espelho_inverte_a_classificacao(self):
         m = self.ub.matriz_pares(self.dados, **self.kw)
@@ -698,85 +711,182 @@ class TesteBayesiana(unittest.TestCase):
             self.dados, limiar=limiar, **self.kw)["classificacao"] == "incerto").sum()
         self.assertGreaterEqual(conta(0.999), conta(0.60))
 
-    def test_resumo_conta_todas_as_relacoes(self):
+    # ------------------------------------------------ sintese e transitividade
+    def test_sintese_conta_todas_as_relacoes(self):
         m = self.ub.matriz_pares(self.dados, **self.kw)
-        r = self.ub.resumo(m)
-        self.assertEqual(list(r.index), m.attrs["nomes"])
-        self.assertEqual(int(r.to_numpy().sum()), len(m))
+        s = self.ub.sintese(m)
+        self.assertEqual(list(s.index), m.attrs["nomes"])
+        contagens = s[["superior a", "equivalente a", "inferior a", "incerto"]]
+        self.assertEqual(int(contagens.to_numpy().sum()), len(m))
+
+    def test_sintese_sem_ciclos_nos_dados_de_teste(self):
+        m = self.ub.matriz_pares(self.dados, **self.kw)
+        self.assertEqual(self.ub.sintese(m).attrs["ciclos"], [])
+
+    def test_transitividade_detecta_ciclo(self):
+        """A > B, B > C e C > A é um ciclo, e precisa ser denunciado."""
+        m = pd.DataFrame([
+            {"linha": a, "coluna": b, "classificacao": "superior"}
+            for a, b in (("A", "B"), ("B", "C"), ("C", "A"))
+        ] + [
+            {"linha": b, "coluna": a, "classificacao": "inferior"}
+            for a, b in (("A", "B"), ("B", "C"), ("C", "A"))
+        ])
+        m.attrs["nomes"] = ["A", "B", "C"]
+        ciclos = self.ub.verificar_transitividade(m)
+        self.assertTrue(ciclos)
+        self.assertEqual(sorted(ciclos[0][:-1] if ciclos[0][0] == ciclos[0][-1]
+                                else ciclos[0]), ["A", "B", "C"])
 
     # -------------------------------------------------- integração ao gate
+    def _longo(self, juiz, ref):
+        n = len(ref)
+        return pd.DataFrame({"documento": [f"d{i}" for i in range(n)],
+                             "juiz": np.asarray(juiz, float),
+                             "ref": np.asarray(ref, float)})
+
     def test_veredito_julga_magnitude_e_nao_direcao(self):
         """Direção certa com margem trivial não pode ser lida como viés."""
         rng = np.random.default_rng(9)
         n = 400
         ref = np.clip(np.round(rng.normal(2.9, 0.9, n)), 1, 4).astype(int)
         juiz = ref.copy()
-        juiz[np.flatnonzero(ref == 3)[:12]] = 4        # viés minúsculo, um só sentido
-        longo = pd.DataFrame({"juiz": juiz.astype(float), "ref": ref.astype(float)})
-        cfg = ra.ConfigBayes(ativo=True, amostras=20_000, semente=42)
-        r = ra.bayes_par(longo, "juiz", "ref", cfg)
-        self.assertGreater(r["p_equiv"], 0.95)
-        self.assertEqual(r["status"], "SEM VIÉS RELEVANTE")
+        juiz[np.flatnonzero(ref == 3)[:12]] = 4      # viés minúsculo, um só sentido
+        g = ra.avaliar_par(self._longo(juiz, ref), "juiz", "ref", CATEGORIAS,
+                           rope=0.30, rope_decisao=0.15)
+        # direção inequívoca nas contagens ordinais (só há divergências acima)...
+        self.assertEqual((g["acima"], g["abaixo"]), (12, 0))
+        # ...e ainda assim a equivalência é estabelecida: magnitude, não direção
+        self.assertGreater(g["p_equiv_notas"], 0.95)
+        self.assertEqual(g["status"], "VALIDADO")
 
-    def test_bayes_par_devolve_as_duas_comparacoes(self):
-        rng = np.random.default_rng(4)
+    def test_vies_relevante_reprova(self):
+        rng = np.random.default_rng(11)
         n = 300
-        ref = np.clip(np.round(rng.normal(2.8, 0.9, n)), 1, 4).astype(float)
-        longo = pd.DataFrame({"juiz": ref, "ref": ref})
-        cfg = ra.ConfigBayes(ativo=True, amostras=20_000, semente=42)
-        r = ra.bayes_par(longo, "juiz", "ref", cfg)
-        self.assertEqual(r["acima"] + r["empate"] + r["abaixo"], n)
-        self.assertEqual(r["decisao_concordante"], n)   # idênticos: nenhuma discordância
-        self.assertEqual(r["status"], "SEM VIÉS RELEVANTE")
+        ref = np.clip(np.round(rng.normal(2.5, 0.8, n)), 1, 4).astype(int)
+        juiz = np.clip(ref + 1, 1, 4)                 # um ponto acima, sempre
+        g = ra.avaliar_par(self._longo(juiz, ref), "juiz", "ref", CATEGORIAS,
+                           rope=0.30, rope_decisao=0.15)
+        self.assertTrue(g["vies_relevante"])
+        self.assertEqual(g["status"], "NÃO VALIDADO")
+
+    def test_inconclusivo_e_ressalva(self):
+        """κw alto com amostra pequena: equivalência inconclusiva → ressalva."""
+        rng = np.random.default_rng(23)
+        n = 12
+        ref = np.clip(np.round(rng.normal(2.8, 0.9, n)), 1, 4).astype(int)
+        juiz = ref.copy()
+        juiz[:3] = np.clip(juiz[:3] + rng.choice([-1, 1], 3), 1, 4)
+        g = ra.avaliar_par(self._longo(juiz, ref), "juiz", "ref", CATEGORIAS,
+                           rope=0.10, rope_decisao=0.05)
+        if g["criterios"]["concordancia"] and not (g["criterios"]["sem_vies"]
+                                                   and g["criterios"]["decisao"]):
+            self.assertEqual(g["status"], "VALIDADO COM RESSALVA")
+            self.assertFalse(g["vies_relevante"])
+
+    def test_contagens_do_gate(self):
+        ref = np.array([1, 2, 3, 4, 3, 2], float)
+        juiz = np.array([2, 2, 2, 4, 4, 2], float)
+        g = ra.avaliar_par(self._longo(juiz, ref), "juiz", "ref", CATEGORIAS,
+                           rope=0.5, rope_decisao=0.2)
+        self.assertEqual((g["acima"], g["empate"], g["abaixo"]), (2, 3, 1))
+
+    # -------------------------------------- calibração e controle negativo
+    def _matriz_especialistas(self):
+        rng = np.random.default_rng(5)
+        n = 120
+        verdade = np.clip(np.round(rng.normal(2.8, 0.8, n)), 1, 4).astype(float)
+        colunas = {}
+        for k, nome in enumerate((1, 2, 3)):
+            notas = verdade.copy()
+            muda = rng.random(n) < 0.25
+            notas[muda] = np.clip(notas[muda] + rng.choice([-1, 1], muda.sum()), 1, 4)
+            colunas[nome] = notas
+        return pd.DataFrame(colunas)
+
+    def test_calibrar_rope_usa_divergencia_absoluta(self):
+        m = self._matriz_especialistas()
+        cal = ra.calibrar_rope(m, [1, 2, 3])
+        esperado = np.mean([np.mean(np.abs(m[a].to_numpy() - m[b].to_numpy()))
+                            for a, b in combinations([1, 2, 3], 2)])
+        self.assertAlmostEqual(cal["rope_notas"],
+                               max(esperado, ra.BAYES_ROPE_MINIMO), places=9)
+        self.assertEqual(cal["n_pares"], 3)
+
+    def test_calibrar_rope_aplica_piso(self):
+        """Especialistas idênticos não podem degenerar a ROPE a zero."""
+        notas = np.array([1, 2, 3, 4, 3, 2, 1, 4], float)
+        m = pd.DataFrame({1: notas, 2: notas})
+        cal = ra.calibrar_rope(m, [1, 2])
+        self.assertEqual(cal["rope_notas"], ra.BAYES_ROPE_MINIMO)
+        self.assertEqual(cal["rope_decisao"], ra.BAYES_ROPE_DECISAO_MINIMO)
+        self.assertTrue(cal["piso_aplicado"]["notas"])
+
+    def test_controle_negativo_passa_com_rope_calibrada(self):
+        m = self._matriz_especialistas()
+        cal = ra.calibrar_rope(m, [1, 2, 3])
+        controle = ra.controle_negativo(m, [1, 2, 3],
+                                        cal["rope_notas"], cal["rope_decisao"])
+        self.assertEqual(len(controle), 3)
+        self.assertTrue((controle["Passa"] == "sim").all(),
+                        controle.to_string())
+
+    def test_controle_negativo_reprova_com_rope_apertada(self):
+        m = self._matriz_especialistas()
+        controle = ra.controle_negativo(m, [1, 2, 3], 0.001, 0.001)
+        self.assertTrue((controle["Passa"] == "NÃO").any())
 
 
 class TesteFlagsBayes(unittest.TestCase):
-    """A etapa só existe quando pedida, e a CLI explica quando não roda."""
+    """ROPE e limiar valem para o gate mesmo sem `--bayes`; `--bayes` só liga
+    o panorama complementar."""
 
     @staticmethod
     def _args(**mudancas):
         padrao = {"bayes": False,
-                  "bayes_rope": ra.BAYES_ROPE_LIKERT,
-                  "bayes_metodo": ra.BAYES_METODO_PADRAO,
-                  "bayes_limiar": ra.BAYES_LIMIAR_PADRAO,
-                  "bayes_limiar_veredito": ra.BAYES_VEREDITO_PADRAO,
-                  "bayes_amostras": ra.BAYES_AMOSTRAS_PADRAO,
-                  "bayes_semente": ra.SEMENTE}
+                  "bayes_rope": None,
+                  "bayes_rope_decisao": None,
+                  "bayes_limiar": ra.BAYES_LIMIAR}
         return type("Args", (), padrao | mudancas)()
 
     @staticmethod
     def _erro(mensagem):
         raise ValueError(mensagem)
 
-    def test_sem_flag_a_etapa_nao_roda(self):
-        self.assertFalse(ra.montar_config_bayes(self._args(), self._erro).ativo)
+    def test_sem_flag_o_panorama_nao_roda(self):
+        cfg = ra.montar_config_bayes(self._args(), self._erro)
+        self.assertFalse(cfg.ativo)
+        # ...mas a configuração continua utilizável pelo gate
+        self.assertEqual(cfg.limiar, ra.BAYES_LIMIAR)
+        self.assertIsNone(cfg.rope)          # None = calibrar na validação
 
-    def test_ajuste_sem_bayes_e_erro_explicito(self):
-        """Silenciar aqui devolveria um relatório sem a seção pedida, sem aviso."""
-        with self.assertRaises(ValueError) as ctx:
-            ra.montar_config_bayes(self._args(bayes_metodo="t"), self._erro)
-        self.assertIn("--bayes", str(ctx.exception))
+    def test_rope_sem_bayes_vale_para_o_gate(self):
+        """A ROPE manual não exige --bayes: o gate a usa de qualquer forma."""
+        cfg = ra.montar_config_bayes(self._args(bayes_rope=0.4), self._erro)
+        self.assertFalse(cfg.ativo)
+        self.assertEqual(cfg.rope, 0.4)
 
     def test_rope_zero_e_recusada(self):
         with self.assertRaises(ValueError) as ctx:
-            ra.montar_config_bayes(self._args(bayes=True, bayes_rope=0.0), self._erro)
-        self.assertIn("ROPE", str(ctx.exception))
+            ra.montar_config_bayes(self._args(bayes_rope=0.0), self._erro)
+        self.assertIn("--bayes-rope", str(ctx.exception))
+
+    def test_rope_decisao_zero_e_recusada(self):
+        with self.assertRaises(ValueError):
+            ra.montar_config_bayes(self._args(bayes_rope_decisao=0.0), self._erro)
 
     def test_limiar_fora_da_faixa(self):
         with self.assertRaises(ValueError):
-            ra.montar_config_bayes(self._args(bayes=True, bayes_limiar=1.5), self._erro)
-
-    def test_amostras_insuficientes(self):
-        with self.assertRaises(ValueError):
-            ra.montar_config_bayes(self._args(bayes=True, bayes_amostras=10), self._erro)
+            ra.montar_config_bayes(self._args(bayes_limiar=1.5), self._erro)
 
     def test_configuracao_completa(self):
         cfg = ra.montar_config_bayes(
-            self._args(bayes=True, bayes_rope=0.5, bayes_metodo="postos",
-                       bayes_limiar=0.85, bayes_amostras=50_000), self._erro)
+            self._args(bayes=True, bayes_rope=0.32, bayes_rope_decisao=0.15),
+            self._erro)
         self.assertTrue(cfg.ativo)
-        self.assertEqual((cfg.rope, cfg.metodo, cfg.limiar), (0.5, "postos", 0.85))
-        self.assertEqual(cfg.kw["nsamples"], 50_000)
+        self.assertEqual((cfg.rope, cfg.rope_decisao, cfg.limiar),
+                         (0.32, 0.15, ra.BAYES_LIMIAR))
+        self.assertEqual(cfg.kw(0.32), {"rope": 0.32, "limiar": ra.BAYES_LIMIAR})
 
 
 # =============================================================================
@@ -787,8 +897,9 @@ def _resumo_ambiente() -> None:
     print("=" * 72)
     print("Verificação das estatísticas de realizar_avaliacoes.py")
     print("=" * 72)
-    print("  scikit-learn : disponível")
-    print("  statsmodels  : disponível")
+    print(f"  scikit-learn : {'disponível' if SKLEARN_OK else 'AUSENTE — testes de referência pulados'}")
+    print(f"  statsmodels  : {'disponível' if STATSMODELS_OK else 'AUSENTE — testes de referência pulados'}")
+    print(f"  baycomp      : {'disponível' if ra.BAYES_DISPONIVEL else 'AUSENTE — camada bayesiana pulada'}")
     print()
     print("Origem das estatísticas no pipeline:")
     for nome, origem in ra.dependencias().items():

@@ -25,24 +25,37 @@ principal. A leitura bayesiana acrescenta o que o teste de hipótese nula não
 consegue expressar — a probabilidade posterior de equivalência prática — e
 trata "equivalente" como achado, não como falha em rejeitar H₀.
 
-Dois alvos, cada um com o teste do baycomp adequado à sua escala:
+**Um único teste nas duas escalas: `baycomp.CorrelatedTTest`** — o teste que
+Benavoli et al. (2017) propõem para comparar dois algoritmos em UM conjunto de
+dados com observações pareadas, que é exatamente este desenho. Analítico
+(Student acumulada): determinístico, sem amostras nem semente. O `SignTest`
+foi descartado porque satura na Likert de 4 pontos (com >50% de empates,
+P(equivalência) → 1 independentemente do desequilíbrio); a evidência vive em
+`demo_est_bayesiana.py`. **Limiar único de 0,95** em todo o trabalho.
 
-  * **Likert do juiz LLM** (principal) — escala ordinal → `baycomp.SignTest`,
-    com `rope = 0,5`. A escala é inteira, então meio ponto significa exatamente
-    "notas iguais": não é margem arbitrada. Mede qualidade percebida.
-  * **Métricas automáticas** (complementar) — escores contínuos →
-    `baycomp.CorrelatedTTest`, com a ROPE calibrada. Ele usa a **magnitude** das
-    diferenças, e não apenas as direções. Medem similaridade com o modelo base,
-    ou seja **fidelidade de destilação, não qualidade** — um protocolo que
+Dois alvos:
+
+  * **Likert do juiz LLM** (principal) — ROPE **calibrada na Etapa 1** pela
+    divergência média entre especialistas e **transcrita à mão** para o YAML
+    (`rope_likert`); a transcrição força o pré-registro consciente. Mede
+    qualidade percebida. Divergindo da métrica automática, a Likert decide.
+  * **Métricas automáticas** (complementar) — ROPE ancorada na variação entre
+    execuções do mesmo protocolo. Medem similaridade com o modelo base, ou
+    seja **fidelidade de destilação, não qualidade** — um protocolo que
     reproduz fielmente um erro do professor é premiado. Por isso entram como
     triangulação, nunca como veredito.
 
-O teste usado aparece no título de cada figura e no cabeçalho de cada seção.
+Limitação assumida (a declarar no texto): a diferença média de notas Likert É
+a diferença das médias — o pareamento não contorna a objeção ordinal. Defesa:
+robustez (Norman, 2010; Carifio & Perla, 2008), ROPE na mesma unidade da
+divergência entre especialistas, e contagens ordinais puras ao lado de toda
+probabilidade.
 
 Configuração (YAML) — ver `configurar_bayesiana` para a lista completa:
 
     estatistica_bayesiana:
       ativo: true
+      rope_likert: 0.32          # transcrita da Etapa 1 (calibração)
       metricas_automaticas:
         rope: 0.01
         campos: ["(global)"]
@@ -80,18 +93,13 @@ from util_analise_estatistica import (MAPA_METRICA_SUFIXO, MAPA_METRICA_DISPLAY,
 # 1. Configuração
 # ============================================================================
 
-#: Padrões da etapa. Todos sobrescritíveis pela chave do YAML.
-LIMIAR_PADRAO = 0.80        # classificação das células do heatmap
-#: A escala Likert é inteira: meio ponto separa "notas iguais" de "notas
-#: diferentes". Não é margem calibrada — é a tradução direta da escala.
-ROPE_LIKERT_PADRAO = 0.5
-AMOSTRAS_PADRAO = 200_000
-SEMENTE_PADRAO = 42
+#: Limiar ÚNICO de decisão em todo o trabalho — gate (Etapa 1), heatmap e
+#: "Medindo as diferenças" (Benavoli et al., 2017, §3.2). Sobrescritível pelo
+#: YAML, com registro do desvio.
+LIMIAR_PADRAO = 0.95
 
-#: nome da classe do baycomp por trás de cada método, para o relatório
-NOME_TESTE = {"sinais": "baycomp.SignTest",
-              "postos": "baycomp.SignedRankTest",
-              "t": "baycomp.CorrelatedTTest"}
+#: nome do único teste do pipeline, para figuras e relatório
+NOME_TESTE = "baycomp.CorrelatedTTest"
 
 #: Acima deste número de protocolos o heatmap deixa de ser legível e a matriz
 #: reintroduz as comparações todos-contra-todos que um desenho pré-registrado
@@ -156,50 +164,40 @@ def _ler_recortes(valor) -> list:
 class ConfigBayes:
     """Parâmetros da comparação bayesiana pareada entre protocolos.
 
-    Toda a estatística vem do **baycomp**, via `util_est_bayesiana`. Cada escala
-    usa o teste adequado à sua natureza:
+    Toda a estatística vem do **baycomp**, via `util_est_bayesiana`, com um
+    único teste nas duas escalas: `CorrelatedTTest` (analítico — sem amostras
+    nem semente a registrar).
 
-    * **Likert** (ordinal) → `SignTest`, com ``rope_likert = 0,5``. A escala é
-      inteira, então meio ponto significa exatamente "notas iguais": não é
-      margem arbitrada, é a tradução direta da escala.
-    * **Métricas automáticas** (contínuas) → `CorrelatedTTest`, com a ``rope``
-      calibrada. Ele usa a magnitude das diferenças, e não apenas as direções.
+    * **Likert** (principal) — ``rope_likert`` é **obrigatória**: o valor vem
+      da calibração da Etapa 1 (divergência média entre especialistas) e é
+      transcrito à mão para o YAML. Sem ele, a seção principal é omitida com
+      aviso — a transcrição manual força o pré-registro consciente.
+    * **Métricas automáticas** (complementares) — ``rope`` obrigatória,
+      ancorada na variação entre execuções do mesmo protocolo.
 
     A ROPE precisa ser **> 0** nos dois casos: com ROPE zero o baycomp devolve
     apenas `(p_esquerda, p_direita)`, sem a probabilidade de equivalência.
+    ``limiar`` é o limiar ÚNICO de decisão (padrão 0,95).
     """
     ativo: bool = False
     limiar: float = LIMIAR_PADRAO
-    amostras: int = AMOSTRAS_PADRAO
-    semente: int = SEMENTE_PADRAO
     incluir_base: bool = False
     recortes: list = field(default_factory=lambda: [Recorte()])
     # --- Likert (principal) ---
-    rope_likert: float = ROPE_LIKERT_PADRAO
-    metodo_likert: str = "sinais"
+    rope_likert: float = 0.0        # transcrita da Etapa 1; 0 = ausente
     # --- métricas automáticas (complementares) ---
     rope: float = 0.0
-    metodo_metricas: str = "t"
     rope_sensibilidade: list = field(default_factory=list)
     campos: list = field(default_factory=list)
     metricas: list = field(default_factory=list)
 
-    def kw(self, metodo: str, rope: float) -> dict:
+    def kw(self, rope: float) -> dict:
         """Argumentos repassados ao `util_est_bayesiana`."""
-        return {"rope": rope, "metodo": metodo, "limiar": self.limiar,
-                "nsamples": self.amostras, "seed": self.semente}
-
-    @property
-    def kw_likert(self) -> dict:
-        return self.kw(self.metodo_likert, self.rope_likert)
-
-    @property
-    def kw_metricas(self) -> dict:
-        return self.kw(self.metodo_metricas, self.rope)
+        return {"rope": rope, "limiar": self.limiar}
 
     @property
     def tem_likert(self) -> bool:
-        """A escala Likert é inteira: a ROPE decorre dela, sempre disponível."""
+        """A seção principal exige a ROPE transcrita da Etapa 1 (> 0)."""
         return self.rope_likert > 0
 
     @property
@@ -233,22 +231,23 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
 
         estatistica_bayesiana:
           ativo: true              # sem isto, nada roda
-          limiar: 0.80             # classificação das células do heatmap
-          rope_likert: 0.5         # (opcional) "notas iguais"; decorre da escala inteira
-          metodo_likert: sinais    # (opcional) sinais | postos | t
-          amostras: 200000         # amostras da posterior
-          semente: 42              # reprodutibilidade
+          limiar: 0.95             # limiar ÚNICO de decisão (padrão do trabalho)
+          rope_likert: 0.32        # OBRIGATÓRIA (> 0): transcrita à mão da
+                                   #   calibração da Etapa 1 (validacao.md)
           incluir_base: false      # inclui o modelo base na matriz da Likert
           protocolos:              # recorte e ORDEM; aceita alias ou rótulo.
-            Q1_ajuste_fino: [A, B, C]        # dicionário = um heatmap por questão,
+            Q1_ajuste_fino: [A, B, C]        # dicionário = figuras por questão,
             Q3_escalonamento: [D1, D2, D3]   #   com o nome virando prefixo dos arquivos
           # protocolos: [A, B, D1] # lista simples = recorte único, sem prefixo
           metricas_automaticas:
             rope: 0.01             # OBRIGATÓRIA (> 0) para a seção complementar
-            metodo: t              # (opcional) t = CorrelatedTTest, adequado a contínuo
             rope_sensibilidade: [0.005, 0.01, 0.02]   # padrão: rope/2, rope, 2·rope
             campos: ["(global)"]   # campos do YAML (ex.: "(global)", "Resumo")
             metricas: [bertscore, sbert_medio]
+
+    As chaves legadas `metodo_likert`, `metodo`, `amostras` e `semente` foram
+    removidas com a fixação do `CorrelatedTTest` (analítico); se presentes,
+    são ignoradas com aviso.
 
     Returns:
         ConfigBayes — com `ativo=False` quando a chave está ausente ou desligada.
@@ -266,17 +265,23 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
     if not isinstance(automaticas, dict):
         automaticas = {}
 
+    # chaves legadas do desenho anterior (SignTest amostral): ignoradas com
+    # aviso, para o YAML antigo não falhar em silêncio nem sugerir que ainda
+    # controlam alguma coisa
+    legadas = ([c for c in ('metodo_likert', 'amostras', 'semente') if c in bloco]
+               + [f'metricas_automaticas.{c}' for c in ('metodo',) if c in automaticas])
+    if legadas:
+        print(f"   ⚠️  chaves legadas ignoradas em `estatistica_bayesiana`: "
+              f"{', '.join(legadas)} — o pipeline usa exclusivamente o "
+              f"{NOME_TESTE} (analítico, sem amostras nem semente).")
+
     return ConfigBayes(
         ativo=True,
         limiar=float(bloco.get('limiar', LIMIAR_PADRAO)),
-        amostras=int(bloco.get('amostras', AMOSTRAS_PADRAO)),
-        semente=int(bloco.get('semente', SEMENTE_PADRAO)),
         incluir_base=bool(bloco.get('incluir_base', False)),
         recortes=_ler_recortes(bloco.get('protocolos')),
-        rope_likert=float(bloco.get('rope_likert', ROPE_LIKERT_PADRAO)),
-        metodo_likert=str(bloco.get('metodo_likert', 'sinais')),
+        rope_likert=float(bloco.get('rope_likert', 0.0) or 0.0),
         rope=float(automaticas.get('rope', 0.0) or 0.0),
-        metodo_metricas=str(automaticas.get('metodo', 't')),
         rope_sensibilidade=list(automaticas.get('rope_sensibilidade') or []),
         campos=list(automaticas.get('campos') or []),
         metricas=list(automaticas.get('metricas') or []),
@@ -331,7 +336,9 @@ def tabela_pares(matriz: pd.DataFrame) -> pd.DataFrame:
     """Formata a matriz longa para leitura: uma linha por par NÃO ordenado.
 
     Mesmo formato de `realizar_avaliacoes.tabela_matriz_bayesiana`, para que as
-    tabelas da Fase A e da Fase B sejam lidas da mesma maneira.
+    tabelas da Fase A e da Fase B sejam lidas da mesma maneira. As colunas
+    `A melhor`/`Empate`/`B melhor` são contagens ORDINAIS PURAS (d>0, d=0,
+    d<0), independentes da ROPE — a âncora contra a objeção da escala ordinal.
     """
     linhas = []
     for linha in _pares_unicos(matriz):
@@ -342,6 +349,8 @@ def tabela_pares(matriz: pd.DataFrame) -> pd.DataFrame:
             "Empate": int(linha["empate"]),
             "B melhor": int(linha["y_melhor"]),
             "Dif. média": _num(linha["diferenca_media"], 4),
+            "IC 95%": (f"[{linha['ic_inf']:+.4f}; {linha['ic_sup']:+.4f}]"
+                       .replace(".", ",")),
             "P(A > B)": _num(linha["p_esquerda"], 4),
             "P(equiv.)": _num(linha["p_rope"], 4),
             "P(A < B)": _num(linha["p_direita"], 4),
@@ -373,19 +382,25 @@ def achados(matriz: pd.DataFrame, rotulo_entidade: str = "protocolo") -> list:
         f"{int(contagem.get('incerto', 0))} permaneceram inconclusivos."
     ]
 
-    resumo = bayes.resumo(matriz)
-    superiores = resumo["superior"]
+    sintese = bayes.sintese(matriz)
+    superiores = sintese["superior a"]
     if superiores.max() > 0:
         lideres = list(superiores[superiores == superiores.max()].index)
         frases.append(
             f"Maior número de superioridades: {', '.join(map(str, lideres))} "
-            f"({int(superiores.max())} de {len(resumo) - 1} comparações).")
-    equivalentes = resumo["equivalente"]
+            f"({int(superiores.max())} de {len(sintese) - 1} comparações).")
+    equivalentes = sintese["equivalente a"]
     if equivalentes.max() > 0:
         estaveis = list(equivalentes[equivalentes == equivalentes.max()].index)
         frases.append(
             f"Mais equivalências: {', '.join(map(str, estaveis))} "
             f"({int(equivalentes.max())}) — equivalência é achado, não falha do teste.")
+    ciclos = sintese.attrs.get("ciclos") or []
+    if ciclos:
+        frases.append(
+            "⚠ Transitividade violada: "
+            + "; ".join(" > ".join(map(str, c)) for c in ciclos)
+            + ". A leitura ordenada da síntese é inválida e precisa ser declarada.")
 
     # a direção satura com n grande: o conteúdo migra para as contagens
     saturados = [p for p in pares if max(p["p_esquerda"], p["p_direita"]) > 0.999]
@@ -396,23 +411,140 @@ def achados(matriz: pd.DataFrame, rotulo_entidade: str = "protocolo") -> list:
             "O conteúdo informativo desses pares está nas contagens e na diferença "
             "média, não na probabilidade.")
 
-    # Limitação do SignTest: com muitos empates a zona central vence por ser a
-    # maior, mesmo havendo desequilíbrio claro entre as laterais.
-    if matriz.attrs.get("metodo") == "sinais":
-        dominadas = [p for p in pares
-                     if p["classificacao"] == "equivalente"
-                     and max(p["x_melhor"], p["y_melhor"]) >= 2 * max(min(p["x_melhor"],
-                                                                          p["y_melhor"]), 1)]
-        if dominadas:
-            nomes = ", ".join(f"{p['linha']} × {p['coluna']}" for p in dominadas[:5])
-            frases.append(
-                f"{len(dominadas)} par(es) classificados como equivalentes apesar de um "
-                f"lado vencer ao menos o dobro de documentos ({nomes}"
-                f"{'…' if len(dominadas) > 5 else ''}). O `SignTest` responde *qual zona "
-                "é a maior*, e com muitos empates a central vence mesmo havendo "
-                "desequilíbrio — leia as contagens ao lado da probabilidade.")
-
     return frases
+
+
+def leitura_sugerida(resultado: dict, cfg: ConfigBayes) -> list:
+    """Parágrafos-rascunho de leitura dos resultados de um alvo (plano §4.5).
+
+    Cinco movimentos, na ordem em que um leitor os faria: panorama, topo,
+    o par mais próximo da fronteira de decisão, os inconclusivos (separando
+    falta de dados de diferença que tangencia a ROPE) e, no alvo
+    complementar, o aviso da sensibilidade. São **rascunho** por desenho —
+    o relatório os marca como tal e o texto final é do autor.
+
+    Returns:
+        Lista de parágrafos (strings); vazia se a matriz não tiver pares.
+    """
+    matriz = resultado["matriz"]
+    pares = list(_pares_unicos(matriz))
+    if not pares:
+        return []
+    limiar, rope = cfg.limiar, resultado["rope"]
+    paragrafos = []
+
+    # 1 — panorama: distribuição das classificações
+    contagem = {c: sum(1 for p in pares if p["classificacao"] == c)
+                for c in ("superior", "inferior", "equivalente", "incerto")}
+    direcionais = contagem["superior"] + contagem["inferior"]
+    plural = len(pares) != 1
+    paragrafos.append(
+        f"{'Das' if plural else 'Da'} {len(pares)} "
+        f"{'comparações pareadas' if plural else 'comparação pareada'} entre os "
+        f"{len(resultado['protocolos'])} protocolos "
+        f"({resultado['metrica']}, n = {_num(resultado['n'], 0)} documentos), "
+        f"{direcionais} {'resultaram' if direcionais != 1 else 'resultou'} em "
+        f"relação direcional ao limiar de {_num(limiar, 2)}, "
+        f"{contagem['equivalente']} em equivalência prática "
+        f"(diferença média dentro da ROPE de {_num(rope, 4)}) e "
+        f"{contagem['incerto']} "
+        f"{'permaneceram inconclusivas' if contagem['incerto'] != 1 else 'permaneceu inconclusiva'}.")
+
+    # 2 — topo: o(s) protocolo(s) com mais superioridades
+    sintese = resultado["sintese"]
+    superiores = sintese["superior a"]
+    if superiores.max() > 0:
+        lideres = list(superiores[superiores == superiores.max()].index)
+        nomes = " e ".join(f"`{n}`" for n in map(str, lideres))
+        medias = ", ".join(f"{_num(sintese.loc[n, 'média'], 4)}"
+                           for n in lideres)
+        paragrafos.append(
+            f"O melhor desempenho é de {nomes}, superior a "
+            f"{int(superiores.max())} dos {len(sintese) - 1} demais protocolos "
+            f"(média: {medias}). A contagem de superioridades não é ranking — "
+            "com relações possivelmente intransitivas, a ordem completa pode "
+            "não existir —, mas delimita o topo.")
+    else:
+        paragrafos.append(
+            "Nenhum protocolo estabeleceu superioridade sobre outro ao limiar "
+            f"de {_num(limiar, 2)}: o conjunto se comporta como um bloco de "
+            "desempenho comparável neste alvo.")
+
+    # 3 — o par mais próximo da fronteira de decisão
+    def _distancia_fronteira(p):
+        maior = max(p["p_esquerda"], p["p_rope"], p["p_direita"])
+        return abs(maior - limiar)
+    fronteirico = min(pares, key=_distancia_fronteira)
+    maior_p = max(fronteirico["p_esquerda"], fronteirico["p_rope"],
+                  fronteirico["p_direita"])
+    distancia = abs(maior_p - limiar)
+    if distancia <= 0.03:
+        paragrafos.append(
+            f"A comparação mais próxima da fronteira de decisão é "
+            f"`{fronteirico['linha']}` × `{fronteirico['coluna']}`: a maior "
+            f"probabilidade posterior é {_num(maior_p, 4)} "
+            f"(classificação: {fronteirico['classificacao']}), a apenas "
+            f"{_num(distancia, 4)} do limiar de {_num(limiar, 2)}. É onde uma "
+            "pequena variação de dados poderia mudar a categoria — qualquer "
+            "afirmação sobre esse par pede cautela extra.")
+    else:
+        paragrafos.append(
+            f"Nenhuma comparação fica perto da fronteira de decisão: a mais "
+            f"próxima (`{fronteirico['linha']}` × `{fronteirico['coluna']}`, "
+            f"maior probabilidade posterior {_num(maior_p, 4)}, classificação "
+            f"{fronteirico['classificacao']}) dista {_num(distancia, 4)} do "
+            f"limiar de {_num(limiar, 2)} — as categorias atribuídas são "
+            "estáveis a pequenas variações de dados.")
+
+    # 4 — inconclusivos: IC largo (faltam dados) vs. IC estreito cruzando a
+    #     ROPE (a diferença real tangencia a margem)
+    incertos = [p for p in pares if p["classificacao"] == "incerto"]
+    if incertos:
+        largura_rope = 2 * rope
+        largos = [p for p in incertos
+                  if (p["ic_sup"] - p["ic_inf"]) > largura_rope]
+        estreitos = [p for p in incertos if p not in largos]
+        partes = []
+        if largos:
+            exemplo = largos[0]
+            partes.append(
+                f"{len(largos)} têm IC 95% mais largo que a própria ROPE "
+                f"(ex.: `{exemplo['linha']}` × `{exemplo['coluna']}`, IC "
+                f"[{exemplo['ic_inf']:+.4f}; {exemplo['ic_sup']:+.4f}]) — "
+                "faltam dados, e a resposta honesta é ampliar a amostra")
+        if estreitos:
+            exemplo = estreitos[0]
+            partes.append(
+                f"{len(estreitos)} têm IC estreito cruzando a borda da ROPE "
+                f"(ex.: `{exemplo['linha']}` × `{exemplo['coluna']}`, IC "
+                f"[{exemplo['ic_inf']:+.4f}; {exemplo['ic_sup']:+.4f}]) — a "
+                "diferença real tangencia a margem, e mais dados tendem a "
+                "confirmar uma diferença pequena, na fronteira da relevância")
+        paragrafos.append(
+            f"Entre as {len(incertos)} comparações inconclusivas, "
+            + "; ".join(partes) +
+            ". Os dois casos são distintos e pedem frases distintas no texto.")
+
+    # 5 — sensibilidade (só no complementar, onde a varredura existe)
+    sens = resultado.get("sensibilidade")
+    if sens is not None and len(sens):
+        coluna = "Muda vs. referência"
+        mudancas = int(sens.loc[sens["Referência"] != "sim", coluna].max()) \
+            if (sens["Referência"] != "sim").any() else 0
+        if mudancas == 0:
+            paragrafos.append(
+                "A varredura de sensibilidade não altera nenhuma classificação "
+                "nos valores testados de ROPE: a conclusão deste alvo não "
+                "depende da margem escolhida.")
+        else:
+            paragrafos.append(
+                f"A varredura de sensibilidade muda até {mudancas} "
+                "classificação(ões) entre os valores testados de ROPE: a "
+                "conclusão deste alvo depende da margem, e o texto precisa "
+                "reportar o resultado nas ROPEs vizinhas, não apenas na "
+                "pré-registrada.")
+
+    return paragrafos
 
 
 # ============================================================================
@@ -506,58 +638,67 @@ def _dados_metrica(df_resultados, protocolos, campo, sufixo, mapa_aliases) -> pd
 # 4. Execução de um alvo (Likert ou métrica automática)
 # ============================================================================
 
-def _analisar_alvo(dados, cfg: ConfigBayes, metodo: str, rope: float,
+def _analisar_alvo(dados, cfg: ConfigBayes, rope: float,
                    metrica: str, papel: str, nome_base: str, pasta: str) -> dict:
     """Calcula a matriz, grava CSV/PNG e devolve tudo o que o relatório precisa.
 
     Args:
         dados: DataFrame largo (documentos × protocolos), já pareado.
-        metodo: `sinais` (Likert, ordinal) ou `t` (métricas contínuas).
-        rope: margem sobre os escores brutos; obrigatória e > 0 nos dois casos.
+        rope: margem sobre os escores brutos; obrigatória e > 0 nos dois casos
+            (Likert: transcrita da calibração da Etapa 1; métricas: ancorada na
+            variação entre execuções).
         nome_base: prefixo dos arquivos gerados na pasta de saída.
 
     Returns:
-        dict com `matriz`, `tabela`, `resumo`, `achados` e `figuras` — ou vazio
-        se não houver ao menos dois protocolos.
+        dict com `matriz`, `tabela`, `sintese`, `achados`, `leitura` e
+        `figuras` — ou vazio se não houver ao menos dois protocolos.
     """
     if dados is None or len(dados.columns) < 2 or len(dados) < 2:
         return {}
 
     nomes = list(dados.columns)
-    matriz = bayes.matriz_pares(dados, nomes=nomes, **cfg.kw(metodo, rope))
+    matriz = bayes.matriz_pares(dados, nomes=nomes, **cfg.kw(rope))
 
     figuras = []
+    _, arquivo_dif = bayes.grafico_diferencas(
+        matriz, arquivo_saida=os.path.join(pasta, f'{nome_base}_diferencas.png'),
+        titulo=f'{metrica} — Medindo as diferenças')
+    if arquivo_dif:
+        figuras.append(os.path.basename(arquivo_dif))
     _, arquivo_heatmap = bayes.heatmap(
         matriz, arquivo_saida=os.path.join(pasta, f'{nome_base}_heatmap.png'),
-        titulo=f'{metrica} — {NOME_TESTE.get(metodo, metodo)}',
+        titulo=f'{metrica} — {NOME_TESTE}',
         rotulo="protocolo")
     if arquivo_heatmap:
         figuras.append(os.path.basename(arquivo_heatmap))
 
     matriz.to_csv(os.path.join(pasta, f'{nome_base}.csv'), index=False, encoding='utf-8')
 
+    sintese = bayes.sintese(matriz)
     resultado = {
         "matriz": matriz,
         "tabela": tabela_pares(matriz),
-        "resumo": bayes.resumo(matriz),
+        "sintese": sintese,
         "achados": achados(matriz),
         "figuras": figuras,
         "n": int(matriz.attrs.get("n") or 0),
         "protocolos": nomes,
         "metrica": metrica,
         "papel": papel,
-        "metodo": metodo,
         "rope": rope,
     }
 
-    # A varredura só se aplica às métricas contínuas: na Likert a ROPE decorre
-    # da escala ser inteira e alterá-la deixaria de representar "notas iguais".
+    # A varredura só se aplica às métricas contínuas: na Likert a ROPE vem da
+    # calibração da Etapa 1 (pré-registrada), e variá-la aqui abriria a porta
+    # para escolher a margem pelo resultado.
     if papel == "complementar":
         sensibilidade = _sensibilidade_rope(dados, nomes, cfg)
         sensibilidade.to_csv(os.path.join(pasta, f'{nome_base}_sensibilidade_rope.csv'),
                              index=False, encoding='utf-8')
         resultado["sensibilidade"] = sensibilidade
 
+    # depois da sensibilidade: o quinto parágrafo da leitura depende dela
+    resultado["leitura"] = leitura_sugerida(resultado, cfg)
     return resultado
 
 
@@ -572,7 +713,7 @@ def _sensibilidade_rope(dados, nomes: list, cfg: ConfigBayes) -> pd.DataFrame:
     referencia = None
     linhas = []
     for valor in cfg.grade_rope:
-        m = bayes.matriz_pares(dados, nomes=nomes, **cfg.kw(cfg.metodo_metricas, valor))
+        m = bayes.matriz_pares(dados, nomes=nomes, **cfg.kw(valor))
         classes = [p["classificacao"] for p in _pares_unicos(m)]
         if referencia is None or valor == cfg.rope:
             referencia = classes
@@ -603,31 +744,42 @@ _LEITURA = """\
 evidência suficiente, e não a existência de algo intermediário entre as três.
 A diagonal é neutra porque `(Pi, Pi)` não é comparação.
 
-Cada par não ordenado é amostrado uma única vez e a célula espelhada é derivada
+Cada par não ordenado é computado uma única vez e a célula espelhada é derivada
 trocando inferior por superior — `P(Pi > Pj)` e `P(Pj < Pi)` são o mesmo número
-por construção, não duas estimativas Monte Carlo que por acaso coincidem.
+por construção. O cálculo é analítico (Student acumulada): determinístico, sem
+amostras nem semente.
 
-**As três probabilidades somam 1** e vêm da mesma posterior: `P(A > B)`,
-`P(equiv.)` e `P(A < B)`. A margem que as separa é sempre a **ROPE**, aplicada
-sobre os escores brutos antes da posterior. Reporte as contagens ao lado delas:
-é o que permite ver o desequilíbrio entre as laterais quando a zona central
-vence apenas por concentrar mais documentos.
+**As três probabilidades somam 1** e vêm da mesma posterior da **diferença
+média**: `P(A > B)`, `P(equiv.)` e `P(A < B)`. A margem que as separa é sempre
+a **ROPE**, na unidade do escore. As colunas `A melhor`/`Empate`/`B melhor` são
+contagens **ordinais puras** (d > 0, d = 0, d < 0), independentes da ROPE —
+reporte-as ao lado das probabilidades: são o número que não assume nada sobre
+os intervalos da escala.
+
+Na figura **"Medindo as diferenças"** (forest plot), cada linha é um par:
+ponto = diferença média, barra = IC 95% da posterior, faixa ao fundo = ROPE,
+cor = classificação, P(equiv.) anotada à direita. É onde a magnitude fica
+visível — o heatmap mostra só as probabilidades.
 """
 
 _TESTES_TABELA = """\
-| teste | o que faz com os documentos | equivalência significa | usado em |
-|---|---|---|---|
-| `SignTest` | **conta** direções em três caixas | P(a caixa da ROPE ser a **maior**) | Likert (ordinal) |
-| `CorrelatedTTest` | **mede** a diferença média | P(a diferença média cair **dentro** da ROPE) | escores contínuos |
+Um único teste nas duas escalas: **`baycomp.CorrelatedTTest`** (Benavoli et
+al., 2017) — o teste proposto para comparar dois algoritmos em UM conjunto de
+dados com observações pareadas, que é exatamente este desenho. Equivalência
+significa P(a diferença **média** cair dentro da ROPE).
 
-O primeiro descarta magnitude — adequado numa escala em que a distância entre as
-notas 2 e 3 não é comparável à distância entre 3 e 4. O segundo usa a magnitude,
-que é o que interessa num escore contínuo.
+O `SignTest` foi considerado e **descartado**: na Likert de 4 pontos, com mais
+de metade dos documentos empatados, a zona central vence por ser a maior
+independentemente do desequilíbrio entre as laterais — P(equivalência) satura
+em 1 para juízes de qualidades muito diferentes. A demonstração numérica vive
+em `demo_est_bayesiana.py`.
 
-**Limitação do `SignTest`:** ele responde *qual zona é a maior*, não *quem vence
-e por quanto*. Com muitos empates a zona central vence mesmo havendo
-desequilíbrio claro entre as laterais — por isso as contagens vão ao lado das
-probabilidades em toda tabela.
+**Limitação assumida** (a declarar no texto): a diferença média de notas
+Likert é a diferença das médias — o pareamento não contorna a objeção ordinal.
+Defesa em três partes: robustez do teste t em escalas Likert (Norman, 2010;
+Carifio & Perla, 2008); ROPE na mesma unidade, ancorada na divergência média
+entre especialistas (Etapa 1); e contagens ordinais puras ao lado de toda
+probabilidade.
 """
 
 
@@ -641,12 +793,15 @@ def _secao_alvo(resultado: dict, cfg: ConfigBayes, numero: str, nivel: int = 2) 
     h_alvo, h_sub = '#' * nivel, '#' * (nivel + 1)
     L = [f'{h_alvo} {numero}. {resultado["metrica"]} — análise {resultado["papel"]}', '']
 
+    origem_rope = ('transcrita da calibração da Etapa 1'
+                   if resultado["papel"] == "principal"
+                   else 'ancorada na variação entre execuções')
     L.append(
-        f'> `{NOME_TESTE.get(resultado["metodo"], resultado["metodo"])}` · '
-        f'ROPE = {_num(resultado["rope"], 5)} (sobre os escores brutos) · '
+        f'> `{NOME_TESTE}` · '
+        f'ROPE = {_num(resultado["rope"], 5)} ({origem_rope}) · '
         f'n = {_num(resultado["n"], 0)} documentos pareados · '
         f'{len(resultado["protocolos"])} protocolos · '
-        f'limiar de classificação = {_num(cfg.limiar, 2)}'
+        f'limiar único = {_num(cfg.limiar, 2)}'
     )
     L.append('')
 
@@ -667,13 +822,22 @@ def _secao_alvo(resultado: dict, cfg: ConfigBayes, numero: str, nivel: int = 2) 
     L.append('')
     L += _tabela_md(resultado["tabela"])
 
-    L.append(f'{h_sub} Síntese por protocolo')
+    L.append(f'{h_sub} Contando as relações')
     L.append('')
     L.append('Contagem de relações — **não é ranking**: com relações possivelmente')
     L.append('intransitivas, ordenar por vitórias criaria uma ordem que os dados não')
     L.append('sustentam.')
     L.append('')
-    L += _tabela_md(resultado["resumo"], indice=True)
+    L += _tabela_md(resultado["sintese"], indice=True)
+    ciclos = resultado["sintese"].attrs.get("ciclos") or []
+    if ciclos:
+        L.append('⚠ **Transitividade violada** — ciclo(s): '
+                 + '; '.join(' > '.join(map(str, c)) for c in ciclos)
+                 + '. A leitura ordenada da tabela é inválida.')
+    else:
+        L.append('✅ Verificação de transitividade: as relações direcionais não '
+                 'formam ciclo.')
+    L.append('')
 
     if resultado.get("sensibilidade") is not None:
         L.append(f'{h_sub} Sensibilidade à ROPE')
@@ -691,6 +855,18 @@ def _secao_alvo(resultado: dict, cfg: ConfigBayes, numero: str, nivel: int = 2) 
             L.append(f'- {frase}')
         L.append('')
 
+    if resultado.get("leitura"):
+        L.append(f'{h_sub} Leitura sugerida — RASCUNHO')
+        L.append('')
+        L.append('> ⚠ Parágrafos gerados automaticamente como **ponto de partida** '
+                 'para o texto da dissertação. Revise, corte e assuma a autoria '
+                 'antes de qualquer uso.')
+        L.append('')
+        for paragrafo in resultado["leitura"]:
+            L.append(f'> {paragrafo}')
+            L.append('>')
+        L.append('')
+
     return L
 
 
@@ -702,15 +878,15 @@ def gerar_markdown(resultados: list, cfg: ConfigBayes,
     origem = getattr(bayes, "__name__", "util_est_bayesiana")
     L.append(
         f'> Gerado em {datetime.now().strftime("%Y-%m-%d %H:%M")} · '
-        f'módulo `{origem}` · amostras da posterior = {_num(cfg.amostras, 0)} · '
-        f'semente = {cfg.semente} · numpy {np.__version__} · pandas {pd.__version__}'
+        f'módulo `{origem}` · `{NOME_TESTE}` (analítico — determinístico, sem '
+        f'amostras nem semente) · numpy {np.__version__} · pandas {pd.__version__}'
     )
     L.append('')
     L.append(
         '> **Método:** comparação bayesiana pareada com o pacote `baycomp` '
         '(Benavoli et al., 2017, JMLR 18:1-36). `util_est_bayesiana` é uma camada '
-        'fina: organiza as chamadas, monta a matriz de todos os pares e desenha o '
-        'heatmap — a estatística é integralmente do pacote.'
+        'fina: organiza as chamadas, monta a matriz de todos os pares e desenha as '
+        'figuras — a estatística é integralmente do pacote.'
     )
     L.append('')
     L.append(
@@ -748,27 +924,23 @@ def gerar_markdown(resultados: list, cfg: ConfigBayes,
     L.append('## 1. Parâmetros da análise')
     L.append('')
     parametros = pd.DataFrame([
-        {'Parâmetro': 'teste (Likert)', 'Valor': NOME_TESTE.get(cfg.metodo_likert, '—'),
-         'Aplica-se a': 'seção principal — escala ordinal'},
-        {'Parâmetro': 'ROPE (Likert)', 'Valor': _num(cfg.rope_likert, 2),
-         'Aplica-se a': 'notas iguais (escala inteira)'},
-        {'Parâmetro': 'teste (métricas)', 'Valor': NOME_TESTE.get(cfg.metodo_metricas, '—'),
-         'Aplica-se a': 'seção complementar — escala contínua'},
+        {'Parâmetro': 'teste (único)', 'Valor': f'`{NOME_TESTE}`',
+         'Aplica-se a': 'todas as seções — analítico, sem amostras nem semente'},
+        {'Parâmetro': 'ROPE (Likert)', 'Valor': _num(cfg.rope_likert, 4),
+         'Aplica-se a': 'seção principal — transcrita da calibração da Etapa 1'},
         {'Parâmetro': 'ROPE (métricas)', 'Valor': _num(cfg.rope, 5),
-         'Aplica-se a': 'margem sobre os escores brutos'},
-        {'Parâmetro': 'limiar de classificação', 'Valor': _num(cfg.limiar, 2),
-         'Aplica-se a': 'células do heatmap'},
-        {'Parâmetro': 'amostras da posterior', 'Valor': _num(cfg.amostras, 0),
-         'Aplica-se a': 'testes amostrais (CorrelatedTTest é analítico)'},
-        {'Parâmetro': 'semente', 'Valor': str(cfg.semente),
-         'Aplica-se a': 'testes amostrais'},
+         'Aplica-se a': 'seção complementar — ancorada na variação entre execuções'},
+        {'Parâmetro': 'limiar único', 'Valor': _num(cfg.limiar, 2),
+         'Aplica-se a': 'gate (Etapa 1), heatmap e "Medindo as diferenças"'},
     ])
     L += _tabela_md(parametros)
     L.append(
-        'A **ROPE da Likert não é parâmetro livre**: a escala é inteira, então meio '
-        'ponto significa exatamente "notas iguais". Já a ROPE das métricas contínuas '
-        'é calibrada e, com escores comprimidos, determina o resultado — por isso a '
-        'varredura de sensibilidade acompanha cada seção complementar.'
+        'A **ROPE da Likert é pré-registrada**: calibrada na Etapa 1 pela '
+        'divergência média entre os especialistas humanos e transcrita à mão para '
+        'o YAML — a transcrição manual força o pré-registro consciente. A ROPE das '
+        'métricas contínuas é calibrada na variação entre execuções e, com escores '
+        'comprimidos, determina o resultado — por isso a varredura de sensibilidade '
+        'acompanha cada seção complementar.'
     )
     L.append('')
 
@@ -777,7 +949,7 @@ def gerar_markdown(resultados: list, cfg: ConfigBayes,
     L.append('')
     L.append(_LEITURA)
     L.append('')
-    L.append('### Os dois testes afirmam coisas diferentes')
+    L.append('### O teste — e por que é um só')
     L.append('')
     L.append(_TESTES_TABELA)
     L.append('')
@@ -812,18 +984,19 @@ def gerar_markdown(resultados: list, cfg: ConfigBayes,
     L.append(f'## {secao}. Limitações registradas')
     L.append('')
     L.append(
-        '- **A ROPE das métricas contínuas é pré-registrada.** A varredura de '
-        'sensibilidade existe para demonstrar que a conclusão **não** depende de um '
-        'número escolhido a dedo. Ler a varredura e então adotar o valor que produz '
-        'o resultado desejado é escolher a conclusão e inventar o critério depois — '
-        'a versão bayesiana do *p-hacking*, e detectável. Na Likert a questão não se '
-        'coloca: a ROPE decorre de a escala ser inteira.'
+        '- **As duas ROPEs são pré-registradas.** A da Likert vem da calibração da '
+        'Etapa 1 (divergência média entre especialistas) e é transcrita à mão; a das '
+        'métricas, da variação entre execuções. A varredura de sensibilidade existe '
+        'para demonstrar que a conclusão **não** depende de um número escolhido a '
+        'dedo. Ler a varredura e então adotar o valor que produz o resultado '
+        'desejado é escolher a conclusão e inventar o critério depois — a versão '
+        'bayesiana do *p-hacking*, e detectável.'
     )
     L.append(
-        '- **O `SignTest` responde qual zona é a maior**, não quem vence e por '
-        'quanto. Com muitos empates — comum na Likert de 4 pontos — a zona central '
-        'vence mesmo havendo desequilíbrio claro entre as laterais. Reporte sempre '
-        'as contagens ao lado das probabilidades.'
+        '- **A diferença média de notas Likert é a diferença das médias** — o '
+        'pareamento não contorna a objeção ordinal. Defesa: robustez (Norman, 2010; '
+        'Carifio & Perla, 2008), ROPE na mesma unidade da divergência entre '
+        'especialistas, e contagens ordinais puras ao lado de toda probabilidade.'
     )
     L.append(
         '- **P(dominância) satura com n grande.** Com milhares de documentos a '
@@ -916,7 +1089,7 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
               "protocolos` para declarar um recorte por questão de pesquisa.")
 
     # ── alvo principal: Likert do juiz LLM ──────────────────────────────────
-    # Ordinal, rope = 0, ε sobre a posterior. É a métrica de qualidade percebida.
+    # ROPE transcrita da calibração da Etapa 1. É a métrica de qualidade percebida.
     dados_likert = _dados_likert(dados_analise, rotulos_likert, mapa_aliases)
 
     if sem_juiz_global:
@@ -946,17 +1119,17 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
         print(f"   ⚠️  {avisos[-1]}")
     elif not cfg.tem_likert:
         avisos.append(
-            f"{marca}notas do juiz LLM disponíveis, mas `rope_likert` foi definida como "
-            "zero ou negativa: a seção principal foi omitida. Com ROPE zero o baycomp "
-            f"não devolve a probabilidade de equivalência; na escala inteira o valor "
-            f"correto é {ROPE_LIKERT_PADRAO}."
+            f"{marca}notas do juiz LLM disponíveis, mas `rope_likert` está ausente "
+            "(ou ≤ 0): a seção principal foi omitida. O valor deve ser transcrito "
+            "à mão da calibração da Etapa 1 (seção 'Calibração da ROPE' do "
+            "`validacao.md`) — a transcrição manual força o pré-registro."
         )
         print(f"   ⚠️  {avisos[-1]}")
     else:
         print(f"   → Likert do juiz LLM ({len(dados_likert)} docs, "
               f"{len(dados_likert.columns)} protocolos)")
         resultado = _analisar_alvo(
-            dados_likert, cfg, metodo=cfg.metodo_likert, rope=cfg.rope_likert,
+            dados_likert, cfg, rope=cfg.rope_likert,
             metrica="Likert (juiz LLM)", papel="principal",
             nome_base=f'bayes_{prefixo}likert_juiz', pasta=pasta)
         if resultado:
@@ -982,7 +1155,7 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
                 print(f"   → {campo} × {display} ({len(dados)} docs, "
                       f"{len(dados.columns)} protocolos)")
                 resultado = _analisar_alvo(
-                    dados, cfg, metodo=cfg.metodo_metricas, rope=cfg.rope,
+                    dados, cfg, rope=cfg.rope,
                     metrica=f'{display} — {campo}', papel="complementar",
                     nome_base=nome_base, pasta=pasta)
                 if resultado:

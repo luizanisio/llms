@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
+
 realizar_avaliacoes.py
 ======================
 
@@ -23,23 +26,49 @@ Modos de execução
 
 Gate de validação (tudo aferido no agregado, sem estratificação por fonte)
 -------------------------------------------------------------------------
-======  ======================  ==========================  =================
-nº      critério                estatística                 aprova se
-======  ======================  ==========================  =================
-1       concordância ordinal    κw de Cohen (ponderado)     κw >= 0,60
-2       ausência de viés        Wilcoxon bilateral          p > 0,05
-3       decisão prática         McNemar (notas >= 3)        p > 0,05
-======  ======================  ==========================  =================
+======  ======================  ================================  ==========
+nº      critério                instrumento                       aprova se
+======  ======================  ================================  ==========
+1       concordância ordinal    κw de Cohen ponderado             κw >= 0,60
+2       ausência de viés        P(equivalência) na diferença      >= 0,95
+                                média das notas
+3       decisão prática         P(equivalência) na taxa de        >= 0,95
+                                adequação (nota >= 3)
+======  ======================  ================================  ==========
 
-O IC 95% do κw é reportado como medida de precisão, não como critério.
+Os critérios 2 e 3 são bayesianos: ``baycomp.CorrelatedTTest`` (Benavoli et
+al., 2017, JMLR 18:1-36), via ``util_est_bayesiana`` — o teste proposto para
+comparar dois algoritmos em UM conjunto de dados com observações pareadas.
+O cálculo é analítico (Student acumulada): determinístico, sem amostras nem
+semente. **Limiar único de 0,95** em todo o trabalho (gate, heatmap e forest
+plot). O IC 95% do κw é reportado como medida de precisão, não como critério.
 
-Camada bayesiana (opcional, `--bayes`)
---------------------------------------
-Complementa o gate sem substituí-lo: acrescenta a probabilidade posterior de
-**equivalência prática** — quantidade que o teste de hipótese nula não produz —
-e um heatmap das relações entre fontes e entre avaliadores. Método: teste de
-sinais bayesiano (Benavoli et al., 2017), via ``util_est_bayesiana``. Sem a
-flag, nada disso é importado nem executado.
+Desfechos: **Validado** (atende aos três) · **Com ressalva** (κw atende,
+equivalência inconclusiva) · **Não validado** (κw abaixo do corte ou viés
+relevante — a diferença quase certamente excede a ROPE).
+
+ROPE calibrada e controle negativo
+----------------------------------
+A ROPE das notas é **calibrada pela divergência média entre os pares de
+especialistas humanos** — medida entre eles, nunca a partir do par julgado.
+A da taxa de adequação segue o mesmo procedimento sobre a binarização.
+O **controle negativo** compara os próprios especialistas entre si com a ROPE
+calibrada e verifica que saem equivalentes; se não saírem, a margem está
+apertada demais — e é melhor descobrir antes de julgar o juiz.
+O valor calibrado é reportado no ``validacao.md`` e deve ser **transcrito à
+mão** para o YAML da Etapa 2 (a transcrição força o pré-registro consciente).
+
+Limitação assumida: a diferença média de notas Likert É a diferença das
+médias — o pareamento não contorna a objeção ordinal. Defesa: robustez
+(Norman, 2010; Carifio & Perla, 2008); ROPE ancorada na divergência entre
+especialistas, na mesma unidade; e as **contagens ordinais puras** (d>0, d=0,
+d<0) reportadas ao lado de toda probabilidade.
+
+Camada bayesiana complementar (opcional, `--bayes`)
+---------------------------------------------------
+Acrescenta as figuras de panorama — heatmap e "Medindo as diferenças" (forest
+plot) — entre fontes e entre avaliadores. Sem a flag, apenas o gate usa a
+camada bayesiana.
 
 Entrada
 -------
@@ -68,12 +97,17 @@ Uso
     python realizar_avaliacoes.py --grupos gpt5:llm sabia4:llm humanos:humano \
         --alias qwen7b=a --saida analise
     python realizar_avaliacoes.py --grupos gpt5:llm humanos:humano \
-        --bayes --bayes-eps 0.08
+        --bayes
+    python realizar_avaliacoes.py --grupos gpt5:llm humanos:humano \\
+        --bayes-rope 0.20 --bayes-limiar 0.95
     python realizar_avaliacoes.py --pastas saida_01 saida_02 saida_03
 
-Requisitos: pandas, numpy, scipy, pyarrow, scikit-learn, statsmodels; matplotlib e ``util_graficos`` para as
-figuras (a estatística roda mesmo sem eles); ``util_est_bayesiana`` apenas quando
-``--bayes`` é informado.
+Requisitos: pandas, numpy, scipy, pyarrow e ``util_est_bayesiana`` (baycomp) —
+este último é obrigatório na validação, porque os critérios 2 e 3 do gate são
+bayesianos. scikit-learn e statsmodels são usados quando presentes (com
+fallback para as fórmulas internas, verificadas em
+``realizar_avaliacoes_teste.py``); matplotlib e ``util_graficos`` só para as
+figuras (a estatística roda mesmo sem eles).
 
 Autor: Luiz Anísio
 """
@@ -112,32 +146,44 @@ except ImportError:
 # -----------------------------------------------------------------------------
 # Os coeficientes e testes com implementação consolidada em pacotes amplamente
 # usados são calculados por eles, favorecendo a replicabilidade por terceiros.
-# As definições operacionais (fórmulas internas) estão em
-# `realizar_avaliacoes_teste.py`, que verifica que coincidem com os pacotes.
+# Quando o pacote não está instalado, o cálculo cai na fórmula interna — as
+# definições operacionais estão em `realizar_avaliacoes_teste.py`, que verifica
+# que coincidem com os pacotes.
 
-from sklearn.metrics import cohen_kappa_score
-from statsmodels.stats.contingency_tables import mcnemar as sm_mcnemar
-from statsmodels.stats.multitest import multipletests
-from statsmodels.stats.proportion import proportion_confint
+try:
+    from sklearn.metrics import cohen_kappa_score
+    SKLEARN_DISPONIVEL = True
+except ImportError:  # fallback: (P_o − P_e)/(1 − P_e) com pesos quadráticos
+    cohen_kappa_score = None
+    SKLEARN_DISPONIVEL = False
+
+try:
+    from statsmodels.stats.multitest import multipletests
+    from statsmodels.stats.proportion import proportion_confint
+    from statsmodels.stats.inter_rater import aggregate_raters, fleiss_kappa
+    STATSMODELS_DISPONIVEL = True
+except ImportError:  # fallback: Holm step-down e Wilson em forma fechada
+    multipletests = proportion_confint = aggregate_raters = fleiss_kappa = None
+    STATSMODELS_DISPONIVEL = False
 
 
 def dependencias(bayes_ativo: bool = False) -> dict:
     """Origem efetiva de cada estatística nesta execução (vai ao relatório)."""
-    import sklearn
-    import statsmodels
-    sk = sklearn.__version__
-    sm = statsmodels.__version__
+    sk = (f"scikit-learn {__import__('sklearn').__version__}"
+          if SKLEARN_DISPONIVEL else "fórmula interna (sklearn ausente)")
+    sm = (f"statsmodels {__import__('statsmodels').__version__}"
+          if STATSMODELS_DISPONIVEL else "fórmula interna (statsmodels ausente)")
     extra = {}
-    if bayes_ativo and BAYES_DISPONIVEL:
-        extra["Comparação bayesiana pareada"] = (
-            "baycomp (Benavoli et al., 2017), via util_est_bayesiana")
+    if BAYES_DISPONIVEL:
+        extra["Critérios 2 e 3 do gate / comparação bayesiana"] = (
+            "baycomp.CorrelatedTTest (Benavoli et al., 2017), "
+            "via util_est_bayesiana — analítico, sem amostras nem semente")
     return {
-        "Kappa de Cohen ponderado": f"scikit-learn {sk}",
-        "Correção de Holm": f"statsmodels {sm}",
-        "Teste de McNemar": f"statsmodels {sm}",
-        "IC de Wilson": f"statsmodels {sm}",
-        "Kappa de Fleiss ponderado": "implementação interna (sem equivalente "
-                                     "ponderado em pacote consolidado)",
+        "Kappa de Cohen ponderado": sk,
+        "Kappa de Light (κw médio par a par)": f"média de κw de Cohen — {sk}",
+        "Kappa de Fleiss (sem pesos)": sm,
+        "Correção de Holm": sm,
+        "IC de Wilson": sm,
         "Friedman, Wilcoxon, Shapiro-Wilk": f"scipy {__import__('scipy').__version__}",
         "Bootstrap (reamostragem de documentos)": "implementação interna",
     } | extra
@@ -221,47 +267,52 @@ class Grupo:
         return ROTULOS[self.tipo]
 
 
-#: padrões da etapa bayesiana (todos sobrescritíveis por flag)
-#: A escala Likert é inteira: |diferença| <= 0,5 significa "notas iguais".
-#: Não é margem arbitrada — é a tradução direta da escala, e substitui todo o
-#: aparato de calibração de ε da versão anterior.
-BAYES_ROPE_LIKERT = 0.5
-BAYES_LIMIAR_PADRAO = 0.80       # classificação das células do heatmap
-BAYES_VEREDITO_PADRAO = 0.95     # veredito juiz × referência
-BAYES_AMOSTRAS_PADRAO = 50_000   # padrão do baycomp
-BAYES_METODO_PADRAO = "sinais"   # SignTest: adequado a escala ordinal
+#: padrões da camada bayesiana — um único teste (`baycomp.CorrelatedTTest`,
+#: analítico) e um único limiar de decisão em todo o trabalho.
+#:
+#: A ROPE das notas é CALIBRADA pela divergência média entre os pares de
+#: especialistas humanos — medida entre eles, nunca a partir do par julgado.
+#: Os valores abaixo são o fallback quando a calibração não é possível (sem
+#: grupo humano com 2+ avaliadores) e não foi dada a flag correspondente.
+BAYES_ROPE_PADRAO = 0.5           # fallback das notas: escala inteira, "notas iguais"
+BAYES_ROPE_DECISAO_PADRAO = 0.10  # fallback da taxa de adequação (10 p.p.)
+#: pisos numéricos da calibração: o baycomp exige ROPE > 0, e especialistas em
+#: acordo quase perfeito degenerariam a margem a zero
+BAYES_ROPE_MINIMO = 0.05
+BAYES_ROPE_DECISAO_MINIMO = 0.01
+#: limiar ÚNICO de decisão — gate, heatmap e "Medindo as diferenças"
+#: (Benavoli et al., 2017, §3.2)
+BAYES_LIMIAR = 0.95
 
-#: nome da classe do baycomp por trás de cada método, para o relatório
-_NOME_TESTE = {"sinais": "baycomp.SignTest",
-               "postos": "baycomp.SignedRankTest",
-               "t": "baycomp.CorrelatedTTest"}
+#: nome do único teste, para relatórios
+_NOME_TESTE_BAYES = "baycomp.CorrelatedTTest"
 
 
 @dataclass
 class ConfigBayes:
-    """Parâmetros repassados ao ``util_est_bayesiana`` (camada fina do baycomp).
+    """Parâmetros da camada bayesiana (``util_est_bayesiana``, camada fina do baycomp).
 
-    A etapa **só roda quando `ativo` é verdadeiro** — sem `--bayes` nada aqui é
-    lido e o pipeline se comporta exatamente como antes.
+    Um único teste em todo o pipeline: ``baycomp.CorrelatedTTest`` — analítico
+    (Student acumulada), determinístico, sem amostras nem semente. A ROPE
+    incide sobre a **diferença média**.
 
-    Esta etapa é integralmente **ordinal** (Likert 1–4), por isso o padrão é
-    ``metodo="sinais"`` (``baycomp.SignTest``) com ``rope=0.5``. Os métodos
-    "postos" e "t" existem para escores contínuos e ficam disponíveis por flag,
-    mas não são o uso previsto aqui.
+    * ``rope`` / ``rope_decisao`` — ``None`` significa **calibrar** pela
+      divergência média entre os pares de especialistas do grupo humano de
+      referência; um valor explícito (flag) sobrescreve a calibração e fica
+      registrado no relatório como pré-registro manual.
+    * ``limiar`` — limiar único de decisão (padrão 0,95).
+    * ``ativo`` — liga a camada **complementar** (heatmaps e forest plots
+      entre fontes e entre avaliadores). Os critérios 2 e 3 do gate são
+      bayesianos e rodam sempre, com ou sem ``--bayes``.
     """
     ativo: bool = False
-    rope: float = BAYES_ROPE_LIKERT
-    metodo: str = BAYES_METODO_PADRAO
-    limiar: float = BAYES_LIMIAR_PADRAO
-    limiar_veredito: float = BAYES_VEREDITO_PADRAO
-    amostras: int = BAYES_AMOSTRAS_PADRAO
-    semente: int = SEMENTE
+    rope: float = None
+    rope_decisao: float = None
+    limiar: float = BAYES_LIMIAR
 
-    @property
-    def kw(self) -> dict:
-        """Argumentos comuns das chamadas ao módulo bayesiano."""
-        return {"rope": self.rope, "metodo": self.metodo, "limiar": self.limiar,
-                "nsamples": self.amostras, "seed": self.semente}
+    def kw(self, rope: float) -> dict:
+        """Argumentos das chamadas ao módulo bayesiano, para uma ROPE resolvida."""
+        return {"rope": rope, "limiar": self.limiar}
 
 
 # =============================================================================
@@ -522,16 +573,13 @@ def _matriz_pesos(k: int) -> np.ndarray:
     return 1.0 - ((i - j) / (k - 1)) ** 2
 
 
-def fleiss_ponderado(notas: np.ndarray, categorias: list) -> dict:
-    """Kappa de Fleiss ponderado para N avaliadores, com seus componentes.
+def _fleiss_interno(notas: np.ndarray, categorias: list,
+                    pesos: np.ndarray = None) -> dict:
+    """Fórmula do κ de Fleiss, usada como reserva quando falta `statsmodels`.
 
-    Args:
-        notas: matriz (n_itens x n_avaliadores)
-        categorias: categorias ordenadas da escala (ex.: [1, 2, 3, 4])
-
-    Returns:
-        dict com ``p_o`` (concordância observada), ``p_e`` (esperada por acaso),
-        ``kappa`` e ``n``.
+    Verificada contra `statsmodels.stats.inter_rater.fleiss_kappa` em
+    `realizar_avaliacoes_teste.py`. `pesos` só é usado internamente para
+    exibir P_o e P_e; o pipeline chama sempre com pesos identidade.
     """
     vazio = {"p_o": np.nan, "p_e": np.nan, "kappa": np.nan, "n": 0}
     notas = np.asarray(notas)
@@ -549,13 +597,71 @@ def fleiss_ponderado(notas: np.ndarray, categorias: list) -> dict:
             if pos is not None:
                 contagens[i, pos] += 1
 
-    pesos = _matriz_pesos(q)
+    if pesos is None:
+        pesos = np.eye(q)
     p_o = float((np.einsum("ia,ab,ib->i", contagens, pesos, contagens) - m).sum()
                 / (n * m * (m - 1)))
     prop = contagens.sum(axis=0) / (n * m)
     p_e = float(prop @ pesos @ prop)
     kappa = np.nan if np.isclose(p_e, 1.0) else (p_o - p_e) / (1.0 - p_e)
     return {"p_o": p_o, "p_e": p_e, "kappa": float(kappa), "n": n}
+
+
+def fleiss_nao_ponderado(notas: np.ndarray, categorias: list) -> dict:
+    """Kappa de Fleiss **sem pesos** para N avaliadores (Fleiss, 1971).
+
+    Vem de ``statsmodels.stats.inter_rater.fleiss_kappa``. Entra no relatório
+    como **piso conservador**: por não ponderar, trata uma divergência de 1
+    ponto como equivalente a uma de 3, o que subestima a confiabilidade numa
+    escala ordinal curta. É o número clássico, reportado para registro.
+
+    Returns:
+        dict com ``p_o``, ``p_e``, ``kappa`` e ``n``.
+    """
+    notas = np.asarray(notas)
+    interno = _fleiss_interno(notas, categorias)
+    if not STATSMODELS_DISPONIVEL or interno["n"] == 0:
+        return interno
+    tabela, _ = aggregate_raters(notas)
+    interno["kappa"] = float(fleiss_kappa(tabela, method="fleiss"))
+    return interno
+
+
+def kappa_light(matriz: pd.DataFrame, avaliadores: list, categorias: list) -> dict:
+    """Kappa de Light (1971): média dos κ de Cohen **ponderados** par a par.
+
+    Coeficiente principal de confiabilidade interna dos grupos. Escolhido
+    sobre o Fleiss por dois motivos:
+
+    1. **Preserva a ponderação quadrática.** Numa Likert de 4 pontos a maior
+       parte das divergências é de 1 ponto; o Fleiss clássico as pune como se
+       fossem de 3, e o coeficiente despenca sem que a confiabilidade real
+       tenha mudado.
+    2. **Sai inteiro de biblioteca.** Cada κ par a par vem do
+       ``sklearn.metrics.cohen_kappa_score``; não há Fleiss ponderado em
+       pacote consolidado, e implementá-lo à mão seria a única estatística do
+       pipeline sem lastro em software estabelecido.
+
+    Light e Fleiss não coincidem numericamente: Light usa o acaso esperado de
+    cada par, o Fleiss um baseline comum a todos (Conger, 1980). A diferença
+    costuma ser pequena, e o relatório traz os dois lado a lado.
+
+    Returns:
+        dict com ``p_o`` e ``p_e`` (médias dos componentes par a par),
+        ``kappa``, ``n`` (itens) e ``pares`` (n.º de pares).
+    """
+    vazio = {"p_o": np.nan, "p_e": np.nan, "kappa": np.nan, "n": 0, "pares": 0}
+    if matriz.empty or len(avaliadores) < 2:
+        return vazio
+    comps = [cohen_ponderado(matriz[a1], matriz[a2], categorias)
+             for a1, a2 in combinations(avaliadores, 2)]
+    comps = [c for c in comps if c["kappa"] == c["kappa"]]
+    if not comps:
+        return vazio
+    return {"p_o": float(np.mean([c["p_o"] for c in comps])),
+            "p_e": float(np.mean([c["p_e"] for c in comps])),
+            "kappa": float(np.mean([c["kappa"] for c in comps])),
+            "n": len(matriz), "pares": len(comps)}
 
 
 def cohen_ponderado(a: Iterable, b: Iterable, categorias: list) -> dict:
@@ -587,11 +693,16 @@ def cohen_ponderado(a: Iterable, b: Iterable, categorias: list) -> dict:
     p_e = float((pesos * esperado).sum())
 
     with np.errstate(invalid="ignore", divide="ignore"):
-        try:
-            kappa = float(cohen_kappa_score(a, b, labels=list(categorias),
-                                            weights="quadratic"))
-        except (ValueError, ZeroDivisionError):
-            kappa = np.nan
+        if SKLEARN_DISPONIVEL:
+            try:
+                kappa = float(cohen_kappa_score(a, b, labels=list(categorias),
+                                                weights="quadratic"))
+            except (ValueError, ZeroDivisionError):
+                kappa = np.nan
+        else:
+            # fórmula interna (idêntica ao sklearn com pesos quadráticos),
+            # verificada em realizar_avaliacoes_teste.py
+            kappa = np.nan if np.isclose(p_e, 1.0) else float((p_o - p_e) / (1.0 - p_e))
     return {"p_o": p_o, "p_e": p_e, "kappa": kappa, "n": len(a)}
 
 
@@ -679,9 +790,16 @@ def ic_wilson(sucessos: int, total: int, confianca: float = 0.95) -> tuple:
     if total == 0:
         return (np.nan, np.nan, np.nan)
     p = sucessos / total
-    inferior, superior = proportion_confint(sucessos, total,
-                                            alpha=1 - confianca, method="wilson")
-    return (p, float(inferior), float(superior))
+    if STATSMODELS_DISPONIVEL:
+        inferior, superior = proportion_confint(sucessos, total,
+                                                alpha=1 - confianca, method="wilson")
+        return (p, float(inferior), float(superior))
+    # forma fechada de Wilson (verificada em realizar_avaliacoes_teste.py)
+    z = stats.norm.ppf(1 - (1 - confianca) / 2)
+    centro = (p + z ** 2 / (2 * total)) / (1 + z ** 2 / total)
+    margem = (z / (1 + z ** 2 / total)) * np.sqrt(
+        p * (1 - p) / total + z ** 2 / (4 * total ** 2))
+    return (p, float(centro - margem), float(centro + margem))
 
 
 def correcao_holm(p_valores: Sequence[float]) -> list:
@@ -694,7 +812,16 @@ def correcao_holm(p_valores: Sequence[float]) -> list:
     if m == 0:
         return []
     limpos = [1.0 if (v is None or v != v) else float(v) for v in p_valores]
-    return [float(v) for v in multipletests(limpos, method="holm")[1]]
+    if STATSMODELS_DISPONIVEL:
+        return [float(v) for v in multipletests(limpos, method="holm")[1]]
+    # step-down de Holm com monotonicidade (verificado em realizar_avaliacoes_teste.py)
+    ordem = np.argsort(limpos)
+    ajustados = np.empty(m)
+    maximo = 0.0
+    for posicao, indice in enumerate(ordem):
+        maximo = max(maximo, min(1.0, (m - posicao) * limpos[indice]))
+        ajustados[indice] = maximo
+    return [float(v) for v in ajustados]
 
 
 def interpretar_efeito(r: float) -> str:
@@ -756,33 +883,6 @@ def wilcoxon_pareado(x, y) -> dict:
         z = stats.norm.isf(saida["p"] / 2)
     saida["z"] = float(z)
     saida["r"] = float(abs(z) / np.sqrt(n_efetivo))
-    return saida
-
-
-def mcnemar(a_binario, b_binario) -> dict:
-    """Teste de McNemar para viés direcional em classificação binária pareada.
-
-    Usa o teste binomial exato quando há poucos discordantes (< 25), que é o
-    cenário esperado com um Gold Set de dezenas de itens; acima disso, aproximação
-    qui-quadrado com correção de continuidade. Executado por
-    ``statsmodels.stats.contingency_tables.mcnemar``.
-    """
-    a = np.asarray(list(a_binario)).astype(bool)
-    b = np.asarray(list(b_binario)).astype(bool)
-    b01 = int(np.sum(a & ~b))   # A adequado, B inadequado
-    b10 = int(np.sum(~a & b))   # A inadequado, B adequado
-    discordantes = b01 + b10
-    saida = {"b01": b01, "b10": b10, "discordantes": discordantes,
-             "p": np.nan, "metodo": "—"}
-    if discordantes == 0:
-        saida.update(p=1.0, metodo="sem discordâncias")
-        return saida
-
-    exato = discordantes < 25
-    metodo = "binomial exato" if exato else "qui-quadrado com correção"
-    tabela = [[int(np.sum(a & b)), b01], [b10, int(np.sum(~a & ~b))]]
-    resultado = sm_mcnemar(tabela, exact=exato, correction=not exato)
-    saida.update(p=float(resultado.pvalue), metodo=metodo)
     return saida
 
 
@@ -878,18 +978,24 @@ def concordancia_interna(df: pd.DataFrame, avaliadores: list, categorias: list) 
         return {}, pd.DataFrame()
 
     valores = matriz[avaliadores].to_numpy().astype(int)
-    comp = fleiss_ponderado(valores, categorias)
+    # coeficiente principal: κ de Light (κw de Cohen médio par a par, sklearn)
+    comp = kappa_light(matriz, avaliadores, categorias)
+    # registro: κ de Fleiss clássico, sem pesos (statsmodels) — piso conservador
+    fleiss = fleiss_nao_ponderado(valores, categorias)
     ic_inf, ic_sup = ic_bootstrap(
-        matriz, lambda d: fleiss_ponderado(d[avaliadores].to_numpy().astype(int),
-                                           categorias)["kappa"])
+        matriz, lambda d: kappa_light(d, avaliadores, categorias)["kappa"])
 
     global_ = {
         "n itens": len(matriz),
         "P_o": round(comp["p_o"], 4),
         "P_e": round(comp["p_e"], 4),
         "kappa": round(comp["kappa"], 4),
+        "pares": comp["pares"],
+        "kappa_fleiss": round(fleiss["kappa"], 4),
+        "P_o_fleiss": round(fleiss["p_o"], 4),
         "ic_inf": round(ic_inf, 4), "ic_sup": round(ic_sup, 4),
         "interpretacao": interpretar_kappa(comp["kappa"]),
+        "interpretacao_fleiss": interpretar_kappa(fleiss["kappa"]),
         "exata": round(float(np.mean([len(set(l)) == 1 for l in valores])), 4),
         "amplitude_1": round(float(np.mean(valores.max(axis=1) - valores.min(axis=1) <= 1)), 4),
         "aprovado": bool(comp["kappa"] >= LIMIAR_KAPPA),
@@ -1142,25 +1248,130 @@ def analisar_grupo(base: str, grupo: Grupo, saida: str, escala: tuple,
 
 
 # =============================================================================
-# 6.5 Análise bayesiana (opcional — só com `--bayes`)
+# 6.5 Camada bayesiana — calibração da ROPE, gate e panorama complementar
 # =============================================================================
-# Camada **complementar**, não substitutiva: Wilcoxon, McNemar, Friedman e κw
-# continuam sendo o que decide o gate. A leitura bayesiana acrescenta o que o
-# teste de hipótese nula não consegue expressar — a probabilidade posterior de
-# equivalência prática — e trata "equivalente" como achado, não como falha em
-# rejeitar H₀.
+# Um único teste em todo o pipeline: `baycomp.CorrelatedTTest`, via
+# `util_est_bayesiana`. Os critérios 2 e 3 do gate são bayesianos e rodam
+# sempre; o que a flag `--bayes` liga é apenas o panorama COMPLEMENTAR
+# (heatmap e forest plot entre fontes e entre avaliadores).
 #
-# Toda a estatística vem do baycomp, via `util_est_bayesiana`. Aqui só se
-# organizam as chamadas e se formatam os resultados.
+# Toda a estatística vem do baycomp. Aqui só se organizam as chamadas e se
+# formatam os resultados.
 
 
-def matriz_bayesiana(dados: pd.DataFrame, colunas: list, cfg: ConfigBayes) -> pd.DataFrame:
-    """Compara todos os pares das colunas indicadas."""
-    return bayes.matriz_pares(dados, nomes=list(colunas), **cfg.kw)
+def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
+                  piso: int = PISO_ADEQUACAO) -> dict:
+    """Calibra as ROPEs pela divergência média entre os pares de especialistas.
+
+    A margem de "praticamente equivalente" deixa de ser arbitrada: passa a ser
+    a divergência média observada ENTRE os próprios especialistas humanos —
+    medida entre eles, **nunca a partir do par julgado**. A interpretação fica
+    relativa ("o juiz diverge da referência tanto quanto os especialistas
+    divergem entre si"), o que é parte da defesa contra a objeção ordinal.
+
+    Duas margens, cada uma na sua unidade, ambas ancoradas na **divergência
+    absoluta média por item** — média de |nota_i − nota_j| sobre os itens,
+    depois sobre os pares. É a magnitude típica do desacordo entre
+    especialistas, e não o viés médio entre eles (|média(nota_i − nota_j)|),
+    que se anula quando as divergências são simétricas e degeneraria a margem;
+    o viés é reportado ao lado, para leitura:
+
+    * ``rope_notas`` — média dos pares de média(|nota_i − nota_j|);
+    * ``rope_decisao`` — o mesmo sobre a binarização em ``nota >= piso``
+      (taxa de decisões discordantes entre os especialistas).
+
+    Pisos numéricos (``BAYES_ROPE_MINIMO`` e ``BAYES_ROPE_DECISAO_MINIMO``)
+    evitam a degeneração a zero quando os especialistas quase não divergem —
+    o baycomp exige ROPE > 0. Quando o piso é aplicado, isso fica registrado.
+
+    Args:
+        matriz_avaliadores: itens × avaliadores (saída de
+            ``matriz_itens_avaliadores`` do grupo humano de referência).
+        avaliadores: colunas a considerar (2+).
+        piso: nota mínima considerada adequada.
+
+    Returns:
+        dict com ``rope_notas``, ``rope_decisao``, ``tabela`` (uma linha por
+        par de especialistas), ``n_itens``, ``piso_aplicado`` (bool por margem).
+    """
+    pares = []
+    for a1, a2 in combinations(avaliadores, 2):
+        x = matriz_avaliadores[a1].astype(float).to_numpy()
+        y = matriz_avaliadores[a2].astype(float).to_numpy()
+        bx, by = (x >= piso).astype(float), (y >= piso).astype(float)
+        pares.append({
+            "Par": f"{a1} × {a2}",
+            "n": len(x),
+            "Divergência abs. (notas)": float(np.mean(np.abs(x - y))),
+            "Viés médio (notas)": float(np.mean(x - y)),
+            "Decisões discordantes": float(np.mean(np.abs(bx - by))),
+            "Viés médio (taxa)": float(np.mean(bx - by)),
+        })
+    tabela = pd.DataFrame(pares)
+    bruto_notas = (float(tabela["Divergência abs. (notas)"].mean())
+                   if len(tabela) else np.nan)
+    bruto_taxa = (float(tabela["Decisões discordantes"].mean())
+                  if len(tabela) else np.nan)
+    rope_notas = max(bruto_notas, BAYES_ROPE_MINIMO)
+    rope_decisao = max(bruto_taxa, BAYES_ROPE_DECISAO_MINIMO)
+    return {
+        "rope_notas": rope_notas, "rope_decisao": rope_decisao,
+        "bruto_notas": bruto_notas, "bruto_taxa": bruto_taxa,
+        "piso_aplicado": {"notas": bruto_notas < BAYES_ROPE_MINIMO,
+                          "decisao": bruto_taxa < BAYES_ROPE_DECISAO_MINIMO},
+        "tabela": tabela, "n_itens": int(len(matriz_avaliadores)),
+        "n_pares": len(pares),
+    }
+
+
+def controle_negativo(matriz_avaliadores: pd.DataFrame, avaliadores: list,
+                      rope: float, rope_decisao: float,
+                      limiar: float = BAYES_LIMIAR,
+                      piso: int = PISO_ADEQUACAO) -> pd.DataFrame:
+    """Controle negativo da Likert: especialista × especialista com a ROPE calibrada.
+
+    Compara os especialistas humanos entre si com a mesma ROPE e o mesmo
+    limiar do gate, e verifica que saem **equivalentes**. Se não saírem, a
+    margem está apertada demais — e é melhor descobrir antes de julgar o juiz.
+    Fecha a pergunta sobre a margem ter sido escolhida convenientemente, com
+    dados já disponíveis.
+    """
+    linhas = []
+    for a1, a2 in combinations(avaliadores, 2):
+        x = matriz_avaliadores[a1].astype(float).to_numpy()
+        y = matriz_avaliadores[a2].astype(float).to_numpy()
+        notas = bayes.Comparacao(x, y, rope=rope, limiar=limiar)
+        decisao = bayes.Comparacao((x >= piso).astype(float),
+                                   (y >= piso).astype(float),
+                                   rope=rope_decisao, limiar=limiar)
+        contagens = notas.contagens
+        linhas.append({
+            "Par": f"{a1} × {a2}", "n": len(x),
+            "A>": contagens["x_melhor"], "=": contagens["empate"],
+            "B>": contagens["y_melhor"],
+            "Dif. média": round(notas.diferenca_media, 4),
+            "P(equiv. notas)": round(notas.probabilidades["p_rope"], 4),
+            "P(equiv. decisão)": round(decisao.probabilidades["p_rope"], 4),
+            "Passa": "sim" if (notas.probabilidades["p_rope"] >= limiar
+                               and decisao.probabilidades["p_rope"] >= limiar)
+                     else "NÃO",
+        })
+    return pd.DataFrame(linhas)
+
+
+def matriz_bayesiana(dados: pd.DataFrame, colunas: list, rope: float,
+                     limiar: float = BAYES_LIMIAR) -> pd.DataFrame:
+    """Compara todos os pares das colunas indicadas (`CorrelatedTTest`)."""
+    return bayes.matriz_pares(dados, nomes=list(colunas), rope=rope, limiar=limiar)
 
 
 def tabela_matriz_bayesiana(matriz: pd.DataFrame, rotulo: str = "Par") -> pd.DataFrame:
-    """Formata a matriz para leitura: um par NÃO ordenado por linha."""
+    """Formata a matriz para leitura: um par NÃO ordenado por linha.
+
+    As colunas `A melhor`/`Empate`/`B melhor` são contagens ORDINAIS PURAS
+    (d>0, d=0, d<0) — a âncora contra a objeção da escala ordinal, reportadas
+    ao lado de toda probabilidade.
+    """
     vistos, linhas = set(), []
     for _, linha in matriz.iterrows():
         par = frozenset((linha["linha"], linha["coluna"]))
@@ -1174,6 +1385,7 @@ def tabela_matriz_bayesiana(matriz: pd.DataFrame, rotulo: str = "Par") -> pd.Dat
             "Empate": int(linha["empate"]),
             "B melhor": int(linha["y_melhor"]),
             "Dif. média": round(float(linha["diferenca_media"]), 4),
+            "IC 95%": f"[{linha['ic_inf']:+.4f}; {linha['ic_sup']:+.4f}]".replace(".", ","),
             "P(A > B)": round(float(linha["p_esquerda"]), 4),
             "P(equiv.)": round(float(linha["p_rope"]), 4),
             "P(A < B)": round(float(linha["p_direita"]), 4),
@@ -1183,116 +1395,78 @@ def tabela_matriz_bayesiana(matriz: pd.DataFrame, rotulo: str = "Par") -> pd.Dat
 
 
 def analise_bayesiana_grupo(r: dict, cfg: ConfigBayes) -> dict:
-    """Comparação bayesiana entre as fontes, dentro de um grupo.
+    """Panorama bayesiano entre as fontes, dentro de um grupo (complementar).
 
     A unidade é a nota mediana por documento — a mesma variável primária do
     Friedman/Wilcoxon. O que muda é a pergunta: em vez de "há diferença
-    detectável?", responde "qual a probabilidade de esta fonte superar aquela, e
-    qual a de serem praticamente equivalentes?".
+    detectável?", responde "qual a probabilidade de esta fonte superar aquela,
+    e qual a de serem praticamente equivalentes?".
+
+    A ROPE segue a mesma regra do gate: valor explícito da flag; senão,
+    calibrada pela divergência entre os avaliadores do PRÓPRIO grupo (2+);
+    senão, o padrão de escala.
     """
     if len(r["fontes"]) < 2:
         return {}
-    matriz = matriz_bayesiana(r["pivo"], r["fontes"], cfg)
+    rope = cfg.rope
+    origem_rope = "flag --bayes-rope (pré-registro manual)"
+    if rope is None:
+        if len(r["avaliadores"]) >= 2:
+            calibracao = calibrar_rope(
+                matriz_itens_avaliadores(r["df"], r["avaliadores"]),
+                r["avaliadores"])
+            rope = calibracao["rope_notas"]
+            origem_rope = (f"calibrada pela divergência média entre os "
+                           f"{len(r['avaliadores'])} {r['grupo'].rotulos['avaliadores']} do grupo")
+        else:
+            rope = BAYES_ROPE_PADRAO
+            origem_rope = "padrão de escala (grupo com um só avaliador)"
+    matriz = matriz_bayesiana(r["pivo"], r["fontes"], rope, cfg.limiar)
     figuras = viz.grafico_bayes(
         matriz, os.path.join(r["saida"], "10_bayes_fontes.png"),
         titulo="Comparação bayesiana entre as fontes (nota mediana)",
         rotulo_entidade="fonte")
+    figuras += viz.grafico_diferencas_bayes(
+        matriz, os.path.join(r["saida"], "11_bayes_fontes_diferencas.png"),
+        titulo="Fontes — Medindo as diferenças (forest plot)")
     matriz.to_csv(os.path.join(r["saida"], "bayes_fontes.csv"),
                   index=False, encoding="utf-8")
-    return {"config": cfg, "matriz": matriz,
-            "resumo": bayes.resumo(matriz),
+    return {"config": cfg, "matriz": matriz, "rope": rope,
+            "origem_rope": origem_rope,
+            "sintese": bayes.sintese(matriz),
             "tabela": tabela_matriz_bayesiana(matriz, "Fonte"),
             "figuras": figuras}
 
 
-def bayes_par(longo: pd.DataFrame, juiz: str, referencia: str,
-              cfg: ConfigBayes) -> dict:
-    """Leitura bayesiana dos critérios 2 e 3 do gate, para um par (juiz, referência).
-
-    Duas comparações pareadas sobre a mesma interseção:
-
-    * **notas** — Likert 1–4, com ROPE = 0,5 ("notas iguais");
-    * **decisão** — a binarização em `nota >= piso`, análogo bayesiano do
-      McNemar. Também com ROPE = 0,5: sobre valores 0/1 as diferenças só valem
-      0 ou ±1, e 0,5 separa exatamente "mesma decisão" de "decisão oposta".
-
-    O veredito é **complementar** ao gate frequentista, nunca o substitui.
-    """
-    a = longo[juiz].astype(float).to_numpy()
-    b = longo[referencia].astype(float).to_numpy()
-
-    notas = bayes.Comparacao(a, b, **cfg.kw)
-    decisao = bayes.Comparacao((a >= PISO_ADEQUACAO).astype(float),
-                               (b >= PISO_ADEQUACAO).astype(float), **cfg.kw)
-
-    p_equiv_notas = notas.probabilidades["p_rope"]
-    p_equiv_decisao = decisao.probabilidades["p_rope"]
-    limiar = cfg.limiar_veredito
-
-    # O veredito julga MAGNITUDE contra a ROPE, nunca direção: um juiz pode ser
-    # confiavelmente mais leniente por uma margem sem relevância prática.
-    if p_equiv_notas >= limiar and p_equiv_decisao >= limiar:
-        status = "SEM VIÉS RELEVANTE"
-    elif (1 - p_equiv_notas) >= limiar or (1 - p_equiv_decisao) >= limiar:
-        status = "VIÉS RELEVANTE"
-    else:
-        status = "INCONCLUSIVO"
-
-    contagens = notas.contagens
-    return {
-        "juiz": juiz, "referencia": referencia, "n": len(a),
-        "acima": contagens["x_melhor"], "empate": contagens["empate"],
-        "abaixo": contagens["y_melhor"],
-        "diferenca_media": notas.diferenca_media,
-        "p_juiz_maior": notas.probabilidades["p_esquerda"],
-        "p_equiv": p_equiv_notas,
-        "p_juiz_menor": notas.probabilidades["p_direita"],
-        "decisao_so_juiz": decisao.contagens["x_melhor"],
-        "decisao_concordante": decisao.contagens["empate"],
-        "decisao_so_referencia": decisao.contagens["y_melhor"],
-        "decisao_p_equiv": p_equiv_decisao,
-        "classificacao": notas.classificacao,
-        "status": status,
-    }
-
-
 def analise_bayesiana_validacao(v: dict, cfg: ConfigBayes) -> dict:
-    """Etapa bayesiana da validação: pares juiz × referência e matriz entre grupos."""
-    longo, nomes = v["longo"], list(v["pivos"].keys())
-    pares = [bayes_par(longo, juiz, v["referencia"], cfg) for juiz in v["juizes"]]
+    """Panorama bayesiano da validação: matriz entre avaliadores (complementar).
 
+    O gate (critérios 2 e 3) já é bayesiano e vive em `avaliar_par`; esta
+    seção acrescenta o panorama entre TODOS os avaliadores — inclusive os
+    pares juiz × juiz, que ficam fora do gate — na mesma ROPE e no mesmo
+    limiar 0,95.
+    """
+    longo, nomes = v["longo"], list(v["pivos"].keys())
     matriz = None
     figuras = []
     if len(nomes) >= 2:
-        matriz = matriz_bayesiana(longo[nomes], nomes, cfg)
+        matriz = matriz_bayesiana(longo[nomes], nomes, v["rope"], cfg.limiar)
         figuras = viz.grafico_bayes(
             matriz, os.path.join(v["saida"], "04_bayes_grupos.png"),
             titulo="Comparação bayesiana entre os avaliadores (nota mediana)",
             rotulo_entidade="avaliador")
+        figuras += viz.grafico_diferencas_bayes(
+            matriz, os.path.join(v["saida"], "05_bayes_grupos_diferencas.png"),
+            titulo="Avaliadores — Medindo as diferenças (forest plot)")
         matriz.to_csv(os.path.join(v["saida"], "bayes_grupos.csv"),
                       index=False, encoding="utf-8")
 
-    tabela = tabela_bayes_juizes(pares)
-    tabela.to_csv(os.path.join(v["saida"], "tabela_bayes_juizes.csv"),
-                  index=False, encoding="utf-8")
-    return {"config": cfg, "pares": pares, "tabela": tabela, "matriz": matriz,
-            "resumo": bayes.resumo(matriz) if matriz is not None else None,
+    return {"config": cfg, "matriz": matriz,
+            "sintese": bayes.sintese(matriz) if matriz is not None else None,
             "tabela_matriz": (tabela_matriz_bayesiana(matriz, "Avaliador")
                               if matriz is not None else None),
             "figuras": figuras}
 
-
-def tabela_bayes_juizes(pares: list) -> pd.DataFrame:
-    """Uma linha por juiz: direção, equivalência nas notas e na decisão prática."""
-    return pd.DataFrame([{
-        "Juiz": p["juiz"], "n": p["n"],
-        "Acima": p["acima"], "Empate": p["empate"], "Abaixo": p["abaixo"],
-        "Dif. média": round(p["diferenca_media"], 4),
-        "P(juiz > ref.)": round(p["p_juiz_maior"], 4),
-        "P(equiv. notas)": round(p["p_equiv"], 4),
-        "P(equiv. decisão)": round(p["decisao_p_equiv"], 4),
-        "Leitura": p["status"],
-    } for p in pares])
 
 
 # =============================================================================
@@ -1347,21 +1521,31 @@ def montar_longo(pivos: dict, fontes: list) -> pd.DataFrame:
 
 
 def avaliar_par(longo: pd.DataFrame, juiz: str, referencia: str,
-                categorias: list, margem: float = np.nan) -> dict:
+                categorias: list, rope: float = BAYES_ROPE_PADRAO,
+                rope_decisao: float = BAYES_ROPE_DECISAO_PADRAO,
+                limiar: float = BAYES_LIMIAR) -> dict:
     """Aplica os três critérios do gate a um par (juiz, referência).
 
     Tudo no agregado — todas as combinações documento × fonte empilhadas numa
     única série. Sem estratificação por fonte.
 
+    Critérios (limiar único de 0,95):
+
+    1. **concordância ordinal** — κw de Cohen ponderado ≥ 0,60 (frequentista);
+    2. **ausência de viés** — P(equivalência) da diferença média das notas,
+       ao ``rope`` calibrado, ≥ ``limiar`` (``baycomp.CorrelatedTTest``);
+    3. **decisão prática** — P(equivalência) da taxa de adequação
+       (nota ≥ piso), ao ``rope_decisao``, ≥ ``limiar``.
+
     Resultados possíveis:
 
     * **VALIDADO** — os três critérios atendidos.
-    * **VALIDADO COM RESSALVA** — critérios 1 e 3 atendidos e viés
-      estatisticamente significativo (critério 2), porém com magnitude abaixo da
-      ``margem`` de relevância prática (0,5 DP das notas da referência, regra da
-      meia-DP de Norman, Sloan & Wyrwich, 2003). Classificação descritiva, não
-      teste de equivalência.
-    * **NÃO VALIDADO** — demais casos.
+    * **VALIDADO COM RESSALVA** — κw atende e a equivalência (2 e/ou 3) ficou
+      **inconclusiva** — os dados não bastam para afirmá-la nem para afirmar
+      viés relevante.
+    * **NÃO VALIDADO** — κw abaixo do corte, ou **viés relevante**: a
+      diferença quase certamente excede a ROPE em alguma direção
+      (max(P(juiz>ref), P(juiz<ref)) ≥ limiar nas notas ou na decisão).
     """
     sub = longo[["documento", juiz, referencia]].rename(
         columns={juiz: "a", referencia: "b"})
@@ -1373,49 +1557,67 @@ def avaliar_par(longo: pd.DataFrame, juiz: str, referencia: str,
     ic_inf, ic_sup = ic_bootstrap(
         sub, lambda d: cohen_kappa(d["a"].astype(int), d["b"].astype(int), categorias))
 
-    # critério 2 — ausência de viés sistemático
-    teste = wilcoxon_pareado(a, b)
-
-    # critério 3 — decisão prática (binarização no piso de adequação)
+    # critérios 2 e 3 — bayesianos (P(equivalência) contra a ROPE calibrada)
+    if not BAYES_DISPONIVEL:
+        raise RuntimeError(
+            "Os critérios 2 e 3 do gate são bayesianos e exigem o módulo "
+            "`util_est_bayesiana.py` (e o pacote `baycomp`) na mesma pasta "
+            "ou no PYTHONPATH.")
+    notas = bayes.Comparacao(a.astype(float), b.astype(float),
+                             rope=rope, limiar=limiar)
     bin_a, bin_b = a >= PISO_ADEQUACAO, b >= PISO_ADEQUACAO
-    mc = mcnemar(bin_a, bin_b)
+    decisao = bayes.Comparacao(bin_a.astype(float), bin_b.astype(float),
+                               rope=rope_decisao, limiar=limiar)
     met = metricas_binarias(referencia=bin_b, teste=bin_a)
+
+    p_eq_notas = notas.probabilidades["p_rope"]
+    p_eq_decisao = decisao.probabilidades["p_rope"]
+    # viés relevante = quase certeza de que a diferença EXCEDE a ROPE
+    vies_relevante = bool(
+        max(notas.probabilidades["p_esquerda"], notas.probabilidades["p_direita"]) >= limiar
+        or max(decisao.probabilidades["p_esquerda"],
+               decisao.probabilidades["p_direita"]) >= limiar)
 
     criterios = {
         "concordancia": bool(comp["kappa"] == comp["kappa"] and comp["kappa"] >= LIMIAR_KAPPA),
-        "sem_vies": bool(teste["p"] == teste["p"] and teste["p"] > LIMIAR_ALFA),
-        "decisao": bool(mc["p"] == mc["p"] and mc["p"] > LIMIAR_ALFA),
+        "sem_vies": bool(p_eq_notas >= limiar),
+        "decisao": bool(p_eq_decisao >= limiar),
     }
-    vies_toleravel = bool(margem == margem and abs(teste["media_dif"]) < margem)
     if all(criterios.values()):
         status = "VALIDADO"
-    elif criterios["concordancia"] and criterios["decisao"] and vies_toleravel:
-        status = "VALIDADO COM RESSALVA"
-    else:
+    elif not criterios["concordancia"] or vies_relevante:
         status = "NÃO VALIDADO"
-    media_dif = teste["media_dif"]
+    else:
+        status = "VALIDADO COM RESSALVA"
+
+    media_dif = notas.diferenca_media
     if abs(media_dif) < 1e-9:
         direcao = "—"
     else:
         direcao = (f"{juiz} mais leniente" if media_dif > 0
                    else f"{referencia} mais leniente")
+    contagens = notas.contagens        # ordinais puras: d>0, d=0, d<0
 
     return {
         "juiz": juiz, "referencia": referencia, "n": len(a),
         "kappa": comp["kappa"], "ic_inf": ic_inf, "ic_sup": ic_sup,
         "p_o": comp["p_o"], "interpretacao": interpretar_kappa(comp["kappa"]),
         "exata": float(np.mean(a == b)), "amplitude_1": float(np.mean(np.abs(a - b) <= 1)),
-        "media_dif": media_dif, "mediana_dif": teste["mediana_dif"],
-        "n_efetivo": teste["n_efetivo"], "z": abs(teste["z"]), "p_wilcoxon": teste["p"],
-        "r": teste["r"], "efeito": interpretar_efeito(teste["r"]), "direcao": direcao,
+        "media_dif": media_dif, "mediana_dif": float(np.median(a - b)),
+        "ic_notas": notas.ic95, "direcao": direcao,
+        "acima": contagens["x_melhor"], "empate": contagens["empate"],
+        "abaixo": contagens["y_melhor"],
+        "rope": rope, "p_equiv_notas": p_eq_notas,
+        "p_juiz_maior": notas.probabilidades["p_esquerda"],   # P(dif > +ROPE)
+        "p_juiz_menor": notas.probabilidades["p_direita"],    # P(dif < -ROPE)
         "kappa_bin": cohen_kappa(bin_a.astype(int), bin_b.astype(int), [0, 1]),
-        "p_mcnemar": mc["p"], "metodo_mcnemar": mc["metodo"],
-        "discordantes": mc["discordantes"], "b01": mc["b01"], "b10": mc["b10"],
+        "b01": int(np.sum(bin_a & ~bin_b)), "b10": int(np.sum(~bin_a & bin_b)),
+        "rope_decisao": rope_decisao, "p_equiv_decisao": p_eq_decisao,
+        "dif_taxa": decisao.diferenca_media, "ic_decisao": decisao.ic95,
         "acuracia": met["acuracia"], "sensibilidade": met["sensibilidade"],
         "especificidade": met["especificidade"],
-        "criterios": criterios, "status": status,
-        "validado": status == "VALIDADO",
-        "margem": margem, "vies_toleravel": vies_toleravel,
+        "criterios": criterios, "status": status, "limiar": limiar,
+        "validado": status == "VALIDADO", "vies_relevante": vies_relevante,
         "confusao": matriz_confusao(a, b, categorias, juiz, referencia),
         "diferencas": a - b,
     }
@@ -1510,14 +1712,53 @@ def validar_juizes(resultados: dict, saida: str, escala: tuple,
     longo = montar_longo(pivos, fontes)
     juizes = [n for n in pivos if n != referencia]
 
-    # margem de relevância prática: 0,5 DP das notas da referência
-    # (regra da meia-DP; Norman, Sloan & Wyrwich, 2003)
-    dp_referencia = float(longo[referencia].std(ddof=1))
-    margem = 0.5 * dp_referencia if dp_referencia == dp_referencia else np.nan
+    if not BAYES_DISPONIVEL:
+        raise RuntimeError(
+            "A validação exige `util_est_bayesiana.py` (e o pacote `baycomp`): "
+            "os critérios 2 e 3 do gate são bayesianos "
+            "(P(equivalência) via baycomp.CorrelatedTTest).")
+    cfg = config_bayes if config_bayes is not None else ConfigBayes()
 
-    gates = [avaliar_par(longo, juiz, referencia, categorias, margem=margem)
+    # ── calibração da ROPE pela divergência entre os especialistas ─────────
+    # medida ENTRE os especialistas do grupo humano de referência — nunca a
+    # partir do par julgado. Um valor explícito de flag sobrescreve (e fica
+    # registrado como pré-registro manual).
+    calibracao, controle = None, None
+    ref_result = resultados[referencia]
+    pode_calibrar = referencia_humana and len(ref_result.get("avaliadores", [])) >= 2
+    if pode_calibrar:
+        matriz_ref = matriz_itens_avaliadores(ref_result["df"],
+                                              ref_result["avaliadores"])
+        calibracao = calibrar_rope(matriz_ref, ref_result["avaliadores"])
+
+    rope = cfg.rope if cfg.rope is not None else (
+        calibracao["rope_notas"] if calibracao else BAYES_ROPE_PADRAO)
+    rope_decisao = cfg.rope_decisao if cfg.rope_decisao is not None else (
+        calibracao["rope_decisao"] if calibracao else BAYES_ROPE_DECISAO_PADRAO)
+    origem_rope = ("flag (pré-registro manual)" if cfg.rope is not None else
+                   ("calibrada pelos especialistas" if calibracao else
+                    "padrão de escala (sem 2+ especialistas na referência)"))
+    print(f"  ROPE (notas) = {rope:.4f} · ROPE (taxa) = {rope_decisao:.4f} "
+          f"[{origem_rope}] · limiar único = {cfg.limiar:.2f}")
+
+    # ── controle negativo: especialista × especialista, mesma ROPE ─────────
+    if calibracao is not None and cfg.rope is None:
+        controle = controle_negativo(matriz_ref, ref_result["avaliadores"],
+                                     rope, rope_decisao, cfg.limiar)
+        reprovados = int((controle["Passa"] == "NÃO").sum())
+        if reprovados:
+            print(f"  ⚠ controle negativo: {reprovados} de {len(controle)} "
+                  "par(es) de especialistas NÃO saem equivalentes com a ROPE "
+                  "calibrada — a margem pode estar apertada demais.")
+        else:
+            print(f"  ✅ controle negativo: os {len(controle)} par(es) de "
+                  "especialistas saem equivalentes com a ROPE calibrada.")
+
+    gates = [avaliar_par(longo, juiz, referencia, categorias,
+                         rope=rope, rope_decisao=rope_decisao, limiar=cfg.limiar)
              for juiz in juizes]
-    laterais = [avaliar_par(longo, a, b, categorias)
+    laterais = [avaliar_par(longo, a, b, categorias,
+                            rope=rope, rope_decisao=rope_decisao, limiar=cfg.limiar)
                 for a, b in combinations(juizes, 2)]
 
     resultado = {
@@ -1526,16 +1767,17 @@ def validar_juizes(resultados: dict, saida: str, escala: tuple,
         "documentos": documentos, "fontes": fontes, "categorias": categorias,
         "referencia": referencia, "referencia_humana": referencia_humana,
         "grupos_humanos": humanos, "juizes": juizes,
-        "dp_referencia": dp_referencia, "margem": margem,
+        "rope": rope, "rope_decisao": rope_decisao, "origem_rope": origem_rope,
+        "limiar": cfg.limiar, "calibracao": calibracao, "controle": controle,
         "gates": gates, "laterais": laterais,
         "entre_grupos": comparar_grupos(longo, list(pivos.keys())),
         "ranks": tabela_ranks(pivos, fontes), "saida": saida,
+        "config_bayes": cfg,
     }
 
-    if config_bayes is not None and config_bayes.ativo:
-        print("  comparação bayesiana entre os avaliadores...")
-        resultado["bayes"] = analise_bayesiana_validacao(resultado, config_bayes)
-        resultado["config_bayes"] = config_bayes
+    if cfg.ativo:
+        print("  panorama bayesiano entre os avaliadores...")
+        resultado["bayes"] = analise_bayesiana_validacao(resultado, cfg)
 
     print("  gerando figuras e relatório de validação...")
     resultado["figuras"] = viz.graficos_validacao(resultado, saida)
@@ -1551,13 +1793,21 @@ def validar_juizes(resultados: dict, saida: str, escala: tuple,
         os.path.join(saida, "tabela_contrastes_grupos.csv"), index=False, encoding="utf-8")
     resultado["ranks"].to_csv(
         os.path.join(saida, "tabela_ranks_fontes.csv"), encoding="utf-8")
+    if calibracao is not None:
+        calibracao["tabela"].to_csv(
+            os.path.join(saida, "tabela_calibracao_rope.csv"),
+            index=False, encoding="utf-8")
+    if controle is not None:
+        controle.to_csv(os.path.join(saida, "tabela_controle_negativo.csv"),
+                        index=False, encoding="utf-8")
     escrever_relatorio_validacao(resultado, os.path.join(saida, "validacao.md"))
 
     icones = {"VALIDADO": "✅", "VALIDADO COM RESSALVA": "🟡", "NÃO VALIDADO": "❌"}
     for gate in gates:
         print(f"  {icones[gate['status']]} {gate['status']}: {gate['juiz']} "
-              f"(κw = {gate['kappa']:.3f}, Wilcoxon p = {gate['p_wilcoxon']:.4f}, "
-              f"McNemar p = {gate['p_mcnemar']:.4f}, "
+              f"(κw = {gate['kappa']:.3f}, "
+              f"P(equiv. notas) = {gate['p_equiv_notas']:.4f}, "
+              f"P(equiv. decisão) = {gate['p_equiv_decisao']:.4f}, "
               f"dif. média = {gate['media_dif']:+.3f})")
     return resultado
 
@@ -1565,6 +1815,44 @@ def validar_juizes(resultados: dict, saida: str, escala: tuple,
 # =============================================================================
 # 8. Relatório — análise interna do grupo
 # =============================================================================
+
+def _bloco_light_vs_fleiss(interna: dict) -> list:
+    """Parágrafo que justifica o coeficiente principal e lê a distância entre os dois."""
+    light, fleiss = interna["kappa"], interna["kappa_fleiss"]
+    L = [f"O coeficiente principal é o **κ de Light** (Light, 1971): a média dos κ de "
+         f"Cohen **ponderados** (pesos quadráticos) dos {interna['pares']} pares de "
+         "avaliadores, cada um calculado por `sklearn.metrics.cohen_kappa_score`. A "
+         "ponderação importa porque a escala é ordinal e curta: divergir por 1 ponto "
+         "não é o mesmo que divergir por 3. O **κ de Fleiss** clássico "
+         "(`statsmodels`) vai ao lado, para registro — por não ponderar, funciona "
+         "como **piso conservador** da confiabilidade.\n"]
+
+    if light == light and fleiss == fleiss:
+        distancia = light - fleiss
+        if distancia >= 0.10:
+            L.append(f"A distância entre os dois ({_num(distancia, 3)}) é a medida direta "
+                     "do peso das divergências de 1 ponto neste grupo: quase todo o "
+                     "desacordo é de vizinhança na escala, e some quando a proximidade "
+                     "recebe crédito parcial.\n")
+        elif distancia <= -0.05:
+            L.append(f"O Fleiss ficou **acima** do Light ({_num(-distancia, 3)} de "
+                     "diferença), o que indica desacordo concentrado em poucos pares ou "
+                     "distribuições marginais bem distintas entre avaliadores — vale "
+                     "olhar a tabela par a par antes de ler o valor global.\n")
+        else:
+            L.append(f"Os dois coeficientes ficam próximos ({_num(distancia, 3)} de "
+                     "diferença), sinal de que a ponderação não está carregando a "
+                     "conclusão: o resultado se sustenta com ou sem crédito parcial.\n")
+
+    L.append("Não se usa o **Fleiss ponderado** por uma razão de método, não de "
+             "estatística: ele não existe em pacote consolidado de Python, e "
+             "implementá-lo à mão seria a única medida do pipeline sem lastro em "
+             "software estabelecido. O κ de Light entrega a mesma propriedade "
+             "(ponderação ordinal para N avaliadores) inteiramente a partir de "
+             "biblioteca. Os dois não coincidem numericamente — Light usa o acaso "
+             "esperado de cada par; Fleiss, um baseline comum (Conger, 1980).\n")
+    return L
+
 
 def escrever_relatorio_grupo(r: dict, caminho: str) -> str:
     """Escreve o `estatisticas.md` da análise interna de um grupo."""
@@ -1618,21 +1906,26 @@ def escrever_relatorio_grupo(r: dict, caminho: str) -> str:
         L.append("| Métrica | Valor |")
         L.append("|---|---|")
         L.append(f"| Itens (documento × fonte) | {_num(interna['n itens'], 0)} |")
-        L.append(f"| {rot['plural']} | {len(r['avaliadores'])} |")
-        L.append(f"| Concordância observada P_o | {_num(interna['P_o'])} |")
+        L.append(f"| {rot['plural']} | {len(r['avaliadores'])} "
+                 f"({interna['pares']} par(es)) |")
+        L.append(f"| Concordância observada P_o (ponderada) | {_num(interna['P_o'])} |")
         L.append(f"| Concordância esperada por acaso P_e | {_num(interna['P_e'])} |")
-        L.append(f"| **Fleiss κw** | **{_num(interna['kappa'])}** "
+        L.append(f"| **κ de Light (κw de Cohen médio par a par)** | "
+                 f"**{_num(interna['kappa'])}** "
                  f"[IC 95%: {_num(interna['ic_inf'])}; {_num(interna['ic_sup'])}] |")
         L.append(f"| Interpretação | nível *{interna['interpretacao']}* |")
+        L.append(f"| κ de Fleiss (clássico, sem pesos) | {_num(interna['kappa_fleiss'])} "
+                 f"— nível *{interna['interpretacao_fleiss']}* |")
         L.append(f"| Concordância exata | {_pct(interna['exata'])} |")
         L.append(f"| Itens com amplitude ≤ 1 ponto | {_pct(interna['amplitude_1'])} |")
         L.append("")
+        L.extend(_bloco_light_vs_fleiss(interna))
         if interna["aprovado"]:
-            L.append(f"✅ **Aprovado** — κw = {_num(interna['kappa'])} ≥ "
+            L.append(f"✅ **Aprovado** — κ de Light = {_num(interna['kappa'])} ≥ "
                      f"{_num(LIMIAR_KAPPA, 2)}. A variável primária deste grupo pode ser usada "
                      "sem ressalva de confiabilidade.\n")
         else:
-            L.append(f"⚠️ **Reprovado** — κw = {_num(interna['kappa'])} < "
+            L.append(f"⚠️ **Reprovado** — κ de Light = {_num(interna['kappa'])} < "
                      f"{_num(LIMIAR_KAPPA, 2)}. Os resultados deste grupo devem ser reportados "
                      "com ressalva. Se `P_o` estiver alto, a queda decorre de efeito de teto "
                      "da escala, não de instabilidade real.\n")
@@ -1791,7 +2084,8 @@ def _plural(rotulo: str) -> str:
     return _PLURAIS.get(rotulo, f"{rotulo}s")
 
 
-def _bloco_como_ler_bayes(cfg, pares_info: list, rotulo_entidade: str = "fonte",
+def _bloco_como_ler_bayes(contexto: dict, pares_info: list,
+                          rotulo_entidade: str = "fonte",
                           referencia: str = None) -> list:
     """Subseção 'Como ler esta análise' — inserida antes das tabelas bayesianas.
 
@@ -1801,37 +2095,43 @@ def _bloco_como_ler_bayes(cfg, pares_info: list, rotulo_entidade: str = "fonte",
     outro não cobre.
     """
     plural = _plural(rotulo_entidade)
+    rope = contexto.get("rope")
+    limiar = contexto.get("limiar", BAYES_LIMIAR)
     L = ["### Como ler esta análise\n"]
 
     L.append(
-        f"A comparação é **pareada por documento** e roda no `baycomp`: para cada par, "
-        f"conta-se em quantos documentos o primeiro {rotulo_entidade} recebeu nota maior, "
-        f"igual ou menor, e daí sai a probabilidade posterior de cada relação.\n")
-
-    # A ROPE aqui não é um parâmetro livre: decorre da escala ser inteira.
-    L.append(
-        f"**ROPE = {_num(cfg.rope, 2)}.** A escala Likert é inteira, então uma diferença "
-        f"de até meio ponto significa exatamente **notas iguais**. Não é uma margem "
-        f"arbitrada nem calibrada: é a tradução direta da escala. Por isso não há análise "
-        f"de sensibilidade a ela nesta etapa — mudá-la deixaria de representar a escala.\n")
+        f"A comparação é **pareada por documento** e roda no `{_NOME_TESTE_BAYES}`: "
+        f"a posterior de Student da **diferença média** entre os dois "
+        f"{plural} é confrontada com a ROPE, e daí saem as três probabilidades "
+        "(superior, equivalente, inferior). O cálculo é analítico — "
+        "determinístico, sem amostras nem semente.\n")
 
     L.append(
-        f"**Método:** `{cfg.metodo}`. Na escala ordinal, a distância entre as notas 2 e 3 "
-        f"não é comparável à distância entre 3 e 4; por isso o teste conta **direções** e "
-        f"descarta magnitude.\n")
+        f"**ROPE = {_num(rope, 4)}** ({contexto.get('origem_rope', 'ver calibração')}). "
+        "A margem é ancorada na divergência média entre os especialistas humanos, na "
+        "mesma unidade das notas — a leitura é **relativa**, não absoluta.\n")
+
+    L.append(
+        "**Contagens ordinais ao lado de toda probabilidade.** A diferença média de "
+        "notas Likert é a diferença das médias — o pareamento não contorna a objeção "
+        "ordinal (robustez: Norman, 2010; Carifio & Perla, 2008). Por isso as colunas "
+        "`A melhor`/`Empate`/`B melhor` são contagens **puras** (d > 0, d = 0, d < 0), "
+        "independentes da ROPE: um número que não assume intervalos.\n")
 
     L.append(
         f"**Como ler o heatmap:** cada célula mostra a relação da **linha** em relação à "
         f"**coluna** — verde = superior, vermelho = inferior, azul = equivalente, cinza = "
         f"incerto. O número é a **probabilidade posterior** da categoria colorida, e a "
         f"intensidade da cor a acompanha. Cinza significa que nenhuma das três alcançou o "
-        f"limiar de {_num(cfg.limiar, 2)} — desfecho legítimo, não ausência de resultado.\n")
+        f"limiar de {_num(limiar, 2)} — desfecho legítimo, não ausência de resultado. "
+        "\"Medindo as diferenças\" (forest plot) mostra o mesmo conteúdo em magnitude: "
+        "ponto = diferença média, barra = IC 95%, faixa = ROPE.\n")
 
     favoravel, desafiador = _pares_didaticos(pares_info)
     for rotulo, exemplo in (("mais favorável", favoravel),
                             ("mais desafiador", desafiador)):
         if exemplo is not None:
-            L.append(_texto_exemplo(exemplo, cfg, plural, referencia, rotulo))
+            L.append(_texto_exemplo(exemplo, limiar, plural, referencia, rotulo))
     return L
 
 
@@ -1850,7 +2150,7 @@ def _pares_didaticos(pares_info: list) -> tuple:
     return (favoravel, None) if favoravel is desafiador else (favoravel, desafiador)
 
 
-def _texto_exemplo(exemplo: dict, cfg, plural: str, referencia: str,
+def _texto_exemplo(exemplo: dict, limiar: float, plural: str, referencia: str,
                    rotulo: str) -> str:
     """Um parágrafo de leitura guiada para um par concreto, com números da execução."""
     nome_a = exemplo.get("juiz") or exemplo.get("nome_a", "A")
@@ -1861,8 +2161,8 @@ def _texto_exemplo(exemplo: dict, cfg, plural: str, referencia: str,
     abaixo = exemplo.get("abaixo", "?")
     n_obs = exemplo.get("n", "?")
 
-    atinge = p_eq >= cfg.limiar
-    posicao = f"{'acima' if atinge else 'abaixo'} do limiar de {_num(cfg.limiar, 2)}"
+    atinge = p_eq >= limiar
+    posicao = f"{'acima' if atinge else 'abaixo'} do limiar de {_num(limiar, 2)}"
     veredito = (
         "a **equivalência prática está estabelecida**: a diferença quase certamente cabe "
         "dentro da ROPE." if atinge else
@@ -1908,21 +2208,28 @@ def _bloco_bayes_grupo(r: dict) -> list:
              "é justamente o que o teste de hipótese nula não consegue afirmar.\n")
     L.append("| Parâmetro | Valor |")
     L.append("|---|---|")
-    L.append(f"| Biblioteca | `baycomp` |")
-    L.append(f"| Teste | `{cfg.metodo}` ({_NOME_TESTE.get(cfg.metodo, cfg.metodo)}) |")
-    L.append(f"| Variável | nota Likert mediana por documento |")
-    L.append(f"| ROPE | {_num(cfg.rope, 2)} (notas iguais, escala inteira) |")
-    L.append(f"| Limiar de classificação | {_num(cfg.limiar, 2)} |")
-    L.append(f"| Amostras / semente | {_num(cfg.amostras, 0)} / {cfg.semente} |")
+    L.append(f"| Teste | `{_NOME_TESTE_BAYES}` (analítico — sem amostras nem semente) |")
+    L.append("| Variável | nota Likert mediana por documento |")
+    L.append(f"| ROPE | {_num(b['rope'], 4)} ({b['origem_rope']}) |")
+    L.append(f"| Limiar único | {_num(cfg.limiar, 2)} |")
     L.append("")
-    L.extend(_bloco_como_ler_bayes(cfg, _pares_info_de_tabela(b["tabela"]),
-                                   rotulo_entidade="fonte"))
+    L.extend(_bloco_como_ler_bayes(
+        {"rope": b["rope"], "limiar": cfg.limiar, "origem_rope": b["origem_rope"]},
+        _pares_info_de_tabela(b["tabela"]), rotulo_entidade="fonte"))
     L.append("### Relações par a par\n")
     L.append(_md(b["tabela"], indice=False))
     L.append("")
-    L.append("### Síntese por fonte\n")
-    L.append(_md(b["resumo"]))
+    L.append("### Contando as relações\n")
+    L.append(_md(b["sintese"]))
     L.append("")
+    ciclos = b["sintese"].attrs.get("ciclos") or []
+    if ciclos:
+        L.append(f"⚠️ **Transitividade violada** — ciclo(s): "
+                 f"{'; '.join(' > '.join(map(str, c)) for c in ciclos)}. A leitura "
+                 "ordenada da tabela é inválida.\n")
+    else:
+        L.append("✅ Verificação de transitividade: as relações direcionais não formam "
+                 "ciclo.\n")
     L.append("A síntese conta relações, **não ordena as fontes**: relações podem ser "
              "intransitivas, e transformar contagem de vitórias em ranking criaria uma ordem "
              "que os dados não sustentam.\n")
@@ -1936,9 +2243,10 @@ def _sintese_grupo(r: dict) -> list:
     interna = r["interna"]
     if interna:
         itens.append(f"**{rot['concordancia']}:** "
-                     f"{'aprovada' if interna['aprovado'] else 'reprovada'} — κw = "
-                     f"{_num(interna['kappa'])} "
+                     f"{'aprovada' if interna['aprovado'] else 'reprovada'} — "
+                     f"κ de Light = {_num(interna['kappa'])} "
                      f"[{_num(interna['ic_inf'])}; {_num(interna['ic_sup'])}], "
+                     f"κ de Fleiss = {_num(interna['kappa_fleiss'])}, "
                      f"P_o = {_num(interna['P_o'])} (critério ≥ {_num(LIMIAR_KAPPA, 2)}).")
     friedman = r["comparacao"].get("friedman")
     if friedman and friedman["chi2"] == friedman["chi2"]:
@@ -1957,6 +2265,64 @@ def _sintese_grupo(r: dict) -> list:
 # =============================================================================
 # 9. Relatório — validação dos juízes
 # =============================================================================
+
+def _bloco_calibracao_rope(v: dict) -> list:
+    """Subseção do `validacao.md`: origem das ROPEs e controle negativo."""
+    L = ["### Calibração da ROPE\n"]
+    L.append(f"**ROPE (notas) = {_num(v['rope'], 4)} ponto · ROPE (taxa de adequação) = "
+             f"{_num(v['rope_decisao'], 4)}** — origem: {v['origem_rope']}.\n")
+    calibracao = v.get("calibracao")
+    if calibracao is not None:
+        L.append("A margem não é arbitrada: é a **divergência absoluta média por item "
+                 "entre os pares de especialistas humanos** da referência — medida "
+                 "entre eles, nunca a partir do par julgado. A leitura fica relativa: "
+                 "o juiz é praticamente equivalente à referência quando o seu "
+                 "desvio médio cabe na magnitude típica do desacordo entre os próprios "
+                 "especialistas. O viés médio de cada par (que se anula quando as "
+                 "divergências são simétricas, e por isso não serve de margem) é "
+                 "reportado ao lado.\n")
+        L.append(_md(calibracao["tabela"], indice=False))
+        L.append("")
+        L.append(f"Divergência absoluta média: notas = "
+                 f"{_num(calibracao['bruto_notas'], 4)} ponto; decisões discordantes = "
+                 f"{_num(calibracao['bruto_taxa'], 4)} "
+                 f"({calibracao['n_pares']} par(es), {_num(calibracao['n_itens'], 0)} itens).\n")
+        for chave, minimo, rotulo in (("notas", BAYES_ROPE_MINIMO, "notas"),
+                                      ("decisao", BAYES_ROPE_DECISAO_MINIMO,
+                                       "taxa de adequação")):
+            if calibracao["piso_aplicado"][chave]:
+                L.append(f"⚠️ A divergência calibrada da {rotulo} ficou abaixo do piso "
+                         f"numérico de {_num(minimo, 2)} e o piso foi aplicado — o "
+                         "baycomp exige ROPE > 0, e especialistas em acordo quase "
+                         "perfeito degenerariam a margem a zero.\n")
+        L.append("**Transcreva o valor calibrado à mão para o YAML da Etapa 2** "
+                 "(`estatistica_bayesiana.rope_likert`). O fluxo é manual de "
+                 "propósito: transcrever força o pré-registro consciente.\n")
+    else:
+        L.append("Sem grupo humano de referência com 2 ou mais especialistas, a "
+                 "calibração não é possível; o valor usado vem da flag ou do padrão "
+                 "de escala, e deve ser lido como margem **não calibrada**.\n")
+
+    controle = v.get("controle")
+    if controle is not None:
+        L.append("### Controle negativo da Likert\n")
+        L.append("Os próprios especialistas, comparados entre si com a ROPE calibrada e "
+                 f"o limiar de {_num(v['limiar'], 2)}, devem sair **equivalentes**. Se não "
+                 "saírem, a margem está apertada demais — e é melhor descobrir antes de "
+                 "julgar o juiz. É o análogo do controle negativo do F1 e fecha a "
+                 "pergunta sobre a margem ter sido escolhida convenientemente.\n")
+        L.append(_md(controle, indice=False))
+        L.append("")
+        reprovados = int((controle["Passa"] == "NÃO").sum())
+        if reprovados:
+            L.append(f"⚠️ **{reprovados} de {len(controle)} par(es) não passou.** "
+                     "Interprete os vereditos do gate com cautela: com esta margem, "
+                     "nem os especialistas seriam considerados equivalentes entre si.\n")
+        else:
+            L.append("✅ Todos os pares de especialistas saem equivalentes — a margem "
+                     "calibrada não é apertada demais.\n")
+    return L
+
 
 def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
     """Escreve o `validacao.md`: veredito, evidência e nota lateral."""
@@ -1995,9 +2361,9 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
         "Juiz": g["juiz"],
         "κw": round(g["kappa"], 4),
         "IC 95%": f"[{_num(g['ic_inf'], 3)}; {_num(g['ic_sup'], 3)}]",
-        "Wilcoxon p": _p(g["p_wilcoxon"]),
         "Dif. média": round(g["media_dif"], 3),
-        "McNemar p": _p(g["p_mcnemar"]),
+        "P(equiv. notas)": _num(g["p_equiv_notas"]),
+        "P(equiv. decisão)": _num(g["p_equiv_decisao"]),
         "Acurácia": _pct(g["acuracia"]),
         "Critérios": f"{sum(g['criterios'].values())} de 3",
         "Resultado": _rotular(g["status"]),
@@ -2013,31 +2379,36 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
     L.append(f"Todos aferidos no **agregado** — as {len(v['fontes'])} fontes empilhadas numa "
              f"única série de {len(v['documentos']) * len(v['fontes'])} itens pareados, sem "
              "estratificação. O juiz precisa passar nos três.\n")
-    L.append("| # | Critério | Estatística | Aprova se |")
+    L.append("| # | Critério | Instrumento | Aprova se |")
     L.append("|---|---|---|---|")
     L.append(f"| 1 | Concordância ordinal com o humano | κw de Cohen ponderado (quadrático) | "
              f"κw ≥ {_num(LIMIAR_KAPPA, 2)} |")
-    L.append(f"| 2 | Ausência de viés sistemático | Wilcoxon bilateral pareado | "
-             f"p > {_num(LIMIAR_ALFA, 2)} |")
-    L.append(f"| 3 | Equivalência na decisão prática | McNemar sobre nota ≥ {PISO_ADEQUACAO} | "
-             f"p > {_num(LIMIAR_ALFA, 2)} |")
+    L.append(f"| 2 | Ausência de viés | P(equivalência) na diferença média das notas, "
+             f"ROPE = {_num(v['rope'], 4)} | ≥ {_num(v['limiar'], 2)} |")
+    L.append(f"| 3 | Decisão prática | P(equivalência) na taxa de adequação "
+             f"(nota ≥ {PISO_ADEQUACAO}), ROPE = {_num(v['rope_decisao'], 4)} | "
+             f"≥ {_num(v['limiar'], 2)} |")
     L.append("")
     L.append(f"O critério 1 é aferido no **valor pontual** do κw. O IC 95% (bootstrap de "
              f"{BOOTSTRAP_REPLICAS} réplicas de documentos) é reportado como medida de "
              "precisão, não como critério: exigir que o limite inferior alcançasse o limiar "
              "reprovaria o juiz por tamanho de amostra, não por falta de concordância.\n")
-    L.append("Nos critérios 2 e 3, **não rejeitar H₀ é o resultado desejado**. Isso indica "
-             "ausência de viés detectável, não equivalência demonstrada.\n")
+    L.append(f"Os critérios 2 e 3 são **bayesianos** (`{_NOME_TESTE_BAYES}`, Benavoli et "
+             "al., 2017): a probabilidade posterior de a diferença **média** caber na ROPE. "
+             "Diferentemente de não rejeitar H₀, uma posterior concentrada dentro da ROPE é "
+             "evidência **a favor** da equivalência. O veredito julga **magnitude**, nunca "
+             "direção: um juiz pode ser confiavelmente mais leniente por uma margem sem "
+             f"relevância prática. O cálculo é analítico (Student acumulada) — "
+             "determinístico, sem amostras nem semente. O limiar de "
+             f"{_num(v['limiar'], 2)} é **único** em todo o trabalho (gate, heatmap e "
+             "forest plot; Benavoli et al., 2017, §3.2).\n")
     L.append(f"### {rotulo_ressalva.capitalize()}\n")
-    L.append(f"Status intermediário previsto no plano contingencial do método: critérios 1 e "
-             "3 atendidos e viés estatisticamente significativo (critério 2), porém com "
-             "magnitude média abaixo da **margem de relevância prática** — 0,5 desvio-padrão "
-             "das notas da referência (regra da meia-DP; Norman, Sloan & Wyrwich, 2003). "
-             f"Nesta execução: DP da referência = {_num(v['dp_referencia'], 4)}, margem = "
-             f"**{_num(v['margem'], 4)} ponto**. Com n grande, diferenças praticamente "
-             "irrelevantes tornam-se significativas; a margem separa significância "
-             "estatística de relevância prática. É classificação descritiva, não teste de "
-             "equivalência (que exigiria margem pré-registrada e procedimento TOST).\n")
+    L.append("Status intermediário: o κw atende ao corte e a equivalência (critério 2 e/ou "
+             "3) ficou **inconclusiva** — os dados não bastam para afirmá-la nem para "
+             "afirmar viés relevante. É desfecho legítimo; a resposta honesta é ampliar a "
+             f"amostra. O `{rotulo_nao}` exige κw abaixo do corte **ou viés relevante** "
+             "(a diferença quase certamente excede a ROPE em alguma direção).\n")
+    L.extend(_bloco_calibracao_rope(v))
 
     # --- cobertura -----------------------------------------------------------
     L.append("---\n\n## Cobertura e pareamento\n")
@@ -2070,12 +2441,11 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
     L.append(_md(_tabela_concordancia(gates_ordenados), indice=False))
     L.append("")
     L.append("`P_o` é a concordância observada ponderada (dá crédito parcial a diferenças de "
-             "1 ponto; a coluna `Exata` é a leitura sem ponderação). `n′` é o número de pares "
-             "com diferença não nula — os empates são descartados pelo Wilcoxon, de modo que "
-             "**`r = |z|/√n′` mede a consistência de direção entre as discordâncias, não a "
-             "magnitude do desacordo**: um `r` grande com `Média dif.` pequena indica viés "
-             "consistente porém de pequena magnitude. A magnitude é lida em `Média dif.`, "
-             "confrontada com a margem de relevância prática.\n")
+             "1 ponto; a coluna `Exata` é a leitura sem ponderação). As colunas "
+             "`Acima`/`Empate`/`Abaixo` são **contagens ordinais puras** (d > 0, d = 0, "
+             "d < 0) — independentes da ROPE, o número que não assume nada sobre os "
+             "intervalos da escala. A magnitude é lida em `Média dif.` com o `IC 95%` da "
+             "posterior, confrontada com a ROPE; `P(equiv. notas)` é o critério 2 do gate.\n")
     L.append(f"### Decisão binária (adequado = nota ≥ {PISO_ADEQUACAO})\n")
     L.append(_md(_tabela_decisao(gates_ordenados), indice=False))
     L.append("")
@@ -2117,10 +2487,10 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
         })
         L.append(_md(tabela, indice=False))
         L.append("")
-        L.append("O **critério 2 do gate usa o `p bruto`**, não o corrigido. A correção de Holm "
-                 "protege contra falsos positivos; como aqui rejeitar H₀ é o resultado "
-                 "desfavorável ao juiz, adotar o valor corrigido tornaria o gate mais permissivo. "
-                 "O `p Holm` consta para leitura conjunta dos contrastes.\n")
+        L.append("Seção **contextual**: não integra o gate. O critério 2 é bayesiano "
+                 "(P(equivalência) da diferença média contra a ROPE calibrada) e vive na "
+                 "tabela de veredito; o Friedman e os contrastes acima descrevem a "
+                 "severidade relativa entre todos os avaliadores.\n")
 
     # --- leitura bayesiana ---------------------------------------------------
     L.extend(_bloco_bayes_validacao(v))
@@ -2154,33 +2524,30 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
              "sustenta afirmar que o juiz é igualmente confiável em cada fonte isoladamente.\n"
              f"- Com {len(v['documentos'])} documentos na interseção, o κw pontual é frágil; o "
              "IC 95% é a informação relevante sobre precisão.\n"
-             "- Não rejeitar H₀ nos critérios 2 e 3 indica ausência de viés detectável, não "
-             "equivalência demonstrada — testes de equivalência formal exigiriam definir uma "
-             "margem e um n maior.\n"
+             f"- A conclusão bayesiana depende do limiar único de {_num(v['limiar'], 2)} e "
+             f"da ROPE de {_num(v['rope'], 4)} ponto — ambos fixados **antes** da análise "
+             f"({v['origem_rope']}). O controle negativo existe para mostrar que a margem "
+             "não foi escolhida convenientemente.\n"
+             "- **A diferença média de notas Likert é a diferença das médias** — o "
+             "pareamento não contorna a objeção ordinal. A defesa tem três partes: a "
+             "literatura de robustez (Norman, 2010; Carifio & Perla, 2008); a ROPE "
+             "ancorada na divergência entre especialistas, na mesma unidade, o que torna "
+             "a interpretação relativa; e as contagens ordinais puras reportadas ao lado "
+             "de toda probabilidade.\n"
+             "- A análise é **independente por conjunto de dados**: não modela a "
+             "variabilidade compartilhada entre datasets nem atualiza sequencialmente o "
+             "conhecimento. O `baycomp.HierarchicalTest` faria isso, mas exige `pystan`, "
+             "pressupõe validação cruzada dentro de cada conjunto e, com poucos conjuntos, "
+             "a variância entre grupos não é identificável.\n"
              "- No agregado, cada documento entra tantas vezes quantas forem as fontes. É "
              "coerente com a unidade de julgamento (a extração avaliada, não o documento), e o "
              "bootstrap reamostra documentos inteiros para preservar essa dependência.\n")
-    if v.get("bayes"):
-        cfg = v["bayes"]["config"]
-        L.append(f"- A conclusão bayesiana depende do limiar de "
-                 f"{_num(cfg.limiar_veredito, 2)}, fixado antes da análise. A ROPE de "
-                 f"{_num(cfg.rope, 2)} não é parâmetro livre: decorre de a escala Likert ser "
-                 "inteira, e alterá-la deixaria de representar 'notas iguais'.\n"
-                 "- O teste de sinais descarta a **magnitude** de cada divergência e conta só "
-                 "direções. Na escala ordinal isso é adequado — a distância entre as notas 2 e "
-                 "3 não é comparável à distância entre 3 e 4 —, mas significa que a análise não "
-                 "distingue divergências de um ponto das de dois.\n"
-                 "- A análise é **independente por conjunto de dados**: não modela a "
-                 "variabilidade compartilhada entre datasets nem atualiza sequencialmente o "
-                 "conhecimento. O `baycomp.HierarchicalTest` faria isso, mas exige `pystan`, "
-                 "pressupõe validação cruzada dentro de cada conjunto e, com poucos conjuntos, "
-                 "a variância entre grupos não é identificável.\n")
 
     L.append("---\n\n## Figuras\n")
     for arquivo in v["figuras"]:
         L.append(f"- `{arquivo}`")
     L.append("")
-    L.append(_bloco_reprodutibilidade(v.get("bayes") or None))
+    L.append(_bloco_reprodutibilidade(v))
 
     texto = "\n".join(L)
     with open(caminho, "w", encoding="utf-8") as arquivo:
@@ -2189,56 +2556,44 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
 
 
 def _bloco_bayes_validacao(v: dict) -> list:
-    """Seção bayesiana do `validacao.md` — vazia quando a etapa não rodou."""
+    """Seção do panorama bayesiano do `validacao.md` — vazia sem `--bayes`."""
     b = v.get("bayes")
     if not b:
         return []
     cfg = b["config"]
-    referencia = v["referencia"]
-    L = ["---\n\n## Leitura bayesiana (complementar ao gate)\n"]
-    L.append(f"O gate acima continua sendo o que decide: κw, Wilcoxon e McNemar. Esta seção "
-             f"acrescenta o que aqueles testes não conseguem afirmar — a probabilidade "
-             f"posterior de **equivalência prática** entre o juiz e `{referencia}`. Não "
-             "rejeitar H₀ não prova equivalência; uma posterior concentrada dentro da ROPE, "
-             "sim, é evidência a favor dela.\n")
+    L = ["---\n\n## Panorama bayesiano entre os avaliadores (complementar)\n"]
+    L.append("Os critérios 2 e 3 do gate já são bayesianos e vivem na tabela de "
+             "veredito. Esta seção acrescenta o **panorama** entre todos os "
+             "avaliadores — inclusive os pares juiz × juiz, que ficam fora do gate — "
+             "na mesma ROPE e no MESMO limiar único.\n")
     L.append("| Parâmetro | Valor |")
     L.append("|---|---|")
-    L.append("| Biblioteca | `baycomp` |")
-    L.append(f"| Teste | `{cfg.metodo}` ({_NOME_TESTE.get(cfg.metodo, cfg.metodo)}) |")
-    L.append(f"| ROPE | {_num(cfg.rope, 2)} (notas iguais, escala inteira) |")
-    L.append(f"| Limiar do veredito | {_num(cfg.limiar_veredito, 2)} |")
-    L.append(f"| Limiar de classificação do heatmap | {_num(cfg.limiar, 2)} |")
-    L.append(f"| Amostras / semente | {_num(cfg.amostras, 0)} / {cfg.semente} |")
+    L.append(f"| Teste | `{_NOME_TESTE_BAYES}` (analítico — sem amostras nem semente) |")
+    L.append("| Variável | nota Likert mediana por documento |")
+    L.append(f"| ROPE | {_num(v['rope'], 4)} ({v['origem_rope']}) |")
+    L.append(f"| Limiar único | {_num(cfg.limiar, 2)} |")
     L.append("")
-    L.extend(_bloco_como_ler_bayes(cfg, b.get("pares", []),
-                                   rotulo_entidade="avaliador", referencia=referencia))
-    L.append(f"### Juiz × `{referencia}`\n")
-    L.append(_md(b["tabela"], indice=False))
-    L.append("")
-    L.append("`P(equiv. notas)` usa as notas medianas; `P(equiv. decisão)` usa a binarização "
-             f"em nota ≥ {PISO_ADEQUACAO}, preservando o pareamento — é o análogo bayesiano "
-             "do McNemar. A coluna `Leitura` combina as duas:\n")
-    L.append(f"- **SEM VIÉS RELEVANTE** — as duas probabilidades de equivalência atingem "
-             f"{_num(cfg.limiar_veredito, 2)};")
-    L.append("- **VIÉS RELEVANTE** — é quase certo que a divergência **excede** a ROPE;")
-    L.append("- **INCONCLUSIVO** — os dados não sustentam nenhuma das duas leituras. É "
-             "desfecho legítimo, e a resposta honesta é ampliar a amostra.\n")
-    L.append("O veredito julga **magnitude**, nunca direção. `P(juiz > ref.)` próximo de 1 com "
-             "`P(equiv. notas)` também alto não é contradição: significa que o juiz é "
-             "confiavelmente mais leniente, mas por uma margem sem relevância prática — "
-             "situação que o teste de hipótese nula não consegue expressar.\n")
+    L.extend(_bloco_como_ler_bayes(v, _pares_info_de_tabela(b["tabela_matriz"])
+                                   if b.get("tabela_matriz") is not None else [],
+                                   rotulo_entidade="avaliador"))
     if b.get("tabela_matriz") is not None:
         L.append("### Relações entre todos os avaliadores\n")
         L.append(_md(b["tabela_matriz"], indice=False))
         L.append("")
-        L.append(_md(b["resumo"]))
+        L.append("### Contando as relações\n")
+        L.append(_md(b["sintese"]))
         L.append("")
-        L.append("Inclui os pares juiz × juiz, que permanecem **fora do gate**: convergência "
-                 "entre modelos não é evidência de validade.\n")
-        L.append(f"⚠️ Esta matriz classifica ao limiar {_num(cfg.limiar, 2)}, enquanto o "
-                 f"veredito acima exige {_num(cfg.limiar_veredito, 2)}. Um mesmo par pode "
-                 "aparecer como `equivalente` aqui e `INCONCLUSIVO` na tabela do juiz — não é "
-                 "inconsistência: a matriz descreve o panorama, o veredito decide.\n")
+        ciclos = b["sintese"].attrs.get("ciclos") or []
+        if ciclos:
+            L.append(f"⚠️ **Transitividade violada** — ciclo(s) nas relações "
+                     f"direcionais: {'; '.join(' > '.join(map(str, c)) for c in ciclos)}. "
+                     "A leitura ordenada desta tabela é inválida.\n")
+        else:
+            L.append("✅ Verificação de transitividade: as relações direcionais não "
+                     "formam ciclo.\n")
+        L.append("A síntese conta relações, **não ordena**. Os pares juiz × juiz "
+                 "permanecem **fora do gate**: convergência entre modelos não é "
+                 "evidência de validade.\n")
     return L
 
 
@@ -2247,34 +2602,41 @@ def _paragrafo_veredito(g: dict, referencia: str, rotulo: str) -> str:
     criterios = g["criterios"]
     if g["status"] == "VALIDADO":
         return (f"✅ **`{g['juiz']}`: {rotulo}** — κw = {_num(g['kappa'])} "
-                f"(concordância no nível *{g['interpretacao']}*), sem viés sistemático "
-                f"detectável (Wilcoxon p = {_p(g['p_wilcoxon'])}) e sem viés direcional na "
-                f"decisão adequado/inadequado (McNemar p = {_p(g['p_mcnemar'])}), com "
-                f"acurácia de {_pct(g['acuracia'])} contra `{referencia}`.")
+                f"(concordância no nível *{g['interpretacao']}*); equivalência prática "
+                f"estabelecida nas notas (P = {_num(g['p_equiv_notas'])}, "
+                f"ROPE = {_num(g['rope'], 4)}) e na decisão adequado/inadequado "
+                f"(P = {_num(g['p_equiv_decisao'])}), ao limiar de "
+                f"{_num(g['limiar'], 2)}; acurácia de {_pct(g['acuracia'])} contra "
+                f"`{referencia}`. Contagens ordinais: {g['acima']} acima, "
+                f"{g['empate']} empates, {g['abaixo']} abaixo.")
 
     if g["status"] == "VALIDADO COM RESSALVA":
+        pendentes = []
+        if not criterios["sem_vies"]:
+            pendentes.append(f"notas (P(equiv.) = {_num(g['p_equiv_notas'])})")
+        if not criterios["decisao"]:
+            pendentes.append(f"decisão (P(equiv.) = {_num(g['p_equiv_decisao'])})")
         return (f"🟡 **`{g['juiz']}`: {rotulo}** — κw = {_num(g['kappa'])} "
-                f"(*{g['interpretacao']}*) e decisão binária sem viés direcional (McNemar "
-                f"p = {_p(g['p_mcnemar'])}). Há viés sistemático estatisticamente "
-                f"significativo (Wilcoxon p = {_p(g['p_wilcoxon'])}, {g['direcao']}), porém "
-                f"de magnitude média {_num(abs(g['media_dif']), 3)} ponto — abaixo da margem "
-                f"de relevância prática de {_num(g['margem'], 3)} ponto (meia-DP da "
-                "referência). O uso em massa deve ser reportado com esta ressalva.")
+                f"(*{g['interpretacao']}*) atende ao corte, mas a equivalência ficou "
+                f"**inconclusiva** em {', '.join(pendentes)} — abaixo do limiar de "
+                f"{_num(g['limiar'], 2)} sem que o viés relevante esteja estabelecido "
+                f"(dif. média = {_num(g['media_dif'], 3)}, IC 95% "
+                f"[{_num(g['ic_notas'][0], 3)}; {_num(g['ic_notas'][1], 3)}]). "
+                "Desfecho legítimo; a resposta honesta é ampliar a amostra.")
 
     falhas = []
     if not criterios["concordancia"]:
         falhas.append(f"κw = {_num(g['kappa'])} < {_num(LIMIAR_KAPPA, 2)} "
                       f"(concordância no nível *{g['interpretacao']}*, "
                       f"P_o = {_num(g['p_o'])})")
-    if not criterios["sem_vies"]:
-        detalhe = f"Wilcoxon p = {_p(g['p_wilcoxon'])}, dif. média = "                   f"{_num(g['media_dif'], 3)}, {g['direcao']}"
-        if g["margem"] == g["margem"] and not g["vies_toleravel"]:
-            detalhe += f"; acima da margem de {_num(g['margem'], 3)} ponto"
-        falhas.append(f"viés sistemático ({detalhe})")
-    if not criterios["decisao"]:
-        falhas.append(f"viés direcional na decisão binária (McNemar p = "
-                      f"{_p(g['p_mcnemar'])}: {g['b01']} itens aprovados pelo juiz e "
-                      f"reprovados pela referência, contra {g['b10']} no sentido oposto)")
+    if g["vies_relevante"]:
+        falhas.append(
+            f"viés relevante — a diferença quase certamente excede a ROPE "
+            f"(dif. média = {_num(g['media_dif'], 3)}, {g['direcao']}; "
+            f"P(acima da ROPE) = {_num(g['p_juiz_maior'])}, "
+            f"P(abaixo da ROPE) = {_num(g['p_juiz_menor'])}; "
+            f"{g['b01']} itens aprovados só pelo juiz contra {g['b10']} só pela "
+            "referência)")
     return (f"❌ **`{g['juiz']}`: {rotulo}.** Critério(s) não atendido(s): "
             f"{'; '.join(falhas)}.")
 
@@ -2289,9 +2651,11 @@ def _tabela_concordancia(gates: list, lateral: bool = False) -> pd.DataFrame:
         "IC95 inf": round(g["ic_inf"], 4), "IC95 sup": round(g["ic_sup"], 4),
         "P_o": round(g["p_o"], 4),
         "Exata": _pct(g["exata"]), "Dif. ≤ 1": _pct(g["amplitude_1"]),
+        "Acima": g["acima"], "Empate": g["empate"], "Abaixo": g["abaixo"],
         "Média dif.": round(g["media_dif"], 4),
-        "n′": g["n_efetivo"], "Wilcoxon p": _p(g["p_wilcoxon"]),
-        "r": round(g["r"], 3), "Direção": g["direcao"],
+        "IC 95%": f"[{g['ic_notas'][0]:+.4f}; {g['ic_notas'][1]:+.4f}]".replace(".", ","),
+        "P(equiv. notas)": round(g["p_equiv_notas"], 4),
+        "Direção": g["direcao"],
     } for g in gates])
 
 
@@ -2304,7 +2668,8 @@ def _tabela_decisao(gates: list, lateral: bool = False) -> pd.DataFrame:
             rotulo: f"{g['juiz']} × {g['referencia']}" if lateral else g["juiz"],
             "κ binário": round(g["kappa_bin"], 4),
             "FP (juiz aprova)": g["b01"], "FN (juiz reprova)": g["b10"],
-            "McNemar p": _p(g["p_mcnemar"]), "Método": g["metodo_mcnemar"],
+            "Dif. taxa": round(g["dif_taxa"], 4),
+            "P(equiv. decisão)": round(g["p_equiv_decisao"], 4),
             "Acurácia": _pct(g["acuracia"]),
             "Sensib.": _pct(g["sensibilidade"]),
             "Especif.": _pct(g["especificidade"]),
@@ -2315,28 +2680,39 @@ def _tabela_decisao(gates: list, lateral: bool = False) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
-def _bloco_reprodutibilidade(bayes_resultado: dict = None) -> str:
-    """Rodapé com versões e convenções usadas."""
-    import sklearn
-    import statsmodels
+def _bloco_reprodutibilidade(contexto: dict = None) -> str:
+    """Rodapé com versões e convenções usadas.
+
+    Args:
+        contexto: dict com `rope`, `rope_decisao`, `limiar` e `origem_rope`
+            quando a camada bayesiana foi parametrizada (validação); None na
+            análise interna sem esses dados.
+    """
+    sk = (__import__("sklearn").__version__ if SKLEARN_DISPONIVEL
+          else "— (fórmula interna)")
+    sm = (__import__("statsmodels").__version__ if STATSMODELS_DISPONIVEL
+          else "— (fórmula interna)")
     extra = []
-    if bayes_resultado:
-        cfg = bayes_resultado["config"]
-        extra = [f"| Posterior bayesiana | baycomp `{cfg.metodo}`, "
-                 f"ROPE {_num(cfg.rope, 2)}, {_num(cfg.amostras, 0)} amostras, "
-                 f"semente {cfg.semente} |"]
+    if contexto and contexto.get("rope") is not None:
+        limiar = contexto.get("limiar")
+        if limiar is None and contexto.get("config") is not None:
+            limiar = contexto["config"].limiar
+        rope_decisao = (f", ROPE decisão {_num(contexto['rope_decisao'], 4)}"
+                        if contexto.get("rope_decisao") is not None else "")
+        extra = [f"| Posterior bayesiana | `{_NOME_TESTE_BAYES}` (analítica), "
+                 f"ROPE notas {_num(contexto['rope'], 4)}{rope_decisao}, "
+                 f"limiar único {_num(limiar if limiar is not None else BAYES_LIMIAR, 2)} "
+                 f"({contexto.get('origem_rope', '—')}) |"]
     return "\n".join([
         "---\n", "## Reprodutibilidade\n",
         "| Item | Valor |", "|---|---|",
         f"| Python | {sys.version.split()[0]} |",
         f"| pandas / numpy / scipy | {pd.__version__} / {np.__version__} "
         f"/ {__import__('scipy').__version__} |",
-        f"| scikit-learn / statsmodels | {sklearn.__version__} / "
-        f"{statsmodels.__version__} |",
+        f"| scikit-learn / statsmodels | {sk} / {sm} |",
         "| Pesos do Kappa | quadráticos |",
         "| Faixas de interpretação | McHugh (2012) |",
         "| Correção múltipla | Holm-Bonferroni |",
-        "| Margem de relevância prática | 0,5 DP da referência (meia-DP) |",
         f"| Bootstrap | {BOOTSTRAP_REPLICAS} réplicas de documentos, semente {SEMENTE} |",
     ] + extra + [
         "",
@@ -2344,7 +2720,7 @@ def _bloco_reprodutibilidade(bayes_resultado: dict = None) -> str:
         "| Estatística | Implementação |",
         "|---|---|",
     ] + [f"| {nome} | {origem} |"
-         for nome, origem in dependencias(bool(bayes_resultado)).items()] + [
+         for nome, origem in dependencias(bool(contexto)).items()] + [
         "",
         "As definições operacionais (fórmulas internas) constam em "
         "`realizar_avaliacoes_teste.py`, que verifica que coincidem com os pacotes.",
@@ -2397,51 +2773,38 @@ def parse_aliases(especificacoes: Sequence[str]) -> dict:
 def montar_config_bayes(args, erro: Callable[[str], None]) -> ConfigBayes:
     """Converte as flags `--bayes*` em ``ConfigBayes``, explicando o que faltou.
 
-    Sem ``--bayes`` a etapa não existe. Ajustes informados isoladamente são
-    erro, e não silêncio — quem escreveu `--bayes-metodo t` esperava a etapa
-    rodar, e deixá-la desligada devolveria um relatório sem a seção pedida.
+    Os critérios 2 e 3 do gate são bayesianos e rodam **sempre** na validação;
+    por isso ``--bayes-rope``, ``--bayes-rope-decisao`` e ``--bayes-limiar``
+    têm efeito mesmo sem ``--bayes``. A flag ``--bayes`` liga apenas a camada
+    complementar (heatmaps e forest plots entre fontes e entre avaliadores).
     """
-    ajustes = {"--bayes-rope": args.bayes_rope != BAYES_ROPE_LIKERT,
-               "--bayes-metodo": args.bayes_metodo != BAYES_METODO_PADRAO,
-               "--bayes-limiar": args.bayes_limiar != BAYES_LIMIAR_PADRAO,
-               "--bayes-limiar-veredito": args.bayes_limiar_veredito != BAYES_VEREDITO_PADRAO,
-               "--bayes-amostras": args.bayes_amostras != BAYES_AMOSTRAS_PADRAO,
-               "--bayes-semente": args.bayes_semente != SEMENTE}
-    informados = [flag for flag, mudou in ajustes.items() if mudou]
-
-    if not args.bayes:
-        if informados:
-            erro(f"{', '.join(informados)} só tem efeito com --bayes. "
-                 "Acrescente --bayes para gerar a comparação bayesiana, ou remova "
-                 "os ajustes para rodar apenas a análise frequentista.")
-        return ConfigBayes(ativo=False)
-
-    if not BAYES_DISPONIVEL:
+    if args.bayes and not BAYES_DISPONIVEL:
         erro("--bayes exige o módulo `util_est_bayesiana.py` (e o pacote `baycomp`) "
-             "na mesma pasta ou no PYTHONPATH. Sem --bayes o pipeline roda "
-             "normalmente, apenas sem a seção bayesiana.")
+             "na mesma pasta ou no PYTHONPATH — assim como o gate da validação, "
+             "cujos critérios 2 e 3 são bayesianos.")
 
     # o baycomp devolve só (p_esquerda, p_direita) com rope = 0: a tripla exige rope > 0
-    if args.bayes_rope <= 0:
-        erro(f"--bayes-rope = {args.bayes_rope} inválido: com ROPE zero o baycomp "
-             "não devolve a probabilidade de equivalência. Na escala Likert inteira "
-             f"o valor correto é {BAYES_ROPE_LIKERT} ('notas iguais').")
-    for flag, valor in (("--bayes-limiar", args.bayes_limiar),
-                        ("--bayes-limiar-veredito", args.bayes_limiar_veredito)):
-        if not 0.5 <= valor <= 1.0:
-            erro(f"{flag} = {valor} fora da faixa admissível [0,5; 1,0].")
-    if args.bayes_amostras < 1000:
-        erro(f"--bayes-amostras = {args.bayes_amostras} é baixo demais: a variação "
-             f"entre sementes dominaria o resultado (padrão: {BAYES_AMOSTRAS_PADRAO}).")
-    if args.bayes_metodo == "t":
-        print("ℹ `--bayes-metodo t` usa baycomp.CorrelatedTTest, que é analítico: "
-              "amostras e semente são ignoradas. Ele foi pensado para escores "
-              "contínuos; nesta etapa a escala é ordinal.")
+    for flag, valor in (("--bayes-rope", args.bayes_rope),
+                        ("--bayes-rope-decisao", args.bayes_rope_decisao)):
+        if valor is not None and valor <= 0:
+            erro(f"{flag} = {valor} inválido: com ROPE zero o baycomp não devolve "
+                 "a probabilidade de equivalência. Omita a flag para usar a ROPE "
+                 "calibrada pela divergência entre os especialistas.")
+    if not 0.5 <= args.bayes_limiar <= 1.0:
+        erro(f"--bayes-limiar = {args.bayes_limiar} fora da faixa admissível "
+             "[0,5; 1,0].")
+    if args.bayes_limiar != BAYES_LIMIAR:
+        print(f"ℹ --bayes-limiar = {args.bayes_limiar}: o limiar deixa de ser o "
+              f"único de {BAYES_LIMIAR} usado no restante do trabalho — registre a "
+              "escolha e o motivo.")
+    if args.bayes_rope is not None:
+        print(f"ℹ --bayes-rope = {args.bayes_rope}: a ROPE informada sobrescreve a "
+              "calibração pela divergência entre especialistas e fica registrada "
+              "como pré-registro manual.")
 
     return ConfigBayes(
-        ativo=True, rope=args.bayes_rope, metodo=args.bayes_metodo,
-        limiar=args.bayes_limiar, limiar_veredito=args.bayes_limiar_veredito,
-        amostras=args.bayes_amostras, semente=args.bayes_semente)
+        ativo=bool(args.bayes), rope=args.bayes_rope,
+        rope_decisao=args.bayes_rope_decisao, limiar=args.bayes_limiar)
 
 
 def executar(base: str, grupos: list, saida: str, escala: tuple = ESCALA_PADRAO,
@@ -2486,10 +2849,11 @@ def main(argv=None):
                "  %(prog)s --pastas saida_01 saida_02 saida_03\n"
                "  %(prog)s --grupos gpt5:llm humanos:humano --bayes\n"
                "\n"
-               "Etapa bayesiana (baycomp):\n"
-               "  Sem `--bayes` a etapa não roda e nada muda no restante do pipeline.\n"
-               "  A escala Likert é inteira, então a ROPE padrão de 0,5 significa\n"
-               "  exatamente 'notas iguais' — não é margem arbitrada.\n")
+               "Camada bayesiana (baycomp.CorrelatedTTest):\n"
+               "  Os critérios 2 e 3 do gate são bayesianos e rodam sempre na\n"
+               "  validação, com a ROPE calibrada pela divergência média entre os\n"
+               "  especialistas humanos e o limiar único de 0,95. `--bayes` liga o\n"
+               "  panorama complementar (heatmaps e forest plots).\n")
     parser.add_argument("--base", default=".",
                         help="diretório que contém as pastas dos avaliadores (padrão: .)")
     parser.add_argument("--grupos", nargs="+", metavar="NOME:TIPO",
@@ -2507,35 +2871,28 @@ def main(argv=None):
                         help="grupo padrão de referência (padrão: primeiro grupo do tipo humano)")
 
     bayesiano = parser.add_argument_group(
-        "análise bayesiana (opcional)",
-        "Camada complementar ao gate frequentista, via `baycomp`: probabilidade "
-        "posterior de superioridade e de equivalência prática, mais o heatmap de "
-        "comparação. Nada aqui roda sem `--bayes`.")
+        "camada bayesiana (baycomp.CorrelatedTTest — analítico, determinístico)",
+        "Os critérios 2 e 3 do gate são bayesianos e rodam SEMPRE na validação, "
+        "com a ROPE calibrada pela divergência entre os especialistas humanos. "
+        "As flags de ROPE e limiar afetam o gate; `--bayes` liga apenas o "
+        "panorama complementar (heatmaps e forest plots).")
     bayesiano.add_argument("--bayes", action="store_true",
-                           help="ativa a etapa bayesiana; sem esta flag ela é ignorada por completo")
-    bayesiano.add_argument("--bayes-rope", type=float, default=BAYES_ROPE_LIKERT,
+                           help="gera o panorama complementar entre fontes e entre "
+                                "avaliadores (heatmap + 'Medindo as diferenças')")
+    bayesiano.add_argument("--bayes-rope", type=float, default=None, metavar="R",
+                           help="sobrescreve a ROPE das notas (padrão: calibrada pela "
+                                "divergência média entre os especialistas da referência; "
+                                f"fallback {BAYES_ROPE_PADRAO}). Deve ser > 0; fica "
+                                "registrada como pré-registro manual")
+    bayesiano.add_argument("--bayes-rope-decisao", type=float, default=None,
                            metavar="R",
-                           help="largura da região de equivalência prática sobre as notas "
-                                f"(padrão: {BAYES_ROPE_LIKERT}; na escala Likert inteira "
-                                "equivale a 'notas iguais'). Deve ser > 0")
-    bayesiano.add_argument("--bayes-metodo", choices=("sinais", "postos", "t"),
-                           default=BAYES_METODO_PADRAO,
-                           help="teste do baycomp: sinais=SignTest (ordinal, padrão), "
-                                "postos=SignedRankTest, t=CorrelatedTTest (contínuo)")
-    bayesiano.add_argument("--bayes-limiar", type=float, default=BAYES_LIMIAR_PADRAO,
+                           help="sobrescreve a ROPE da taxa de adequação (padrão: "
+                                "calibrada pelos especialistas; fallback "
+                                f"{BAYES_ROPE_DECISAO_PADRAO}). Deve ser > 0")
+    bayesiano.add_argument("--bayes-limiar", type=float, default=BAYES_LIMIAR,
                            metavar="P",
-                           help="probabilidade mínima para classificar uma célula do heatmap; "
-                                f"abaixo dela a relação fica `incerta` (padrão: {BAYES_LIMIAR_PADRAO})")
-    bayesiano.add_argument("--bayes-limiar-veredito", type=float,
-                           default=BAYES_VEREDITO_PADRAO, metavar="P",
-                           help="probabilidade mínima para o veredito de equivalência juiz × "
-                                f"referência (padrão: {BAYES_VEREDITO_PADRAO})")
-    bayesiano.add_argument("--bayes-amostras", type=int, default=BAYES_AMOSTRAS_PADRAO,
-                           metavar="N",
-                           help=f"amostras da posterior (padrão: {BAYES_AMOSTRAS_PADRAO}); "
-                                "ignorado por `--bayes-metodo t`, que é analítico")
-    bayesiano.add_argument("--bayes-semente", type=int, default=SEMENTE, metavar="S",
-                           help=f"semente da amostragem (padrão: {SEMENTE})")
+                           help="limiar ÚNICO de decisão — gate, heatmap e forest plot "
+                                f"(padrão: {BAYES_LIMIAR}, Benavoli et al. 2017 §3.2)")
     args = parser.parse_args(argv)
 
     if args.grupos and args.pastas:
