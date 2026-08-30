@@ -128,6 +128,7 @@ _TEXTOS = {
         'efeito_insignificante': 'Insignificante', 'efeito_pequeno': 'Pequeno',
         'efeito_medio': 'Médio', 'efeito_grande': 'Grande',
         'sim': 'Sim', 'nao': 'Não',
+        'nota_rope_calibracao': '📌 **Nota de calibração da ROPE:** O maior |Δ| observado nesta tabela é **{max_delta}**. Se os protocolos comparados foram treinados sob o **mesmo regime e mesmos dados** (comparação de calibração/réplicas), esse valor representa o piso de ruído do treinamento (variância não-determinística) e pode ser utilizado como referência para o parâmetro `metricas_automaticas.rope` na análise bayesiana (`estatistica_bayesiana`) em comparações futuras entre protocolos distintos.',
     },
     'en': {
         'titulo_principal': 'Statistical Analysis',
@@ -175,6 +176,7 @@ _TEXTOS = {
         'efeito_insignificante': 'Negligible', 'efeito_pequeno': 'Small',
         'efeito_medio': 'Medium', 'efeito_grande': 'Large',
         'sim': 'Yes', 'nao': 'No',
+        'nota_rope_calibracao': '📌 **ROPE calibration note:** The largest |Δ| observed in this table is **{max_delta}**. If the compared protocols were trained under the **same regime and same data** (calibration/replica comparison), this value represents the training noise floor (non-deterministic variance) and can be used as a reference for the `metricas_automaticas.rope` parameter in the Bayesian analysis (`estatistica_bayesiana`) when comparing distinct protocols in future experiments.',
     }
 }
 
@@ -732,6 +734,12 @@ class AnaliseEstatistica:
             m = len(self.wilcoxon_resultados)
             L.append(f'> *{t["msg_holm_nota"].format(m=m)}*')
             L.append('')
+            # Nota de calibração da ROPE — maior |Δ| como referência
+            if self.wilcoxon_resultados:
+                max_delta = max(abs(r['diferenca']) for r in self.wilcoxon_resultados)
+                if max_delta > 0:
+                    L.append(f'> {t["nota_rope_calibracao"].format(max_delta=f"{max_delta:.4f}")}')
+                    L.append('')
         
         # --- 5. Nemenyi Post-hoc (seção materializada) ---
         if not self.nemenyi_pvalores.empty and self.K >= 3:
