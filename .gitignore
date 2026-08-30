@@ -265,3 +265,5 @@ experimentos/summa-experimento/avaliacao_llm_humana/analise_llm/*
 experimentos/summa-experimento/avaliacao_llm_humana/saida_**
 experimentos/summa-experimento/avaliacao_llm_humana/analise_avaliacoes**
 experimentos/_notas_*.md
+experimentos/semclibr-experimento/dados**
+experimentos/semclibr-experimento/saidas**
