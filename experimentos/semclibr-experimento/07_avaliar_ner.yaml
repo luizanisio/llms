@@ -1,0 +1,121 @@
+# ==========================================================================
+# Trilha NER-F1 — variável primária declarada no README §6
+# ==========================================================================
+# O comparar_extracoes.py mede similaridade textual (BERTScore/ROUGE) sobre o
+# JSON de saída. Isso ordena o currículo (passo 03) e alimenta os gráficos e a
+# análise bayesiana (passo 06), mas NÃO é o F1 de reconhecimento de entidades
+# que o corpus SemClinBr exige e que os sistemas publicados (CRF de Souza et
+# al., BioBERTpt de Schneider et al.) reportam.
+#
+# Este passo roda em paralelo ao 06, sobre os MESMOS parquets de saída, e
+# produz f1_strict / lenient / flexible / relaxed por documento chamando
+# avaliar_documento() de util_semclinbr.py — a unidade da análise pareada.
+#
+# Executar com: python 07_avaliar_ner.py --config 07_avaliar_ner.yaml
+# ==========================================================================
+
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+
+# --- Corpus de referência (gabarito COM offsets, que o parquet não carrega) ---
+corpus:
+  xml: "dados/SemClinBr-xml-public-v1"
+  # Divisão gerada pelo passo 03 (traz `dificuldade` para o recorte do §7.3).
+  # Se ainda não existir, cai para a divisão original, sem recorte por faixa.
+  divisao: "dados/divisao_Gold_Qwen7B.csv"
+  divisao_fallback: "dados/divisao_semclinbr.csv"
+  split: "teste"
+  # SemGroups.txt oficial do UMLS (ABBR|GROUP|TUI|STY). Sem ele vale o mapa
+  # STY→SGR embutido em util_semclinbr.py, que cobre os rótulos do corpus.
+  semgroups: ""
+
+# --- Saída ---
+saida:
+  pasta: "compara/ner"
+
+execucao:
+  # Colunas dos parquets de saída dos passos 02 e 05
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    erro: "erro"
+  # Variável primária: a mais exigente e a que menos depende do mapa STY→SGR
+  metrica_primaria: "f1_strict"
+  # Complementares, também tabuladas e analisadas
+  metricas_complementares:
+    - f1_lenient
+    - f1_flexible
+    - f1_relaxed
+    - f1_span_exato
+    - f1_span_parcial
+    - f1_relacoes
+  # Piso de viabilidade do §7.5 — fixado ANTES de olhar os resultados.
+  # 0,70 coincide com o IAA strict do corpus (referência de dificuldade, não teto).
+  piso_viabilidade: 0.70
+  lang: "en"
+
+# --- Protocolos avaliados (mesmos arquivos de 06_compara_todos.yaml) ---
+protocolos:
+  - arquivo: "saidas/saida_semclinbr_7b.parquet"
+    alias: "A"
+  - arquivo: "saidas/saida_semclinbr_7b(b)_teste.parquet"
+    alias: "B"
+  - arquivo: "saidas/saida_semclinbr_7b(b16)_teste.parquet"
+    alias: "B16"
+  - arquivo: "saidas/saida_semclinbr_7b(b16r8)_teste.parquet"
+    alias: "B16R8"
+  - arquivo: "saidas/saida_semclinbr_7b(c)_teste.parquet"
+    alias: "C"
+  - arquivo: "saidas/saida_semclinbr_7b(d1)_teste.parquet"
+    alias: "D1"
+  - arquivo: "saidas/saida_semclinbr_7b(d2)_teste.parquet"
+    alias: "D2"
+  - arquivo: "saidas/saida_semclinbr_7b(d3)_teste.parquet"
+    alias: "D3"
+  - arquivo: "saidas/saida_semclinbr_7b(d4)_teste.parquet"
+    alias: "D4"
+  - arquivo: "saidas/saida_semclinbr_7b(d5)_teste.parquet"
+    alias: "D5"
+  - arquivo: "saidas/saida_semclinbr_7b(d6)_teste.parquet"
+    alias: "D6"
+  - arquivo: "saidas/saida_semclinbr_7b(d7)_teste.parquet"
+    alias: "D7"
+  - arquivo: "saidas/saida_semclinbr_7b(d8)_teste.parquet"
+    alias: "D8"
+  - arquivo: "saidas/saida_semclinbr_7b(d9)_teste.parquet"
+    alias: "D9"
+  - arquivo: "saidas/saida_semclinbr_7b(d10)_teste.parquet"
+    alias: "D10"
+  - arquivo: "saidas/saida_semclinbr_7b(d11)_teste.parquet"
+    alias: "D11"
+  - arquivo: "saidas/saida_semclinbr_7b(d12)_teste.parquet"
+    alias: "D12"
+  - arquivo: "saidas/saida_semclinbr_7b(d13)_teste.parquet"
+    alias: "D13"
+  - arquivo: "saidas/saida_semclinbr_7b(d14)_teste.parquet"
+    alias: "D14"
+  - arquivo: "saidas/saida_semclinbr_7b(d15)_teste.parquet"
+    alias: "D15"
+  - arquivo: "saidas/saida_semclinbr_7b(d16)_teste.parquet"
+    alias: "D16"
+  - arquivo: "saidas/saida_semclinbr_7b(d17)_teste.parquet"
+    alias: "D17"
+  - arquivo: "saidas/saida_semclinbr_7b(d18)_teste.parquet"
+    alias: "D18"
+  - arquivo: "saidas/saida_semclinbr_7b(d19)_teste.parquet"
+    alias: "D19"
+  - arquivo: "saidas/saida_semclinbr_7b(d20)_teste.parquet"
+    alias: "D20"
+  - arquivo: "saidas/saida_semclinbr_7b(d21)_teste.parquet"
+    alias: "D21"
+  - arquivo: "saidas/saida_semclinbr_7b(d22)_teste.parquet"
+    alias: "D22"
+  - arquivo: "saidas/saida_semclinbr_7b(d23)_teste.parquet"
+    alias: "D23"
+  - arquivo: "saidas/saida_semclinbr_7b(d24)_teste.parquet"
+    alias: "D24"
+  - arquivo: "saidas/saida_semclinbr_7b(d25)_teste.parquet"
+    alias: "D25"
