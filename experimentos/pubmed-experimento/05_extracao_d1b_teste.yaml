@@ -40,6 +40,7 @@ geracao:
   top_k: 2
   top_p: 0.9
   batch_size: 30
+  tentativas: 20
 
 # --- Entrada ---
 entrada:

@@ -4,7 +4,7 @@
 # =============================================================================
 
 # Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
-#SBATCH --job-name=pubmed-treinar-d1920
+#SBATCH --job-name=pubmed-treinar-d1ab
 
 # Partição de execução:
 #SBATCH --partition=gpu
@@ -58,7 +58,7 @@ echo "==============================="
 
 CONFIGS=(
   "04_treinar_d1a.yaml"
-  "04_treinar_d2b.yaml"
+  "04_treinar_d1b.yaml"
 )
 
 OUT_BASE="$BASE_DIR/treinos"
@@ -76,6 +76,33 @@ for CONFIG in "${CONFIGS[@]}"; do
   else
     echo "=> Arquivo $LOSS_FILE não encontrado. Iniciando treinamento..."
     python $SRC_DIR/treinar_unsloth.py --treinar "$BASE_DIR/$CONFIG"
+  fi
+done
+
+# =============================================
+# Extração dos protocolos d1a e d1b (teste)
+# Cada config já possui tentativas: 20, então
+# basta uma única chamada por protocolo.
+# =============================================
+
+EXTRACT_CONFIGS=(
+  "05_extracao_d1a_teste.yaml"
+  "05_extracao_d1b_teste.yaml"
+)
+
+for EXTRACT_CONFIG in "${EXTRACT_CONFIGS[@]}"; do
+  # extrai o sufixo: "d1a" ou "d1b"
+  SUFFIX=$(echo "$EXTRACT_CONFIG" | sed 's/05_extracao_//' | sed 's/_teste\.yaml//')
+  ARQUIVO_SAIDA="$BASE_DIR/saidas/saida_pubmed_1_5b(${SUFFIX})_teste.parquet"
+
+  echo "========================================="
+  echo "Processando extração: $EXTRACT_CONFIG"
+
+  if [ -f "$ARQUIVO_SAIDA" ]; then
+    echo "=> Já extraído. Arquivo $ARQUIVO_SAIDA encontrado. Pulando."
+  else
+    echo "=> Arquivo $ARQUIVO_SAIDA não encontrado. Iniciando extração..."
+    python $SRC_DIR/util_vllm_batch.py --config "$BASE_DIR/$EXTRACT_CONFIG"
   fi
 done
 
