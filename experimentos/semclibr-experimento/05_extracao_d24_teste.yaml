@@ -1,0 +1,59 @@
+# ==========================================================================
+# Configuração para extração com vLLM do modelo treinado (Test Cases)
+# Protocolo D24: CL granular fundido — LoRA 4 bits com gating 10% (variante fundida do D12)
+# Executar com: python ../../src/util_vllm_batch.py --config 05_extracao_d24_teste.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+# --- Modelo ---
+# Protocolo D24 é fusão LoRA 4 bits com gating → base + adaptador LoRA
+modelo:
+  caminho: "Qwen2.5-7B-Instruct"
+  lora: "Qwen2.5-7B-Instruct(d24)"
+
+# --- Configuração do vLLM ---
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 12288
+  tensor_parallel_size: 1
+  dtype: "auto"
+  quantization: bitsandbytes
+  load_format: bitsandbytes
+
+# --- Parâmetros de Geração ---
+geracao:
+  max_tokens: 8192
+  temperature: 0.01
+  top_k: 2
+  top_p: 0.9
+  batch_size: 5
+  tentativas: 20      # tentativas de extração (em caso de erro, tenta novamente apenas para os que tiveram falha)
+  pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
+
+# --- Entrada ---
+entrada:
+  arquivo: "dados/semclinbr.parquet"
+  campo_chave: "id"
+  campo_texto: "texto"
+  prompt_template: "dados/prompt_semclinbr.txt"
+  variavel_texto: "<<--TEXTO-->>"
+  system_prompt: "You are an expert clinical annotator."
+  filtro:
+    dataset_filtro: {"split": "teste"}
+
+# --- Saída ---
+saida:
+  arquivo: "saidas/saida_semclinbr_7b(d24)_teste.parquet"
+  tipo_saida: "json"

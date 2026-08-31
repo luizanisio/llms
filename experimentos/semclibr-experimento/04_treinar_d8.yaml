@@ -1,0 +1,146 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d8.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d8.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 7B (Protocolo D8)
+# ==========================================================================
+# Papel:   Ablação (CL sem escalonamento)
+# Modo:    CL acumulado, LoRA-only (sem escalonamento de capacidade)
+# Etapas:  LoRA-fácil → LoRA-(fácil+médio) → LoRA-tudo
+# Objetivo: Isolar o efeito do curriculum learning acumulado sem escalonamento
+#           de capacidade. Cada etapa inclui os dados das anteriores (replay).
+#           Todas as etapas usam LoRA puro.
+# Pergunta: Q2 (CL melhora o FT? — ablação para isolar CL do escalonamento)
+# Comparar: d8 vs b (CL acumulado ajuda?), d8 vs d7 (etapas vs acumulado)
+#           d8 vs d3/d4 (escalonamento adiciona ao CL acumulado?)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
+  saida:
+    dataframe: saidas/saida_semclinbr_gold.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  #| Entrada: Especifica os dados que o modelo vai receber como prompt
+  entrada:
+    dataframe: dados/semclinbr.parquet
+    dataframe_col: texto
+    dataframe_id: id
+    prompt_template: dados/prompt_semclinbr.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  #| CL acumulado LoRA-only: fácil → fácil+médio → tudo (dados acumulados)
+  divisao:
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "fácil"
+    tipo: "lora"
+    pace_epochs: 2
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "médio-ac"
+    tipo: "lora"
+    pace_epochs: 2
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo"
+    tipo: "lora"
+    pace_epochs: 2
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d8)
+  ollama: Qwen2.5-7B-Instruct(d8):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  eval_steps: 20%
+
+  #| ATENÇÃO: `efetivo` MANDA. _aplicar_batch_size_auto (src/treinar_unsloth_util.py)
+  #| recalcula grad_batch_size = efetivo / (batch_size x n_gpus) e SOBRESCREVE o valor
+  #| escrito abaixo. Com efetivo=16 e batch_size=1 em 1 GPU, o acúmulo real é 16.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 16
+
+  num_train_epochs: 4
+  max_seq_length: 12288
+  validar_max_seq_length: true
+  #| Remove os exemplos que ultrapassam o limite (esperado: nenhum, o corpus cabe em 12288)
+  filtrar_max_seq_length: true
+
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 4
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 16 é um bom balanço entre capacidade e memória.
+  r: 16
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 32
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

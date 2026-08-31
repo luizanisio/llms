@@ -1,0 +1,96 @@
+#!/bin/bash
+# =============================================================================
+# PARÂMETROS DO JOB (linhas #SBATCH são lidas pelo Slurm; demais são comentários)
+# =============================================================================
+
+# Nome do job — aparece no squeue e no nome dos arquivos de log (%x)
+#SBATCH --job-name=semclinbr-treinar-bd12
+
+# Partição de execução:
+#SBATCH --partition=gpu
+
+# Recurso de GPU:
+#SBATCH --gres=gpu:1
+
+# CPUs disponíveis para o processo Python (data loading, tokenização, I/O)
+#SBATCH --cpus-per-task=16
+
+# RAM do sistema (CPU)
+#SBATCH --mem=64G
+
+# Tempo máximo de execução (HH:MM:SS)
+#SBATCH --time=120:00:00
+
+# Arquivo de saída padrão: <job-name>_<job-id>.out
+#SBATCH --output=jobs_logs/%x_%j.out
+
+# Arquivo de saída de erros: <job-name>_<job-id>.err
+#SBATCH --error=jobs_logs/%x_%j.err
+
+# Notificações por e-mail: END = ao terminar, FAIL = se falhar
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=luizanisio@gmail.com
+
+# =============================================================================
+
+# pasta do próprio script (funciona independente de onde o sbatch for chamado)
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+cd "$SCRIPT_DIR"
+
+# Constante de diretório base para facilitar portabilidade
+BASE_DIR="/students/luiz.abatitucci/llms/experimentos/semclibr-experimento"
+SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
+
+source /opt/conda/etc/profile.d/conda.sh
+conda activate luizbat01
+
+# echo "Configurando variáveis de ambiente..."
+# export CUDA_HOME=$CONDA_PREFIX
+# export PATH=$CUDA_HOME/bin:$PATH
+
+echo "=== Iniciando job: $(date) ==="
+echo "Host     : $(hostname)"
+echo "Pasta    : $SCRIPT_DIR"
+echo "Python   : $(which python)"
+echo "GPU info :"
+nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
+echo "==============================="
+
+CONFIGS=(
+  "04_treinar_b.yaml"
+  "04_treinar_c.yaml"
+  "04_treinar_d1.yaml"
+  "04_treinar_d1a.yaml"
+  "04_treinar_d1b.yaml"
+  "04_treinar_d2.yaml"
+  "04_treinar_d3.yaml"
+  "04_treinar_d4.yaml"
+  "04_treinar_d5.yaml"
+  "04_treinar_d6.yaml"
+  "04_treinar_d7.yaml"
+  "04_treinar_d8.yaml"
+  "04_treinar_d9.yaml"
+  "04_treinar_d10.yaml"
+  "04_treinar_d11.yaml"
+  "04_treinar_d12.yaml"
+)
+
+OUT_BASE="$BASE_DIR/treinos"
+
+for CONFIG in "${CONFIGS[@]}"; do
+  SUFFIX=$(echo "$CONFIG" | sed 's/04_treinar_//' | sed 's/\.yaml//')
+  MODEL_DIR="${OUT_BASE}/Qwen2.5-7B-Instruct(${SUFFIX})"
+  LOSS_FILE="${MODEL_DIR}/treinamento/treinamento_loss.png"
+  
+  echo "========================================="
+  echo "Processando configuração: $CONFIG"
+  
+  if [ -f "$LOSS_FILE" ]; then
+    echo "=> Já treinado. Arquivo $LOSS_FILE encontrado. Pulando."
+  else
+    echo "=> Arquivo $LOSS_FILE não encontrado. Iniciando treinamento..."
+    python $SRC_DIR/treinar_unsloth.py --treinar "$BASE_DIR/$CONFIG"
+  fi
+done
+
+echo "=== Job finalizado: $(date) ==="

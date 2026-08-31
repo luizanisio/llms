@@ -1,0 +1,160 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d20.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d20.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 7B (Protocolo D20)
+# ==========================================================================
+# Papel:   Controle (PT-unfreezing puro, sem CL)
+# Modo:    Full FT 16 bits com unfreeze progressivo, DADOS COMPLETOS em todas
+#          as etapas (sem progressão de dificuldade)
+# Etapas:  completo(75% congelado) → completo(50%) → completo(25%) → completo(0%)
+# Objetivo: Isolar o efeito do descongelamento progressivo. D20 vs C mede o
+#           unfreezing puro; D19 vs D20 mede o CL DADO o unfreezing. Se
+#           D19 > D20 > C, há evidência de sinergia CL+PT (tese central);
+#           se D19 ≈ D20 > C, o ganho é do unfreezing e o CL é passageiro.
+# Orçamento: 4 × 1 época × N = 4N instâncias (igual a C/D16/D19).
+# Comparar: d20 vs c (unfreezing), d20 vs d19 (CL dado unfreezing)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte a 'unfreeze_layers_from' (PLANO_UNFREEZE_D16_D20.md)
+#
+# NOTAS:
+# - O corte é declarado em PERCENTUAL de blocos congelados (portável entre
+#   modelos); o comentário ao lado de cada etapa registra o índice absoluto
+#   resolvido. Qwen 2.5 7B tem 28 blocos (0-27) → 75/50/25/0% = 21/14/7/0.
+# - Embeddings e lm_head congelados até a última etapa (0%), como âncora do
+#   conhecimento pré-treinado.
+# - 1 época por etapa (vs 2 no D19) porque aqui cada etapa usa o conjunto
+#   COMPLETO — mantém o orçamento total de 4N instâncias comparável.
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_semclinbr_gold.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/semclinbr.parquet
+    dataframe_col: texto
+    dataframe_id: id
+    prompt_template: dados/prompt_semclinbr.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| Mesmo cronograma de descongelamento do D19, sem filtro de dificuldade:
+  #| todas as etapas veem o conjunto completo.
+  divisao:
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf75pct"
+    tipo: "full"
+    unfreeze_layers_from: 75%  # 75% congelado = bloco 21 (28 blocos): treina 21-27 (25% finais)
+    pace_epochs: 1
+    learning_rate: 5e-06
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf50pct"
+    tipo: "full"
+    unfreeze_layers_from: 50%  # 50% congelado = bloco 14 (28 blocos): treina 14-27 (50% finais)
+    pace_epochs: 1
+    learning_rate: 5e-06
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf25pct"
+    tipo: "full"
+    unfreeze_layers_from: 25%  # 25% congelado = bloco 7 (28 blocos): treina 7-27 (75% finais)
+    pace_epochs: 1
+    learning_rate: 5e-06
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf0pct"
+    tipo: "full"
+    unfreeze_layers_from: 0%   # 0% congelado = bloco 0 (28 blocos): tudo treinável, inclui embeddings/lm_head
+    pace_epochs: 1
+    learning_rate: 3e-06       # LR menor na fase de capacidade plena (paridade com D19)
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d20)
+  ollama: Qwen2.5-7B-Instruct(d20):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true        # Todas as etapas são full: fallback SDPA seguro (H100)
+
+  eval_steps: 20%
+
+  #| ATENÇÃO: `efetivo` MANDA. _aplicar_batch_size_auto (src/treinar_unsloth_util.py)
+  #| recalcula grad_batch_size = efetivo / (batch_size x n_gpus) e SOBRESCREVE o valor
+  #| escrito abaixo. Com efetivo=16 e batch_size=1 em 1 GPU, o acúmulo real é 16.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 16
+
+  num_train_epochs: 4
+  max_seq_length: 12288
+  validar_max_seq_length: true
+  #| Remove os exemplos que ultrapassam o limite (esperado: nenhum, o corpus cabe em 12288)
+  filtrar_max_seq_length: true
+
+  learning_rate: 5e-06       # Padrão Full FT (etapas sobrescrevem quando necessário)
+  max_grad_norm: 0.3         # Paridade com D19 (estabilidade Full FT em sequências longas)
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # Rampa após cada reset de otimizador (padrão ReLoRA)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # Full FT: sempre 16 bits (sem quantização em nenhuma etapa)
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA — NÃO UTILIZADO (todas as etapas são full)
+#| =========================================================================
+#| r: 0 garante tipo_padrao = "full" caso alguma etapa omita 'tipo'.
+lora:
+  r: 0
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

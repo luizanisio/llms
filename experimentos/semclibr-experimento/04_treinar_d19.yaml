@@ -1,0 +1,175 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d19.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d19.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 7B (Protocolo D19)
+# ==========================================================================
+# Papel:   Experimental (CL + PT via descongelamento progressivo — tese central)
+# Modo:    Full FT 16 bits com unfreeze progressivo alinhado ao currículo
+# Etapas:  fácil(75% congelado) → médio(50%) → difícil(25%) → completo(0%)
+# Objetivo: Segunda instanciação do eixo PT do framework: a capacidade cresce
+#           DENTRO da mesma parametrização (sem merge LoRA, sem requantização,
+#           sem troca de espaço de busca). Transições function-preserving:
+#           na fronteira, nenhum peso muda — apenas mais blocos passam a ser
+#           treináveis. Blocos inferiores congelados atuam como âncora do
+#           conhecimento pré-treinado (análogo à regularização implícita do LoRA).
+#           Dados e capacidade progridem JUNTOS: pouca capacidade para conteúdo
+#           simples, capacidade plena para o conjunto completo.
+# Orçamento: (fácil+médio+difícil = N) × 2 + completo N × 2 = 4N instâncias.
+# Perguntas: sinergia CL+PT. d19 vs d20 (CL dado unfreezing),
+#            d19 vs d13 (valor do PT somado ao CL), d19 vs b (headroom).
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte a 'unfreeze_layers_from' (PLANO_UNFREEZE_D16_D20.md)
+#
+# NOTAS:
+# - O corte é declarado em PERCENTUAL de blocos congelados (portável entre
+#   modelos); o comentário ao lado de cada etapa registra o índice absoluto
+#   resolvido. Qwen 2.5 7B tem 28 blocos (0-27) → 75/50/25/0% = 21/14/7/0.
+#   O mesmo YAML vale para o 7B do summa-experimento (também 28 blocos).
+# - Embeddings e lm_head ficam congelados até a etapa 'completo' (0%), atuando
+#   como âncora do conhecimento pré-treinado. No 7B são um tensor único
+#   (tied); no 7B são separados (untied) — o código congela ambos igualmente.
+# - Etapa 'completo' com unfreeze_layers_from: 0% == full tradicional.
+# - Validar os primeiros ~50 steps da etapa 1 (loss descendo, sem warning de
+#   gradiente nulo) antes de submeter a fila completa no Slurm.
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_semclinbr_gold.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/semclinbr.parquet
+    dataframe_col: texto
+    dataframe_id: id
+    prompt_template: dados/prompt_semclinbr.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| CL (fácil→médio→difícil→completo) alinhado ao unfreeze (21→14→7→0).
+  #| Todas as etapas são "full" (16 bits): nenhuma transição de precisão
+  #| ou de técnica em nenhum ponto do pipeline.
+  divisao:
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-uf75pct"
+    tipo: "full"
+    unfreeze_layers_from: 75%  # 75% congelado = bloco 21 (28 blocos): treina 21-27 (25% finais)
+    pace_epochs: 2
+    learning_rate: 5e-06
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-uf50pct"
+    tipo: "full"
+    unfreeze_layers_from: 50%  # 50% congelado = bloco 14 (28 blocos): treina 14-27 (50% finais)
+    pace_epochs: 2
+    learning_rate: 5e-06
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-uf25pct"
+    tipo: "full"
+    unfreeze_layers_from: 25%  # 25% congelado = bloco 7 (28 blocos): treina 7-27 (75% finais)
+    pace_epochs: 2
+    learning_rate: 5e-06
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf0pct"
+    tipo: "full"
+    unfreeze_layers_from: 0%   # 0% congelado = bloco 0 (28 blocos): tudo treinável, inclui embeddings/lm_head
+    pace_epochs: 2
+    learning_rate: 3e-06       # LR menor na fase de capacidade plena (mais parâmetros
+                               # recém-liberados com momentos Adam zerados)
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d19)
+  ollama: Qwen2.5-7B-Instruct(d19):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true        # Todas as etapas são full: fallback SDPA seguro (H100)
+
+  eval_steps: 20%
+
+  #| ATENÇÃO: `efetivo` MANDA. _aplicar_batch_size_auto (src/treinar_unsloth_util.py)
+  #| recalcula grad_batch_size = efetivo / (batch_size x n_gpus) e SOBRESCREVE o valor
+  #| escrito abaixo. Com efetivo=16 e batch_size=1 em 1 GPU, o acúmulo real é 16.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 16
+
+  num_train_epochs: 4
+  max_seq_length: 12288
+  validar_max_seq_length: true
+  #| Remove os exemplos que ultrapassam o limite (esperado: nenhum, o corpus cabe em 12288)
+  filtrar_max_seq_length: true
+
+  learning_rate: 5e-06       # Padrão Full FT (etapas sobrescrevem quando necessário)
+  #| max_grad_norm apertado: requisito diagnosticado para estabilizar Full FT
+  #| com sequências longas (evita explosão de gradiente nos primeiros steps
+  #| de cada etapa, quando blocos recém-descongelados têm momentos zerados).
+  max_grad_norm: 0.3
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # Rampa após cada reset de otimizador (padrão ReLoRA)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  nbits: 16                  # Full FT: sempre 16 bits (sem quantização em nenhuma etapa)
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA — NÃO UTILIZADO (todas as etapas são full)
+#| =========================================================================
+#| r: 0 garante tipo_padrao = "full" caso alguma etapa omita 'tipo'.
+lora:
+  r: 0
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

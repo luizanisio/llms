@@ -1,0 +1,162 @@
+# ==========================================================================
+# Comparação: gabarito humano × Qwen2.5-7B zero-shot, corpus COMPLETO
+# ==========================================================================
+# Propósito: calibrar a DIFICULDADE de cada documento. A distância entre o
+#   gabarito e o que o modelo base produz sem treino é o proxy S_i que ordena
+#   o currículo dos protocolos D*. Roda sobre os 1.000 documentos — inclusive
+#   os de treino — porque é o treino que precisa da ordenação.
+#
+# Produz: dados/divisao_Gold_Qwen7B.csv com as colunas `dificuldade`,
+#   `dificuldade_int` e `alvo`, consumido por todos os 04_treinar_*.yaml.
+#
+# Executar com: python ../../src/comparar_extracoes.py --config 03_compara_gold_full.yaml
+# Zipar e apagar a pasta: zip -r "analises_comparacao_semclinbr (full).zip" "analises_comparacao_semclinbr (full)"
+#                         rm -rf "analises_comparacao_semclinbr (full)"
+# ==========================================================================
+
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_semclinbr (full)"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_semclinbr"
+  regerar_planilha_base: true # Se false, não regera a planilha se ela já existir
+  linguagem_graficos: "en" # pt ou en para as legendas dos gráficos
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false # Defina como true para pular métricas pesadas (BERTScore)
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+  # =========================================================================
+  # CONFIGURAÇÃO DE DIVISÃO
+  # =========================================================================
+  # `arquivo_referencia` é o split já sorteado por CorpusSemClinBr.definir_splits()
+  # (hash estável de (seed, id), estratificado por quartil de nº de entidades).
+  # O script calcula a dificuldade e faz merge com este arquivo, preservando a
+  # divisão original — sem isso a dificuldade reembaralharia treino/teste e
+  # abriria data leakage.
+  # =========================================================================
+  divisao:
+    arquivo_referencia: "dados/divisao_semclinbr.csv"
+
+# Modelo Base (Gabarito humano do corpus SemClinBr)
+modelo_base:
+  arquivo: "saidas/saida_semclinbr_gold.parquet"
+  rotulo: "Gold"
+  familia: "SemClinBR-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  - arquivo: "saidas/saida_semclinbr_7b.parquet"
+    rotulo: "Qwen7B"
+    familia: "Qwen-7B"
+  - arquivo: "saidas/saida_semclinbr_1_5b.parquet"
+    rotulo: "Qwen1.5B"
+    familia: "Qwen-1.5B"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  # Configuração do campo ID
+  nome_campo_id: "id"  # Nome interno do campo de ID (usado em DataFrames, gráficos, etc)
+  rotulo_campo_id: "ID"  # Rótulo de exibição do campo ID (usado em relatórios)
+
+  # Configuração dos campos do parquet (quando a entrada for .parquet)
+  # Mapeia os nomes das colunas do arquivo parquet para os dados esperados pelo pipeline.
+  # Campos obrigatórios: id, resposta. Campos opcionais: resumo_tokens, avaliacao, erro.
+  campos_parquet:
+    id: "chave"             # coluna com o ID do documento
+    resposta: "resposta"    # coluna com o JSON da extração (será salvo como {id}.json)
+    resumo_tokens: "resumo" # coluna com o JSON de tokens (será salvo como {id}.tokens.json)
+    avaliacao: ""           # coluna com avaliação LLM (se disponível, salvo como {id}.avaliacao.json)
+    erro: "erro"            # coluna com mensagem de erro (se disponível)
+
+  # Sem `filtro`: este passo roda sobre o corpus inteiro.
+
+  # (Opcional) Sobrescrita de modelos HF para BERTScore
+  modelos:
+    # Alternativa para pt-br clínico. Trocar exige rodar 03 E 06 com o mesmo
+    # modelo, senão a dificuldade e a avaliação final ficam em escalas distintas.
+    #bertscore: "pucpr/biobertpt-all"
+    bertscore_batch_size: 1024
+
+  # Máscaras de arquivos (Regex ou Sufixo)
+  # Se começar com '^', é tratado como Regex.
+  # Se não, é tratado como sufixo e o script adiciona '^(.+)' antes e escape no sufixo.
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Entidades"
+      - "Relacoes"
+    metricas:
+      - bertscore
+      - rouge_l
+      - rouge_2
+
+  # ========================================================================
+  # Mapeamento de campos para métricas
+  # ------------------------------------------------------------------------
+  # Esquema da resposta: {"entities": [{id, text, tag, abbr}],
+  #                       "relations": [{annotation1, annotation2, reltype}]}
+  #
+  # `entities.id`, `relations.annotation1` e `relations.annotation2` ficam de
+  # FORA de propósito: são inteiros sequenciais e, depois do alinhamento húngaro
+  # que util_json aplica às listas, não correspondem entre gabarito e predição.
+  # Compará-los mediria o ruído da ordenação, não a qualidade da extração.
+  # ========================================================================
+  campos:
+    bertscore:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_1:
+
+    rouge_2:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_l:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+campos_virtuais:
+  Entidades:
+    - entities.text
+    - entities.tag
+    - entities.abbr
+  Relacoes:
+    - relations.reltype

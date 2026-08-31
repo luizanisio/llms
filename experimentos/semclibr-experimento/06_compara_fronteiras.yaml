@@ -1,0 +1,242 @@
+# ==========================================================================
+# Comparação: Custo de Fronteira e de Transição de Regime (Q6)
+# ==========================================================================
+# Propósito: Responder Q6 — há perda de eficiência ao transitar entre etapas
+#   LoRA/Full e durante a progressão de dificuldade?
+#   A pergunta tem duas metades, e este relatório cobre as duas:
+#
+#   (a) TRANSIÇÃO DE REGIME (LoRA ↔ Full): o merge/requantização entre etapas
+#       custa qualidade?
+#         d5 vs c, d5 vs b → FF→LoRA contra os diretos (sem CL, sem confundir com dados)
+#         d6 vs c, d6 vs b → LoRA→FF contra os diretos
+#         d25 vs d24       → mesma topologia fundida, full 16b vs LoRA 4b
+#
+#   (b) FRONTEIRA DE ETAPA (reset do otimizador Adam + reinício do cosine),
+#       mesmo sem mudar regime nem dados:
+#         d16 vs b16  → FRONTEIRA PURA: b16 é a execução única em LoRA 16b r=16,
+#                       exatamente a configuração do d16 sem as 3 fronteiras.
+#                       Este é o par correto (d16 vs b carregaria também a
+#                       quantização, pois b roda NF4 — ver 06_compara_controle_b).
+#         d17 vs d16  → ordenação curricular com fronteiras controladas
+#         d18 vs d16  → efeito de bloco sem ordenação
+#         d21 vs d17  → MEDIDA MAIS LIMPA: mesma progressão de dados, mesma
+#                       precisão, mesmo orçamento — fronteiras VIRTUAIS (fusão)
+#                       vs REAIS (segmentado). Diferença = custo de fronteira.
+#         d24 vs d12  → mesma leitura na granularidade 10 (CL acumulado unitário)
+#         d24 vs d21  → granularidade 10 vs 4 DENTRO do modo fundido
+#
+#   Leitura esperada: se d21 > d17 e d24 > d12, parte do "custo do CL" medido
+#   nos protocolos segmentados era custo de fronteira, não da ordenação.
+#
+# Modelos: A, b, b16, c, d5, d6, d12, d16, d17, d18, d21, d24, d25
+# NOTA: as curvas de treino (pasta_treinamento → training_metrics.jsonl) são a
+#       evidência primária desta pergunta — observar o spike de loss em cada
+#       fronteira dos segmentados e sua ausência nos fundidos (d21-d25).
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_fronteiras.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_semclinbr_fronteiras"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_semclinbr(fronteiras)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_semclinbr_gold.parquet"
+  rotulo: "Gold"
+  familia: "SemClinBR-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- A: zero-shot (sem ajuste fino) ---
+  - arquivo: "saidas/saida_semclinbr_7b.parquet"
+    rotulo: "Qwen7B"
+    alias: "A"
+    familia: "Qwen-7B"
+    baseline: true
+  # --- B: LoRA 4b r=16 direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    alias: "B"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- B16: Controle do B — LoRA 16b r=16 direto (isola a quantização NF4) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b16)_teste.parquet"
+    rotulo: "Qwen7B(b16)"
+    alias: "B16"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b16)"
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(c)_teste.parquet"
+    rotulo: "Qwen7B(c)"
+    alias: "C"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
+  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d5)_teste.parquet"
+    rotulo: "Qwen7B(d5)"
+    alias: "D5"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
+  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d6)_teste.parquet"
+    rotulo: "Qwen7B(d6)"
+    alias: "D6"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
+  # --- D12: CL acumulado granular (10 etapas) + LoRA→FF ---
+  - arquivo: "saidas/saida_semclinbr_7b(d12)_teste.parquet"
+    rotulo: "Qwen7B(d12)"
+    alias: "D12"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d12)"
+  # --- D16: Sem CL, 4 execuções com dados completos, LoRA 16b (fronteira pura) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d16)_teste.parquet"
+    rotulo: "Qwen7B(d16)"
+    alias: "D16"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d16)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d17)_teste.parquet"
+    rotulo: "Qwen7B(d17)"
+    alias: "D17"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d17)"
+  # --- D18: Blocos aleatórios (terços), LoRA 16b (controle de efeito de bloco) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d18)_teste.parquet"
+    rotulo: "Qwen7B(d18)"
+    alias: "D18"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d18)"
+  # --- D21: FUSÃO: CL por etapas, LoRA 16b, fronteiras virtuais (espelho do D17) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d21)_teste.parquet"
+    rotulo: "Qwen7B(d21)"
+    alias: "D21"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d21)"
+  # --- D24: FUSÃO: CL granular (10 spans) + gating 10%, LoRA 4b (espelho do D12) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d24)_teste.parquet"
+    rotulo: "Qwen7B(d24)"
+    alias: "D24"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d24)"
+  # --- D25: FUSÃO: CL granular (10 spans) + gating 10%, Full FT 16b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d25)_teste.parquet"
+    rotulo: "Qwen7B(d25)"
+    alias: "D25"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d25)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/semclinbr.parquet"
+    campo_id: "id"
+    dataset_filtro: {"split": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  # (Opcional) Sobrescrita de modelos HF para BERTScore
+  modelos:
+    # Alternativa para pt-br clínico. Trocar exige rodar 03 E 06 com o mesmo
+    # modelo, senão a dificuldade e a avaliação final ficam em escalas distintas.
+    #bertscore: "pucpr/biobertpt-all"
+    bertscore_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Entidades"
+      - "Relacoes"
+    metricas:
+      - bertscore
+      - rouge_l
+      - rouge_2
+
+  # ========================================================================
+  # Mapeamento de campos para métricas
+  # ------------------------------------------------------------------------
+  # Esquema da resposta: {"entities": [{id, text, tag, abbr}],
+  #                       "relations": [{annotation1, annotation2, reltype}]}
+  #
+  # `entities.id`, `relations.annotation1` e `relations.annotation2` ficam de
+  # FORA de propósito: são inteiros sequenciais e, depois do alinhamento húngaro
+  # que util_json aplica às listas, não correspondem entre gabarito e predição.
+  # Compará-los mediria o ruído da ordenação, não a qualidade da extração.
+  # Idêntico ao bloco de 03_compara_gold_full.yaml — a dificuldade que ordena o
+  # currículo e a avaliação final precisam sair da mesma régua.
+  # ========================================================================
+  campos:
+    bertscore:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_1:
+
+    rouge_2:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_l:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+campos_virtuais:
+  Entidades:
+    - entities.text
+    - entities.tag
+    - entities.abbr
+  Relacoes:
+    - relations.reltype

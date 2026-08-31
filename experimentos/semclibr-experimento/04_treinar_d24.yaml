@@ -1,0 +1,241 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d24.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d24.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 7B (Protocolo D24)
+# ==========================================================================
+# Papel:   Experimental (variante FUNDIDA do D12 — isola o custo de fronteira)
+# Modo:    FUSÃO: LoRA 4 bits, CL acumulado granular por spans + PT por gating
+#          de LR em passos de 10%, em um ÚNICO trainer.train()
+# Spans:   ≤1(uf 90%) → ≤2(uf 80%) → ... → ≤9(uf 10%) → tudo(uf 0%)
+# Objetivo: Replicar a progressão de dados do D12 (incremento unitário de
+#           dificuldade_int com acúmulo) eliminando TODAS as fronteiras reais:
+#           sem reset de otimizador, sem reload de modelo, sem reinício de
+#           scheduler. As 10 etapas do D12 viram 10 spans concatenados.
+#           A progressão de capacidade avança em passos de 10% (vs 0% no D12
+#           segmentado, que usava LoRA plano + FF final) — cada span libera
+#           mais um grupo de adapters, alinhando dados mais difíceis a mais
+#           capacidade treinável.
+#           Se d24 > d12: as fronteiras de estágios prejudicavam o D12.
+#           Se d24 ≈ d12: o custo de fronteira é marginal na granularidade 10.
+#           Se d24 < d12: o gating granular introduz overhead que supera o
+#           benefício da continuidade (improvável, mas diagnosticável).
+# Perguntas: Q6 (custo de fronteira em CL granular), Q5+Q7 (granularidade +
+#            fusão), sinergia CL+PT no regime LoRA 4 bits.
+# Comparar: d24 vs d12 (Q6: fronteira segmentada vs fundida, isomorfismo
+#           de dados), d24 vs d22 (granularidade 10 vs 4, LoRA 4b vs 16b),
+#           d24 vs b (headroom do CL+PT granular fundido vs direto)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte ao modo FUSÃO + gating de LR por grupos
+#
+# DIFERENÇAS CHAVE EM RELAÇÃO AO D12 (SEGMENTADO):
+# 1. Otimizador NUNCA reinicia — trajetória de otimização contínua.
+# 2. Scheduler: um ÚNICO cosine do pico a ~0, sem os 10 ciclos do D12.
+# 3. Capacidade: gating de 10 grupos (90%→80%→...→0%) vs LoRA plano +
+#    transição abrupta para FF. No D24, adapters de camadas profundas
+#    acumulam momentos Adam enquanto dormem (pré-condicionador aquecido).
+# 4. Bits: 4 bits em todo o run (LoRA puro), sem a transição 4b→16b do
+#    estágio FF final do D12.
+# 5. Sem etapa Full: o D12 terminava com um estágio full 16 bits
+#    (completo-FF). O D24 mantém LoRA 4 bits até o fim, com todos os
+#    adapters ativos no span final. Isso isola melhor a variável
+#    "fronteira" (sem confundir com a mudança de regime 4b→16b).
+#
+# PROGRESSÃO DE CAPACIDADE — 10 GRUPOS (Qwen 2.5 7B: 28 blocos, 0-27):
+#   Span   Dados   unfreeze   Grupo    Blocos liberados    Acumulado
+#   f1     ≤1      90%        G1       25-27 + cabeça      3 blocos
+#   f2     ≤2      80%        G2       22-24               6 blocos
+#   f3     ≤3      70%        G3       19-21               9 blocos
+#   f4     ≤4      60%        G4       16-18               12 blocos
+#   f5     ≤5      50%        G5       13-15               15 blocos
+#   f6     ≤6      40%        G6       10-12               18 blocos
+#   f7     ≤7      30%        G7       7-9                 21 blocos
+#   f8     ≤8      20%        G8       4-6                 24 blocos
+#   f9     ≤9      10%        G9       1-3                 27 blocos
+#   all    tudo    0%         G10      0 + embeddings      28 blocos
+#
+# ORÇAMENTO DE DADOS: equivale ao D12. Cada span usa pace_epochs: 2
+# (paridade com as 2 pace_epochs por etapa do D12 segmentado), e o
+# num_train_epochs é ignorado no modo fundido (1 época real sobre o stream).
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_semclinbr_gold.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/semclinbr.parquet
+    dataframe_col: texto
+    dataframe_id: id
+    prompt_template: dados/prompt_semclinbr.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| FUSÃO: parâmetros globais do run único
+  #| Regime LoRA 4 bits com gating granular — 10 grupos de adapters.
+  #| O cosine global decai de 2e-05 a ~0; cada grupo rampa até o valor
+  #| já decaído do cosine ao acordar (discriminative LR emergente).
+  fusao:
+    ativo: true
+    tipo: "lora"              # gating sobre adapters LoRA (base congelada, 4 bits)
+    learning_rate: 2e-05      # pico único do cosine global (paridade com D12)
+    warmup_grupo_steps: 100   # rampa de cada grupo ao acordar (0 → cosine atual)
+    seed_shuffle: 3407
+
+  #| CL acumulado granular com gating de capacidade em passos de 10%.
+  #| Mesma progressão de dados do D12 (dificuldade_int ≤1, ≤2, ..., ≤9, tudo),
+  #| mas cada span libera 10% a mais dos adapters LoRA via gating.
+  #| pace_epochs: 2 preserva o orçamento de instâncias do D12 segmentado.
+  divisao:
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=1"}
+    alias: "f1-uf90"
+    pace_epochs: 2
+    unfreeze_layers_from: 90%   # G1 ativo do step 0: adapters dos blocos 25-27 + cabeça/norm
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=2"}
+    alias: "f2-uf80"
+    pace_epochs: 2
+    unfreeze_layers_from: 80%   # G2 acorda aqui: adapters dos blocos 22-24
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=3"}
+    alias: "f3-uf70"
+    pace_epochs: 2
+    unfreeze_layers_from: 70%   # G3 acorda aqui: adapters dos blocos 19-21
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=4"}
+    alias: "f4-uf60"
+    pace_epochs: 2
+    unfreeze_layers_from: 60%   # G4 acorda aqui: adapters dos blocos 16-18
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=5"}
+    alias: "f5-uf50"
+    pace_epochs: 2
+    unfreeze_layers_from: 50%   # G5 acorda aqui: adapters dos blocos 13-15
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=6"}
+    alias: "f6-uf40"
+    pace_epochs: 2
+    unfreeze_layers_from: 40%   # G6 acorda aqui: adapters dos blocos 10-12
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=7"}
+    alias: "f7-uf30"
+    pace_epochs: 2
+    unfreeze_layers_from: 30%   # G7 acorda aqui: adapters dos blocos 7-9
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=8"}
+    alias: "f8-uf20"
+    pace_epochs: 2
+    unfreeze_layers_from: 20%   # G8 acorda aqui: adapters dos blocos 4-6
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade_int": "<=9"}
+    alias: "f9-uf10"
+    pace_epochs: 2
+    unfreeze_layers_from: 10%   # G9 acorda aqui: adapters dos blocos 1-3
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf0"
+    pace_epochs: 2
+    unfreeze_layers_from: 0%    # G10 acorda aqui: adapters do bloco 0 + embeddings
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d24)
+  ollama: Qwen2.5-7B-Instruct(d24):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  #| 5% → alta resolução de avaliação para capturar os 10 marcadores virtuais
+  #| e observar a curva de LR por grupo com detalhe suficiente.
+  eval_steps: 5%
+
+  #| ATENÇÃO: `efetivo` MANDA. _aplicar_batch_size_auto (src/treinar_unsloth_util.py)
+  #| recalcula grad_batch_size = efetivo / (batch_size x n_gpus) e SOBRESCREVE o valor
+  #| escrito abaixo. Com efetivo=16 e batch_size=1 em 1 GPU, o acúmulo real é 16.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 16
+
+  #| IGNORADO no modo fundido (1 época real sobre o stream concatenado;
+  #| as repetições vêm de pace_epochs por span). Mantido em 4 para
+  #| documentar o orçamento equivalente ao D12 segmentado.
+  num_train_epochs: 4
+  max_seq_length: 12288
+  validar_max_seq_length: true
+  #| Remove os exemplos que ultrapassam o limite (esperado: nenhum, o corpus cabe em 12288)
+  filtrar_max_seq_length: true
+
+  #| Sobrescrito por fusao.learning_rate; mantido igual para documentação.
+  learning_rate: 2e-05
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  #| Warmup GLOBAL do run (rampa do G1, sempre ativo). O otimizador
+  #| nunca reinicia — não há warmup por etapa.
+  warmup_steps: 100
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine  # UM ciclo; gates multiplicam o envelope por grupo
+  seed: 3407
+
+  #| LoRA 4 bits: paridade com o D12 segmentado (que usava 4 bits nas
+  #| etapas LoRA). Mantém o custo de VRAM baixo e isola a variável
+  #| "fronteira" sem introduzir a confusão de troca de precisão.
+  nbits: 4
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Mesma configuração do D12: r=16, alpha=32, todas as projeções lineares.
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

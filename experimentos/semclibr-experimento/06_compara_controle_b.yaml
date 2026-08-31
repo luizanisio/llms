@@ -1,0 +1,180 @@
+# ==========================================================================
+# Comparação: Controles do Protocolo B — quantização e posto do LoRA
+# ==========================================================================
+# Propósito: Precificar as duas escolhas de implementação embutidas no
+#   baseline B, que de outra forma contaminam TODA comparação contra ele.
+#   Os três protocolos são idênticos em dados (completos), pace (execução
+#   única), orçamento (4 épocas), LR (2e-4) e regime (LoRA): mudam apenas
+#   a precisão da base e o posto do adaptador.
+#
+#     b       LoRA NF4 (4 bits), r = 16   ← baseline usado nas demais comparações
+#     b16     LoRA 16 bits,      r = 16   ← mesma capacidade, sem quantização
+#     b16r8   LoRA 16 bits,      r =  8   ← mesma precisão, metade do posto
+#     c       FF controle
+#
+#   Comparações-chave:
+#     b vs b16      → quanto do desempenho de B é limitado pelo erro de
+#                     quantização NF4? Fator de correção para todo cruzamento
+#                     entre protocolos 4 bits (b, d1-d15, d24) e 16 bits
+#                     (d16-d23, d25).
+#     b16 vs b16r8  → o posto do adaptador está saturado? Se b16 ≈ b16r8, r=16
+#                     já é folga e o posto não explica diferenças observadas.
+#     b vs b16r8    → efeito conjunto (precisão + posto), diagnóstico apenas.
+#
+# NOTA: b16 é a referência de execução ÚNICA que faltava para ler d16 e d17
+#   sem confundir fronteira/ordenação com precisão — ver 06_compara_fronteiras.
+# Modelos: b, b16, b16r8 (sem zero-shot: o objetivo é o contraste pareado)
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_controle_b.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_semclinbr_controle_b"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_semclinbr(controle_b)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_semclinbr_gold.parquet"
+  rotulo: "Gold"
+  familia: "SemClinBR-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- B: LoRA 4b r=16 direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    alias: "B"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- B16: Controle do B — LoRA 16b r=16 direto (isola a quantização NF4) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b16)_teste.parquet"
+    rotulo: "Qwen7B(b16)"
+    alias: "B16"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b16)"
+  # --- B16R8: Controle do B — LoRA 16b r=8 direto (isola o posto do adaptador) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b16r8)_teste.parquet"
+    rotulo: "Qwen7B(b16r8)"
+    alias: "B16R8"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b16r8)"
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(c)_teste.parquet"
+    rotulo: "Qwen7B(c)"
+    alias: "C"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/semclinbr.parquet"
+    campo_id: "id"
+    dataset_filtro: {"split": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  # (Opcional) Sobrescrita de modelos HF para BERTScore
+  modelos:
+    # Alternativa para pt-br clínico. Trocar exige rodar 03 E 06 com o mesmo
+    # modelo, senão a dificuldade e a avaliação final ficam em escalas distintas.
+    #bertscore: "pucpr/biobertpt-all"
+    bertscore_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Entidades"
+      - "Relacoes"
+    metricas:
+      - bertscore
+      - rouge_l
+      - rouge_2
+
+  # ========================================================================
+  # Mapeamento de campos para métricas
+  # ------------------------------------------------------------------------
+  # Esquema da resposta: {"entities": [{id, text, tag, abbr}],
+  #                       "relations": [{annotation1, annotation2, reltype}]}
+  #
+  # `entities.id`, `relations.annotation1` e `relations.annotation2` ficam de
+  # FORA de propósito: são inteiros sequenciais e, depois do alinhamento húngaro
+  # que util_json aplica às listas, não correspondem entre gabarito e predição.
+  # Compará-los mediria o ruído da ordenação, não a qualidade da extração.
+  # Idêntico ao bloco de 03_compara_gold_full.yaml — a dificuldade que ordena o
+  # currículo e a avaliação final precisam sair da mesma régua.
+  # ========================================================================
+  campos:
+    bertscore:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_1:
+
+    rouge_2:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_l:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+campos_virtuais:
+  Entidades:
+    - entities.text
+    - entities.tag
+    - entities.abbr
+  Relacoes:
+    - relations.reltype

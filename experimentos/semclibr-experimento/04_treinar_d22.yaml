@@ -1,0 +1,174 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_d22.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_d22.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen 2.5 7B (Protocolo D22)
+# ==========================================================================
+# Papel:   Experimental (CL + PT fundidos — aposta principal contra B)
+# Modo:    FUSÃO: LoRA 16 bits, CL por spans + PT por gating de LR por camada,
+#          em um ÚNICO trainer.train()
+# Spans:   fácil(uf 75%) ×2 → médio(uf 50%) ×2 → difícil(uf 25%) ×2 → completo(uf 0%) ×2
+# Objetivo: Materializar CL+PT preservando integralmente os ingredientes de B:
+#           trajetória de otimização contínua, regularização de posto baixo,
+#           otimizador jamais resetado. A capacidade progride via GATING:
+#           todos os adapters LoRA são registrados no otimizador desde o
+#           step 0, em grupos por faixa de camada; cada grupo tem LR=0 até o
+#           início do span que o ativa, sobe em rampa (warmup_grupo_steps)
+#           até o valor ATUAL do cosine e o acompanha. Grupos adormecidos
+#           acumulam momentos Adam (pré-condicionador "aquecido" ao acordar).
+# Orçamento: (fácil+médio+difícil = N) × 2 + completo N × 2 = 4N instâncias.
+# Comparar: d22 vs b (CL+PT fundido supera o direto?), d22 vs d21 (efeito do
+#           gating dado CL fundido), d22 vs d23 (efeito do CL dado gating)
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Requisito: código com suporte ao modo FUSÃO + gating de LR por grupos
+#
+# SEMÂNTICA DO GATING (unfreeze_layers_from no modo fundido):
+# - NÃO congela parâmetros: define o step de ativação do LR de cada grupo.
+# - Grupos derivados do conjunto de cortes distintos declarados (75/50/25/0
+#   → 4 grupos; cabeça+norm no primeiro grupo; ordem fixa: corte mais alto
+#   primeiro — requisito de determinismo para resume).
+# - No regime LoRA, os grupos agrupam os ADAPTERS por índice de camada
+#   (regex .layers.N. já implementado); a base permanece congelada como sempre.
+# - VALIDADOR: no modo fundido, unfreeze_layers_from é permitido com
+#   fusao.tipo "lora" (gating) — a regra "unfreeze só com tipo full" vale
+#   apenas para o modo segmentado (congelamento real).
+# - Monotonicidade obrigatória: cortes não crescentes ao longo dos spans
+#   (75% → 50% → 25% → 0%); re-congelar não é suportado.
+# - LR efetivo do grupo g: LR_base × cosine_global(t) × gate_g(t).
+#   Grupos que acordam tarde rampam até o teto JÁ DECAÍDO do cosine
+#   (discriminative LR emergente — sem LR manual por etapa).
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+  pastas_modelos:
+    - /students/luiz.abatitucci/models
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+curriculum:
+  saida:
+    dataframe: saidas/saida_semclinbr_gold.parquet
+    dataframe_col: resposta
+    dataframe_id: chave
+    formato: json
+    texto_criptografado: false
+
+  entrada:
+    dataframe: dados/semclinbr.parquet
+    dataframe_col: texto
+    dataframe_id: id
+    prompt_template: dados/prompt_semclinbr.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    exigir_ids_pareados: false
+
+  #| FUSÃO: parâmetros globais do run único
+  fusao:
+    ativo: true
+    tipo: "lora"              # gating sobre adapters LoRA (base congelada)
+    learning_rate: 2e-05      # pico único do cosine global
+    warmup_grupo_steps: 100   # rampa de cada grupo ao acordar (0 → cosine atual)
+    seed_shuffle: 3407
+
+  #| Spans com progressão conjunta: dados (dificuldade) + capacidade (gating)
+  #| avançam nas MESMAS fronteiras virtuais — a materialização da hipótese CL+PT.
+  divisao:
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade": "facil"}
+    alias: "fácil-uf75"
+    pace_epochs: 2
+    unfreeze_layers_from: 75%   # G1 ativo do step 0: adapters dos blocos 21-27 + cabeça
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade": "medio"}
+    alias: "médio-uf50"
+    pace_epochs: 2
+    unfreeze_layers_from: 50%   # G2 acorda aqui: adapters dos blocos 14-20
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    dataset_filtro: {"dificuldade": "dificil"}
+    alias: "difícil-uf25"
+    pace_epochs: 2
+    unfreeze_layers_from: 25%   # G3 acorda aqui: adapters dos blocos 7-13
+  - arquivo: dados/divisao_Gold_Qwen7B.csv
+    alias: "completo-uf0"
+    pace_epochs: 2
+    unfreeze_layers_from: 0%    # G4 acorda aqui: adapters dos blocos 0-6
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+modelo:
+  base_model_name: Qwen2.5-7B-Instruct
+  saida: treinos/Qwen2.5-7B-Instruct(d22)
+  ollama: Qwen2.5-7B-Instruct(d22):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+treinamento:
+  flash_attention_2: true
+  liger_kernel: true
+  full_com_sdpa: true
+
+  eval_steps: 5%             # ~20 avaliações: caracteriza os marcadores virtuais
+
+  #| ATENÇÃO: `efetivo` MANDA. _aplicar_batch_size_auto (src/treinar_unsloth_util.py)
+  #| recalcula grad_batch_size = efetivo / (batch_size x n_gpus) e SOBRESCREVE o valor
+  #| escrito abaixo. Com efetivo=16 e batch_size=1 em 1 GPU, o acúmulo real é 16.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 16
+
+  num_train_epochs: 4        # IGNORADO no modo fundido (1 época real concatenada)
+  max_seq_length: 12288
+  validar_max_seq_length: true
+  #| Remove os exemplos que ultrapassam o limite (esperado: nenhum, o corpus cabe em 12288)
+  filtrar_max_seq_length: true
+
+  learning_rate: 2e-05       # sobrescrito por fusao.learning_rate
+  max_grad_norm: 1
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 100          # warmup GLOBAL (= rampa do G1, sempre ativo)
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  lr_scheduler_type: cosine  # UM ciclo; gates multiplicam o envelope por grupo
+  seed: 3407
+
+  nbits: 16
+
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj

@@ -1,0 +1,198 @@
+# ==========================================================================
+# Comparação: Direção do Currículo (Q4)
+# ==========================================================================
+# Propósito: Responder Q4 — a ordem fácil→difícil importa, ou basta fatiar os dados?
+#   Contrasta três ordenações sobre a MESMA partição de dados, em LoRA-only:
+#     crescente (CL) × decrescente (anti-CL) × aleatória (controle de bloco).
+#   Comparações-chave:
+#     d7 vs d9    → efeito da direção no pace por etapas disjuntas (4 bits)
+#     d8 vs d10   → efeito da direção no pace acumulado (4 bits)
+#     d17 vs d18  → dificuldade crescente vs terços ALEATÓRIOS, 16 bits, mesmas
+#                   fronteiras e mesmo orçamento — o controle que separa
+#                   "ordenar por dificuldade" de "treinar em blocos com recência"
+#     d7/d8 vs b     → CL melhora sobre o baseline direto?
+#     d9/d10 vs b    → anti-CL melhora sobre o baseline direto?
+#     d18 vs b       → só fatiar em blocos (sem ordenar) já muda o resultado?
+# Modelos: A (zero-shot), b (LoRA direto), d7/d8 (CL), d9/d10 (anti-CL),
+#          d17 (CL 16b), d18 (blocos aleatórios 16b)
+# NOTA: d7-d10 rodaram em LoRA 4 bits e d17/d18 em LoRA 16 bits. Comparações
+#       válidas são intra-precisão (d7×d9, d8×d10, d17×d18); cruzamentos entre
+#       os dois grupos carregam {ordem + quantização} como diferença conjunta.
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ordem_cl.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_semclinbr_ordem_cl"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_semclinbr(ordem_cl)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_semclinbr_gold.parquet"
+  rotulo: "Gold"
+  familia: "SemClinBR-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- A: zero-shot (sem ajuste fino) ---
+  - arquivo: "saidas/saida_semclinbr_7b.parquet"
+    rotulo: "Qwen7B"
+    alias: "A"
+    familia: "Qwen-7B"
+    baseline: true
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    alias: "B"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- D7: CL por etapas, LoRA-only 4b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d7)_teste.parquet"
+    rotulo: "Qwen7B(d7)"
+    alias: "D7"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d7)"
+  # --- D8: CL acumulado, LoRA-only 4b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d8)_teste.parquet"
+    rotulo: "Qwen7B(d8)"
+    alias: "D8"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d8)"
+  # --- D9: Anti-CL por etapas, LoRA-only 4b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d9)_teste.parquet"
+    rotulo: "Qwen7B(d9)"
+    alias: "D9"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d9)"
+  # --- D10: Anti-CL acumulado, LoRA-only 4b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d10)_teste.parquet"
+    rotulo: "Qwen7B(d10)"
+    alias: "D10"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d10)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d17)_teste.parquet"
+    rotulo: "Qwen7B(d17)"
+    alias: "D17"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d17)"
+  # --- D18: Blocos aleatórios (terços), LoRA 16b (controle de efeito de bloco) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d18)_teste.parquet"
+    rotulo: "Qwen7B(d18)"
+    alias: "D18"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d18)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/semclinbr.parquet"
+    campo_id: "id"
+    dataset_filtro: {"split": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  # (Opcional) Sobrescrita de modelos HF para BERTScore
+  modelos:
+    # Alternativa para pt-br clínico. Trocar exige rodar 03 E 06 com o mesmo
+    # modelo, senão a dificuldade e a avaliação final ficam em escalas distintas.
+    #bertscore: "pucpr/biobertpt-all"
+    bertscore_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Entidades"
+      - "Relacoes"
+    metricas:
+      - bertscore
+      - rouge_l
+      - rouge_2
+
+  # ========================================================================
+  # Mapeamento de campos para métricas
+  # ------------------------------------------------------------------------
+  # Esquema da resposta: {"entities": [{id, text, tag, abbr}],
+  #                       "relations": [{annotation1, annotation2, reltype}]}
+  #
+  # `entities.id`, `relations.annotation1` e `relations.annotation2` ficam de
+  # FORA de propósito: são inteiros sequenciais e, depois do alinhamento húngaro
+  # que util_json aplica às listas, não correspondem entre gabarito e predição.
+  # Compará-los mediria o ruído da ordenação, não a qualidade da extração.
+  # Idêntico ao bloco de 03_compara_gold_full.yaml — a dificuldade que ordena o
+  # currículo e a avaliação final precisam sair da mesma régua.
+  # ========================================================================
+  campos:
+    bertscore:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_1:
+
+    rouge_2:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_l:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+campos_virtuais:
+  Entidades:
+    - entities.text
+    - entities.tag
+    - entities.abbr
+  Relacoes:
+    - relations.reltype

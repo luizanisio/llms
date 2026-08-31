@@ -1,0 +1,220 @@
+# ==========================================================================
+# Comparação: Ablações (decomposição dos componentes do framework CL+PT)
+# ==========================================================================
+# Propósito: Isolar a contribuição de cada componente, removendo um de cada vez.
+#   - d5, d6: escalonamento SEM CL (isola o eixo PT por troca de regime)
+#   - d7, d8: CL SEM escalonamento, LoRA-only 4b (isola o eixo CL)
+#   - d13:    CL SEM escalonamento, FF-only 16b (contraparte FF do d7)
+#   - d17:    CL SEM escalonamento, LoRA 16b (d7 sem a variável de quantização)
+#   - d14:    warm-up LoRA completo + CL FF-only (PT como pré-treino, não como etapa)
+#   - d15:    d14 + estabilização FF com LR 1e-6 após o merge LoRA→FF
+#   Comparações-chave:
+#     Q2  d7 vs b     → CL puro (LoRA 4b) melhora sobre FT direto?
+#     Q2  d17 vs b    → CL puro (LoRA 16b) melhora sobre FT direto? (sem confundir com NF4)
+#     Q2  d13 vs c    → CL puro (FF) melhora sobre FF direto?
+#         d7 vs d17   → quanto do resultado do d7 vinha da quantização 4 bits?
+#         d7 vs d13   → CL LoRA-only vs CL FF-only (regime dado o mesmo CL)
+#     Q3  d5/d6 vs c  → escalonamento sem CL melhora sobre FF direto?
+#     Q3  d5 vs d6    → direção do escalonamento sem CL
+#         d7 vs d8    → pace por etapas disjuntas vs acumulado (sem escalonamento)
+#     Q6  d14 vs d13  → o warm-up LoRA antes do CL ajuda ou custa (transição de regime)?
+#     Q6  d15 vs d14  → a estabilização pós-merge recupera a perda da transição?
+# Modelos: A (zero-shot), b (LoRA), c (FF), d5-d8, d13, d14, d15, d17
+# Ver também: 06_compara_fronteiras (Q6 — custo de fronteira isolado),
+#             06_compara_capacidade (eixo PT sem troca de regime)
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_ablacoes.yaml
+# ==========================================================================
+
+# --- Miscelânea ---
+misc:
+  pastas_base:
+    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+
+# Configuração Global de Saída
+saida:
+  pasta: "compara/analises_comparacao_semclinbr_ablacoes"
+  pasta_parquet: "compara/"
+  arquivo_base: "comparacao_semclinbr(ablacoes)"
+  regerar_planilha_base: true
+  linguagem_graficos: "en"
+
+# Configurações de Execução
+execucao:
+  max_workers: 20
+  teste_rapido: false
+  llm_as_a_judge: false
+  ignorar_erro_extracao: false
+
+# Modelo Base (Gabarito/Referência)
+modelo_base:
+  arquivo: "saidas/saida_semclinbr_gold.parquet"
+  rotulo: "Gold"
+  familia: "SemClinBR-Gold"
+
+# Modelos Comparados
+modelos_comparacao:
+  # --- A: zero-shot (sem ajuste fino) ---
+  - arquivo: "saidas/saida_semclinbr_7b.parquet"
+    rotulo: "Qwen7B"
+    alias: "A"
+    familia: "Qwen-7B"
+    baseline: true
+  # --- B: LoRA 4b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(b)_teste.parquet"
+    rotulo: "Qwen7B(b)"
+    alias: "B"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
+  # --- C: Full FT 16b direto, dados completos (sem CL) ---
+  - arquivo: "saidas/saida_semclinbr_7b(c)_teste.parquet"
+    rotulo: "Qwen7B(c)"
+    alias: "C"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(c)"
+  # --- D5: Escalonamento FF→LoRA sem CL (dados completos) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d5)_teste.parquet"
+    rotulo: "Qwen7B(d5)"
+    alias: "D5"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d5)"
+  # --- D6: Escalonamento LoRA→FF sem CL (dados completos) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d6)_teste.parquet"
+    rotulo: "Qwen7B(d6)"
+    alias: "D6"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d6)"
+  # --- D7: CL por etapas, LoRA-only 4b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d7)_teste.parquet"
+    rotulo: "Qwen7B(d7)"
+    alias: "D7"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d7)"
+  # --- D8: CL acumulado, LoRA-only 4b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d8)_teste.parquet"
+    rotulo: "Qwen7B(d8)"
+    alias: "D8"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d8)"
+  # --- D13: CL por etapas, FF-only 16b ---
+  - arquivo: "saidas/saida_semclinbr_7b(d13)_teste.parquet"
+    rotulo: "Qwen7B(d13)"
+    alias: "D13"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d13)"
+  # --- D14: PT LoRA completo + CL por etapas FF-only ---
+  - arquivo: "saidas/saida_semclinbr_7b(d14)_teste.parquet"
+    rotulo: "Qwen7B(d14)"
+    alias: "D14"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d14)"
+  # --- D15: PT LoRA + estabilização FF (LR 1e-6) + CL FF-only ---
+  - arquivo: "saidas/saida_semclinbr_7b(d15)_teste.parquet"
+    rotulo: "Qwen7B(d15)"
+    alias: "D15"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d15)"
+  # --- D17: CL por etapas, LoRA 16b (D7 sem quantização) ---
+  - arquivo: "saidas/saida_semclinbr_7b(d17)_teste.parquet"
+    rotulo: "Qwen7B(d17)"
+    alias: "D17"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(d17)"
+
+# Configuração das Métricas e Campos
+configuracao_comparacao:
+  padronizar_simbolos: true
+  rouge_stemmer: true
+
+  filtro:
+    arquivo: "dados/semclinbr.parquet"
+    campo_id: "id"
+    dataset_filtro: {"split": "teste"}
+
+  nome_campo_id: "id"
+  rotulo_campo_id: "ID"
+
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+    resumo_tokens: "resumo"
+    avaliacao: ""
+    erro: "erro"
+
+  # (Opcional) Sobrescrita de modelos HF para BERTScore
+  modelos:
+    # Alternativa para pt-br clínico. Trocar exige rodar 03 E 06 com o mesmo
+    # modelo, senão a dificuldade e a avaliação final ficam em escalas distintas.
+    #bertscore: "pucpr/biobertpt-all"
+    bertscore_batch_size: 1024
+
+  mascaras:
+    extracao: "^(.+)\\.json$"
+    tokens: ".tokens.json"
+    avaliacao: ".avaliacao.json"
+    observabilidade: ".obs.json"
+
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  campos_estatisticas:
+    campos:
+      - "(global)"
+      - "Entidades"
+      - "Relacoes"
+    metricas:
+      - bertscore
+      - rouge_l
+      - rouge_2
+
+  # ========================================================================
+  # Mapeamento de campos para métricas
+  # ------------------------------------------------------------------------
+  # Esquema da resposta: {"entities": [{id, text, tag, abbr}],
+  #                       "relations": [{annotation1, annotation2, reltype}]}
+  #
+  # `entities.id`, `relations.annotation1` e `relations.annotation2` ficam de
+  # FORA de propósito: são inteiros sequenciais e, depois do alinhamento húngaro
+  # que util_json aplica às listas, não correspondem entre gabarito e predição.
+  # Compará-los mediria o ruído da ordenação, não a qualidade da extração.
+  # Idêntico ao bloco de 03_compara_gold_full.yaml — a dificuldade que ordena o
+  # currículo e a avaliação final precisam sair da mesma régua.
+  # ========================================================================
+  campos:
+    bertscore:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_1:
+
+    rouge_2:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+    rouge_l:
+      - "(global)"
+      - "entities"
+      - "entities.text"
+      - "entities.tag"
+      - "entities.abbr"
+      - "relations"
+      - "relations.reltype"
+      - "Entidades"
+      - "Relacoes"
+
+campos_virtuais:
+  Entidades:
+    - entities.text
+    - entities.tag
+    - entities.abbr
+  Relacoes:
+    - relations.reltype
