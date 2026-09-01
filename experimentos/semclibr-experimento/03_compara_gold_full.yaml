@@ -77,7 +77,7 @@ configuracao_comparacao:
   campos_parquet:
     id: "chave"             # coluna com o ID do documento
     resposta: "resposta"    # coluna com o JSON da extração (será salvo como {id}.json)
-    resumo_tokens: "resumo" # coluna com o JSON de tokens (será salvo como {id}.tokens.json)
+    resumo_tokens: ""       # gabarito humano — sem dados de tokens LLM
     avaliacao: ""           # coluna com avaliação LLM (se disponível, salvo como {id}.avaliacao.json)
     erro: "erro"            # coluna com mensagem de erro (se disponível)
 
@@ -122,7 +122,7 @@ configuracao_comparacao:
   # Compará-los mediria o ruído da ordenação, não a qualidade da extração.
   # ========================================================================
   campos:
-    bertscore:
+    xbertscore:
       - "(global)"
       - "entities"
       - "entities.text"
