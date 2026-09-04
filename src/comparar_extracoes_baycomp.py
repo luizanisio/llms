@@ -503,7 +503,8 @@ def leitura_sugerida(resultado: dict, cfg: ConfigBayes) -> list:
         largura_rope = 2 * rope
         largos = [p for p in incertos
                   if (p["ic_sup"] - p["ic_inf"]) > largura_rope]
-        estreitos = [p for p in incertos if p not in largos]
+        estreitos = [p for p in incertos
+                     if (p["ic_sup"] - p["ic_inf"]) <= largura_rope]
         partes = []
         if largos:
             exemplo = largos[0]
