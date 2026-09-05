@@ -24,9 +24,7 @@ misc:
 corpus:
   xml: "dados/SemClinBr-xml-public-v1"
   # Divisão gerada pelo passo 03 (traz `dificuldade` para o recorte do §7.3).
-  # Se ainda não existir, cai para a divisão original, sem recorte por faixa.
   divisao: "dados/divisao_Gold_Qwen7B.csv"
-  divisao_fallback: "dados/divisao_semclinbr.csv"
   split: "teste"
   # SemGroups.txt oficial do UMLS (ABBR|GROUP|TUI|STY). Sem ele vale o mapa
   # STY→SGR embutido em util_semclinbr.py, que cobre os rótulos do corpus.

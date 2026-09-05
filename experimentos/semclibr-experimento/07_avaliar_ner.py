@@ -66,16 +66,12 @@ def caminho(pasta_base: Path, relativo: str) -> Path:
 
 
 def carregar_divisao(pasta_base: Path, cfg_corpus: dict) -> pd.DataFrame:
-    """Divisão do passo 03 (com `dificuldade`) ou a original, como fallback."""
+    """Divisão com o recorte de dificuldade (passo 03)."""
     principal = caminho(pasta_base, cfg_corpus["divisao"])
-    if principal.is_file():
-        df = pd.read_csv(principal)
-        print(f"📑 Divisão: {principal.name}")
-    else:
-        alternativa = caminho(pasta_base, cfg_corpus["divisao_fallback"])
-        df = pd.read_csv(alternativa)
-        print(f"⚠️  {principal.name} não encontrado — usando {alternativa.name} "
-              f"(sem recorte por dificuldade; rode o passo 03 antes)")
+    if not principal.is_file():
+        raise FileNotFoundError(f"Arquivo de divisão não encontrado: {principal}")
+    df = pd.read_csv(principal)
+    print(f"📑 Divisão: {principal.name}")
     coluna_id = "id_arquivo" if "id_arquivo" in df.columns else "id"
     df = df.rename(columns={coluna_id: "id_arquivo"})
     df["id_arquivo"] = df["id_arquivo"].astype(str).str.strip()

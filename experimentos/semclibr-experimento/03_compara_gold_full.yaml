@@ -45,7 +45,7 @@ execucao:
   # abriria data leakage.
   # =========================================================================
   divisao:
-    arquivo_referencia: "dados/divisao_semclinbr.csv"
+    arquivo_referencia: "dados/divisao_Gold_Qwen7B.csv"
 
 # Modelo Base (Gabarito humano do corpus SemClinBr)
 modelo_base:
