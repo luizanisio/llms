@@ -421,18 +421,18 @@ estatistica_bayesiana:
     Q4a_decomposicao: ["B", "C", "D1", "D5", "D7"]
     # Q4b — unfreeze progressivo: D19 > D20 > C => sinergia CL+PT
     #   (3 contrastes)
-    Q4b_unfreeze: ["C", "D20", "D19"]
+    Q4b_unfreeze: ["B", "C", "D20", "D19"]
     # Q5 — direcao do curriculo: CL vs anti-CL (mesma base LoRA-only 4b)
     #   (10 contrastes)
     Q5_anti_curriculo: ["B", "D7", "D8", "D9", "D10"]
     # Q6a — fusao: D21xD17 = fundido vs segmentado, mesma topologia — teste
     #   mais limpo do custo de fronteira (10 contrastes)
-    Q6a_fusao: ["B16", "D17", "D21", "D22", "D23"]
+    Q6a_fusao: ["B","C", "B16", "D17", "D21", "D22", "D23"]
     # Q6b — fusao granular; regime full vs LoRA (3 contrastes)
-    Q6b_fusao_granular: ["D12", "D24", "D25"]
+    Q6b_fusao_granular: ["B","C", "D12", "D24", "D25"]
     # Q6c — transicao de regime: pre-treino LoRA e estabilizacao pos-merge
     #   (6 contrastes)
-    Q6c_transicao_regime: ["C", "D13", "D14", "D15"]
+    Q6c_transicao_regime: ["B","C", "D13", "D14", "D15"]
 
   # --- Metricas automaticas (secao COMPLEMENTAR) ---
   # Medem similaridade com o modelo base (Prof), ou seja FIDELIDADE DE
@@ -456,3 +456,4 @@ estatistica_bayesiana:
     metricas:
       - bertscore
       - sbert_medio
+      - rouge_l
