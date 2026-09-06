@@ -922,10 +922,30 @@ def salvar_resultados_parquet(
     if pasta:
         os.makedirs(pasta, exist_ok=True)
 
-    # Escrita atômica: salva num arquivo temporário e renomeia
+    # Escrita atômica com retry para erros de I/O transientes (NFS/Lustre)
     arquivo_tmp = arquivo_saida + ".tmp"
-    df_final.to_parquet(arquivo_tmp, index=False)
-    os.replace(arquivo_tmp, arquivo_saida)
+    max_tentativas = 3
+    backoff_segundos = [10, 30, 60]
+    for tentativa in range(max_tentativas):
+        try:
+            df_final.to_parquet(arquivo_tmp, index=False)
+            os.replace(arquivo_tmp, arquivo_saida)
+            break
+        except (OSError, IOError) as e:
+            if tentativa < max_tentativas - 1:
+                espera = backoff_segundos[tentativa]
+                print(
+                    f"⚠️  Erro de I/O ao salvar parquet (tentativa "
+                    f"{tentativa + 1}/{max_tentativas}): {e}. "
+                    f"Aguardando {espera}s antes de tentar novamente..."
+                )
+                time.sleep(espera)
+            else:
+                print(
+                    f"❌ Erro de I/O persistente após {max_tentativas} "
+                    f"tentativas: {e}"
+                )
+                raise
 
 
 def salvar_resultado_pasta(
