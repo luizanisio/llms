@@ -72,6 +72,8 @@ geracao:
 # system_prompt: system prompt para modelos instruct (opcional).
 #   Se informado, o chat template do modelo é aplicado automaticamente.
 #   Se vazio, o texto montado é enviado diretamente ao modelo (sem chat template).
+  tentativas: 20      # tentativas de extração (em caso de erro, tenta novamente apenas para os que tiveram falha)
+  pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
 entrada:
   arquivo: "./dados/integras_experimento_summa_novos.parquet"
   campo_chave: "seq_documento_acordao"

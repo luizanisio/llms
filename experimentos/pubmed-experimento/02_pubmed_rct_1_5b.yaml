@@ -52,6 +52,8 @@ geracao:
 # prompt_template: arquivo .txt com template do prompt (opcional).
 # variavel_texto: placeholder no template a ser substituído pelo texto. Padrão: "<--TEXTO-->"
 # system_prompt: system prompt para modelos instruct (opcional).
+  tentativas: 20      # tentativas de extração (em caso de erro, tenta novamente apenas para os que tiveram falha)
+  pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
 entrada:
   arquivo: "dados/pubmed-rct-20k.parquet"
   campo_chave: "pmid"

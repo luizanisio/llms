@@ -43,6 +43,7 @@ geracao:
   tentativas: 20
 
 # --- Entrada ---
+  pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
 entrada:
   arquivo: "dados/pubmed-rct-20k.parquet"
   campo_chave: "pmid"
