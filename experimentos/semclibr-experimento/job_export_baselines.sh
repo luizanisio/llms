@@ -62,7 +62,9 @@ df -h "$BASE_DIR" 2>/dev/null || echo "df indisponível"
 quota -s 2>/dev/null | tail -n +1 || echo "quota indisponível"
 echo "==============================="
 
+EXTRACOES_COM_ERRO=false
 
+#CONFIGS=("02_semclinbr_1_5b.yaml" "02_semclinbr_7b.yaml")
 CONFIGS=("02_semclinbr_1_5b.yaml" "02_semclinbr_7b.yaml")
 
 for CONFIG_FILE in "${CONFIGS[@]}"; do
@@ -72,7 +74,16 @@ for CONFIG_FILE in "${CONFIGS[@]}"; do
     echo "=== Hora: $(date) ==="
     echo "============================================================"
 
-    python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
+    ARQUIVO_PARQUET=$(python -c "import yaml; print(yaml.safe_load(open('$BASE_DIR/$CONFIG_FILE'))['saida']['arquivo'])" 2>/dev/null)
+
+    if [ -n "$ARQUIVO_PARQUET" ] && [ -f "$BASE_DIR/$ARQUIVO_PARQUET" ]; then
+        echo "Arquivo parquet ($ARQUIVO_PARQUET) já existe. Ignorando a extração."
+    else
+        if ! python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE; then
+            echo "Erro na extração de $CONFIG_FILE!"
+            EXTRACOES_COM_ERRO=true
+        fi
+    fi
 
     echo "=== Extração com $CONFIG_FILE finalizada: $(date) ==="
 done
@@ -89,10 +100,14 @@ echo "============================================================"
 CONFIG_COMPARA="$BASE_DIR/03_compara_gold_full.yaml"
 SAIDA_PASTA=$(python -c "import yaml; print(yaml.safe_load(open('$CONFIG_COMPARA'))['saida']['pasta'])" 2>/dev/null)
 
-if [ -n "$SAIDA_PASTA" ] && [ -d "$BASE_DIR/$SAIDA_PASTA" ]; then
-    echo "Pasta de saída ($SAIDA_PASTA) já existe. Ignorando a comparação."
+if [ "$EXTRACOES_COM_ERRO" = true ]; then
+    echo "Houve erro nas extrações. Ignorando a comparação."
 else
-    python "$SRC_DIR/comparar_extracoes.py" --config "$CONFIG_COMPARA"
+    if [ -n "$SAIDA_PASTA" ] && [ -d "$BASE_DIR/$SAIDA_PASTA" ]; then
+        echo "Pasta de saída ($SAIDA_PASTA) já existe. Ignorando a comparação."
+    else
+        python "$SRC_DIR/comparar_extracoes.py" --config "$CONFIG_COMPARA"
+    fi
 fi
 
 echo "=== Comparação finalizada: $(date) ==="
