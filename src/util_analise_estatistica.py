@@ -267,12 +267,17 @@ class AnaliseEstatistica:
         self._calcular_wilcoxon_corrigido()
         self._calcular_effect_sizes()
         
+        self.max_delta = 0.0
+        if self.wilcoxon_resultados:
+            self.max_delta = max(abs(r['diferenca']) for r in self.wilcoxon_resultados)
+
         self._analise_realizada = True
         self._gerar_relatorio_md()
         self._gerar_cd_diagram()
         
         self.resumo = {
             'metrica': self.metrica_nome,
+            'is_llm': 'llm_' in self.metrica_nome,
             'K': self.K,
             'N': self.N,
             'friedman_p': self.friedman_resultado.get('p_valor'),
@@ -282,6 +287,7 @@ class AnaliseEstatistica:
             'n_grupos': len(set(
                 g for v in self.grupos.values() for g in str(v).split()
             )) if self.grupos else 0,
+            'max_delta': self.max_delta,
         }
         return self.resumo
     
@@ -735,11 +741,9 @@ class AnaliseEstatistica:
             L.append(f'> *{t["msg_holm_nota"].format(m=m)}*')
             L.append('')
             # Nota de calibração da ROPE — maior |Δ| como referência
-            if self.wilcoxon_resultados:
-                max_delta = max(abs(r['diferenca']) for r in self.wilcoxon_resultados)
-                if max_delta > 0:
-                    L.append(f'> {t["nota_rope_calibracao"].format(max_delta=f"{max_delta:.4f}")}')
-                    L.append('')
+            if getattr(self, 'max_delta', 0.0) > 0:
+                L.append(f'> {t["nota_rope_calibracao"].format(max_delta=f"{self.max_delta:.4f}")}')
+                L.append('')
         
         # --- 5. Nemenyi Post-hoc (seção materializada) ---
         if not self.nemenyi_pvalores.empty and self.K >= 3:
@@ -899,6 +903,28 @@ def _slug(texto):
     sem_acento = unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode()
     import re as _re
     return _re.sub(r'_+', '_', _re.sub(r'[^0-9A-Za-z]+', '_', sem_acento)).strip('_').lower()
+
+
+def _gerar_relatorio_rope_global(pasta_estat, max_delta_global, lang):
+    """Gera um pequeno relatório destacando a maior variação (ROPE sugerido)."""
+    arquivo_md = os.path.join(pasta_estat, '00_rope_sugerido.md')
+    titulo = "Sugestão de Calibração da ROPE" if lang == 'pt' else "ROPE Calibration Suggestion"
+    
+    if lang == 'pt':
+        msg = (f"O maior `|Δ|` (diferença média) observado em todas as métricas automáticas comparadas foi **{max_delta_global:.4f}**.\n\n"
+               f"Se os protocolos avaliados nesta bateria foram treinados sob o **mesmo regime e mesmos dados** (ex: réplicas d1, d1a, d1b), "
+               f"esse valor captura a variância não-determinística máxima.\n\n"
+               f"**Sugestão:** Utilize `rope: {max_delta_global:.4f}` na seção `metricas_automaticas` da análise bayesiana (`estatistica`) para comparações futuras entre protocolos distintos.")
+    else:
+        msg = (f"The largest `|Δ|` (mean difference) observed across all evaluated automatic metrics was **{max_delta_global:.4f}**.\n\n"
+               f"If the protocols evaluated in this batch were trained under the **same regime and data** (e.g., replicas d1, d1a, d1b), "
+               f"this value captures the maximum non-deterministic variance.\n\n"
+               f"**Suggestion:** Use `rope: {max_delta_global:.4f}` in the `metricas_automaticas` section of the Bayesian analysis (`estatistica`) for future comparisons between distinct protocols.")
+    
+    with open(arquivo_md, 'w', encoding='utf-8') as f:
+        f.write(f"# {titulo}\n\n{msg}\n")
+    print(f"   📄 Relatório ROPE sugerido: {os.path.basename(arquivo_md)}")
+
 
 
 def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida, lang='en'):
@@ -1077,6 +1103,12 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
     if resumos:
         sig_count = sum(1 for r in resumos if r.get('friedman_sig'))
         print(f"\n   ✅ {len(resumos)} análise(s) concluída(s) ({sig_count} com Friedman significativo)")
+        
+        max_delta_global = max((r.get('max_delta', 0.0) for r in resumos if not r.get('is_llm', False)), default=0.0)
+        if max_delta_global > 0:
+            print(f"   📌 ROPE Global Sugerido: {max_delta_global:.4f} (maior variação encontrada entre as métricas automáticas)")
+            _gerar_relatorio_rope_global(pasta_estat, max_delta_global, lang)
+            
     else:
         print("   ⚠️  Nenhuma análise estatística gerada (combinações campo×métrica não encontradas nos dados).")
     
