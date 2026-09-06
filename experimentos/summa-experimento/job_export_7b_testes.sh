@@ -79,11 +79,7 @@ for PROTOCOL in "${PROTOCOLS[@]}"; do
     echo "=== Hora: $(date) ==="
     echo "============================================================"
 
-    # Roda a extração 20 vezes (útil para repescagem de erros)
-    for i in $(seq 1 20); do
-        echo "--- Rodada $i/20 para o protocolo $PROTOCOL --- $(date)"
-        python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
-    done
+    python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE
 
     echo "=== Protocolo $PROTOCOL finalizado: $(date) ==="
 done

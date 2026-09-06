@@ -25,11 +25,7 @@ for PROTOCOL in "${PROTOCOLS[@]}"; do
     CONFIG_FILE="05_extracao_${PROTOCOL}_teste.yaml"
     echo "=== Iniciando extração do protocolo: $PROTOCOL ==="
     
-    # Roda a extração 10 vezes (útil para repescagem de erros)
-    for i in {1..10}; do
-        echo "Rodada $i/10 para o protocolo $PROTOCOL..."
-        python ../../src/util_vllm_batch.py --config "$CONFIG_FILE"
-    done
+    python ../../src/util_vllm_batch.py --config "$CONFIG_FILE"
 done
 
 
