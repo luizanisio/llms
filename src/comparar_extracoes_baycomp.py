@@ -53,13 +53,22 @@ probabilidade.
 
 Configuração (YAML) — ver `configurar_bayesiana` para a lista completa:
 
-    estatistica_bayesiana:
-      ativo: true
+    estatistica:
+      bayesiana: true
+      frequentista: true
       rope_likert: 0.32          # transcrita da Etapa 1 (calibração)
+      protocolos:
+        Q1_ajuste_fino: [A, B, C]
+        Panorama_Geral: "TODOS"  # todos os modelos ativos
       metricas_automaticas:
         rope: 0.01
         campos: ["(global)"]
         metricas: [bertscore]
+
+    # Legado (retrocompatível):
+    estatistica_bayesiana:
+      ativo: true
+      ...
 
 Uso:
     from comparar_extracoes_baycomp import executar_analise_bayesiana
@@ -145,18 +154,27 @@ class Recorte:
 
 
 def _ler_recortes(valor) -> list:
-    """Normaliza a chave `protocolos` do YAML nas três formas aceitas.
+    """Normaliza a chave `protocolos` do YAML nas formas aceitas.
 
     * ausente/vazia → um recorte anônimo com todos os protocolos;
     * lista → um recorte anônimo com os protocolos listados;
     * dicionário `{nome: [protocolos]}` → um recorte nomeado por entrada, na
       ordem declarada (o YAML preserva a ordem do documento).
+    * No dicionário, um valor ``"TODOS"`` (string) gera um recorte nomeado
+      com lista vazia de protocolos — o que equivale a "todos os modelos
+      ativos". Útil para um panorama geral todos-contra-todos.
     """
     if not valor:
         return [Recorte()]
     if isinstance(valor, dict):
-        return [Recorte(nome=str(nome), protocolos=list(lista or []))
-                for nome, lista in valor.items()]
+        recortes = []
+        for nome, lista in valor.items():
+            if isinstance(lista, str) and lista.strip().upper() == 'TODOS':
+                # "TODOS" → recorte nomeado com lista vazia = todos os modelos
+                recortes.append(Recorte(nome=str(nome), protocolos=[]))
+            else:
+                recortes.append(Recorte(nome=str(nome), protocolos=list(lista or [])))
+        return recortes
     return [Recorte(protocolos=list(valor))]
 
 
@@ -223,27 +241,36 @@ class ConfigBayes:
 def configurar_bayesiana(config: dict) -> ConfigBayes:
     """Lê a configuração da etapa bayesiana do YAML.
 
-    A chave canônica é `estatistica_bayesiana` no nível raiz; também é aceita
-    dentro de `configuracao_comparacao`, ao lado de `campos_estatisticas` (mesma
-    tolerância que o YAML já pratica em `execucao.divisao`/`execucao-divisao`).
+    A chave canônica é ``estatistica`` (unificada com a frequentista) no nível
+    raiz. A sub-chave ``bayesiana: true`` ativa esta camada. A chave legada
+    ``estatistica_bayesiana`` é aceita para retrocompatibilidade, bem como a
+    posição dentro de ``configuracao_comparacao``.
 
-    Chaves reconhecidas::
+    Chaves reconhecidas (formato novo)::
 
-        estatistica_bayesiana:
-          ativo: true              # sem isto, nada roda
-          limiar: 0.95             # limiar ÚNICO de decisão (padrão do trabalho)
-          rope_likert: 0.32        # OBRIGATÓRIA (> 0): transcrita à mão da
-                                   #   calibração da Etapa 1 (validacao.md)
-          incluir_base: false      # inclui o modelo base na matriz da Likert
-          protocolos:              # recorte e ORDEM; aceita alias ou rótulo.
+        estatistica:
+          bayesiana: true           # ativa a camada bayesiana
+          frequentista: true        # ativa a camada frequentista (lida em outro módulo)
+          limiar: 0.95              # limiar ÚNICO de decisão (padrão do trabalho)
+          rope_likert: 0.32         # OBRIGATÓRIA (> 0): transcrita à mão da
+                                    #   calibração da Etapa 1 (validacao.md)
+          incluir_base: false       # inclui o modelo base na matriz da Likert
+          protocolos:               # recorte e ORDEM; aceita alias ou rótulo.
             Q1_ajuste_fino: [A, B, C]        # dicionário = figuras por questão,
             Q3_escalonamento: [D1, D2, D3]   #   com o nome virando prefixo dos arquivos
+            Panorama_Geral: "TODOS"          # todos os modelos ativos
           # protocolos: [A, B, D1] # lista simples = recorte único, sem prefixo
           metricas_automaticas:
-            rope: 0.01             # OBRIGATÓRIA (> 0) para a seção complementar
+            rope: 0.01              # OBRIGATÓRIA (> 0) para a seção complementar
             rope_sensibilidade: [0.005, 0.01, 0.02]   # padrão: rope/2, rope, 2·rope
-            campos: ["(global)"]   # campos do YAML (ex.: "(global)", "Resumo")
+            campos: ["(global)"]    # campos do YAML (ex.: "(global)", "Resumo")
             metricas: [bertscore, sbert_medio]
+
+    Formato legado (retrocompatível)::
+
+        estatistica_bayesiana:
+          ativo: true
+          ...                       # mesmas sub-chaves acima
 
     As chaves legadas `metodo_likert`, `metodo`, `amostras` e `semente` foram
     removidas com a fixação do `CorrelatedTTest` (analítico); se presentes,
@@ -252,14 +279,22 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
     Returns:
         ConfigBayes — com `ativo=False` quando a chave está ausente ou desligada.
     """
-    bloco = config.get('estatistica_bayesiana')
-    if not isinstance(bloco, dict):
-        bloco = config.get('configuracao_comparacao', {}).get('estatistica_bayesiana')
-    if not isinstance(bloco, dict):
-        return ConfigBayes(ativo=False)
-
-    if not bloco.get('ativo', True):
-        return ConfigBayes(ativo=False)
+    # ── Resolução da chave: formato novo → legado → dentro de configuracao_comparacao
+    bloco = config.get('estatistica')
+    formato_novo = isinstance(bloco, dict)
+    if formato_novo:
+        # No formato novo, a bayesiana é ativada pela sub-chave `bayesiana`
+        if not bloco.get('bayesiana', False):
+            return ConfigBayes(ativo=False)
+    else:
+        # Fallback legado: `estatistica_bayesiana`
+        bloco = config.get('estatistica_bayesiana')
+        if not isinstance(bloco, dict):
+            bloco = config.get('configuracao_comparacao', {}).get('estatistica_bayesiana')
+        if not isinstance(bloco, dict):
+            return ConfigBayes(ativo=False)
+        if not bloco.get('ativo', True):
+            return ConfigBayes(ativo=False)
 
     automaticas = bloco.get('metricas_automaticas') or {}
     if not isinstance(automaticas, dict):
@@ -271,7 +306,7 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
     legadas = ([c for c in ('metodo_likert', 'amostras', 'semente') if c in bloco]
                + [f'metricas_automaticas.{c}' for c in ('metodo',) if c in automaticas])
     if legadas:
-        print(f"   ⚠️  chaves legadas ignoradas em `estatistica_bayesiana`: "
+        print(f"   ⚠️  chaves legadas ignoradas em `estatistica`: "
               f"{', '.join(legadas)} — o pipeline usa exclusivamente o "
               f"{NOME_TESTE} (analítico, sem amostras nem semente).")
 
@@ -907,7 +942,7 @@ def gerar_markdown(resultados: list, cfg: ConfigBayes,
     if declarados:
         L.append(
             '> **Recortes de protocolos** — declarados em '
-            '`estatistica_bayesiana.protocolos`. A ordem dentro de cada recorte é '
+            '`estatistica.protocolos`. A ordem dentro de cada recorte é '
             'a declarada, para que os heatmaps das diferentes métricas possam ser '
             'lidos lado a lado:'
         )
@@ -1045,7 +1080,7 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
                                             [rotulo_base] + protocolos, mapa_aliases)
         if ausentes:
             avisos.append(
-                f"{marca}nomes em `estatistica_bayesiana.protocolos` que não "
+                f"{marca}nomes em `estatistica.protocolos` que não "
                 f"casaram com nenhum modelo do YAML e foram ignorados: "
                 f"{', '.join(ausentes)}. Use o alias ou o rótulo de "
                 f"`modelo_base`/`modelos_comparacao`."
@@ -1086,7 +1121,7 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
     maior = max(len(rotulos_likert), len(rotulos_metricas))
     if maior > PROTOCOLOS_ALERTA:
         print(f"   ⚠️  {maior} protocolos → {maior * (maior - 1) // 2} pares. "
-              "O heatmap pode ficar difícil de ler; use `estatistica_bayesiana."
+              "O heatmap pode ficar difícil de ler; use `estatistica."
               "protocolos` para declarar um recorte por questão de pesquisa.")
 
     # ── alvo principal: Likert do juiz LLM ──────────────────────────────────
@@ -1104,7 +1139,7 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
         if recorte.protocolos and com_nota:
             detalhe = (
                 f"Dos protocolos do recorte, apenas {', '.join(map(str, com_nota))} "
-                f"tem nota do juiz LLM. Revise `estatistica_bayesiana.protocolos` "
+                f"tem nota do juiz LLM. Revise `estatistica.protocolos` "
                 f"ou gere as avaliações dos demais."
             )
         else:
@@ -1174,9 +1209,10 @@ def executar_analise_bayesiana(analisador, dados_analise, config, pasta_saida) -
     `bayesiana/analise_bayesiana.md` com as tabelas, figuras e a leitura
     descritiva.
 
-    A etapa é silenciosamente ignorada quando a chave `estatistica_bayesiana`
-    não existe ou está com `ativo: false` — o pipeline se comporta exatamente
-    como antes.
+    A etapa é silenciosamente ignorada quando a chave `estatistica` não existe
+    ou `bayesiana` está desligada (ou, no formato legado, quando
+    `estatistica_bayesiana` não existe ou está com `ativo: false`) — o pipeline
+    se comporta exatamente como antes.
 
     Args:
         analisador: instância de JsonAnaliseDataFrame com `_resultados` populado.
@@ -1259,7 +1295,7 @@ def executar_analise_bayesiana(analisador, dados_analise, config, pasta_saida) -
     # Recortes nomeados existem para o panorama completo: 16 protocolos geram
     # 120 pares e uma figura ilegível. Declarando um recorte por questão de
     # pesquisa, a MESMA comparação já processada rende várias figuras focadas —
-    # e ajustá-las custa apenas `--bayesiana`, sem refazer a análise pesada.
+    # e ajustá-las custa apenas `--estatisticas`, sem refazer a análise pesada.
     for recorte in cfg.recortes:
         parciais, avisos_recorte = _processar_recorte(
             recorte, cfg, analisador, dados_analise, pasta,

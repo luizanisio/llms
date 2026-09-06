@@ -137,30 +137,30 @@ configuracao_comparacao:
 # "qual a probabilidade de A superar B?" e "qual a probabilidade de serem
 # praticamente equivalentes?" — que o teste de hipótese nula não expressa.
 # Gera bayesiana/analise_bayesiana.md, heatmaps e varreduras de sensibilidade.
+# Configuração unificada de estatísticas — bayesiana e frequentista compartilham
+# os mesmos recortes (protocolos), gerando análises segmentadas por cenário.
 # Cada escala usa o teste do baycomp adequado: Likert (ordinal) -> SignTest;
 # metricas automaticas (continuas) -> CorrelatedTTest.
-# Remova o bloco (ou use ativo: false) para desligar a etapa por completo.
-estatistica_bayesiana:
-  ativo: true
+# Remova o bloco para desligar ambas as etapas por completo.
+estatistica:
+  bayesiana: true                  # Ativa a camada bayesiana (heatmaps, ROPE, relatório)
+  frequentista: true               # Ativa a camada frequentista (Friedman, Wilcoxon, CD Diagram)
   limiar: 0.80                   # Probabilidade mínima p/ classificar uma célula do heatmap
   rope_likert: 0.5               # (Opcional) Margem sobre as NOTAS. Na escala Likert inteira,
                                  #   0,5 significa exatamente "notas iguais" — não é margem
                                  #   arbitrada, é a tradução da escala. Deve ser > 0: com ROPE
                                  #   zero o baycomp não devolve a probabilidade de equivalência.
-  metodo_likert: sinais          # (Opcional) sinais = baycomp.SignTest (ordinal, padrão)
-                                 #   postos = SignedRankTest · t = CorrelatedTTest
-  amostras: 200000               # Amostras da posterior (use 200000 na análise definitiva)
-  semente: 42                    # Reprodutibilidade — registre o valor na dissertação
   incluir_base: false            # true = inclui o modelo base na matriz da Likert
                                  #   (ignorado quando 'protocolos' abaixo é usado)
 
   # (Opcional) Recorte(s) E ORDEM dos protocolos comparados. Aceita o alias
   # (o que aparece nas figuras) ou o rótulo. Filtrar aqui NÃO exige refazer a
-  # comparação: ajuste as listas e rode com --bayesiana.
+  # comparação: ajuste as listas e rode com --estatisticas.
   #   - recorte: com muitos protocolos o heatmap fica ilegível (16 = 120 pares)
   #   - ordem:   linhas/colunas saem na sequência declarada, para que os heatmaps
   #              da Likert e das métricas automáticas possam ser lidos lado a lado
   # Omitido = todos os modelos ativos, na ordem do YAML.
+  # Use "TODOS" como valor para incluir automaticamente todos os modelos ativos.
   #
   # Forma 1 — lista simples: um recorte único, arquivos sem prefixo.
   # protocolos: ["A", "B", "D1", "D2"]
@@ -171,6 +171,7 @@ estatistica_bayesiana:
   # protocolos:
   #   Q1_ajuste_fino:   ["A", "B", "C"]
   #   Q3_escalonamento: ["D1", "D2", "D3", "D4"]
+  #   Panorama_Geral:   "TODOS"
 
   # Métricas automáticas: seção COMPLEMENTAR. Medem similaridade com o modelo base,
   # ou seja fidelidade de destilação — NÃO qualidade. Servem como triangulação.
@@ -179,9 +180,6 @@ estatistica_bayesiana:
                                  #   |x - y| <= rope conta como empate. Com escores
                                  #   comprimidos é a ROPE que determina o resultado,
                                  #   por isso a varredura de sensibilidade é obrigatória.
-    metodo: t                    # (Opcional) t = baycomp.CorrelatedTTest (padrão): usa a
-                                 #   MAGNITUDE das diferenças, adequado a escore contínuo.
-                                 #   sinais/postos só contam direções.
     rope_sensibilidade: [0.005, 0.01, 0.02]   # (Opcional) padrão: rope/2, rope, 2*rope
     campos: ["(global)"]         # Mesmos nomes usados em configuracao_comparacao.campos
     metricas: [bertscore]        # bertscore, rouge_l, rouge_1, rouge_2, levenshtein, sbert_*

@@ -98,6 +98,7 @@ def processar_analise_estatistica(analisador, dados_analise, pasta_saida, config
     """
     Executa análise estatística (Friedman, Wilcoxon, Nemenyi, Shapiro-Wilk)
     para cada combinação campo×métrica configurada em campos_estatisticas.
+    Quando ``estatistica.protocolos`` está definido, segmenta por cenário.
     """
     try:
         from util_analise_estatistica import executar_analise_estatistica
@@ -119,7 +120,8 @@ def processar_analise_bayesiana(analisador, dados_analise, pasta_saida, config):
     sensibilidade ao ε, varredura da ROPE e relatório Markdown).
 
     Camada complementar à análise frequentista: só roda quando a chave
-    'estatistica_bayesiana' existe no YAML e está ativa.
+    'estatistica' existe no YAML com 'bayesiana: true' (ou, no formato legado,
+    'estatistica_bayesiana' com 'ativo: true').
     """
     try:
         from comparar_extracoes_baycomp import executar_analise_bayesiana
@@ -328,11 +330,10 @@ def main():
     parser.add_argument('--config', dest='config_file', default=None, help="Caminho do arquivo de configuração YAML")
     parser.add_argument('--graficos', action='store_true', help="Apenas atualiza os gráficos a partir de uma comparação já realizada")
     parser.add_argument('--estatisticas', action='store_true', help="Apenas atualiza as estatísticas a partir de uma comparação já realizada")
-    parser.add_argument('--bayesiana', action='store_true', help="Apenas atualiza a análise bayesiana a partir de uma comparação já realizada")
     parser.add_argument('--planilha', action='store_true', help="Apenas atualiza a formatação da planilha base a partir de uma comparação já realizada")
     args = parser.parse_args()
 
-    qualquer_flag_parcial = args.graficos or args.estatisticas or args.bayesiana or args.planilha
+    qualquer_flag_parcial = args.graficos or args.estatisticas or args.planilha
 
     # 1. Carregar configuração
     caminho_yaml_abs = ""
@@ -702,12 +703,11 @@ def main():
         if not os.path.isfile(arquivo_excel):
             print("\n❌ ERRO: Planilha de comparação não encontrada.")
             print(f"Esperado: {arquivo_excel}")
-            print("Execute a comparação completa primeiro (sem usar as flags --graficos, --estatisticas, --bayesiana ou --planilha).")
+            print("Execute a comparação completa primeiro (sem usar as flags --graficos, --estatisticas ou --planilha).")
             sys.exit(1)
 
         flag_graficos = args.graficos
         flag_estatisticas = args.estatisticas
-        flag_bayesiana = args.bayesiana
         flag_planilha = args.planilha
         flag_llm = False # Se for execução parcial, pulamos LLM por envolver custo de API
         regerar = False
@@ -715,7 +715,6 @@ def main():
         # Execução Padrão: faz tudo!
         flag_graficos = True
         flag_estatisticas = True
-        flag_bayesiana = True
         flag_planilha = False
         regerar = True
         flag_llm = config.get('execucao', {}).get('llm_as_a_judge', False)
@@ -853,7 +852,7 @@ def main():
 
     # Camada bayesiana: complementar à análise frequentista acima. Roda depois
     # dela para que o relatório em bayesiana/ possa remeter ao de estatisticas/.
-    if flag_bayesiana and analisador_instanciado:
+    if flag_estatisticas and analisador_instanciado:
         processar_analise_bayesiana(analisador, dados_analise, pasta_saida, config)
 
     # 8. Divisão dos Dados (Treino/Teste/Validação) (pula se for execução parcial)

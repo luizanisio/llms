@@ -128,7 +128,7 @@ _TEXTOS = {
         'efeito_insignificante': 'Insignificante', 'efeito_pequeno': 'Pequeno',
         'efeito_medio': 'Médio', 'efeito_grande': 'Grande',
         'sim': 'Sim', 'nao': 'Não',
-        'nota_rope_calibracao': '📌 **Nota de calibração da ROPE:** O maior |Δ| observado nesta tabela é **{max_delta}**. Se os protocolos comparados foram treinados sob o **mesmo regime e mesmos dados** (comparação de calibração/réplicas), esse valor representa o piso de ruído do treinamento (variância não-determinística) e pode ser utilizado como referência para o parâmetro `metricas_automaticas.rope` na análise bayesiana (`estatistica_bayesiana`) em comparações futuras entre protocolos distintos.',
+        'nota_rope_calibracao': '📌 **Nota de calibração da ROPE:** O maior |Δ| observado nesta tabela é **{max_delta}**. Se os protocolos comparados foram treinados sob o **mesmo regime e mesmos dados** (comparação de calibração/réplicas), esse valor representa o piso de ruído do treinamento (variância não-determinística) e pode ser utilizado como referência para o parâmetro `metricas_automaticas.rope` na análise bayesiana (`estatistica`) em comparações futuras entre protocolos distintos.',
     },
     'en': {
         'titulo_principal': 'Statistical Analysis',
@@ -176,7 +176,7 @@ _TEXTOS = {
         'efeito_insignificante': 'Negligible', 'efeito_pequeno': 'Small',
         'efeito_medio': 'Medium', 'efeito_grande': 'Large',
         'sim': 'Yes', 'nao': 'No',
-        'nota_rope_calibracao': '📌 **ROPE calibration note:** The largest |Δ| observed in this table is **{max_delta}**. If the compared protocols were trained under the **same regime and same data** (calibration/replica comparison), this value represents the training noise floor (non-deterministic variance) and can be used as a reference for the `metricas_automaticas.rope` parameter in the Bayesian analysis (`estatistica_bayesiana`) when comparing distinct protocols in future experiments.',
+        'nota_rope_calibracao': '📌 **ROPE calibration note:** The largest |Δ| observed in this table is **{max_delta}**. If the compared protocols were trained under the **same regime and same data** (calibration/replica comparison), this value represents the training noise floor (non-deterministic variance) and can be used as a reference for the `metricas_automaticas.rope` parameter in the Bayesian analysis (`estatistica`) when comparing distinct protocols in future experiments.',
     }
 }
 
@@ -864,10 +864,53 @@ def montar_mapa_aliases(config):
     return mapa_aliases
 
 
+def _ler_config_frequentista(config):
+    """Lê a configuração da análise frequentista do YAML.
+
+    Formato novo (unificado)::
+
+        estatistica:
+          frequentista: true
+          protocolos:
+            Q1_ajuste_fino: [A, B, C]
+            Panorama_Geral: "TODOS"
+
+    Formato legado (sem chave `estatistica`): a frequentista roda sempre que
+    a flag ``--estatisticas`` é passada ou na execução completa.
+
+    Returns:
+        tuple(ativo, recortes_dict):
+          ativo: bool — se a frequentista está habilitada
+          recortes_dict: dict {nome: lista_protocolos} ou None (todos contra todos)
+    """
+    bloco = config.get('estatistica')
+    if isinstance(bloco, dict):
+        # Formato novo: a frequentista é controlada pela sub-chave `frequentista`
+        ativo = bloco.get('frequentista', True)
+        protocolos_raw = bloco.get('protocolos')
+        return ativo, protocolos_raw
+    # Formato legado: sem chave `estatistica` → a frequentista roda sempre
+    return True, None
+
+
+def _slug(texto):
+    """Normaliza um nome de recorte para uso em nome de arquivo."""
+    import unicodedata
+    sem_acento = unicodedata.normalize('NFKD', str(texto)).encode('ascii', 'ignore').decode()
+    import re as _re
+    return _re.sub(r'_+', '_', _re.sub(r'[^0-9A-Za-z]+', '_', sem_acento)).strip('_').lower()
+
+
 def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida, lang='en'):
     """
     Função principal chamada por comparar_extracoes.py.
     Descobre alvos (campo×métrica) e executa análise estatística para cada um.
+
+    Quando ``estatistica.protocolos`` está definido no YAML, a análise é
+    segmentada por cenário (recorte), gerando arquivos com o prefixo do cenário
+    (ex: ``Q1_ajuste_fino_estat_...``). Um valor ``"TODOS"`` inclui todos os
+    modelos ativos automaticamente. Sem a chave ``protocolos``, faz a análise
+    "todos contra todos" (comportamento original).
     
     Args:
         analisador: instância de JsonAnaliseDataFrame com _resultados populado
@@ -883,6 +926,12 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
     
     if analisador is None or not hasattr(analisador, '_resultados') or analisador._resultados is None:
         print("   ⚠️  Analisador sem resultados. Pulando análise estatística.")
+        return []
+
+    # Verifica se a frequentista está habilitada no novo formato
+    freq_ativo, protocolos_config = _ler_config_frequentista(config)
+    if not freq_ativo:
+        print("   ⚠️  Análise frequentista desativada (estatistica.frequentista: false).")
         return []
     
     df_resultados = analisador._resultados
@@ -940,62 +989,86 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
     if not protocolos:
         print("   ⚠️  Nenhum protocolo encontrado para análise estatística.")
         return []
+
+    # Monta os recortes (cenários): cada um gera um bloco de análises com
+    # prefixo próprio nos nomes de arquivo, como na bayesiana
+    recortes = _montar_recortes_frequentista(protocolos_config, protocolos, mapa_aliases)
     
     resumos = []
     
-    print(f"\n📊 Análise Estatística — {len(alvos_campos)} campo(s) × {len(alvos_metricas)} métrica(s)")
-    
-    for campo in alvos_campos:
-        for metrica in alvos_metricas:
-            sufixo = mapa_metrica_sufixo.get(metrica, metrica)
-            display = mapa_metrica_display.get(metrica, metrica)
-            
-            # Padrão de coluna: {protocolo}_{campo}_{sufixo}_F1
-            # Tenta encontrar as colunas no DataFrame
-            df_largo = pd.DataFrame()
-            
-            for proto in protocolos:
-                # Tenta o padrão completo: {proto}_{campo}_{sufixo}_F1
-                col_candidatas = [
-                    f'{proto}_{campo}_{sufixo}_F1',
-                ]
+    n_recortes = len(recortes)
+    info_recortes = f" × {n_recortes} recorte(s)" if n_recortes > 1 else ""
+    print(f"\n📊 Análise Estatística — {len(alvos_campos)} campo(s) × {len(alvos_metricas)} métrica(s){info_recortes}")
+
+    for nome_recorte, aliases_recorte in recortes:
+        prefixo = f'{_slug(nome_recorte)}_' if nome_recorte else ''
+        
+        if nome_recorte:
+            qt_protos = len(aliases_recorte) if aliases_recorte is not None else len(protocolos)
+            print(f"\n   🔍 Recorte: {nome_recorte} ({qt_protos} protocolos)")
+
+        for campo in alvos_campos:
+            for metrica in alvos_metricas:
+                sufixo = mapa_metrica_sufixo.get(metrica, metrica)
+                display = mapa_metrica_display.get(metrica, metrica)
                 
-                col_encontrada = None
-                for col in col_candidatas:
-                    if col in df_resultados.columns:
-                        col_encontrada = col
-                        break
+                # Padrão de coluna: {protocolo}_{campo}_{sufixo}_F1
+                # Tenta encontrar as colunas no DataFrame
+                df_largo = pd.DataFrame()
                 
-                if col_encontrada:
+                for proto in protocolos:
                     alias = mapa_aliases.get(proto, proto)
-                    df_largo[alias] = df_resultados[col_encontrada]
-            
-            if df_largo.empty or len(df_largo.columns) < 2:
-                continue
-            
-            # Remove linhas com NaN
-            df_largo = df_largo.dropna()
-            
-            metrica_nome = f'{campo}_{sufixo}_F1'
-            nome_base = f'estat_{campo}_{metrica}'.replace('(', '').replace(')', '')
-            arquivo_md = os.path.join(pasta_estat, f'{nome_base}.md')
-            arquivo_png = os.path.join(pasta_estat, f'{nome_base}_cd.png')
-            
-            print(f"   → {campo} × {display} ({len(df_largo)} docs, {len(df_largo.columns)} protocolos)")
-            
-            analise = AnaliseEstatistica(df_largo, config={
-                'metrica_nome': metrica_nome,
-                'campo': campo,
-                'tecnica': display,
-                'arquivo_md': arquivo_md,
-                'arquivo_cd_png': arquivo_png,
-                'lang': lang,
-                'min_amostras': 20,
-            })
-            
-            resumo = analise.processar()
-            analise.salvar()
-            resumos.append(resumo)
+                    # Filtra pelo recorte: se aliases_recorte está definido,
+                    # só inclui protocolos que pertençam ao recorte
+                    if aliases_recorte is not None and alias not in aliases_recorte:
+                        continue
+
+                    # Tenta o padrão completo: {proto}_{campo}_{sufixo}_F1
+                    col_candidatas = [
+                        f'{proto}_{campo}_{sufixo}_F1',
+                    ]
+                    
+                    col_encontrada = None
+                    for col in col_candidatas:
+                        if col in df_resultados.columns:
+                            col_encontrada = col
+                            break
+                    
+                    if col_encontrada:
+                        df_largo[alias] = df_resultados[col_encontrada]
+                
+                if df_largo.empty or len(df_largo.columns) < 2:
+                    continue
+                
+                # Reordena colunas pela ordem declarada no recorte
+                if aliases_recorte is not None:
+                    colunas_ordenadas = [a for a in aliases_recorte if a in df_largo.columns]
+                    if colunas_ordenadas:
+                        df_largo = df_largo[colunas_ordenadas]
+
+                # Remove linhas com NaN
+                df_largo = df_largo.dropna()
+                
+                metrica_nome = f'{campo}_{sufixo}_F1'
+                nome_base = f'{prefixo}estat_{campo}_{metrica}'.replace('(', '').replace(')', '')
+                arquivo_md = os.path.join(pasta_estat, f'{nome_base}.md')
+                arquivo_png = os.path.join(pasta_estat, f'{nome_base}_cd.png')
+                
+                print(f"   → {campo} × {display} ({len(df_largo)} docs, {len(df_largo.columns)} protocolos)")
+                
+                analise = AnaliseEstatistica(df_largo, config={
+                    'metrica_nome': metrica_nome,
+                    'campo': campo,
+                    'tecnica': display,
+                    'arquivo_md': arquivo_md,
+                    'arquivo_cd_png': arquivo_png,
+                    'lang': lang,
+                    'min_amostras': 20,
+                })
+                
+                resumo = analise.processar()
+                analise.salvar()
+                resumos.append(resumo)
     
     # --- LLM-as-a-Judge (seção separada, se disponível) ---
     if dados_analise and hasattr(dados_analise, 'avaliacao_llm') and dados_analise.avaliacao_llm:
@@ -1008,6 +1081,70 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
         print("   ⚠️  Nenhuma análise estatística gerada (combinações campo×métrica não encontradas nos dados).")
     
     return resumos
+
+
+def _montar_recortes_frequentista(protocolos_config, protocolos_disponiveis, mapa_aliases):
+    """Monta a lista de recortes para a análise frequentista.
+
+    Args:
+        protocolos_config: valor bruto de ``estatistica.protocolos`` — pode ser
+            ``None`` (todos contra todos), ``dict`` (cenários nomeados) ou
+            ``list`` (recorte único anônimo).
+        protocolos_disponiveis: rótulos dos modelos disponíveis no analisador.
+        mapa_aliases: {rotulo: alias}.
+
+    Returns:
+        list[tuple(nome, aliases)]: cada tupla contém o nome do recorte (ou
+        ``None`` para o anônimo) e a lista de aliases a incluir (ou ``None``
+        para "todos"). A ordem dos aliases respeita a declaração no YAML.
+    """
+    if protocolos_config is None:
+        # Sem configuração: análise global todos-contra-todos (comportamento original)
+        return [(None, None)]
+
+    if isinstance(protocolos_config, list):
+        # Lista simples: recorte único anônimo com os protocolos listados
+        aliases = _resolver_aliases(protocolos_config, protocolos_disponiveis, mapa_aliases)
+        return [(None, aliases)]
+
+    if isinstance(protocolos_config, dict):
+        recortes = []
+        for nome, lista in protocolos_config.items():
+            if isinstance(lista, str) and lista.strip().upper() == 'TODOS':
+                # "TODOS" → todos os modelos, nomeado
+                recortes.append((str(nome), None))
+            else:
+                aliases = _resolver_aliases(list(lista or []), protocolos_disponiveis, mapa_aliases)
+                if len(aliases) >= 2:
+                    recortes.append((str(nome), aliases))
+                else:
+                    print(f"   ⚠️  Recorte '{nome}' resolveu {len(aliases)} protocolo(s) — "
+                          "menos que os dois necessários. Ignorado.")
+        return recortes if recortes else [(None, None)]
+
+    return [(None, None)]
+
+
+def _resolver_aliases(selecao, protocolos_disponiveis, mapa_aliases):
+    """Resolve nomes do YAML (alias ou rótulo) em aliases, na ordem declarada.
+
+    Mesma lógica de ``selecionar_protocolos`` do módulo bayesiano, sem depender
+    dele (evita import circular).
+    """
+    # Monta índice: rótulo primeiro (precedência), alias depois
+    indice = {}
+    for rotulo in protocolos_disponiveis:
+        indice.setdefault(str(rotulo).strip().lower(), rotulo)
+    for rotulo in protocolos_disponiveis:
+        indice.setdefault(str(mapa_aliases.get(rotulo, rotulo)).strip().lower(), rotulo)
+
+    aliases, vistos = [], set()
+    for nome in selecao:
+        rotulo = indice.get(str(nome).strip().lower())
+        if rotulo is not None and rotulo not in vistos:
+            vistos.add(rotulo)
+            aliases.append(mapa_aliases.get(rotulo, rotulo))
+    return aliases
 
 
 def montar_dataframes_llm(dados_analise, protocolos, mapa_aliases):

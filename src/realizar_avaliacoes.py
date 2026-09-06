@@ -2296,7 +2296,7 @@ def _bloco_calibracao_rope(v: dict) -> list:
                          "baycomp exige ROPE > 0, e especialistas em acordo quase "
                          "perfeito degenerariam a margem a zero.\n")
         L.append("**Transcreva o valor calibrado à mão para o YAML da Etapa 2** "
-                 "(`estatistica_bayesiana.rope_likert`). O fluxo é manual de "
+                 "(`estatistica.rope_likert`). O fluxo é manual de "
                  "propósito: transcrever força o pré-registro consciente.\n")
     else:
         L.append("Sem grupo humano de referência com 2 ou mais especialistas, a "
