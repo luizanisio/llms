@@ -49,6 +49,9 @@ SRC_DIR="$(dirname $(dirname "$BASE_DIR"))/src"
 source /opt/conda/etc/profile.d/conda.sh
 conda activate luizbat01
 
+# Resolver erro OSError: [Errno 5] Input/output error no Triton cache (pasta da rede)
+export TRITON_CACHE_DIR="/tmp/triton_cache_${SLURM_JOB_ID:-$$}"
+
 echo "=== Iniciando job: $(date) ==="
 echo "Host     : $(hostname)"
 echo "Pasta    : $SCRIPT_DIR"
