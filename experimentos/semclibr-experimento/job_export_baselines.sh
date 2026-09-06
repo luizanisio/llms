@@ -57,6 +57,9 @@ echo "Pasta    : $SCRIPT_DIR"
 echo "Python   : $(which python)"
 echo "GPU info :"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || echo "nvidia-smi indisponível"
+echo "Disco    :"
+df -h "$BASE_DIR" 2>/dev/null || echo "df indisponível"
+quota -s 2>/dev/null | tail -n +1 || echo "quota indisponível"
 echo "==============================="
 
 

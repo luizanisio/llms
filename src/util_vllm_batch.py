@@ -880,40 +880,144 @@ def _carregar_saida_pasta(pasta: str) -> set:
 # Funções de Salvamento
 # ---------------------------------------------------------------------------
 
+# Resultados que não puderam ser gravados, por arquivo de saída. Ficam em
+# memória e são regravados junto com o próximo batch — assim uma falha de
+# I/O na rede não derruba a execução nem perde itens já gerados.
+_PENDENTES_NAO_SALVOS: Dict[str, List[Dict[str, Any]]] = {}
+
+# Intervalo mínimo entre atualizações do .bak (evita copiar o arquivo
+# inteiro pela rede a cada batch)
+_INTERVALO_BACKUP_S = 600
+
+
+def _diagnosticar_io(pasta: str) -> None:
+    """Imprime diagnóstico da pasta de saída após uma falha de I/O.
+
+    Distingue "o mount inteiro está com problema" de "falha no arquivo
+    específico", que é o que decide se adianta tentar de novo.
+    """
+    pasta = pasta or "."
+    try:
+        import shutil
+        uso = shutil.disk_usage(pasta)
+        print(
+            f"      💾 Espaço em {pasta}: "
+            f"{uso.free / (1024 ** 3):.1f} GB livres de "
+            f"{uso.total / (1024 ** 3):.1f} GB"
+        )
+    except Exception as e:
+        print(f"      ⚠️  Não foi possível medir o espaço em {pasta}: {e}")
+
+    teste = os.path.join(pasta, f".teste_io_{os.getpid()}")
+    try:
+        with open(teste, "wb") as f:
+            f.write(b"teste")
+            f.flush()
+            os.fsync(f.fileno())
+        os.remove(teste)
+        print("      ✅ Escrita de teste na pasta funcionou (falha do arquivo)")
+    except Exception as e:
+        print(f"      ❌ Escrita de teste na pasta também falhou: {e}")
+
+
+def _gravar_bytes_atomico(destino: str, dados: bytes, sufixo: str) -> None:
+    """Grava bytes de forma atômica com fsync (levanta OSError se falhar).
+
+    O temporário é único por tentativa: em sistemas de arquivo de rede um
+    arquivo que já falhou no flush/close costuma continuar retornando erro,
+    então cada tentativa escreve em um inode novo.
+    """
+    tmp = f"{destino}.tmp.{os.getpid()}.{sufixo}"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(dados)
+            f.flush()
+            os.fsync(f.fileno())  # erro de I/O aparece aqui, não no close
+        os.replace(tmp, destino)
+    except BaseException:
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        raise
+    # fsync do diretório garante que o rename foi persistido
+    try:
+        fd = os.open(os.path.dirname(destino) or ".", os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def _atualizar_backup(arquivo_saida: str, dados: bytes) -> None:
+    """Atualiza o .bak no máximo a cada _INTERVALO_BACKUP_S segundos."""
+    arquivo_bak = arquivo_saida + ".bak"
+    try:
+        if os.path.isfile(arquivo_bak):
+            idade = time.time() - os.path.getmtime(arquivo_bak)
+            if idade < _INTERVALO_BACKUP_S:
+                return
+        _gravar_bytes_atomico(arquivo_bak, dados, "bak")
+    except Exception as e:
+        print(f"   ⚠️  Não foi possível atualizar o backup: {e}")
+
+
 def salvar_resultados_parquet(
     arquivo_saida: str,
     resultados: List[Dict[str, Any]],
     append: bool = True,
-) -> None:
+) -> bool:
     """Salva ou atualiza parquet de saída.
 
     Se append=True e o arquivo já existe, combina resultados existentes
     com novos, sobrescrevendo itens pela chave (últimos vencem).
 
+    Erros de I/O não derrubam a execução: os resultados ficam pendentes em
+    memória e são regravados na próxima chamada.
+
     Args:
         arquivo_saida: caminho do parquet
         resultados: lista de dicts com {chave, resumo, resposta, erro}
         append: se True, mescla com dados existentes
+
+    Returns:
+        True se gravou; False se ficou pendente por erro de I/O.
     """
+    # Junta o que ficou pendente de gravações anteriores
+    pendentes = _PENDENTES_NAO_SALVOS.pop(arquivo_saida, [])
+    resultados = pendentes + list(resultados)
+    if pendentes:
+        print(
+            f"   🔁 Regravando {len(pendentes)} resultado(s) pendente(s) "
+            f"de falha de I/O anterior"
+        )
+    if not resultados:
+        return True
+
     df_novo = pd.DataFrame(resultados, columns=_COLUNAS_SAIDA_PARQUET)
 
     if append and os.path.isfile(arquivo_saida):
         try:
-            # Cria backup do arquivo antes de abri-lo/modificá-lo
-            import shutil
-            arquivo_bak = arquivo_saida + ".bak"
-            shutil.copy2(arquivo_saida, arquivo_bak)
-
             df_existente = pd.read_parquet(arquivo_saida)
-            # Remove itens que serão atualizados
-            chaves_novas = set(df_novo["chave"].astype(str))
-            df_existente = df_existente[
-                ~df_existente["chave"].astype(str).isin(chaves_novas)
-            ]
-            df_final = pd.concat([df_existente, df_novo], ignore_index=True)
         except Exception as e:
-            print(f"⚠️  Erro ao mesclar com parquet existente: {e}")
-            df_final = df_novo
+            # NUNCA sobrescreve a saída existente com apenas o batch atual:
+            # uma falha transitória de leitura apagaria todo o processamento.
+            print(
+                f"❌ Erro ao ler o parquet existente: {e}\n"
+                f"   ⏸️  {len(resultados)} resultado(s) ficam pendentes para a "
+                f"próxima gravação (nada foi sobrescrito)."
+            )
+            _PENDENTES_NAO_SALVOS[arquivo_saida] = resultados
+            return False
+        # Remove itens que serão atualizados
+        chaves_novas = set(df_novo["chave"].astype(str))
+        df_existente = df_existente[
+            ~df_existente["chave"].astype(str).isin(chaves_novas)
+        ]
+        df_final = pd.concat([df_existente, df_novo], ignore_index=True)
     else:
         df_final = df_novo
 
@@ -922,16 +1026,20 @@ def salvar_resultados_parquet(
     if pasta:
         os.makedirs(pasta, exist_ok=True)
 
-    # Escrita atômica com retry para erros de I/O transientes (NFS/Lustre)
-    arquivo_tmp = arquivo_saida + ".tmp"
-    max_tentativas = 3
-    backoff_segundos = [10, 30, 60]
+    # Serializa em memória: separa erro de dados de erro de gravação
+    dados = df_final.to_parquet(index=False)
+
+    # Escrita atômica com retry para erros de I/O (NFS/Lustre)
+    max_tentativas = 5
+    backoff_segundos = [5, 15, 30, 60, 120]
     for tentativa in range(max_tentativas):
         try:
-            df_final.to_parquet(arquivo_tmp, index=False)
-            os.replace(arquivo_tmp, arquivo_saida)
-            break
+            _gravar_bytes_atomico(arquivo_saida, dados, str(tentativa))
+            _atualizar_backup(arquivo_saida, dados)
+            return True
         except (OSError, IOError) as e:
+            if tentativa == 0:
+                _diagnosticar_io(pasta)
             if tentativa < max_tentativas - 1:
                 espera = backoff_segundos[tentativa]
                 print(
@@ -943,9 +1051,48 @@ def salvar_resultados_parquet(
             else:
                 print(
                     f"❌ Erro de I/O persistente após {max_tentativas} "
-                    f"tentativas: {e}"
+                    f"tentativas: {e}\n"
+                    f"   ⏸️  {len(resultados)} resultado(s) mantidos em memória "
+                    f"para a próxima gravação — a execução continua."
                 )
-                raise
+                _PENDENTES_NAO_SALVOS[arquivo_saida] = resultados
+    return False
+
+
+def flush_pendentes_parquet(arquivo_saida: str) -> bool:
+    """Grava o que ficou pendente; salva cópia de resgate local se falhar.
+
+    Returns:
+        True se não há pendências (ou se elas foram gravadas).
+    """
+    if not _PENDENTES_NAO_SALVOS.get(arquivo_saida):
+        return True
+
+    print(
+        f"\n💾 Gravando {len(_PENDENTES_NAO_SALVOS[arquivo_saida])} "
+        f"resultado(s) pendente(s) de falha de I/O..."
+    )
+    if salvar_resultados_parquet(arquivo_saida, []):
+        print("   ✅ Pendências gravadas.")
+        return True
+
+    # Não conseguiu: salva cópia local para não perder o processamento
+    pendentes = _PENDENTES_NAO_SALVOS.get(arquivo_saida, [])
+    destino = os.path.join(
+        os.environ.get("TMPDIR", "/tmp"),
+        f"pendentes_{os.path.basename(arquivo_saida)}",
+    )
+    try:
+        pd.DataFrame(pendentes, columns=_COLUNAS_SAIDA_PARQUET).to_parquet(
+            destino, index=False
+        )
+        print(
+            f"   💾 Cópia de resgate salva em: {destino}\n"
+            f"      (mescle na saída oficial quando o disco normalizar)"
+        )
+    except Exception as e:
+        print(f"   ❌ Falha também ao salvar a cópia de resgate: {e}")
+    return False
 
 
 def salvar_resultado_pasta(
@@ -1502,6 +1649,10 @@ def processar_batch(
                 tokens_processados_minuto=tp_min,
             )
 
+    # Última chance de gravar o que ficou pendente por erro de I/O
+    if eh_parquet:
+        flush_pendentes_parquet(arquivo_saida)
+
     stats["tempo_total"] = time.time() - inicio_total
 
     # Log final
@@ -1856,6 +2007,10 @@ def processar_batch_api(
                 tokens_gerados_minuto=tg_min,
                 tokens_processados_minuto=tp_min,
             )
+
+    # Última chance de gravar o que ficou pendente por erro de I/O
+    if eh_parquet:
+        flush_pendentes_parquet(arquivo_saida)
 
     stats["tempo_total"] = time.time() - inicio_total
 
