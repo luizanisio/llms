@@ -98,20 +98,9 @@ configuracao_comparacao:
       - "Sentencas"
       - "MetaDados"
     metricas:
-      - bertscore
       - rouge_l
-      - sbert_grande
 
   campos:
-    bertscore:
-      - "(global)"
-      - "background"
-      - "objective"
-      - "methods"
-      - "results"
-      - "conclusions"
-      - "Sentencas"
-      - "MetaDados"
 
     rouge_1:
 
@@ -139,14 +128,6 @@ configuracao_comparacao:
       - "publication"
       - "journal"
 
-    sbert_grande:
-      - "background"
-      - "objective"
-      - "methods"
-      - "results"
-      - "conclusions"
-      - "Sentencas"
-      - "MetaDados"
 
 campos_virtuais:
   Sentencas:
@@ -160,3 +141,27 @@ campos_virtuais:
     - publication
     - journal
     - keywords
+
+
+estatistica:
+  bayesiana: true
+  frequentista: true
+  protocolos:
+    Panorama_Geral: "TODOS"
+  metricas_automaticas:
+    # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
+    # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
+    # resultado: pequena demais satura o heatmap em verde/vermelho, grande
+    # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
+    # reportar — a matriz em tres ROPEs e o minimo defensavel.
+    # Maior diferença de F1 entre as três rodadas de D1 em todas as métricas automáticas
+    rope: 0.0030
+    rope_sensibilidade: [0.0015, 0.0030, 0.0045]
+
+    # Mesmos agregados de campos_estatisticas, sem o "(global)": Sentenças e
+    # MetaDados sao os alvos de interesse das comparacoes pareadas.
+    campos:
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - rouge_l

@@ -9,6 +9,7 @@
 #     D1 vs D1a vs D1b → variância entre réplicas (consistência)
 # Modelos: D1 (réplica 1), D1a (réplica 2), D1b (réplica 3)
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml --estatisticas
 # ==========================================================================
 
 # --- Miscelânea ---

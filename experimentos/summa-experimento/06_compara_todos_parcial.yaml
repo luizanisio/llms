@@ -17,7 +17,7 @@
 #   e orçamento; as leituras causais devem sair dos relatórios temáticos, onde
 #   os pares estão controlados.
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml
-# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --bayesiana
+# Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --estatisticas
 # ==========================================================================
 
 # --- Miscelânea ---
@@ -366,11 +366,12 @@ campos_virtuais:
 #   (Student acumulada), deterministico: sem amostras, sem semente.
 # Saida: compara/analises_comparacao_summa_todos/bayesiana/
 # Reexecutar SO esta etapa (nao refaz a comparacao pesada):
-#   python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --bayesiana
+#   python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml --estatisticas
 # ==========================================================================
 
-estatistica_bayesiana:
-  ativo: true
+estatistica:
+  bayesiana: true
+  frequentista: true
 
   # --- Likert do juiz LLM (secao PRINCIPAL) ---
   # CorrelatedTTest sobre a diferenca de notas pareada por documento.
@@ -391,14 +392,15 @@ estatistica_bayesiana:
   incluir_base: false            # ignorado quando 'protocolos' abaixo e um dicionario
 
   # --- Recortes pre-especificados por questao de pesquisa (B1) ---
-  # 12 recortes, 79 contrastes — nenhuma comparacao todos-contra-todos.
+  # 12 recortes + panorama geral — o "TODOS" gera a comparacao todos-contra-todos.
   # Cada entrada gera um conjunto proprio de figuras/tabelas, com o nome
   # virando prefixo dos arquivos e uma secao propria no relatorio.
   # Aceita alias ou rotulo; a ORDEM declarada e a ordem das linhas/colunas.
-  # Ajustar as listas e rodar com --bayesiana NAO refaz a comparacao.
+  # Ajustar as listas e rodar com --estatisticas NAO refaz a comparacao.
   # Protocolos comentados em modelos_comparacao (em treinamento) sao ignorados
   # automaticamente; os recortes ficam pre-especificados para quando estiverem
   # disponiveis.
+  # Use "TODOS" como valor para incluir automaticamente todos os modelos ativos.
   protocolos:
     # Q1 — efeito do ajuste fino: zero-shot vs LoRA vs Full FT (3 contrastes)
     Q1_ajuste_fino: ["A", "B", "C"]
@@ -433,12 +435,14 @@ estatistica_bayesiana:
     # Q6c — transicao de regime: pre-treino LoRA e estabilizacao pos-merge
     #   (6 contrastes)
     Q6c_transicao_regime: ["B","C", "D13", "D14", "D15"]
+    # Panorama geral: todos os modelos ativos, para visao global
+    Panorama_Geral: "TODOS"
 
   # --- Metricas automaticas (secao COMPLEMENTAR) ---
   # Medem similaridade com o modelo base (Prof), ou seja FIDELIDADE DE
   # DESTILACAO, nao qualidade: um protocolo que reproduz fielmente um erro do
   # professor e premiado por elas. Servem como triangulacao, nunca como veredito.
-  # CorrelatedTTest (unico teste do pipeline) sobre escores continuos.
+  # CorrelatedTTest (unico teste do pipeline bayesiano) sobre escores continuos.
   metricas_automaticas:
     # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
     # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o

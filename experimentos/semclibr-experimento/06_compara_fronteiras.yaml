@@ -166,10 +166,6 @@ configuracao_comparacao:
 
   # (Opcional) Sobrescrita de modelos HF para BERTScore
   modelos:
-    # Alternativa para pt-br clínico. Trocar exige rodar 03 E 06 com o mesmo
-    # modelo, senão a dificuldade e a avaliação final ficam em escalas distintas.
-    #bertscore: "pucpr/biobertpt-all"
-    bertscore_batch_size: 1024
 
   mascaras:
     extracao: "^(.+)\\.json$"
@@ -184,7 +180,6 @@ configuracao_comparacao:
       - "Entidades"
       - "Relacoes"
     metricas:
-      - bertscore
       - rouge_l
       - rouge_2
 
@@ -202,13 +197,6 @@ configuracao_comparacao:
   # currículo e a avaliação final precisam sair da mesma régua.
   # ========================================================================
   campos:
-    bertscore:
-      - "(global)"
-      - "entities"
-      - "entities.text"
-      - "Entidades"
-      - "Relacoes"
-
     rouge_1:
 
     rouge_2:
