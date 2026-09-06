@@ -74,15 +74,12 @@ for CONFIG_FILE in "${CONFIGS[@]}"; do
     echo "=== Hora: $(date) ==="
     echo "============================================================"
 
-    ARQUIVO_PARQUET=$(python -c "import yaml; print(yaml.safe_load(open('$BASE_DIR/$CONFIG_FILE'))['saida']['arquivo'])" 2>/dev/null)
-
-    if [ -n "$ARQUIVO_PARQUET" ] && [ -f "$BASE_DIR/$ARQUIVO_PARQUET" ]; then
-        echo "Arquivo parquet ($ARQUIVO_PARQUET) já existe. Ignorando a extração."
-    else
-        if ! python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE; then
-            echo "Erro na extração de $CONFIG_FILE!"
-            EXTRACOES_COM_ERRO=true
-        fi
+    # Sem guarda de "arquivo já existe": o util_vllm_batch.py retoma sozinho —
+    # ignora itens já processados e usa a coluna "rodada" da saída para não
+    # ultrapassar o limite de 'tentativas' definido no YAML.
+    if ! python $SRC_DIR/util_vllm_batch.py --config $BASE_DIR/$CONFIG_FILE; then
+        echo "Erro na extração de $CONFIG_FILE!"
+        EXTRACOES_COM_ERRO=true
     fi
 
     echo "=== Extração com $CONFIG_FILE finalizada: $(date) ==="

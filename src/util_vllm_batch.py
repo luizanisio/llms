@@ -61,7 +61,7 @@ from util import Util
 # ---------------------------------------------------------------------------
 
 MAX_PROMPTS_LOG = 5
-_COLUNAS_SAIDA_PARQUET = ["chave", "resumo", "resposta", "erro"]
+_COLUNAS_SAIDA_PARQUET = ["chave", "resumo", "resposta", "erro", "rodada"]
 
 _YAML_EXEMPLO = """\
 # ==========================================================================
@@ -124,6 +124,9 @@ vllm:
 # max_itens: limite máximo de itens a processar (útil para testes). Opcional.
 # tentativas: número de rodadas de reprocessamento para itens com erro (padrão: 1 = sem retry).
 #   Após cada rodada, apenas os itens que falharam são reprocessados.
+#   A rodada de cada item fica gravada na saída (coluna/campo "rodada"), então
+#   uma execução interrompida retoma a contagem de onde parou e nunca gasta
+#   mais rodadas do que o configurado aqui.
 # pausa_tentativas: segundos de pausa entre rodadas de tentativas (padrão: 5).
 # think: controle de reasoning para APIs remotas (opcional).
 #   Valores: "low", "medium", "high", "minimal" ou combinação "high:medium" (reasoning:verbosity)
@@ -969,6 +972,7 @@ def salvar_resultados_parquet(
     arquivo_saida: str,
     resultados: List[Dict[str, Any]],
     append: bool = True,
+    rodada: int = 1,
 ) -> bool:
     """Salva ou atualiza parquet de saída.
 
@@ -982,6 +986,7 @@ def salvar_resultados_parquet(
         arquivo_saida: caminho do parquet
         resultados: lista de dicts com {chave, resumo, resposta, erro}
         append: se True, mescla com dados existentes
+        rodada: número da rodada de tentativas que gerou estes resultados
 
     Returns:
         True se gravou; False se ficou pendente por erro de I/O.
@@ -996,6 +1001,11 @@ def salvar_resultados_parquet(
         )
     if not resultados:
         return True
+
+    # Carimba a rodada (pendentes já carimbados mantêm a rodada de origem)
+    for r in resultados:
+        if not r.get("rodada"):
+            r["rodada"] = int(rodada)
 
     df_novo = pd.DataFrame(resultados, columns=_COLUNAS_SAIDA_PARQUET)
 
@@ -1012,6 +1022,9 @@ def salvar_resultados_parquet(
             )
             _PENDENTES_NAO_SALVOS[arquivo_saida] = resultados
             return False
+        # Saídas geradas antes da coluna "rodada" contam como rodada 1
+        if "rodada" not in df_existente.columns:
+            df_existente["rodada"] = 1
         # Remove itens que serão atualizados
         chaves_novas = set(df_novo["chave"].astype(str))
         df_existente = df_existente[
@@ -1020,6 +1033,10 @@ def salvar_resultados_parquet(
         df_final = pd.concat([df_existente, df_novo], ignore_index=True)
     else:
         df_final = df_novo
+
+    df_final["rodada"] = (
+        pd.to_numeric(df_final["rodada"], errors="coerce").fillna(1).astype("int64")
+    )
 
     # Garante diretório existe
     pasta = os.path.dirname(arquivo_saida)
@@ -1101,6 +1118,7 @@ def salvar_resultado_pasta(
     resposta: str,
     resumo: Dict[str, Any],
     erro: str = "",
+    rodada: int = 1,
 ) -> None:
     """Salva resultado individual em pasta (.txt + .json).
 
@@ -1110,6 +1128,7 @@ def salvar_resultado_pasta(
         resposta: texto da resposta
         resumo: dicionário com usage/model/tempo
         erro: mensagem de erro (vazio se sucesso)
+        rodada: número da rodada de tentativas que gerou o resultado
     """
     os.makedirs(pasta_saida, exist_ok=True)
 
@@ -1121,6 +1140,7 @@ def salvar_resultado_pasta(
     # .json com resumo + erro
     json_data = dict(resumo)
     json_data["chave"] = chave
+    json_data["rodada"] = int(json_data.get("rodada") or rodada)
     if erro:
         json_data["erro"] = erro
 
@@ -1220,6 +1240,89 @@ def carregar_chaves_com_erro(config: Dict[str, Any]) -> set:
         return _carregar_chaves_com_erro_parquet(arquivo_saida)
     else:
         return _carregar_chaves_com_erro_pasta(arquivo_saida)
+
+
+# ---------------------------------------------------------------------------
+# Contagem de rodadas (tentativas) já gastas — sobrevive a interrupções
+# ---------------------------------------------------------------------------
+
+def _carregar_progresso_parquet(arquivo: str) -> Tuple[int, set]:
+    """Retorna (maior rodada registrada, chaves registradas) do parquet."""
+    if not os.path.isfile(arquivo):
+        return 0, set()
+    try:
+        df = pd.read_parquet(arquivo)
+    except Exception as e:
+        print(f"⚠️  Erro ao ler as rodadas do parquet de saída: {e}")
+        return 0, set()
+    if "chave" not in df.columns or len(df) == 0:
+        return 0, set()
+
+    chaves = set(df["chave"].astype(str))
+    if "rodada" not in df.columns:
+        # Saída gerada antes da coluna existir: conta como 1 rodada gasta
+        return 1, chaves
+    rodadas = pd.to_numeric(df["rodada"], errors="coerce").fillna(1)
+    return int(rodadas.max()), chaves
+
+
+def _carregar_progresso_pasta(pasta: str) -> Tuple[int, set]:
+    """Retorna (maior rodada registrada, chaves registradas) da pasta."""
+    if not os.path.isdir(pasta):
+        return 0, set()
+    rodada_max = 0
+    chaves = set()
+    for nome in os.listdir(pasta):
+        if not nome.lower().endswith(".json"):
+            continue
+        chaves.add(os.path.splitext(nome)[0])
+        try:
+            with open(os.path.join(pasta, nome), "r", encoding="utf-8") as f:
+                dados = json.load(f)
+            rodada_max = max(rodada_max, int(dados.get("rodada", 1) or 1))
+        except Exception:
+            rodada_max = max(rodada_max, 1)
+    return rodada_max, chaves
+
+
+def carregar_progresso_rodadas(config: Dict[str, Any]) -> Tuple[int, set]:
+    """Retorna (maior rodada registrada, chaves registradas) da saída.
+
+    A rodada de cada item é gravada junto com o resultado, então o número
+    de tentativas já gastas sobrevive a uma interrupção do processo.
+    """
+    arquivo_saida = config["saida"]["arquivo"]
+    if _saida_eh_parquet(config):
+        return _carregar_progresso_parquet(arquivo_saida)
+    return _carregar_progresso_pasta(arquivo_saida)
+
+
+def calcular_rodada_inicial(
+    rodada_max: int,
+    chaves_registradas: set,
+    itens: List[Dict[str, str]],
+) -> int:
+    """Decide em qual rodada a execução deve continuar.
+
+    - Sem saída anterior: começa na rodada 1.
+    - Última rodada interrompida (há item sem nenhum registro na saída):
+      continua NA mesma rodada, que não chegou ao fim.
+    - Última rodada concluída: segue para a próxima.
+
+    Args:
+        rodada_max: maior rodada registrada na saída
+        chaves_registradas: chaves que já têm algum registro na saída
+        itens: itens da entrada (após filtros de max_itens)
+
+    Returns:
+        Número da rodada em que a execução deve continuar.
+    """
+    if rodada_max <= 0:
+        return 1
+    interrompida = any(
+        item["chave"] not in chaves_registradas for item in itens
+    )
+    return rodada_max if interrompida else rodada_max + 1
 
 
 # ---------------------------------------------------------------------------
@@ -1379,6 +1482,7 @@ def processar_batch(
     config: Dict[str, Any],
     batch_log: Optional["BatchLog"] = None,
     chaves_erro_anteriores: Optional[set] = None,
+    rodada: int = 1,
 ) -> Dict[str, Any]:
     """Processa itens pendentes em batches, salvando incrementalmente.
 
@@ -1389,6 +1493,7 @@ def processar_batch(
         config: configuração completa
         batch_log: instância de BatchLog para registrar o log incremental
         chaves_erro_anteriores: chaves que tinham erro antes desta execução
+        rodada: número da rodada de tentativas (gravado junto com o resultado)
 
     Returns:
         Dicionário com estatísticas do processamento
@@ -1478,13 +1583,13 @@ def processar_batch(
                     stats["erros_novos"] += 1
 
             if eh_parquet:
-                salvar_resultados_parquet(arquivo_saida, resultados_batch)
+                salvar_resultados_parquet(arquivo_saida, resultados_batch, rodada=rodada)
             else:
                 for r in resultados_batch:
                     resumo = json.loads(r["resumo"])
                     salvar_resultado_pasta(
                         arquivo_saida, r["chave"], r["resposta"],
-                        resumo, r["erro"]
+                        resumo, r["erro"], rodada=rodada
                     )
 
             # Log do batch com erro total
@@ -1592,13 +1697,13 @@ def processar_batch(
 
         # Salvamento incremental
         if eh_parquet:
-            salvar_resultados_parquet(arquivo_saida, resultados_batch)
+            salvar_resultados_parquet(arquivo_saida, resultados_batch, rodada=rodada)
         else:
             for r in resultados_batch:
                 resumo = json.loads(r["resumo"])
                 salvar_resultado_pasta(
                     arquivo_saida, r["chave"], r["resposta"],
-                    resumo, r["erro"]
+                    resumo, r["erro"], rodada=rodada
                 )
 
         tokens_batch = sum(
@@ -1818,6 +1923,7 @@ def processar_batch_api(
     config: Dict[str, Any],
     batch_log: Optional["BatchLog"] = None,
     chaves_erro_anteriores: Optional[set] = None,
+    rodada: int = 1,
 ) -> Dict[str, Any]:
     """Processa itens pendentes via API remota (or:, tg:, vl:, oa:).
 
@@ -1829,6 +1935,7 @@ def processar_batch_api(
         config: configuração completa
         batch_log: instância de BatchLog para registrar o log incremental
         chaves_erro_anteriores: chaves que tinham erro antes desta execução
+        rodada: número da rodada de tentativas (gravado junto com o resultado)
 
     Returns:
         Dicionário com estatísticas do processamento
@@ -1952,13 +2059,13 @@ def processar_batch_api(
 
         # Salvamento incremental
         if eh_parquet:
-            salvar_resultados_parquet(arquivo_saida, resultados_batch)
+            salvar_resultados_parquet(arquivo_saida, resultados_batch, rodada=rodada)
         else:
             for r in resultados_batch:
                 resumo = json.loads(r["resumo"])
                 salvar_resultado_pasta(
                     arquivo_saida, r["chave"], r["resposta"],
-                    resumo, r["erro"]
+                    resumo, r["erro"], rodada=rodada
                 )
 
         tokens_batch = sum(
@@ -2459,8 +2566,37 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
     # Filtra pendentes
     itens_pendentes = [item for item in itens if item["chave"] not in chaves_ok]
 
-    if not itens_pendentes:
-        print(f"✅ Todos os {len(itens)} itens já foram processados com sucesso!")
+    # Rodadas de tentativas já gastas em execuções anteriores
+    tentativas_cfg = config["geracao"].get("tentativas", 1)
+    rodada_max, chaves_registradas = carregar_progresso_rodadas(config)
+    rodada_inicial = calcular_rodada_inicial(rodada_max, chaves_registradas, itens)
+    if rodada_max > 0:
+        restantes = max(0, tentativas_cfg - rodada_inicial + 1)
+        situacao = (
+            "rodada anterior interrompida"
+            if rodada_inicial == rodada_max
+            else "rodada anterior concluída"
+        )
+        print(
+            f"   🔁 Rodadas já registradas: {rodada_max} ({situacao}) — "
+            f"retomando na rodada {rodada_inicial}/{tentativas_cfg} "
+            f"({restantes} restante(s))"
+        )
+
+    limite_rodadas_atingido = rodada_inicial > tentativas_cfg
+    if not itens_pendentes or limite_rodadas_atingido:
+        if not itens_pendentes:
+            print(f"✅ Todos os {len(itens)} itens já foram processados com sucesso!")
+        else:
+            print(
+                f"\n⛔ Limite de {tentativas_cfg} tentativa(s) já atingido — "
+                f"{len(itens_pendentes)} item(ns) seguem com erro e NÃO serão "
+                f"reprocessados."
+            )
+            print(
+                f"   Para tentar de novo, aumente 'tentativas' no YAML para "
+                f"mais de {rodada_max}."
+            )
         print("   Gerando gráficos e resumos para os dados existentes...")
         stats_vazio = {
             'processados_ok': 0,
@@ -2558,7 +2694,7 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
     print(f"   Batch size: {cfg_geracao.get('batch_size', 64)}")
     if cfg_geracao.get('max_itens', 0) > 0:
         print(f"   Max itens: {cfg_geracao['max_itens']}")
-    tentativas = cfg_geracao.get('tentativas', 1)
+    tentativas = tentativas_cfg
     pausa_tentativas = cfg_geracao.get('pausa_tentativas', 5)
     if tentativas > 1:
         print(f"   Tentativas: {tentativas}")
@@ -2589,10 +2725,10 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         if not modo_api:
             engine, tokenizer = inicializar_engine(config)
 
-        for tentativa_atual in range(1, tentativas + 1):
+        for tentativa_atual in range(rodada_inicial, tentativas + 1):
             tentativa_realizada = tentativa_atual
 
-            if tentativa_atual > 1:
+            if tentativa_atual > rodada_inicial:
                 # Recarrega chaves OK e com erro para a nova rodada
                 chaves_ok = carregar_saida_existente(config)
                 chaves_erro = carregar_chaves_com_erro(config)
@@ -2618,12 +2754,14 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
                     itens_pendentes, config,
                     batch_log=batch_log,
                     chaves_erro_anteriores=chaves_erro,
+                    rodada=tentativa_atual,
                 )
             else:
                 stats = processar_batch(
                     engine, tokenizer, itens_pendentes, config,
                     batch_log=batch_log,
                     chaves_erro_anteriores=chaves_erro,
+                    rodada=tentativa_atual,
                 )
 
             # Acumula stats de todas as rodadas
