@@ -16,7 +16,7 @@ Requisitos: scipy>=1.9 (wilcoxon zstatistic; fallback via norm.isf se ausente),
 import os
 import pandas as pd
 import numpy as np
-from scipy import stats
+from scipy import stats, optimize
 from itertools import combinations
 
 # Lazy imports para scikit_posthocs e matplotlib (evita overhead se não usado)
@@ -128,7 +128,7 @@ _TEXTOS = {
         'efeito_insignificante': 'Insignificante', 'efeito_pequeno': 'Pequeno',
         'efeito_medio': 'Médio', 'efeito_grande': 'Grande',
         'sim': 'Sim', 'nao': 'Não',
-        'nota_rope_calibracao': '📌 **Nota de calibração da ROPE:** O maior |Δ| observado nesta tabela é **{max_delta}**. Se os protocolos comparados foram treinados sob o **mesmo regime e mesmos dados** (comparação de calibração/réplicas), esse valor representa o piso de ruído do treinamento (variância não-determinística) e pode ser utilizado como referência para o parâmetro `metricas_automaticas.rope` na análise bayesiana (`estatistica`) em comparações futuras entre protocolos distintos.',
+        'nota_rope_calibracao': '📌 **Nota de calibração da ROPE:** o par mais exigente desta tabela é {par}, com |Δ| = {delta} e desvio-padrão da posterior = {sd}; a ROPE sugerida é **{rope}** — a menor margem sob a qual TODOS os pares desta tabela seriam declarados `equivalente` ao limiar de {limiar}. O maior |Δ| isolado ({max_delta}) **não** serve como ROPE: fixá-la no Δ observado centra a posterior na borda do intervalo e trava a probabilidade de equivalência em ~0,50. Detalhes e bloco YAML em `00_rope_sugerido.md`.',
     },
     'en': {
         'titulo_principal': 'Statistical Analysis',
@@ -176,7 +176,7 @@ _TEXTOS = {
         'efeito_insignificante': 'Negligible', 'efeito_pequeno': 'Small',
         'efeito_medio': 'Medium', 'efeito_grande': 'Large',
         'sim': 'Yes', 'nao': 'No',
-        'nota_rope_calibracao': '📌 **ROPE calibration note:** The largest |Δ| observed in this table is **{max_delta}**. If the compared protocols were trained under the **same regime and same data** (calibration/replica comparison), this value represents the training noise floor (non-deterministic variance) and can be used as a reference for the `metricas_automaticas.rope` parameter in the Bayesian analysis (`estatistica`) when comparing distinct protocols in future experiments.',
+        'nota_rope_calibracao': '📌 **ROPE calibration note:** the most demanding pair in this table is {par}, with |Δ| = {delta} and posterior standard deviation = {sd}; the suggested ROPE is **{rope}** — the smallest margin under which EVERY pair in this table would be classified `equivalent` at the {limiar} threshold. The largest |Δ| alone ({max_delta}) is **not** a usable ROPE: pinning it to the observed Δ centres the posterior on the interval boundary and locks the equivalence probability at ~0.50. Details and YAML block in `00_rope_sugerido.md`.',
     }
 }
 
@@ -212,6 +212,13 @@ class AnaliseEstatistica:
         self.lang = self.config.get('lang', 'en')
         self.t = _TEXTOS.get(self.lang, _TEXTOS['en'])
         self.alpha = self.config.get('alpha', 0.05)
+        # Limiar ÚNICO de decisão da camada bayesiana (`estatistica.limiar`).
+        # Entra aqui porque a ROPE sugerida é derivada dele — ver
+        # `_rope_para_equivalencia`.
+        self.limiar_bayes = float(self.config.get('limiar_bayes', 0.95) or 0.95)
+        # Bateria de calibração (réplicas do MESMO protocolo)? Só nesse caso a
+        # ROPE sugerida tem sentido, e só nesse caso a nota é emitida.
+        self.calibracao_rope = bool(self.config.get('calibracao_rope', False))
         self.min_amostras = self.config.get('min_amostras', 20)
         self.formato_grupo = self.config.get('formato_grupo', 'G-{:02d}')
         
@@ -268,8 +275,23 @@ class AnaliseEstatistica:
         self._calcular_effect_sizes()
         
         self.max_delta = 0.0
+        self.rope_calibrado = 0.0
+        self.rope_detalhe = {}
         if self.wilcoxon_resultados:
             self.max_delta = max(abs(r['diferenca']) for r in self.wilcoxon_resultados)
+            # A ROPE sugerida é a do par MAIS EXIGENTE: a margem que basta para
+            # o par pior colocado já basta para todos os outros.
+            pior = max(self.wilcoxon_resultados,
+                       key=lambda r: self._rope_para_equivalencia(r, arredondar=False))
+            self.rope_calibrado = self._rope_para_equivalencia(pior)
+            self.rope_detalhe = {
+                'rope': self.rope_calibrado,
+                'delta': abs(float(pior['diferenca'])),
+                'sd': float(np.sqrt(max(float(pior.get('var_posterior', 0.0)), 0.0))),
+                'par': f"{pior['proto1']} × {pior['proto2']}",
+                'n': int(pior.get('n', self.N)),
+                'limiar': self.limiar_bayes,
+            }
 
         self._analise_realizada = True
         self._gerar_relatorio_md()
@@ -277,6 +299,7 @@ class AnaliseEstatistica:
         
         self.resumo = {
             'metrica': self.metrica_nome,
+            'campo': self.campo,
             'is_llm': 'llm_' in self.metrica_nome,
             'K': self.K,
             'N': self.N,
@@ -288,6 +311,8 @@ class AnaliseEstatistica:
                 g for v in self.grupos.values() for g in str(v).split()
             )) if self.grupos else 0,
             'max_delta': self.max_delta,
+            'rope_calibrado': self.rope_calibrado,
+            'rope_detalhe': self.rope_detalhe,
         }
         return self.resumo
     
@@ -447,6 +472,14 @@ class AnaliseEstatistica:
             diff = v2 - v1
             n_total = len(v1)
             n_prime = int(np.sum(diff != 0))  # pares efetivos (sem empate)
+
+            # Posterior do CorrelatedTTest com a correção de Nadeau-Bengio
+            # (`var * (1/n + 1/(n-1))`, runs=1) — exatamente a variância que a
+            # camada bayesiana usa. É recalculada aqui para que a ROPE sugerida
+            # seja auto-consistente com o teste que a consome, sem depender de
+            # a bayesiana ter rodado.
+            var_post = (float(np.var(diff, ddof=1)) * (1.0 / n_total + 1.0 / (n_total - 1))
+                        if n_total > 1 else 0.0)
             
             # NOTA: no teste bilateral com method="approx", o zstatistic do scipy
             # NÃO carrega direção (wilcoxon(v1,v2) e wilcoxon(v2,v1) retornam o
@@ -487,6 +520,8 @@ class AnaliseEstatistica:
                 'media_p1': v1.mean(), 'media_p2': v2.mean(),
                 'diferenca': diff.mean(),
                 'delta_mediano': float(np.median(diff)),
+                'var_posterior': var_post,
+                'gl_posterior': n_total - 1,
                 'z_stat': z_stat,
                 'r_efeito': r_efeito,
                 'tamanho_efeito_r': tamanho_r,
@@ -507,6 +542,55 @@ class AnaliseEstatistica:
         
         self.wilcoxon_resultados = resultados_brutos
     
+    def _rope_para_equivalencia(self, resultado, arredondar=True):
+        """Menor ROPE que classifica este par como `equivalente` ao limiar.
+
+        A camada bayesiana não compara o Δ pontual com a ROPE: ela integra a
+        posterior da diferença média sobre ``[-R, +R]`` e exige que essa massa
+        alcance o limiar. Fixar ``R = |Δ|`` — o que a versão anterior deste
+        módulo sugeria — centra a posterior exatamente na borda do intervalo,
+        deixando metade da massa de fora e travando P(equivalência) em ~0,50.
+        É um teto estrutural: não melhora com mais dados, porque a posterior
+        apenas estreita em torno da borda.
+
+        O valor útil é o menor ``R`` que satisfaz
+
+            P(-R < δ < R) ≥ limiar,   δ ~ t(Δ, var_posterior, n-1)
+
+        isto é, ``R ≈ |Δ| + t_limiar · sd_posterior``: o Δ observado entre as
+        réplicas **mais** a margem de incerteza sobre esse próprio Δ. A
+        posterior é a do `baycomp.CorrelatedTTest` (Nadeau-Bengio, runs=1),
+        de modo que o número devolvido aqui é o que a camada bayesiana de fato
+        consome.
+
+        Com ``arredondar=True`` o valor sai arredondado **para cima** na 4ª casa
+        decimal — a mesma precisão com que é transcrito no YAML. Arredondar para
+        o mais próximo quebraria a garantia: uma ROPE exigida de 0,005731 viraria
+        0,0057 e devolveria `incerto` justamente no par que a definiu.
+        """
+        def _teto(valor):
+            """Arredonda para cima na 4ª casa — nunca para baixo do exigido."""
+            return float(np.ceil(valor * 1e4) / 1e4) if arredondar else float(valor)
+
+        media = abs(float(resultado.get('diferenca', 0.0)))
+        var = float(resultado.get('var_posterior', 0.0))
+        gl = int(resultado.get('gl_posterior', 0))
+        if var <= 0.0 or gl <= 0:
+            return _teto(media)
+        sd = float(np.sqrt(var))
+        limiar = min(max(float(self.limiar_bayes), 1e-6), 1.0 - 1e-9)
+
+        def excedente(r):
+            """Massa da posterior dentro de [-r, r], menos o limiar."""
+            return (stats.t.cdf((r - media) / sd, gl)
+                    - stats.t.cdf((-r - media) / sd, gl)) - limiar
+
+        # excedente(0) = -limiar < 0 e cresce monotonicamente com r.
+        alto = media + 40.0 * sd
+        if excedente(alto) <= 0.0:
+            return _teto(alto)  # guarda numérica: inalcançável na prática
+        return _teto(optimize.brentq(excedente, 0.0, alto, xtol=1e-12))
+
     def _calcular_effect_sizes(self):
         """Cohen's d para cada par nos resultados de Wilcoxon (métrica secundária)."""
         for r in self.wilcoxon_resultados:
@@ -740,9 +824,17 @@ class AnaliseEstatistica:
             m = len(self.wilcoxon_resultados)
             L.append(f'> *{t["msg_holm_nota"].format(m=m)}*')
             L.append('')
-            # Nota de calibração da ROPE — maior |Δ| como referência
-            if getattr(self, 'max_delta', 0.0) > 0:
-                L.append(f'> {t["nota_rope_calibracao"].format(max_delta=f"{self.max_delta:.4f}")}')
+            # Nota de calibração da ROPE — só faz sentido em bateria de réplicas
+            detalhe = getattr(self, 'rope_detalhe', {}) or {}
+            if self.calibracao_rope and detalhe.get('rope', 0.0) > 0:
+                L.append('> ' + t['nota_rope_calibracao'].format(
+                    par=detalhe['par'],
+                    delta=f"{detalhe['delta']:.4f}",
+                    sd=f"{detalhe['sd']:.4f}",
+                    rope=f"{detalhe['rope']:.4f}",
+                    limiar=f"{detalhe.get('limiar', 0.95):.2f}",
+                    max_delta=f"{self.max_delta:.4f}",
+                ))
                 L.append('')
         
         # --- 5. Nemenyi Post-hoc (seção materializada) ---
@@ -905,26 +997,233 @@ def _slug(texto):
     return _re.sub(r'_+', '_', _re.sub(r'[^0-9A-Za-z]+', '_', sem_acento)).strip('_').lower()
 
 
-def _gerar_relatorio_rope_global(pasta_estat, max_delta_global, lang):
-    """Gera um pequeno relatório destacando a maior variação (ROPE sugerido)."""
-    arquivo_md = os.path.join(pasta_estat, '00_rope_sugerido.md')
-    titulo = "Sugestão de Calibração da ROPE" if lang == 'pt' else "ROPE Calibration Suggestion"
-    
-    if lang == 'pt':
-        msg = (f"O maior `|Δ|` (diferença média) observado em todas as métricas automáticas comparadas foi **{max_delta_global:.4f}**.\n\n"
-               f"Se os protocolos avaliados nesta bateria foram treinados sob o **mesmo regime e mesmos dados** (ex: réplicas d1, d1a, d1b), "
-               f"esse valor captura a variância não-determinística máxima.\n\n"
-               f"**Sugestão:** Utilize `rope: {max_delta_global:.4f}` na seção `metricas_automaticas` da análise bayesiana (`estatistica`) para comparações futuras entre protocolos distintos.")
-    else:
-        msg = (f"The largest `|Δ|` (mean difference) observed across all evaluated automatic metrics was **{max_delta_global:.4f}**.\n\n"
-               f"If the protocols evaluated in this batch were trained under the **same regime and data** (e.g., replicas d1, d1a, d1b), "
-               f"this value captures the maximum non-deterministic variance.\n\n"
-               f"**Suggestion:** Use `rope: {max_delta_global:.4f}` in the `metricas_automaticas` section of the Bayesian analysis (`estatistica`) for future comparisons between distinct protocols.")
-    
-    with open(arquivo_md, 'w', encoding='utf-8') as f:
-        f.write(f"# {titulo}\n\n{msg}\n")
-    print(f"   📄 Relatório ROPE sugerido: {os.path.basename(arquivo_md)}")
+def _gerar_relatorio_rope_global(pasta_estat, dados_por_campo, metricas_usadas, limiar, lang):
+    """Gera `00_rope_sugerido.md` com a ROPE calibrada na posterior, por campo.
 
+    ``dados_por_campo`` é ``{campo: {rope, delta, sd, par, n}}`` — o par mais
+    exigente de cada campo e a ROPE que o torna equivalente ao ``limiar``.
+    """
+    arquivo_md = os.path.join(pasta_estat, '00_rope_sugerido.md')
+    pt = (lang == 'pt')
+    rope_global = max(d['rope'] for d in dados_por_campo.values())
+    campos_ord = sorted(dados_por_campo.keys())
+    n_docs = max(d.get('n', 0) for d in dados_por_campo.values())
+    n_fmt = f'{n_docs:,}'.replace(',', '.')   # separador de milhar pt-BR
+
+    L = ['# ' + ('Sugestão de Calibração da ROPE' if pt else 'ROPE Calibration Suggestion'), '']
+
+    if pt:
+        L.append(f'Bateria marcada como **calibração** (`estatistica.calibracao_rope: true`): os '
+                 f'protocolos comparados aqui são réplicas do mesmo regime de treinamento e dos '
+                 f'mesmos dados, de modo que qualquer diferença entre eles é ruído — não efeito.')
+        L.append('')
+        L.append(f'**ROPE sugerida (global): `{rope_global:.4f}`** — o maior valor entre os campos, '
+                 f'usado como *fallback* para campos não listados em `rope_por_campo`.')
+    else:
+        L.append('Batch marked as **calibration** (`estatistica.calibracao_rope: true`): the protocols '
+                 'compared here are replicas of the same training regime and the same data, so any '
+                 'difference between them is noise — not effect.')
+        L.append('')
+        L.append(f'**Suggested ROPE (global): `{rope_global:.4f}`** — the largest value across fields, '
+                 f'used as a fallback for fields not listed in `rope_por_campo`.')
+    L.append('')
+
+    # ----------------------------------------------------------- tabela
+    L.append('## ' + ('Valor sugerido por campo' if pt else 'Suggested value per field'))
+    L.append('')
+    if pt:
+        L.append('| Campo | Par mais exigente | \\|Δ\\| | sd da posterior | ROPE sugerida |')
+    else:
+        L.append('| Field | Most demanding pair | \\|Δ\\| | posterior sd | Suggested ROPE |')
+    L.append('|---|---|---|---|---|')
+    for campo in campos_ord:
+        d = dados_por_campo[campo]
+        L.append(f"| {campo} | {d['par']} | {d['delta']:.4f} | {d['sd']:.4f} | `{d['rope']:.4f}` |")
+    L.append('')
+
+    # ----------------------------------------------------------- explicacao
+    L.append('## ' + ('Como o valor é calculado' if pt else 'How the value is computed'))
+    L.append('')
+    if pt:
+        L.extend([
+            'A camada bayesiana **não** compara o Δ observado com a ROPE. Para cada par de '
+            'protocolos ela constrói a posterior da *diferença média* pelo '
+            '`baycomp.CorrelatedTTest` (Benavoli et al., 2017):',
+            '',
+            '```',
+            'δ ~ t(Δ, s², n-1),   s² = var(d) · (1/n + 1/(n-1))',
+            '```',
+            '',
+            'onde `d` são as diferenças pareadas documento a documento, `Δ = média(d)` e o fator '
+            '`(1/n + 1/(n-1))` é a correção de Nadeau-Bengio aplicada pelo pacote com `runs=1`. '
+            'A classificação `equivalente` exige que a **massa** dessa posterior dentro da ROPE '
+            'alcance o limiar:',
+            '',
+            '```',
+            'P(-R < δ < R) ≥ limiar',
+            '```',
+            '',
+            '### Por que o maior |Δ| observado não serve como ROPE',
+            '',
+            'Fixar `R = |Δ|máx` — a sugestão da versão anterior deste relatório — centra a '
+            'posterior do par mais discrepante **exatamente na borda** do intervalo. Metade da '
+            'massa cai para fora e `P(equivalência) ≈ 0,50`, abaixo de qualquer limiar útil. '
+            'Pior: isso **não melhora com mais dados**, porque a posterior apenas estreita em '
+            'torno da borda. A bateria de calibração, rodada com a própria ROPE que ela sugeriu, '
+            'reprovava por construção — todos os pares saíam `incerto`.',
+            '',
+            '### A regra usada',
+            '',
+            'Para cada campo, a ROPE sugerida é o **menor `R` que basta para todos os pares de '
+            'réplicas daquele campo**:',
+            '',
+            '```',
+            'ROPE(campo) = min { R : P(-R < δ < R) ≥ limiar para TODO par de réplicas }',
+            '```',
+            '',
+            'O valor é arredondado **para cima** na 4ª casa decimal — a mesma precisão da '
+            'transcrição no YAML —, para que o número copiado preserve a garantia.',
+            '',
+            f'Como a condição é monotônica em `R`, o valor é determinado pelo par mais exigente e '
+            f'resolvido numericamente (Brent) sobre a t de Student. Em forma aproximada, '
+            f'`R ≈ |Δ| + t_{{{limiar:.2f}}} · s` desse par: o Δ observado entre as réplicas **mais** '
+            f'a margem de incerteza sobre esse próprio Δ. O limiar usado é '
+            f'`{limiar:.2f}` (`estatistica.limiar`).',
+            '',
+            'A consequência prática é a auto-consistência: rodar esta mesma bateria com a ROPE '
+            'sugerida produz, por construção, equivalência em 100% dos pares de réplicas. Esse é '
+            'o *sanity check* da calibração — se ele falhar, a calibração não é válida.',
+            '',
+            '### Por que a ROPE é por campo',
+            '',
+            'O termo dominante da fórmula é `t · s`, e `s` (o ruído de medida) é **estável dentro '
+            'de um campo** entre os pares de réplicas, mas genuinamente diferente entre campos: '
+            'campos com escores comprimidos perto de 1,0 têm distribuição por documento mais '
+            'dispersa e `s` maior. A coluna `sd da posterior` na tabela acima torna isso '
+            'auditável. Uma ROPE única forçaria todos os campos ao valor do pior deles, '
+            'desperdiçando poder nos demais — por isso `rope_por_campo`.',
+        ])
+    else:
+        L.extend([
+            'The Bayesian layer does **not** compare the observed Δ against the ROPE. For each pair '
+            'of protocols it builds the posterior of the *mean difference* via '
+            '`baycomp.CorrelatedTTest` (Benavoli et al., 2017):',
+            '',
+            '```',
+            'δ ~ t(Δ, s², n-1),   s² = var(d) · (1/n + 1/(n-1))',
+            '```',
+            '',
+            'where `d` are the per-document paired differences, `Δ = mean(d)`, and the factor '
+            '`(1/n + 1/(n-1))` is the Nadeau-Bengio correction the package applies with `runs=1`. '
+            'The `equivalent` classification requires the posterior **mass** inside the ROPE to '
+            'reach the threshold:',
+            '',
+            '```',
+            'P(-R < δ < R) >= threshold',
+            '```',
+            '',
+            '### Why the largest observed |Δ| is not a usable ROPE',
+            '',
+            'Pinning `R = max|Δ|` — what the previous version of this report suggested — centres '
+            'the posterior of the most discrepant pair **exactly on the boundary** of the '
+            'interval. Half of the mass falls outside and `P(equivalence) ≈ 0.50`, below any '
+            'useful threshold. Worse, this **does not improve with more data**: the posterior '
+            'merely narrows around the boundary. The calibration batch, run with the very ROPE it '
+            'suggested, failed by construction — every pair came out `uncertain`.',
+            '',
+            '### The rule in use',
+            '',
+            'For each field, the suggested ROPE is the **smallest `R` that suffices for every '
+            'replica pair of that field**:',
+            '',
+            '```',
+            'ROPE(field) = min { R : P(-R < δ < R) >= threshold for EVERY replica pair }',
+            '```',
+            '',
+            'The value is rounded **up** at the 4th decimal — the same precision used in the YAML '
+            'transcription — so that the copied number preserves the guarantee.',
+            '',
+            f'Since the condition is monotonic in `R`, the value is set by the most demanding pair '
+            f'and solved numerically (Brent) over the Student t. In approximate form, '
+            f'`R ≈ |Δ| + t_{{{limiar:.2f}}} · s` for that pair: the Δ observed between replicas '
+            f'**plus** the uncertainty margin on that very Δ. The threshold in use is '
+            f'`{limiar:.2f}` (`estatistica.limiar`).',
+            '',
+            'The practical consequence is self-consistency: re-running this same batch with the '
+            'suggested ROPE yields, by construction, equivalence for 100% of the replica pairs. '
+            'That is the calibration sanity check — if it fails, the calibration is not valid.',
+            '',
+            '### Why the ROPE is per field',
+            '',
+            'The dominant term is `t · s`, and `s` (the measurement noise) is **stable within a '
+            'field** across replica pairs, yet genuinely different across fields: fields with '
+            'scores compressed near 1.0 have a more dispersed per-document distribution and a '
+            'larger `s`. The `posterior sd` column above makes this auditable. A single ROPE '
+            'would force every field to the worst field\'s value, wasting power on the others — '
+            'hence `rope_por_campo`.',
+        ])
+    L.append('')
+
+    # ----------------------------------------------------------- snippet YAML
+    L.append('## ' + ('Configuração sugerida para o YAML' if pt else 'Suggested YAML configuration'))
+    L.append('')
+    L.append('Copie e cole o bloco abaixo na seção `estatistica` do YAML de comparação entre '
+             'protocolos distintos:' if pt else
+             'Copy and paste the block below into the `estatistica` section of the YAML used to '
+             'compare distinct protocols:')
+    L.append('')
+    L.append('```yaml')
+    L.append('metricas_automaticas:')
+    L.append(f'    rope: {rope_global:.4f}')
+    valores_unicos = set(f"{d['rope']:.4f}" for d in dados_por_campo.values())
+    if len(dados_por_campo) > 1 and len(valores_unicos) > 1:
+        L.append('    rope_por_campo:')
+        for campo in campos_ord:
+            L.append(f"      {campo}: {dados_por_campo[campo]['rope']:.4f}")
+    L.append('    campos:')
+    for campo in campos_ord:
+        L.append(f'      - "{campo}"')
+    if metricas_usadas:
+        L.append('    metricas:')
+        for m in metricas_usadas:
+            L.append(f'      - {m}')
+    L.append('```')
+    L.append('')
+
+    # ----------------------------------------------------------- ressalvas
+    L.append('## ' + ('Ressalvas' if pt else 'Caveats'))
+    L.append('')
+    if pt:
+        L.extend([
+            f'- **Não use esta ROPE nesta mesma bateria como resultado.** Calibrar e testar no '
+            f'mesmo dado é circular; aqui a bateria só serve de *sanity check*. O valor é para '
+            f'transcrever nos YAMLs que comparam protocolos **distintos**.',
+            f'- **O termo `|Δ|` é ruidoso com poucas réplicas.** Com 3 réplicas há apenas 3 pares, '
+            f'e o maior deles é o máximo de três observações incertas. Mais réplicas encolhem '
+            f'esse termo e estreitam a ROPE.',
+            f'- **A ROPE herda o ruído da avaliação.** `s` cai com 1/√n: ampliar o conjunto de '
+            f'teste (aqui n = {n_fmt} documentos) reduz a ROPE sem tocar no treinamento.',
+            f'- **A ROPE é da métrica automática.** A ROPE da Likert continua pré-registrada à '
+            f'mão em `rope_likert`, calibrada pela divergência entre especialistas.',
+        ])
+    else:
+        L.extend([
+            '- **Do not report this ROPE as a result of this same batch.** Calibrating and testing '
+            'on the same data is circular; here the batch only serves as a sanity check. The value '
+            'is meant to be transcribed into the YAMLs that compare **distinct** protocols.',
+            '- **The `|Δ|` term is noisy with few replicas.** With 3 replicas there are only 3 '
+            'pairs, and the largest is the maximum of three uncertain observations. More replicas '
+            'shrink this term and tighten the ROPE.',
+            f'- **The ROPE inherits the evaluation noise.** `s` falls with 1/sqrt(n): enlarging the '
+            f'test set (here n = {n_docs:,} documents) lowers the ROPE without touching training.',
+            '- **This is the automatic-metric ROPE.** The Likert ROPE remains hand-registered in '
+            '`rope_likert`, calibrated from the divergence between human specialists.',
+        ])
+    L.append('')
+
+    with open(arquivo_md, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(L))
+    print(f"   📄 Relatório ROPE sugerido: {os.path.basename(arquivo_md)}")
 
 
 def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida, lang='en'):
@@ -1001,6 +1300,15 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
             print("   ⚠️  Nenhuma métrica com (global) encontrada. Sem análise estatística.")
             return []
     
+    # Parâmetros compartilhados com a camada bayesiana: o limiar único de
+    # decisão (que define a ROPE sugerida) e a marcação de bateria de
+    # calibração — só em réplicas do mesmo protocolo a ROPE sugerida faz
+    # sentido, porque só aí a diferença observada é integralmente ruído.
+    bloco_estat = config.get('estatistica')
+    bloco_estat = bloco_estat if isinstance(bloco_estat, dict) else {}
+    limiar_bayes = float(bloco_estat.get('limiar', 0.95) or 0.95)
+    calibracao_rope = bool(bloco_estat.get('calibracao_rope', False))
+
     mapa_aliases = montar_mapa_aliases(config)
 
     # Mapas de métrica → sufixo de coluna / rótulo (constantes do módulo,
@@ -1085,6 +1393,8 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
                 analise = AnaliseEstatistica(df_largo, config={
                     'metrica_nome': metrica_nome,
                     'campo': campo,
+                    'limiar_bayes': limiar_bayes,
+                    'calibracao_rope': calibracao_rope,
                     'tecnica': display,
                     'arquivo_md': arquivo_md,
                     'arquivo_cd_png': arquivo_png,
@@ -1104,10 +1414,37 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
         sig_count = sum(1 for r in resumos if r.get('friedman_sig'))
         print(f"\n   ✅ {len(resumos)} análise(s) concluída(s) ({sig_count} com Friedman significativo)")
         
-        max_delta_global = max((r.get('max_delta', 0.0) for r in resumos if not r.get('is_llm', False)), default=0.0)
-        if max_delta_global > 0:
-            print(f"   📌 ROPE Global Sugerido: {max_delta_global:.4f} (maior variação encontrada entre as métricas automáticas)")
-            _gerar_relatorio_rope_global(pasta_estat, max_delta_global, lang)
+        # ROPE sugerida: só em bateria de calibração (réplicas do mesmo
+        # protocolo). Fora disso o número somaria efeitos reais ao ruído e
+        # inflaria a margem de indiferença de quem o copiasse.
+        if calibracao_rope:
+            # Agrega por campo a ROPE do par mais exigente (excluindo métricas LLM)
+            resumos_auto = [r for r in resumos
+                            if not r.get('is_llm', False) and r.get('rope_calibrado', 0.0) > 0]
+            dados_por_campo = {}
+            metricas_usadas_set = set()
+            for r in resumos_auto:
+                campo = r.get('campo', '(global)')
+                detalhe = r.get('rope_detalhe') or {}
+                if detalhe.get('rope', 0.0) > dados_por_campo.get(campo, {}).get('rope', 0.0):
+                    dados_por_campo[campo] = detalhe
+                # Extrai nome da métrica do metrica_nome (ex: "(global)_rouge_F1" → "rouge_l")
+                metrica_nome = r.get('metrica', '')
+                for nome_yaml, sufixo in MAPA_METRICA_SUFIXO.items():
+                    if f'_{sufixo}_' in metrica_nome:
+                        metricas_usadas_set.add(nome_yaml)
+                        break
+
+            if dados_por_campo:
+                rope_global = max(d['rope'] for d in dados_por_campo.values())
+                print(f"   📌 ROPE sugerida (global): {rope_global:.4f} "
+                      f"(margem que torna as réplicas equivalentes ao limiar de {limiar_bayes:.2f})")
+                if len(dados_por_campo) > 1:
+                    for campo, d in sorted(dados_por_campo.items()):
+                        print(f"       └─ {campo}: {d['rope']:.4f} "
+                              f"(|Δ| {d['delta']:.4f} + margem, par {d['par']})")
+                _gerar_relatorio_rope_global(pasta_estat, dados_por_campo,
+                                             sorted(metricas_usadas_set), limiar_bayes, lang)
             
     else:
         print("   ⚠️  Nenhuma análise estatística gerada (combinações campo×métrica não encontradas nos dados).")

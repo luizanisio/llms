@@ -205,9 +205,13 @@ class ConfigBayes:
     rope_likert: float = 0.0        # transcrita da Etapa 1; 0 = ausente
     # --- métricas automáticas (complementares) ---
     rope: float = 0.0
-    rope_sensibilidade: list = field(default_factory=list)
+    rope_por_campo: dict = field(default_factory=dict)
     campos: list = field(default_factory=list)
     metricas: list = field(default_factory=list)
+
+    def rope_para_campo(self, campo: str) -> float:
+        """Retorna a ROPE específica de um campo, ou a global como fallback."""
+        return self.rope_por_campo.get(campo, self.rope)
 
     def kw(self, rope: float) -> dict:
         """Argumentos repassados ao `util_est_bayesiana`."""
@@ -220,22 +224,26 @@ class ConfigBayes:
 
     @property
     def tem_automaticas(self) -> bool:
-        """A seção complementar exige alvos declarados e ROPE > 0."""
-        return bool(self.campos and self.metricas and self.rope > 0)
+        """A seção complementar exige alvos declarados e ROPE > 0 (global ou por campo)."""
+        tem_rope = self.rope > 0 or any(v > 0 for v in self.rope_por_campo.values())
+        return bool(self.campos and self.metricas and tem_rope)
 
-    @property
-    def grade_rope(self) -> list:
-        """Valores da varredura de sensibilidade à ROPE.
+    @staticmethod
+    def grade_rope(rope: float) -> list:
+        """Valores da varredura de sensibilidade à ROPE para um dado valor.
 
         Padrão (rope/2, rope, rope*2) porque com escores comprimidos é a ROPE —
         e não os dados — que determina o resultado: pequena demais esvazia a zona
         central e o heatmap satura em verde/vermelho; grande demais engole tudo e
         ele fica azul. A transição entre os extremos é rápida, e reportar a
         matriz em três ROPEs é o mínimo defensável.
+
+        Calculado automaticamente por campo: cada campo tem a sua própria ROPE
+        e a varredura precisa ser centrada nela.
         """
-        if self.rope_sensibilidade:
-            return sorted({float(v) for v in self.rope_sensibilidade if float(v) > 0})
-        return sorted({self.rope / 2, self.rope, self.rope * 2})
+        if rope <= 0:
+            return []
+        return sorted({round(rope / 2, 6), round(rope, 6), round(rope * 2, 6)})
 
 
 def configurar_bayesiana(config: dict) -> ConfigBayes:
@@ -304,11 +312,18 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
     # aviso, para o YAML antigo não falhar em silêncio nem sugerir que ainda
     # controlam alguma coisa
     legadas = ([c for c in ('metodo_likert', 'amostras', 'semente') if c in bloco]
-               + [f'metricas_automaticas.{c}' for c in ('metodo',) if c in automaticas])
+               + [f'metricas_automaticas.{c}' for c in ('metodo', 'rope_sensibilidade') if c in automaticas])
     if legadas:
         print(f"   ⚠️  chaves legadas ignoradas em `estatistica`: "
               f"{', '.join(legadas)} — o pipeline usa exclusivamente o "
-              f"{NOME_TESTE} (analítico, sem amostras nem semente).")
+              f"{NOME_TESTE} (analítico, sem amostras nem semente). "
+              f"A sensibilidade à ROPE é calculada automaticamente por campo.")
+
+    # lê rope_por_campo
+    rope_por_campo_raw = automaticas.get('rope_por_campo') or {}
+    rope_por_campo = {}
+    if isinstance(rope_por_campo_raw, dict):
+        rope_por_campo = {str(k): float(v) for k, v in rope_por_campo_raw.items() if float(v or 0) > 0}
 
     return ConfigBayes(
         ativo=True,
@@ -317,7 +332,7 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
         recortes=_ler_recortes(bloco.get('protocolos')),
         rope_likert=float(bloco.get('rope_likert', 0.0) or 0.0),
         rope=float(automaticas.get('rope', 0.0) or 0.0),
-        rope_sensibilidade=list(automaticas.get('rope_sensibilidade') or []),
+        rope_por_campo=rope_por_campo,
         campos=list(automaticas.get('campos') or []),
         metricas=list(automaticas.get('metricas') or []),
     )
@@ -728,7 +743,7 @@ def _analisar_alvo(dados, cfg: ConfigBayes, rope: float,
     # calibração da Etapa 1 (pré-registrada), e variá-la aqui abriria a porta
     # para escolher a margem pelo resultado.
     if papel == "complementar":
-        sensibilidade = _sensibilidade_rope(dados, nomes, cfg)
+        sensibilidade = _sensibilidade_rope(dados, nomes, cfg, rope)
         sensibilidade.to_csv(os.path.join(pasta, f'{nome_base}_sensibilidade_rope.csv'),
                              index=False, encoding='utf-8')
         resultado["sensibilidade"] = sensibilidade
@@ -738,20 +753,26 @@ def _analisar_alvo(dados, cfg: ConfigBayes, rope: float,
     return resultado
 
 
-def _sensibilidade_rope(dados, nomes: list, cfg: ConfigBayes) -> pd.DataFrame:
+def _sensibilidade_rope(dados, nomes: list, cfg: ConfigBayes, rope_campo: float) -> pd.DataFrame:
     """Quantas células mudam de categoria ao variar a ROPE.
 
     A ROPE age sobre os escores brutos e muda as contagens, então **cada valor
     exige uma nova comparação** — ao contrário do limiar, que só reclassifica
     números prontos. Com escores comprimidos esta varredura não é complemento
     metodológico: é a ROPE que determina o resultado.
+
+    A grade é calculada automaticamente como [rope/2, rope, rope*2], centrada
+    na ROPE específica do campo sendo analisado.
     """
+    grade = ConfigBayes.grade_rope(rope_campo)
+    if not grade:
+        return pd.DataFrame()
     referencia = None
     linhas = []
-    for valor in cfg.grade_rope:
+    for valor in grade:
         m = bayes.matriz_pares(dados, nomes=nomes, **cfg.kw(valor))
         classes = [p["classificacao"] for p in _pares_unicos(m)]
-        if referencia is None or valor == cfg.rope:
+        if referencia is None or valor == rope_campo:
             referencia = classes
         linhas.append({"ROPE": valor,
                        **{c: classes.count(c) for c in
@@ -760,7 +781,7 @@ def _sensibilidade_rope(dados, nomes: list, cfg: ConfigBayes) -> pd.DataFrame:
     for linha in linhas:
         linha["Muda vs. referência"] = sum(
             a != b for a, b in zip(linha.pop("Classes"), referencia))
-        linha["Referência"] = "sim" if linha["ROPE"] == cfg.rope else "não"
+        linha["Referência"] = "sim" if linha["ROPE"] == rope_campo else "não"
     return pd.DataFrame(linhas)
 
 
@@ -1188,10 +1209,13 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
 
                 nome_base = (f'bayes_{prefixo}{campo}_{metrica}'
                              .replace('(', '').replace(')', ''))
+                rope_campo = cfg.rope_para_campo(campo)
+                if rope_campo <= 0:
+                    continue
                 print(f"   → {campo} × {display} ({len(dados)} docs, "
-                      f"{len(dados.columns)} protocolos)")
+                      f"{len(dados.columns)} protocolos, ROPE={rope_campo:.4f})")
                 resultado = _analisar_alvo(
-                    dados, cfg, rope=cfg.rope,
+                    dados, cfg, rope=rope_campo,
                     metrica=f'{display} — {campo}', papel="complementar",
                     nome_base=nome_base, pasta=pasta)
                 if resultado:
