@@ -11,7 +11,6 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `util.py` | General-purpose utilities (env loading, file I/O, logging) |
 | `util_print.py` | Process-aware grouped output with color support, DataFrame-to-Excel export |
 | `util_menu_opcoes.py` | Interactive CLI menus for selecting YAML files, folders, and generic files |
-| `util_agentes.py` | Agent orchestration helpers (planning, memory, directed review) |
 | `util_json.py` | JSON schema validation, field extraction, and normalization |
 | `util_json_carga.py` | Dataset loading with field grouping and sub-level aggregation |
 | `util_json_dados.py` | Data access and manipulation utilities for JSON records |
@@ -22,15 +21,30 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `util_openai.py` | OpenAI API wrappers (chat, embeddings, retry logic) |
 | `util_prompt.py` | Prompt template construction and token budget management |
 | `util_sbert.py` | Sentence-BERT wrappers for semantic similarity |
-| `util_bertscore.py` | BERTScore-like metric implementation for evaluation |
-| `util_bertscore_service.py` | BERTScore as a local service for batch evaluation |
-| `util_analise_estatistica.py` | Statistical analysis (Wilcoxon, bootstrap, effect sizes) |
 | `util_graficos.py` | Visualization utilities for metrics and comparisons |
 | `util_pandas.py` | DataFrame helpers and tabular processing utilities |
 | `util_tiktoken.py` | Token counting via tiktoken for cost estimation |
 | `util_sysinfo.py` | System resource monitoring (CPU, RAM, GPU) |
 | `util_get_resposta.py` | LLM response retrieval and parsing helpers |
 | `util_vllm_batch.py` | Batch inference utility using vLLM configured via YAML |
+| `util_vllm_batch_view.py` | Viewer for vLLM batch output and responses |
+| `util_ckan.py` | CKAN dataset loading and API interaction |
+
+### Avaliação e Comparação (Evaluation & Statistics)
+
+| File / Module | Role |
+|---|---|
+| `realizar_avaliacoes.py` | Main script for batch evaluations of models |
+| `realizar_avaliacoes_graficos.py` | Charts and visual reports for model evaluations |
+| `comparar_extracoes.py` | YAML-driven comparison of structured extractions (BERTScore, ROUGE, Levenshtein) |
+| `comparar_extracoes_baycomp.py` | Bayesian statistical comparison for extractions |
+| `comparar_extracoes_graficos.py` | Chart generation for extraction comparisons |
+| `comparar_extracoes_util.py` | Utilities for the extraction comparison pipeline |
+| `comparar_extracoes_exemplo.py` | Few-shot examples and snippets for extractions |
+| `util_bertscore.py` | BERTScore-like metric implementation for evaluation |
+| `util_bertscore_service.py` | BERTScore as a local service for batch evaluation |
+| `util_analise_estatistica.py` | Statistical analysis (Wilcoxon, bootstrap, effect sizes) |
+| `util_est_bayesiana.py` | Bayesian estimation utilities for model performance comparisons |
 
 ### Training Pipeline (Unsloth / HF / vLLM)
 
@@ -41,8 +55,10 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `treinar_unsloth_pipeline.py` | Curriculum learning pipeline with unified state/metrics tracking |
 | `treinar_unsloth_util.py` | YAML config loader/validator (`YamlTreinamento`) and folder-based dataset loader |
 | `treinar_unsloth_dataset.py` | Dataset loading, validation, and preparation for curriculum-based training |
+| `treinar_unsloth_datasets_relatorio.py` | Dataset inspection and statistical report generator |
 | `treinar_unsloth_chat.py` | Chat template manager (template selection, dataset formatting, train-on-responses-only) |
 | `treinar_unsloth_export.py` | Export and inference engine — predict (HF/vLLM/Unsloth), interactive inference, LoRA merge |
+| `treinar_unsloth_fusao.py` | Weights fusion utilities (merge checkpoints and progressive unfreezing boundaries) |
 | `treinar_unsloth_avaliar.py` | Evaluation and statistics for trained models |
 | `treinar_unsloth_graficos.py` | Chart generation for training metrics (loss curves, token-distribution boxplots) |
 | `treinar_unsloth_report.py` | Markdown report generator for training runs |
@@ -50,42 +66,39 @@ Fonte: https://github.com/luizanisio/llms/tree/main/src
 | `treinar_unsloth_logging.py` | Centralized logging configuration (levels, timestamps, file + console output) |
 | `treinar_unsloth_monitor.py` | Resource monitor — continuous RAM/GPU tracking during predictions |
 | `treinar_unsloth_dicas.py` | Inline documentation hints injected into YAML configuration files |
-| `treinar_model_loader.py` | Model loading via HF Transformers + PEFT (base & LoRA), 4-bit/8-bit quantization. Flash attention via PyTorch SDPA nativo (primário, PyTorch >= 2.0) ou pacote `flash-attn` (alternativa). |
+| `treinar_model_loader.py` | Model loading via HF Transformers + PEFT (base & LoRA), 4-bit/8-bit quantization. |
 | `treinar_chat_templates.py` | Native HF chat-template module — auto-detects template by model family |
 | `treinar_vllm_inference.py` | Fast inference engine using vLLM (PagedAttention, continuous batching, multi-GPU) |
 | `treinar_realizar_predicoes.py` | Prediction and interactive inference classes for LLM models (HF, vLLM, Unsloth, Ollama) |
-| `treinar_gemma3.py` | Gemma-3 specific fine-tuning configuration |
 | `treinar_to_ollama.py` | Ollama Modelfile generator for importing merged HF models into Ollama |
+
+### Componentes Secundários e Testes (`src2/`)
+
+| File / Module | Role |
+|---|---|
+| `util_agentes.py` | Agent orchestration helpers (planning, memory, directed review) |
+| `util_ckan_teste.py` | Test scripts for CKAN dataset fetching |
+| `teste_*.py` | Unit tests for various utilities (e.g. `teste_util_json.py`, `teste_sbert.py`, `teste_ambiente.py`) |
+| `realizar_avaliacoes_teste.py` | Test execution script for evaluations |
+| `treinar_gemma3.py` | Gemma-3 specific fine-tuning configuration |
 | `exportar_gguf.py` | GGUF export utility using Unsloth for quantized conversion |
 | `inst_deps_treina.py` | Automated dependency installer for training (Colab-aware) |
-
-### Other Tools
-
-| File / Module | Role |
-|---|---|
 | `generate.py` | Entry point for running single-prompt and JAMEX pipelines |
-| `comparar_extracoes.py` | YAML-driven comparison of structured extractions (BERTScore, ROUGE, Levenshtein) |
 | `debug_dataset_format.py` | Debug script — simulates dataset loading and chat-template formatting |
 | `debug_template.py` | Debug script — applies chat template to inspect formatted conversation output |
-
-### Tests
-
-| File / Module | Role |
-|---|---|
-| `teste_analise_estatistica.py` | Tests for statistical analysis utilities |
-| `teste_bert_rouge.py` | Tests for BERTScore and ROUGE metrics |
-| `teste_cuda.py` | CUDA availability and GPU diagnostic tests |
-| `teste_sbert.py` | Tests for Sentence-BERT wrappers |
-| `teste_util_json.py` | Tests for JSON utilities |
 
 ### Documentation
 
 | File | Description |
 |---|---|
 | `treinar_unsloth.md` | Full documentation for the training package (Gemma-3, Deepseek, Llama, Qwen fine-tuning via YAML) |
-| `treinar_TODO_PLANEJAMENTO.md` | Development planning and task-tracking (completed and pending items) |
+| `treinar_unsloth_unfreeze_fusao.md` | Progressive unfreezing and fusion documentation |
 | `treinar_readme_ollama.md` | Step-by-step guide to export a model to HF safetensors, convert to GGUF, and import into Ollama |
+| `realizar_avaliacoes.md` | Technical documentation for the model evaluation pipeline |
 | `comparar_extracoes.md` | Technical documentation for the YAML-driven extraction comparison tool |
+| `util_est_bayesiana_heatmap.md` | Guide for Bayesian estimation heatmap charts |
+| `util_ckan.md` | Documentation for the CKAN data handling utilities |
+| `util_bertscore.md` | Documentation for the BERTScore metrics and local service |
 
 ### Requirements
 
