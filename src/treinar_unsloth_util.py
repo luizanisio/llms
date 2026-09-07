@@ -719,12 +719,13 @@ class YamlTreinamento:
             fusao=fusao
         )
     
-    def _processar_dataset_filtro(self, filtro_raw) -> Optional[Dict[str, Any]]:
-        """Processa dataset_filtro do YAML em dicionário de filtros.
+    def _processar_dataset_filtro(self, filtro_raw) -> Optional[Any]:
+        """Processa dataset_filtro do YAML em dicionário ou string de query.
 
         Aceita:
         - Dicionário YAML nativo: ``{fold: 11}``
         - String JSON: ``'{"fold": 11}'``
+        - String de Query do Pandas: ``"id <= 'puil_033'"``
         - None ou vazio → retorna None
         """
         if not filtro_raw:
@@ -733,13 +734,15 @@ class YamlTreinamento:
             return filtro_raw
         if isinstance(filtro_raw, str):
             try:
+                # Tenta processar como JSON legível (ex: '{"alvo": "teste"}')
                 resultado = json.loads(filtro_raw)
                 if isinstance(resultado, dict):
                     return resultado
             except json.JSONDecodeError:
+                # Se não for JSON, trata como string de query para df.query()
                 pass
-            raise ValueError(f"dataset_filtro deve ser JSON válido, recebido: {filtro_raw!r}")
-        raise ValueError(f"dataset_filtro deve ser dict ou string JSON, recebido: {type(filtro_raw).__name__}")
+            return filtro_raw
+        raise ValueError(f"dataset_filtro deve ser dict, JSON ou string query, recebido: {type(filtro_raw).__name__}")
 
     def _processar_proporcao(self, proporcao_raw) -> List[float]:
         """Processa proporções de divisão em diversos formatos YAML."""

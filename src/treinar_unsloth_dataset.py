@@ -437,8 +437,7 @@ class DatasetTreinamento:
                     if multi_etapa and etapa.alias and etapa.alias not in resultado[id_val]["divisoes"]:
                         resultado[id_val]["divisoes"].append(etapa.alias)
             except Exception as e:
-                print(f"⚠️  Erro ao ler CSV da etapa '{etapa.alias}': {e}")
-                continue
+                raise ValueError(f"Erro ao processar arquivo da etapa '{etapa.alias}': {e}") from e
 
         if not resultado:
             return {}

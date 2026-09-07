@@ -87,6 +87,9 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
         try:
             msg_treino = dataset_manager.carregar_mensagens_de_pastas(alvo="treino")
             qtd_treino = len(msg_treino)
+        except ValueError as e:
+            logger.error(f"❌ Erro fatal ao processar treino da etapa {alias}")
+            raise
         except Exception as e:
             logger.warning(f"Erro no treino da etapa {alias}: {e}")
             qtd_treino = "ERRO"
@@ -94,6 +97,9 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
         try:
             msg_val = dataset_manager.carregar_mensagens_de_pastas(alvo="validacao")
             qtd_val = len(msg_val)
+        except ValueError as e:
+            logger.error(f"❌ Erro fatal ao processar validacao da etapa {alias}")
+            raise
         except Exception as e:
             logger.warning(f"Erro na validacao da etapa {alias}: {e}")
             qtd_val = "ERRO"
@@ -101,6 +107,9 @@ def gerar_relatorio_datasets(yaml_path: str, print_console: bool = True) -> Opti
         try:
             msg_teste = dataset_manager.carregar_mensagens_de_pastas(alvo="teste")
             qtd_teste = len(msg_teste)
+        except ValueError as e:
+            logger.error(f"❌ Erro fatal ao processar teste da etapa {alias}")
+            raise
         except Exception as e:
             logger.warning(f"Erro no teste da etapa {alias}: {e}")
             qtd_teste = "ERRO"

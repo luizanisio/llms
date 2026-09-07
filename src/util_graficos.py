@@ -704,10 +704,19 @@ class UtilGraficos:
             cur = ax.get_xlim()
             ax.set_xlim(min(cur[0], xlim[0]), max(cur[1], xlim[1]))
         
-        # Texto informativo
+        # Texto informativo (rodapé)
         if info_text:
-            ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
-                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            import textwrap
+            linhas_quebradas = []
+            for linha in info_text.split('\n'):
+                if linha.strip():
+                    linhas_quebradas.extend(textwrap.wrap(linha, width=120))
+                else:
+                    linhas_quebradas.append("")
+            texto_rodape = '\n'.join(linhas_quebradas)
+            
+            plt.figtext(0.5, -0.05, texto_rodape, ha='center', va='top', fontsize=10,
+                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
         
         plt.tight_layout()
         

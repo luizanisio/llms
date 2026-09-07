@@ -330,6 +330,9 @@ def executar_treinar(yaml_path: str, reset: bool = False) -> None:
         from treinar_unsloth_datasets_relatorio import gerar_relatorio_datasets
         logger.info("<azul>📊 Extraindo quantitativos do dataset...</azul>")
         gerar_relatorio_datasets(yaml_path, print_console=False)
+    except ValueError as e:
+        logger.error(f"❌ Abortando treinamento devido a erro fatal na estruturação do dataset: {e}")
+        raise
     except Exception as e:
         logger.warning(f"⚠️  Não foi possível gerar relatório prévio de datasets: {e}")
     

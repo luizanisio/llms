@@ -475,9 +475,7 @@ def aplicar_filtro_dataset(df: pd.DataFrame, dataset_filtro) -> pd.DataFrame:
                 print(f"🔍 dataset_filtro aplicado (query): '{dataset_filtro}' → {len(df_filtrado)} de {len(df)} registros")
             return df_filtrado
         except Exception as e:
-            print(f"⚠️ Erro ao aplicar filtro query '{dataset_filtro}': {e}")
-            return df
-            
+            raise ValueError(f"Erro crítico ao aplicar filtro query '{dataset_filtro}': {e}") from e
     if not isinstance(dataset_filtro, dict):
         return df
         
