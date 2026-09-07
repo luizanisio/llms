@@ -97,7 +97,7 @@ def _inicializar_ambiente():
 def processar_analise_estatistica(analisador, dados_analise, pasta_saida, config, lang='en'):
     """
     Executa análise estatística (Friedman, Wilcoxon, Nemenyi, Shapiro-Wilk)
-    para cada combinação campo×métrica configurada em campos_estatisticas.
+    para cada combinação campo×métrica configurada em estatistica.metricas_automaticas.
     Quando ``estatistica.protocolos`` está definido, segmenta por cenário.
     """
     try:

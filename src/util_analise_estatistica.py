@@ -1266,14 +1266,17 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
         if total > 0:
             print(f"   🧹 {total} arquivos antigos removidos da pasta estatisticas/")
     
-    # Descobre alvos de campos_estatisticas
+    # Descobre alvos de campos e métricas para estatística descritiva e testes
     conf_comp = config.get('configuracao_comparacao', {})
-    campos_est = conf_comp.get('campos_estatisticas', {})
+    bloco_estat = config.get('estatistica')
+    bloco_estat = bloco_estat if isinstance(bloco_estat, dict) else {}
+    
+    metricas_auto = bloco_estat.get('metricas_automaticas', {})
     campos_virtuais = config.get('campos_virtuais', {})
     
-    if campos_est:
-        alvos_campos = campos_est.get('campos', [])
-        alvos_metricas = campos_est.get('metricas', [])
+    if metricas_auto and ('campos' in metricas_auto or 'metricas' in metricas_auto):
+        alvos_campos = metricas_auto.get('campos', [])
+        alvos_metricas = metricas_auto.get('metricas', [])
     else:
         # Default: (global) para métricas que possuem (global)
         alvos_campos = ['(global)']
