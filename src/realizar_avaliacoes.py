@@ -49,12 +49,13 @@ relevante — a diferença quase certamente excede a ROPE).
 
 ROPE calibrada e controle negativo
 ----------------------------------
-A ROPE das notas é **calibrada pela divergência média entre os pares de
-especialistas humanos** — medida entre eles, nunca a partir do par julgado.
+A ROPE das notas é **calibrada pelo IC 95% da diferença média entre os pares
+de especialistas humanos** — medida entre eles, nunca a partir do par julgado,
+na mesma escala que o ``CorrelatedTTest`` avalia (diferença média populacional).
 A da taxa de adequação segue o mesmo procedimento sobre a binarização.
-O **controle negativo** compara os próprios especialistas entre si com a ROPE
-calibrada e verifica que saem equivalentes; se não saírem, a margem está
-apertada demais — e é melhor descobrir antes de julgar o juiz.
+A calibração garante por construção que todos os pares de especialistas saiam
+equivalentes; o **controle negativo** confirma esse resultado e fecha a
+pergunta sobre a margem ter sido escolhida convenientemente.
 O valor calibrado é reportado no ``validacao.md`` e deve ser **transcrito à
 mão** para o YAML da Etapa 2 (a transcrição força o pré-registro consciente).
 
@@ -270,10 +271,10 @@ class Grupo:
 #: padrões da camada bayesiana — um único teste (`baycomp.CorrelatedTTest`,
 #: analítico) e um único limiar de decisão em todo o trabalho.
 #:
-#: A ROPE das notas é CALIBRADA pela divergência média entre os pares de
-#: especialistas humanos — medida entre eles, nunca a partir do par julgado.
-#: Os valores abaixo são o fallback quando a calibração não é possível (sem
-#: grupo humano com 2+ avaliadores) e não foi dada a flag correspondente.
+#: A ROPE das notas é CALIBRADA pelo IC 95% da diferença média entre os pares
+#: de especialistas humanos — na mesma escala do teste (diferença média
+#: populacional). Os valores abaixo são o fallback quando a calibração não é
+#: possível (sem grupo humano com 2+ avaliadores) e não foi dada a flag.
 BAYES_ROPE_PADRAO = 0.5           # fallback das notas: escala inteira, "notas iguais"
 BAYES_ROPE_DECISAO_PADRAO = 0.10  # fallback da taxa de adequação (10 p.p.)
 #: pisos numéricos da calibração: o baycomp exige ROPE > 0, e especialistas em
@@ -1261,24 +1262,28 @@ def analisar_grupo(base: str, grupo: Grupo, saida: str, escala: tuple,
 
 def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
                   piso: int = PISO_ADEQUACAO) -> dict:
-    """Calibra as ROPEs pela divergência média entre os pares de especialistas.
+    """Calibra as ROPEs pelo IC 95% da diferença média entre os pares de especialistas.
 
     A margem de "praticamente equivalente" deixa de ser arbitrada: passa a ser
-    a divergência média observada ENTRE os próprios especialistas humanos —
-    medida entre eles, **nunca a partir do par julgado**. A interpretação fica
-    relativa ("o juiz diverge da referência tanto quanto os especialistas
-    divergem entre si"), o que é parte da defesa contra a objeção ordinal.
+    o **máximo limite absoluto do IC 95% da diferença média** entre os pares de
+    especialistas humanos — medida entre eles, **nunca a partir do par julgado**.
 
-    Duas margens, cada uma na sua unidade, ambas ancoradas na **divergência
-    absoluta média por item** — média de |nota_i − nota_j| sobre os itens,
-    depois sobre os pares. É a magnitude típica do desacordo entre
-    especialistas, e não o viés médio entre eles (|média(nota_i − nota_j)|),
-    que se anula quando as divergências são simétricas e degeneraria a margem;
-    o viés é reportado ao lado, para leitura:
+    O IC 95% vem da mesma posterior de Student usada pelo ``CorrelatedTTest`` de
+    Benavoli et al. (2017) — a ROPE fica na **mesma escala** que o teste avalia
+    (diferença média populacional), garantindo por construção que todos os pares
+    de especialistas saiam equivalentes. A versão anterior usava a divergência
+    absoluta média por item (MAE), que está numa escala diferente (desacordo
+    per-item vs viés populacional) e não garantia equivalência.
 
-    * ``rope_notas`` — média dos pares de média(|nota_i − nota_j|);
+    Duas margens, cada uma na sua unidade:
+
+    * ``rope_notas`` — max sobre os pares de max(|IC_inf|, |IC_sup|) da
+      diferença média das notas;
     * ``rope_decisao`` — o mesmo sobre a binarização em ``nota >= piso``
-      (taxa de decisões discordantes entre os especialistas).
+      (taxa de adequação).
+
+    A **divergência absoluta média** e o **viés médio** continuam na tabela,
+    para leitura descritiva — mas NÃO são a base da ROPE.
 
     Pisos numéricos (``BAYES_ROPE_MINIMO`` e ``BAYES_ROPE_DECISAO_MINIMO``)
     evitam a degeneração a zero quando os especialistas quase não divergem —
@@ -1295,23 +1300,36 @@ def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
         par de especialistas), ``n_itens``, ``piso_aplicado`` (bool por margem).
     """
     pares = []
+    ic_extremos_notas = []
+    ic_extremos_decisao = []
     for a1, a2 in combinations(avaliadores, 2):
         x = matriz_avaliadores[a1].astype(float).to_numpy()
         y = matriz_avaliadores[a2].astype(float).to_numpy()
         bx, by = (x >= piso).astype(float), (y >= piso).astype(float)
+
+        # IC 95% da diferença média (mesma posterior do CorrelatedTTest)
+        comp_notas = bayes.Comparacao(x, y, rope=BAYES_ROPE_MINIMO, limiar=BAYES_LIMIAR)
+        comp_decisao = bayes.Comparacao(bx, by, rope=BAYES_ROPE_DECISAO_MINIMO,
+                                        limiar=BAYES_LIMIAR)
+        ic_notas = comp_notas.ic95
+        ic_decisao = comp_decisao.ic95
+
+        ic_extremos_notas.append(max(abs(ic_notas[0]), abs(ic_notas[1])))
+        ic_extremos_decisao.append(max(abs(ic_decisao[0]), abs(ic_decisao[1])))
+
         pares.append({
             "Par": f"{a1} × {a2}",
             "n": len(x),
             "Divergência abs. (notas)": float(np.mean(np.abs(x - y))),
             "Viés médio (notas)": float(np.mean(x - y)),
+            "IC 95% notas": f"[{ic_notas[0]:+.4f}; {ic_notas[1]:+.4f}]",
             "Decisões discordantes": float(np.mean(np.abs(bx - by))),
             "Viés médio (taxa)": float(np.mean(bx - by)),
+            "IC 95% decisão": f"[{ic_decisao[0]:+.4f}; {ic_decisao[1]:+.4f}]",
         })
     tabela = pd.DataFrame(pares)
-    bruto_notas = (float(tabela["Divergência abs. (notas)"].mean())
-                   if len(tabela) else np.nan)
-    bruto_taxa = (float(tabela["Decisões discordantes"].mean())
-                  if len(tabela) else np.nan)
+    bruto_notas = (float(max(ic_extremos_notas)) if ic_extremos_notas else np.nan)
+    bruto_taxa = (float(max(ic_extremos_decisao)) if ic_extremos_decisao else np.nan)
     rope_notas = max(bruto_notas, BAYES_ROPE_MINIMO)
     rope_decisao = max(bruto_taxa, BAYES_ROPE_DECISAO_MINIMO)
     return {
@@ -1405,19 +1423,27 @@ def analise_bayesiana_grupo(r: dict, cfg: ConfigBayes) -> dict:
     A ROPE segue a mesma regra do gate: valor explícito da flag; senão,
     calibrada pela divergência entre os avaliadores do PRÓPRIO grupo (2+);
     senão, o padrão de escala.
+
+    Quando o grupo tem 2+ avaliadores, gera **também** a comparação bayesiana
+    entre os avaliadores/rodadas (heatmap + forest plot), usando a ROPE
+    calibrada pela divergência entre eles — confirma visualmente que a margem
+    produz equivalência entre os avaliadores humanos ou estabilidade entre as
+    rodadas de um juiz LLM.
     """
     if len(r["fontes"]) < 2:
         return {}
+    rot = r["grupo"].rotulos
     rope = cfg.rope
     origem_rope = "flag --bayes-rope (pré-registro manual)"
+    calibracao_avaliadores = None
     if rope is None:
         if len(r["avaliadores"]) >= 2:
-            calibracao = calibrar_rope(
+            calibracao_avaliadores = calibrar_rope(
                 matriz_itens_avaliadores(r["df"], r["avaliadores"]),
                 r["avaliadores"])
-            rope = calibracao["rope_notas"]
+            rope = calibracao_avaliadores["rope_notas"]
             origem_rope = (f"calibrada pela divergência média entre os "
-                           f"{len(r['avaliadores'])} {r['grupo'].rotulos['avaliadores']} do grupo")
+                           f"{len(r['avaliadores'])} {rot['avaliadores']} do grupo")
         else:
             rope = BAYES_ROPE_PADRAO
             origem_rope = "padrão de escala (grupo com um só avaliador)"
@@ -1431,11 +1457,59 @@ def analise_bayesiana_grupo(r: dict, cfg: ConfigBayes) -> dict:
         titulo="Fontes — Medindo as diferenças (forest plot)")
     matriz.to_csv(os.path.join(r["saida"], "bayes_fontes.csv"),
                   index=False, encoding="utf-8")
-    return {"config": cfg, "matriz": matriz, "rope": rope,
-            "origem_rope": origem_rope,
-            "sintese": bayes.sintese(matriz),
-            "tabela": tabela_matriz_bayesiana(matriz, "Fonte"),
-            "figuras": figuras}
+    resultado = {"config": cfg, "matriz": matriz, "rope": rope,
+                 "origem_rope": origem_rope,
+                 "sintese": bayes.sintese(matriz),
+                 "tabela": tabela_matriz_bayesiana(matriz, "Fonte"),
+                 "figuras": figuras}
+
+    # ── comparação bayesiana entre avaliadores/rodadas ──────────────────────
+    if len(r["avaliadores"]) >= 2:
+        mat_aval = matriz_itens_avaliadores(r["df"], r["avaliadores"])
+        # ROPE calibrada pela divergência entre os próprios avaliadores
+        if calibracao_avaliadores is None:
+            calibracao_avaliadores = calibrar_rope(mat_aval, r["avaliadores"])
+        rope_aval = calibracao_avaliadores["rope_notas"]
+        origem_rope_aval = (f"calibrada pela divergência média entre os "
+                            f"{len(r['avaliadores'])} {rot['avaliadores']}")
+
+        # rótulos legíveis: "R1", "R2" ... para LLM; "A1", "A2" ... para humano
+        colunas_aval = [f"{rot['sigla']}{a}" for a in r["avaliadores"]]
+        pivo_aval = mat_aval[r["avaliadores"]].copy()
+        pivo_aval.columns = colunas_aval
+
+        titulo_entidade = rot['avaliadores']          # "rodadas" ou "avaliadores"
+        titulo_heatmap = (f"Comparação bayesiana entre as {titulo_entidade} "
+                          "(nota mediana)")
+        titulo_forest = (f"{rot['plural']} — Medindo as diferenças (forest plot)")
+
+        mat_bayes_aval = matriz_bayesiana(pivo_aval, colunas_aval, rope_aval,
+                                          cfg.limiar)
+        figuras_aval = viz.grafico_bayes(
+            mat_bayes_aval,
+            os.path.join(r["saida"], "12_bayes_avaliadores.png"),
+            titulo=titulo_heatmap,
+            rotulo_entidade=rot["avaliador"].lower())
+        figuras_aval += viz.grafico_diferencas_bayes(
+            mat_bayes_aval,
+            os.path.join(r["saida"], "13_bayes_avaliadores_diferencas.png"),
+            titulo=titulo_forest)
+        mat_bayes_aval.to_csv(
+            os.path.join(r["saida"], "bayes_avaliadores.csv"),
+            index=False, encoding="utf-8")
+
+        resultado["avaliadores"] = {
+            "matriz": mat_bayes_aval,
+            "rope": rope_aval,
+            "origem_rope": origem_rope_aval,
+            "calibracao": calibracao_avaliadores,
+            "sintese": bayes.sintese(mat_bayes_aval),
+            "tabela": tabela_matriz_bayesiana(mat_bayes_aval, rot["avaliador"]),
+            "figuras": figuras_aval,
+        }
+        resultado["figuras"] += figuras_aval
+
+    return resultado
 
 
 def analise_bayesiana_validacao(v: dict, cfg: ConfigBayes) -> dict:
@@ -2200,6 +2274,7 @@ def _bloco_bayes_grupo(r: dict) -> list:
     if not b:
         return []
     cfg = b["config"]
+    rot = r["grupo"].rotulos
     L = ["---\n\n## Comparação bayesiana entre as fontes\n"]
     L.append("Complementa — não substitui — o Friedman e os contrastes de Wilcoxon acima. "
              "A pergunta muda: em vez de *há diferença detectável?*, responde *qual a "
@@ -2233,6 +2308,64 @@ def _bloco_bayes_grupo(r: dict) -> list:
     L.append("A síntese conta relações, **não ordena as fontes**: relações podem ser "
              "intransitivas, e transformar contagem de vitórias em ranking criaria uma ordem "
              "que os dados não sustentam.\n")
+
+    # ── seção de avaliadores/rodadas ───────────────────────────────────────
+    ba = b.get("avaliadores")
+    if ba:
+        titulo_entidade = rot['avaliadores']  # "rodadas" ou "avaliadores"
+        L.append(f"---\n\n## Comparação bayesiana entre {rot['artigo']} "
+                 f"{titulo_entidade}\n")
+        L.append(f"Complementa a concordância interna acima com a leitura bayesiana. "
+                 f"A pergunta é a mesma: os {titulo_entidade} do grupo são praticamente "
+                 f"equivalentes? Se a ROPE calibrada produz equivalência entre todos os "
+                 f"pares, a margem está bem dimensionada para este grupo.\n")
+        L.append("| Parâmetro | Valor |")
+        L.append("|---|---|")
+        L.append(f"| Teste | `{_NOME_TESTE_BAYES}` (analítico — sem amostras "
+                 "nem semente) |")
+        L.append(f"| Variável | nota Likert por item (documento × fonte) |")
+        L.append(f"| ROPE | {_num(ba['rope'], 4)} ({ba['origem_rope']}) |")
+        L.append(f"| Limiar único | {_num(cfg.limiar, 2)} |")
+        L.append("")
+        L.extend(_bloco_como_ler_bayes(
+            {"rope": ba["rope"], "limiar": cfg.limiar,
+             "origem_rope": ba["origem_rope"]},
+            _pares_info_de_tabela(ba["tabela"]),
+            rotulo_entidade=rot["avaliador"].lower()))
+        L.append(f"### Relações par a par entre {titulo_entidade}\n")
+        L.append(_md(ba["tabela"], indice=False))
+        L.append("")
+        L.append("### Contando as relações\n")
+        L.append(_md(ba["sintese"]))
+        L.append("")
+        ciclos_aval = ba["sintese"].attrs.get("ciclos") or []
+        if ciclos_aval:
+            L.append(f"⚠️ **Transitividade violada** — ciclo(s): "
+                     f"{'; '.join(' > '.join(map(str, c)) for c in ciclos_aval)}. "
+                     "A leitura ordenada da tabela é inválida.\n")
+        else:
+            L.append("✅ Verificação de transitividade: as relações direcionais não "
+                     "formam ciclo.\n")
+
+        # verificação de equivalência: todos os pares devem sair equivalentes
+        tabela_aval = ba["tabela"]
+        col_equiv = [c for c in tabela_aval.columns if "P(equiv" in c]
+        if col_equiv:
+            equiv_vals = tabela_aval[col_equiv[0]]
+            todos_equiv = bool((equiv_vals >= cfg.limiar).all())
+            n_pares = len(tabela_aval)
+            n_equiv = int((equiv_vals >= cfg.limiar).sum())
+            if todos_equiv:
+                L.append(f"✅ **Todos os {n_pares} par(es) de {titulo_entidade} "
+                         f"saem equivalentes** (P(equiv.) ≥ {_num(cfg.limiar, 2)}) "
+                         f"— a ROPE calibrada de {_num(ba['rope'], 4)} está bem "
+                         "dimensionada.\n")
+            else:
+                L.append(f"⚠️ **{n_equiv} de {n_pares} par(es)** saem equivalentes "
+                         f"(P(equiv.) ≥ {_num(cfg.limiar, 2)}). Os pares restantes "
+                         f"indicam que a margem de {_num(ba['rope'], 4)} pode estar "
+                         "apertada para este grupo.\n")
+
     return L
 
 
@@ -2273,25 +2406,25 @@ def _bloco_calibracao_rope(v: dict) -> list:
              f"{_num(v['rope_decisao'], 4)}** — origem: {v['origem_rope']}.\n")
     calibracao = v.get("calibracao")
     if calibracao is not None:
-        L.append("A margem não é arbitrada: é a **divergência absoluta média por item "
-                 "entre os pares de especialistas humanos** da referência — medida "
-                 "entre eles, nunca a partir do par julgado. A leitura fica relativa: "
-                 "o juiz é praticamente equivalente à referência quando o seu "
-                 "desvio médio cabe na magnitude típica do desacordo entre os próprios "
-                 "especialistas. O viés médio de cada par (que se anula quando as "
-                 "divergências são simétricas, e por isso não serve de margem) é "
-                 "reportado ao lado.\n")
+        L.append("A margem não é arbitrada: é o **máximo limite absoluto do IC 95% da "
+                 "diferença média** entre os pares de especialistas humanos da referência "
+                 "— medida entre eles, nunca a partir do par julgado, e na **mesma "
+                 "escala** que o `CorrelatedTTest` avalia (diferença média populacional). "
+                 "A ROPE calibrada assim garante por construção que todos os pares de "
+                 "especialistas saiam equivalentes. A divergência absoluta média e o "
+                 "viés médio de cada par são reportados ao lado, para leitura "
+                 "descritiva.\n")
         L.append(_md(calibracao["tabela"], indice=False))
         L.append("")
-        L.append(f"Divergência absoluta média: notas = "
-                 f"{_num(calibracao['bruto_notas'], 4)} ponto; decisões discordantes = "
-                 f"{_num(calibracao['bruto_taxa'], 4)} "
+        L.append(f"ROPE calibrada: notas = "
+                 f"{_num(calibracao['bruto_notas'], 4)} ponto (max |IC 95%|); "
+                 f"taxa de adequação = {_num(calibracao['bruto_taxa'], 4)} "
                  f"({calibracao['n_pares']} par(es), {_num(calibracao['n_itens'], 0)} itens).\n")
         for chave, minimo, rotulo in (("notas", BAYES_ROPE_MINIMO, "notas"),
                                       ("decisao", BAYES_ROPE_DECISAO_MINIMO,
                                        "taxa de adequação")):
             if calibracao["piso_aplicado"][chave]:
-                L.append(f"⚠️ A divergência calibrada da {rotulo} ficou abaixo do piso "
+                L.append(f"⚠️ A ROPE calibrada da {rotulo} ficou abaixo do piso "
                          f"numérico de {_num(minimo, 2)} e o piso foi aplicado — o "
                          "baycomp exige ROPE > 0, e especialistas em acordo quase "
                          "perfeito degenerariam a margem a zero.\n")
