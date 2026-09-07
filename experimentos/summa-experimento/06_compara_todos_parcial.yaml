@@ -450,7 +450,6 @@ estatistica:
     # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
     # reportar — a matriz em tres ROPEs e o minimo defensavel.
     rope: 0.01
-    rope_sensibilidade: [0.005, 0.01, 0.02]
 
     # Mesmos agregados de campos_estatisticas, sem o "(global)": Likert e
     # MetaDados sao os alvos de interesse das comparacoes pareadas.
