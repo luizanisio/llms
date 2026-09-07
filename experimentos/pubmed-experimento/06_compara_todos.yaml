@@ -263,15 +263,6 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Sentencas"
-      - "MetaDados"
-    metricas:
-      - rouge_l
-
   campos:
 
     rouge_1:
@@ -354,25 +345,30 @@ estatistica:
     Q6c_transicao_regime: ["B","C", "D13", "D14", "D15"]
     # Panorama geral: todos os modelos ativos, para visao global
     Panorama_Geral: "TODOS"
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
   metricas_automaticas:
-      # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
-      # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
-      # resultado: pequena demais satura o heatmap em verde/vermelho, grande
-      # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
-      # reportar — a matriz em tres ROPEs e o minimo defensavel.
-      # Valores transcritos de `estatisticas/00_rope_sugerido.md`: para cada
-      # campo, a menor margem sob a qual TODOS os pares de replicas atingem
-      # P(equivalencia) >= 0,95 — o |Delta| observado MAIS a incerteza sobre ele.
-      # O |Delta| pontual (0,0013 / 0,0030 / 0,0006) NAO serve como ROPE: centra
-      # a posterior na borda do intervalo e trava P(equiv.) em ~0,50.
-      rope: 0.0058
-      rope_por_campo:
-        (global): 0.0030
-        MetaDados: 0.0058
-        Sentencas: 0.0022
-      campos:
-        - "(global)"
-        - "MetaDados"
-        - "Sentencas"
-      metricas:
-        - rouge_l
+    # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
+    # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
+    # resultado: pequena demais satura o heatmap em verde/vermelho, grande
+    # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
+    # reportar — a matriz em tres ROPEs e o minimo defensavel.
+    # Valores transcritos de `estatisticas/00_rope_sugerido.md`: para cada
+    # campo, a menor margem sob a qual TODOS os pares de replicas atingem
+    # P(equivalencia) >= 0,95 — o |Delta| observado MAIS a incerteza sobre ele.
+    # O |Delta| pontual (0,0013 / 0,0030 / 0,0006) NAO serve como ROPE: centra
+    # a posterior na borda do intervalo e trava P(equiv.) em ~0,50.
+    rope: 0.0058
+    rope_por_campo:
+      (global): 0.0030
+      MetaDados: 0.0058
+      Sentencas: 0.0022
+
+    # Sentenças e MetaDados são os alvos de interesse das comparações pareadas 
+    campos:
+      - "(global)"
+      - "Sentencas"
+      - "MetaDados"
+    metricas:
+      - rouge_l
+
+

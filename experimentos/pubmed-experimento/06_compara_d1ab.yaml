@@ -91,15 +91,6 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Sentencas"
-      - "MetaDados"
-    metricas:
-      - rouge_l
-
   campos:
 
     rouge_1:
@@ -153,6 +144,7 @@ estatistica:
   calibracao_rope: true
   protocolos:
     Panorama_Geral: "TODOS"
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
   metricas_automaticas:
     # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
     # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
@@ -170,8 +162,7 @@ estatistica:
       MetaDados: 0.0058
       Sentencas: 0.0022
 
-    # Mesmos agregados de campos_estatisticas, sem o "(global)": Sentenças e
-    # MetaDados sao os alvos de interesse das comparacoes pareadas.
+    # Sentenças e MetaDados são os alvos de interesse das comparações pareadas 
     campos:
       - "(global)"
       - "Sentencas"

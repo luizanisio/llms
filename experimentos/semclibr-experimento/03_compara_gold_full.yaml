@@ -95,16 +95,6 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Entidades"
-      - "Relacoes"
-    metricas:
-      - rouge_l
-      - rouge_2
-
   # ========================================================================
   # Mapeamento de campos para métricas
   # ------------------------------------------------------------------------

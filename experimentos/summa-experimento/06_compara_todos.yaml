@@ -255,18 +255,8 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
   # Sem este bloco o padrao seria apenas "(global)"; os agregados Likert e
   # MetaDados sao os alvos de interesse para as comparacoes pareadas.
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Likert"
-      - "MetaDados"
-    metricas:
-      - bertscore
-      - sbert_medio
-      - sbert_grande
 
   campos:
     bertscore:

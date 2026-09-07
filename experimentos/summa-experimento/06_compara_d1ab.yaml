@@ -98,17 +98,6 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Likert"
-      - "MetaDados"
-    metricas:
-      - bertscore
-      - sbert_medio
-      - sbert_grande
-
   campos:
     bertscore:
       - "(global)"

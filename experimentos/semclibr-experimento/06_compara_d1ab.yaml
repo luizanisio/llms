@@ -89,16 +89,6 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Entidades"
-      - "Relacoes"
-    metricas:
-      - rouge_l
-      - rouge_2
-
   # ========================================================================
   # Mapeamento de campos para métricas
   # ------------------------------------------------------------------------
@@ -144,3 +134,40 @@ campos_virtuais:
     - entities.abbr
   Relacoes:
     - relations.reltype
+
+estatistica:
+  bayesiana: true
+  frequentista: true
+  # Bateria de CALIBRAÇÃO: as réplicas D1/D1a/D1b compartilham regime e dados,
+  # entao toda diferenca entre elas e ruido. So com esta marca o pipeline gera
+  # `estatisticas/00_rope_sugerido.md` — em comparacoes entre protocolos
+  # distintos o mesmo calculo somaria efeitos reais ao ruido e inflaria a ROPE.
+  calibracao_rope: true
+  protocolos:
+    Panorama_Geral: "TODOS"
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+  metricas_automaticas:
+    # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
+    # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
+    # resultado: pequena demais satura o heatmap em verde/vermelho, grande
+    # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
+    # reportar — a matriz em tres ROPEs e o minimo defensavel.
+    # Valores transcritos de `estatisticas/00_rope_sugerido.md`: para cada
+    # campo, a menor margem sob a qual TODOS os pares de replicas atingem
+    # P(equivalencia) >= 0,95 — o |Delta| observado MAIS a incerteza sobre ele.
+    # O |Delta| pontual (0,0013 / 0,0030 / 0,0006) NAO serve como ROPE: centra
+    # a posterior na borda do intervalo e trava P(equiv.) em ~0,50.
+    rope: 0.0058
+    rope_por_campo:
+      (global): 0.0030
+      MetaDados: 0.0058
+      Sentencas: 0.0022
+
+    # Sentenças e MetaDados são os alvos de interesse das comparações pareadas 
+    campos:
+      - "(global)"
+      - "Entidades"
+      - "Relacoes"
+    metricas:
+      - rouge_l
+      - rouge_2

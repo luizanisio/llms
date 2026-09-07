@@ -262,18 +262,8 @@ configuracao_comparacao:
     avaliacao: ".avaliacao.json"
     observabilidade: ".obs.json"
 
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
   # Sem este bloco o padrao seria apenas "(global)"; os agregados Likert e
   # MetaDados sao os alvos de interesse para as comparacoes pareadas.
-  campos_estatisticas:
-    campos:
-      - "(global)"
-      - "Likert"
-      - "MetaDados"
-    metricas:
-      - bertscore
-      - sbert_medio
-      - sbert_grande
 
   campos:
     bertscore:
@@ -443,6 +433,7 @@ estatistica:
   # DESTILACAO, nao qualidade: um protocolo que reproduz fielmente um erro do
   # professor e premiado por elas. Servem como triangulacao, nunca como veredito.
   # CorrelatedTTest (unico teste do pipeline bayesiano) sobre escores continuos.
+  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
   metricas_automaticas:
     # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
     # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
@@ -451,8 +442,7 @@ estatistica:
     # reportar — a matriz em tres ROPEs e o minimo defensavel.
     rope: 0.01
 
-    # Mesmos agregados de campos_estatisticas, sem o "(global)": Likert e
-    # MetaDados sao os alvos de interesse das comparacoes pareadas.
+    # Likert e MetaDados são os alvos de interesse das comparações pareadas (omitindo o "(global)").
     campos:
       - "Likert"
       - "MetaDados"
