@@ -64,31 +64,10 @@ echo "==============================="
 #echo "1/9 - Executando 03_compara_gold_full.yaml..."
 #python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/03_compara_gold_full.yaml"
 
-echo "2/9 - Executando 06_compara_controle_b.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_controle_b.yaml"
-
-echo "3/9 - Executando 06_compara_experimentais.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_experimentais.yaml"
-
-echo "4/9 - Executando 06_compara_ablacoes.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ablacoes.yaml"
-
-echo "5/9 - Executando 06_compara_ordem_cl.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_cl.yaml"
-
-echo "6/9 - Executando 06_compara_ordem_pt.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_pt.yaml"
-
-echo "7/9 - Executando 06_compara_fronteiras.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_fronteiras.yaml"
-
-echo "8/9 - Executando 06_compara_capacidade.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_capacidade.yaml"
-
-echo "9/10 - Executando 06_compara_todos.yaml..."
+echo "Executando 06_compara_todos.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_todos.yaml"
 
-echo "10/10 - Executando 07_avaliar_ner.py (trilha NER-F1, variável primária)..."
+echo "Executando 07_avaliar_ner.py (trilha NER-F1, variável primária)..."
 python "$BASE_DIR/07_avaliar_ner.py" --config "$BASE_DIR/07_avaliar_ner.yaml"
 
 echo "=== Job finalizado: $(date) ==="
