@@ -814,10 +814,15 @@ contagens **ordinais puras** (d > 0, d = 0, d < 0), independentes da ROPE —
 reporte-as ao lado das probabilidades: são o número que não assume nada sobre
 os intervalos da escala.
 
-Na figura **"Medindo as diferenças"** (forest plot), cada linha é um par:
-ponto = diferença média, barra = IC 95% da posterior, faixa ao fundo = ROPE,
-cor = classificação, P(equiv.) anotada à direita. É onde a magnitude fica
-visível — o heatmap mostra só as probabilidades.
+A figura **"Medindo as diferenças"** é um gráfico de floresta (*forest plot*). 
+Cada linha representa um contraste pareado: o ponto marca a diferença média, 
+a barra horizontal indica o Intervalo de Maior Densidade (HDI) de 95% da probabilidade 
+posterior de Student, a faixa sombreada ao fundo delimita a ROPE, e a cor 
+representa a classificação inferencial final, com a P(equivalência) anotada à direita. 
+A estrutura visual do *forest plot* é um recurso metodológico clássico, gerado 
+nativamente em `matplotlib` (Hunter, 2007) para viabilizar a injeção exata dos componentes 
+bayesianos requeridos por esta análise (como a banda da ROPE), assegurando 
+rigor visual e precisão para reportar em publicações científicas.
 """
 
 _TESTES_TABELA = """\
