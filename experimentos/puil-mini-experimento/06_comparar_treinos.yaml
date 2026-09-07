@@ -43,6 +43,31 @@ execucao:
     validacao: 0.10                              # Proporção para validação  
     teste: 0.20                                  # Proporção para teste
 
+# ---- Estatística (Recortes de Grupos) ----
+# Separa a comparação estatística em panoramas focados, gerando um heatmap/análise 
+# por grupo, mantendo o panorama geral além de outras duas análises.
+estatistica:
+  bayesiana: true
+  frequentista: true
+  protocolos:
+    panorama_geral: "TODOS"
+    impacto_curriculum: ["Gabarito", "puil_lora", "puil_lora_full", "puil_lora_etapas"]
+    baselines_vs_lora: ["Gabarito", "puil_full", "puil_lora"]
+  metricas_automaticas:
+    # ROPE: um valor estimado só de teste
+    rope: 0.001
+    rope_por_campo:
+      resposta: 0.001
+
+    # Sentenças e MetaDados são os alvos de interesse das comparações pareadas 
+    campos:
+      - resposta
+    metricas:
+      - rouge_l
+      - rouge_2
+      - bertscore
+      - sbert_medio
+
 # ---- Modelo Base (Gabarito/Referência) ----
 # Aponta para a pasta onde os JSONs do gabarito foram/serão extraídos a partir de dados/saida_puil.csv
 modelo_base:
@@ -68,6 +93,14 @@ modelos_comparacao:
     ativo: true
     # pasta com os dados de treinamento para comparação de loss
     pasta_treinamento: "treinos_local/Qwen2.5-1.5B-Instruct(puil_lora)/treinamento"
+  - arquivo: "saidas/saida_puil_lora_full.parquet"
+    rotulo: "puil_lora_full"
+    ativo: true
+    pasta_treinamento: "treinos_local/Qwen2.5-1.5B-Instruct(puil_lora_full)/treinamento"
+  - arquivo: "saidas/saida_puil_lora_etapas.parquet"
+    rotulo: "puil_lora_etapas"
+    ativo: true
+    pasta_treinamento: "treinos_local/Qwen2.5-1.5B-Instruct(puil_lora_etapas)/treinamento"
 
 # ---- Configuração de Métricas e Campos ----
 configuracao_comparacao:
