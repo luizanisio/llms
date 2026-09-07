@@ -28,6 +28,16 @@ Este documento centraliza a arquitetura dos experimentos: os objetivos de cada f
 - **Ambiente de Treino:** Local via WSL em GPU comercial (`RTX 3060 12GB` / `RTX 2060`).
 - **Detalhes Técnicos:** Pipeline simplificado com contexto mínimo e batch unitário, para debugar os *engineers* sem gastar horas do cluster.
 
+### 🏥 SemClinBR-Experimento *(generalização do framework — NER clínico)*
+- **Objetivo:** Extração de entidades clínicas e relações (NER + RE) em notas clínicas em português, sobre o corpus **SemClinBr** (Oliveira et al., 2022 — 1.000 notas, 65.129 entidades, 11.263 relações, 100 STYs UMLS + `Abbreviation` + `Negation`).
+- **Modelo Base:** `Qwen2.5-1.5B-Instruct` e `Qwen2.5-7B-Instruct`
+- **Ambiente de Treino:** Cluster Slurm (H100 80GB)
+- **Detalhes Técnicos:** Experimento isolado com avaliação própria (F1 de entidades e relações), comparação interna entre protocolos e comparação com a extração realizada pelo modelo publicado. Avaliação via script dedicado (`07_avaliar_ner.py`).
+- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`
+
+### 📝 Summa-Qualifica *(trabalho inicial da qualificação)*
+- **Objetivo:** Versão preliminar do experimento Summa, utilizada durante a qualificação do mestrado. Mantida como referência histórica.
+
 ---
 
 ## 2. Os Dois Eixos do Framework
@@ -121,39 +131,52 @@ Legenda de fronteiras: **real** = nova execução de trainer (reset de otimizado
 
 > **Gating ≠ congelamento.** No d19/d20 os blocos congelados não entram no otimizador (economia real de VRAM). No gating (d22–d25) todos os grupos estão no otimizador desde o step 0, com LR 0 até acordarem — não há economia de memória. Isso pesa no **d25 do summa**: full FT 16 bits no 7B com contexto 32768 mantém pesos, gradientes e estados Adam de todos os parâmetros simultaneamente. Preferir H200 e validar o pico de VRAM nos primeiros steps.
 
+### Réplicas (teste de consistência)
+
+| ID | Etapas | O que testa | Disp. |
+| :-- | :-- | :-- | :-- |
+| **d1a** | Idêntico ao d1 | **Réplica 2** do d1 — mede variância não-determinística do treinamento | ambos |
+| **d1b** | Idêntico ao d1 | **Réplica 3** do d1 — mesmos hiperparâmetros, saída distinta | ambos |
+
+> Os protocolos `d1a`/`d1b` são réplicas idênticas ao `d1` para medir a variância não-determinística do treinamento (mesmos hiperparâmetros, apenas saída distinta). A comparação `d1` × `d1a` × `d1b` (via `06_compara_d1ab.yaml`) serve para calibrar a ROPE bayesiana e separar efeito real de ruído estocástico.
+
 ---
 
-## 4. Perguntas de Pesquisa → Protocolos → Relatório
+## 4. Perguntas de Pesquisa → Protocolos → Recortes
 
-| # | Pergunta | Protocolos | Relatório |
-| :-- | :-- | :-- | :-- |
-| **Q1** | O ajuste fino produz ganho sobre o zero-shot? | todos vs **A** | `06_compara_experimentais` |
-| **Q2** | A progressão de dificuldade melhora sobre o FT direto? | b, c, d1–d4, d13 (+d7, d8, d17) | `06_compara_experimentais`, `06_compara_ablacoes` |
-| **Q3** | FF→LoRA e LoRA→FF produzem desempenhos distintos? | d1–d4, d5, d6 | `06_compara_ordem_pt` |
-| **Q4** | A ordem fácil→difícil importa vs difícil→fácil? | d7–d10 (+d17, d18) | `06_compara_ordem_cl` |
-| **Q5** | O pace suave (unitário) melhora sobre a progressão rápida? | d11, d12 (vs d3, d4) | `06_compara_experimentais` |
-| **Q6** | Há perda de eficiência ao transitar entre etapas LoRA/Full e durante a progressão de dificuldade? | d5, d6, d12, d16–d18, d21, d24, d25 | `06_compara_fronteiras` |
-| **Q7** | *(proposta)* A capacidade pode escalar **sem** troca de regime, e isso sinergia com o CL? | d13, d17, d19–d25 | `06_compara_capacidade` |
-| — | *(controle transversal)* Quanto do baseline `b` é limitado por quantização e posto? | b, b16, b16r8 | `06_compara_controle_b` *(pubmed)* |
+As perguntas de pesquisa são respondidas por **recortes** (subconjuntos de modelos) dentro de um único relatório consolidado (`06_compara_todos.yaml` / `06_compara_todos_parcial.yaml`). Os relatórios individuais (`06_compara_ablacoes`, `06_compara_ordem_cl`, etc.) foram eliminados em favor dessa estrutura unificada.
 
-> **Nota de numeração:** alguns cabeçalhos de `04_treinar_*.yaml` ainda usam Q6/Q7/Q8 com outro sentido (warm-up LoRA no d14, estabilização no d15, regime full vs LoRA no d24/d25). Os `06_compara_*.yaml` seguem a numeração desta tabela.
+| Recorte | Pergunta | Protocolos |
+| :-- | :-- | :-- |
+| **Q1_ajuste_fino** | O ajuste fino produz ganho sobre o zero-shot? | A, B, C |
+| **Q2a_cl_controlado** | O CL melhora sobre FT direto? (controles: fronteira, blocos aleatórios) | B16, D16, D18, D17 |
+| **Q2b_cl_puro** | CL sem escalonamento, em cada regime | B, D7, D8, D13, D14 |
+| **Q2c_granularidade** | Progressão granular (10 etapas) vs saltos (3 etapas) | D3, D4, D11, D12 |
+| **Q3a_direcao_com_cl** | FF→LoRA vs LoRA→FF com CL | D1, D2, D3, D4 |
+| **Q3b_direcao_sem_cl** | Direção do escalonamento sem CL (controle) | B, C, D5, D6 |
+| **Q4a_decomposicao** | Decomposição 2×2: CL só, escalonamento só, ambos, nenhum | B, C, D1, D5, D7 |
+| **Q4b_unfreeze** | Sinergia CL+PT por descongelamento progressivo | B, C, D20, D19 |
+| **Q5_anti_curriculo** | Direção do currículo: CL vs anti-CL | B, D7, D8, D9, D10 |
+| **Q6a_fusao** | Fundido vs segmentado (custo de fronteira) | B, C, B16, D17, D21, D22, D23 |
+| **Q6b_fusao_granular** | Fusão granular: regime full vs LoRA | B, C, D12, D24, D25 |
+| **Q6c_transicao_regime** | Pré-treino LoRA e estabilização pós-merge | B, C, D13, D14, D15 |
+| **Panorama_Geral** | Visão global: ranking, Friedman/Nemenyi | TODOS |
+
+> **Nota de numeração:** alguns cabeçalhos de `04_treinar_*.yaml` ainda usam Q6/Q7/Q8 com outro sentido (warm-up LoRA no d14, estabilização no d15, regime full vs LoRA no d24/d25). Os recortes do `06_compara_todos*.yaml` seguem a numeração desta tabela.
 
 ---
 
 ## 5. Relatórios de Comparação
 
-Cada `06_compara_*.yaml` é uma **visão** — protocolos aparecem em mais de um relatório de propósito.
+Os relatórios foram consolidados em **dois arquivos** por experimento, com recortes (protocolos) definidos internamente:
 
-| Relatório | Modelos | Serve a |
+| Arquivo | Conteúdo | Uso |
 | :-- | :-- | :-- |
-| `06_compara_experimentais` | A, b, c, d1–d4, d11, d12 | Q1, Q2, Q3, Q5 (experimento principal, segmentado) |
-| `06_compara_ablacoes` | A, b, c, d5–d8, d13, d14, d15, d17 | Isolamento de cada componente |
-| `06_compara_ordem_cl` | A, b, d7–d10, d17, d18 | Q4 (crescente × decrescente × aleatório) |
-| `06_compara_ordem_pt` | A, b, c, d1–d6 | Q3 (direção, com e sem CL) |
-| `06_compara_fronteiras` | A, b, c, d5, d6, d12, d16–d18, d21, d24, d25 *(+b16 no pubmed)* | Q6 |
-| `06_compara_capacidade` | A, b, c, d13, d17, d19–d25 | Q7 (unfreeze e gating) |
-| `06_compara_controle_b` | b, b16, b16r8 — **só pubmed** | Calibração do baseline (quantização e posto) |
-| `06_compara_todos` | tudo | Panorama, ranking, Friedman/Nemenyi global |
+| `06_compara_todos.yaml` | Todos os modelos ativos, todos os recortes da seção 4 | Relatório completo (quando todos os protocolos estão treinados) |
+| `06_compara_todos_parcial.yaml` | Idem, com modelos ainda em treinamento comentados | Relatório incremental (resultados parciais) |
+| `06_compara_d1ab.yaml` | D1, D1a, D1b | Calibração de réplicas e cálculo da ROPE bayesiana |
+
+Cada recorte gera seu próprio conjunto de figuras/tabelas dentro do relatório, com o nome do recorte como prefixo dos arquivos e uma seção própria no markdown final.
 
 Execução em lote no cluster: `sbatch job_compara_testes.sh` (roda os relatórios em sequência).
 

@@ -4,7 +4,22 @@
 
 Este guia centraliza as práticas recomendadas para execução de experimentos, configuração do ambiente e resolução de problemas comuns.
 
----
+### 📂 Diretórios de Experimento
+
+| Diretório | Descrição |
+| :-- | :-- |
+| [`summa-experimento/`](./summa-experimento/) | Experimento principal — extração de metadados jurídicos (Qwen 7B, H100/H200) |
+| [`pubmed-experimento/`](./pubmed-experimento/) | Generalização — classificação de seções de abstracts médicos PubMed 20k (Qwen 1.5B) |
+| [`semclibr-experimento/`](./semclibr-experimento/) | Generalização — NER + RE clínico em notas pt-br do SemClinBr (Qwen 1.5B/7B) |
+| [`puil-mini-experimento/`](./puil-mini-experimento/) | Validação local rápida do pipeline (RTX 3060/2060) |
+| [`summa_qualifica/`](./summa_qualifica/) | Versão preliminar do Summa usada na qualificação do mestrado (referência histórica) |
+
+### 📖 Documentação Complementar
+
+| Documento | Conteúdo |
+| :-- | :-- |
+| [README_protocolos.md](./README_protocolos.md) | Design conceitual, objetivos de pesquisa, mapa dos protocolos `b`–`d25` e perguntas de pesquisa |
+| [README_filtros.md](./README_filtros.md) | Sintaxe dos filtros de dados, onde cada filtro age no pipeline e receitas de replicação |
 
 ## ⚠️ Instruções para Recriar o Ambiente (Recomendado)
 
@@ -86,7 +101,7 @@ TMPDIR=/var/tmp MAX_JOBS=8 pip install flash-attn --no-build-isolation --no-deps
 ### Passo 6: Validar o Ambiente
 Valide a instalação executando:
 ```bash
-python ../src/teste_ambiente.py
+python ../src2/teste_ambiente.py
 ```
 Esse script verifica pacotes, versões, CUDA, GPU e backends SDPA, alertando sobre qualquer configuração pendente.
 
