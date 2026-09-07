@@ -3,6 +3,8 @@
     expectativas de saída após o cruzamento de dados de espelhos e íntegras.
 '''
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 import gc
 import unittest
 from util_ckan import UtilCkan, UtilCkanIntegra
