@@ -370,14 +370,9 @@ estatistica:
         (global): 0.0030
         MetaDados: 0.0058
         Sentencas: 0.0022
-
-      # Mesmos agregados de campos_estatisticas, sem o "(global)": Sentenças e
-      # MetaDados sao os alvos de interesse das comparacoes pareadas.
       campos:
         - "(global)"
-        - "Sentencas"
         - "MetaDados"
+        - "Sentencas"
       metricas:
         - rouge_l
-
-

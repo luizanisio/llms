@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Etapa 1 — escolha e validação do juiz (2/3)</title>
+  <!--
+  EXPORTAÇÃO — Canvas 1280 × 720 px (16:9).
+  Chrome/Edge: Ctrl+P → "Salvar como PDF" → Paisagem → Margens "Nenhuma"
+  → marcar "Gráficos de segundo plano".
+
+  MUDANÇAS em relação à versão anterior:
+  - a etapa não é só um gate: é um funil de 4 passos sobre 4 candidatos;
+  - a faixa bayesiana deixou de ser "complementar" — os critérios 2 e 3 SÃO
+    o gate. O que a faixa inferior mostra agora é a calibração da margem e o
+    controle negativo, que era o argumento ausente;
+  - confiabilidade interna: κ de Light (sklearn) com κ de Fleiss ao lado.
+
+  Valores marcados com "—" são preenchidos após a coleta com especialistas.
+-->
+  <style>
+    :root {
+      --ink: #16202b;
+      --muted: #566472;
+      --line: #b7c2cc;
+      --line-2: #7d8b99;
+      --surface: #f3f6f8;
+      --ok: #1d6b4b;
+      --ok-bg: #e6f3ec;
+      --warn: #8a6200;
+      --warn-bg: #fcf3de;
+      --fail: #93262b;
+      --fail-bg: #fbeaea;
+      --margem: #1a4f7a;
+      --margem-bg: #eef4f9;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: #e9edf1; color: var(--ink);
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+
+    .slide {
+      width: 1280px; height: 720px; background: #fff;
+      padding: 32px 52px 30px; display: flex; flex-direction: column;
+    }
+
+    .tag {
+      font-size: 13px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--ok);
+    }
+    .titulo { font-size: 30px; font-weight: 700; letter-spacing: -0.015em; margin-top: 3px; }
+    .subtitulo { font-size: 18px; color: var(--muted); margin-top: 5px; }
+    .regua { height: 3px; background: var(--ink); width: 62px; margin: 11px 0 16px; }
+
+    .corpo { display: flex; gap: 32px; }
+    .esquerda { width: 452px; }
+    .direita { flex: 1; }
+
+    .secao {
+      font-size: 13.5px; font-weight: 700; letter-spacing: 0.09em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* ── Funil de 4 passos ───────────────────────────────────── */
+    .passo {
+      display: flex; gap: 12px; align-items: flex-start;
+      border: 1.5px solid var(--line); border-left: 4px solid var(--ink);
+      border-radius: 5px; padding: 9px 14px;
+    }
+    .passo + .passo { margin-top: 8px; }
+    .passo-num {
+      font-size: 13px; font-weight: 700; color: #fff; background: var(--ink);
+      width: 24px; height: 24px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 1px;
+    }
+    .passo-nome { font-size: 17px; font-weight: 600; }
+    .passo-detalhe { font-size: 14.5px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+    .passo-corte {
+      font-size: 15px; font-weight: 700; background: #e3e9ee;
+      border-radius: 12px; padding: 3px 11px; white-space: nowrap; margin-top: 2px;
+    }
+    .passo.eleito { border-left-color: var(--ok); }
+
+    .interna {
+      margin-top: 12px; background: var(--surface);
+      border-radius: 5px; padding: 9px 14px; font-size: 14.5px;
+      line-height: 1.45; color: var(--muted);
+    }
+    .interna b { color: var(--ink); font-weight: 700; }
+
+    /* ── Gate ────────────────────────────────────────────────── */
+    .criterio {
+      display: flex; align-items: center; gap: 13px;
+      border: 1.5px solid var(--line); border-radius: 6px; padding: 9px 15px;
+    }
+    .criterio + .criterio { margin-top: 7px; }
+    .criterio-num {
+      font-size: 15px; font-weight: 700; color: #fff; background: var(--ink);
+      width: 27px; height: 27px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .criterio-texto { flex: 1; }
+    .criterio-nome { font-size: 17.5px; font-weight: 600; }
+    .criterio-teste { font-size: 14.5px; color: var(--muted); margin-top: 2px; }
+    .criterio-corte {
+      font-size: 16.5px; font-weight: 700; background: #e3e9ee;
+      border-radius: 14px; padding: 4px 13px; white-space: nowrap;
+    }
+
+    .resultados { display: flex; gap: 9px; margin-top: 11px; }
+    .resultado { flex: 1; border: 2px solid; border-radius: 6px; padding: 8px 12px; }
+    .resultado-topo { display: flex; align-items: center; gap: 7px; }
+    .resultado b { font-weight: 700; font-size: 16px; }
+    .resultado span {
+      font-size: 13.5px; opacity: 0.92; display: block;
+      margin-top: 3px; line-height: 1.35;
+    }
+    .resultado.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+    .resultado.ressalva { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+    .resultado.falha { border-color: var(--fail); background: var(--fail-bg); color: var(--fail); }
+    .marca { font-weight: 700; font-size: 17px; flex-shrink: 0; }
+
+    /* ── Faixa da margem ─────────────────────────────────────── */
+    .margem {
+      margin-top: 16px; border: 1.5px solid var(--margem); border-radius: 7px;
+      background: var(--margem-bg); padding: 12px 18px 13px;
+    }
+    .margem-cabecalho { display: flex; align-items: baseline; gap: 12px; margin-bottom: 9px; }
+    .margem-titulo { font-size: 18.5px; font-weight: 700; color: var(--margem); }
+    .margem-frase { font-size: 14.5px; color: var(--muted); line-height: 1.4; }
+    .margem-frase b { color: var(--ink); font-weight: 700; }
+
+    .margem-grade { display: flex; gap: 12px; }
+    .cartao {
+      flex: 1; background: #fff; border: 1.5px solid var(--line);
+      border-radius: 5px; padding: 9px 13px;
+    }
+    .cartao-rotulo {
+      font-size: 11.5px; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+    }
+    .cartao-texto { font-size: 14.5px; line-height: 1.4; }
+    .cartao-texto b { font-weight: 700; }
+    .cartao.controle { border-color: var(--ok); border-left: 4px solid var(--ok); }
+
+    .rodape {
+      font-size: 13px; color: var(--muted);
+      border-top: 1px solid var(--line); padding-top: 9px; margin-top: auto;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="slide">
+
+    <div class="tag">Etapa 1 · 210 itens pareados · 630 julgamentos humanos</div>
+    <div class="titulo">Escolha e validação do juiz contra os especialistas</div>
+    <div class="subtitulo">Avaliação de modelos candidatos para eleição de um juiz validado</div>
+    <div class="regua"></div>
+
+    <div class="corpo">
+
+      <!-- ESQUERDA: funil -->
+      <div class="esquerda">
+        <div class="secao">O funil — de 4 candidatos a 1</div>
+
+        <div class="passo">
+          <div class="passo-num">1</div>
+          <div style="flex:1">
+            <div class="passo-nome">Estabilidade intra-juiz</div>
+            <div class="passo-detalhe">Concordância entre as 3 rodadas do mesmo modelo.
+              Estabilidade é pré-requisito para avaliação em rodada única.</div>
+          </div>
+          <div class="passo-corte">κ<sub>w</sub> ≥ 0,80</div>
+        </div>
+
+        <div class="passo">
+          <div class="passo-num">2</div>
+          <div style="flex:1">
+            <div class="passo-nome">Viés de autoavaliação (GPT-5)</div>
+            <div class="passo-detalhe">Como o modelo é candidato a juiz <b>e</b> fonte 
+              avaliada, afere-se a homogeneidade da concordância entre fontes.</div>
+          </div>
+        </div>
+
+        <div class="passo eleito">
+          <div class="passo-num">3</div>
+          <div style="flex:1">
+            <div class="passo-nome">Minimização do erro absoluto</div>
+            <div class="passo-detalhe">Menor distância média até a mediana humana, aferida
+              na <b>pior</b> rodada de cada candidato.</div>
+          </div>
+          <div class="passo-corte">≥ 0,95</div>
+        </div>
+
+        <div class="passo eleito">
+          <div class="passo-num">4</div>
+          <div style="flex:1">
+            <div class="passo-nome">Validação conjunta</div>
+            <div class="passo-detalhe">O candidato eleito deve satisfazer os três critérios 
+              simultaneamente.</div>
+          </div>
+        </div>
+
+        <div class="interna">
+          <b>Antes de tudo:</b> a confiabilidade de cada grupo é aferida pelo
+          <b>κ de Light</b> — a média das concordâncias par a par, que dá crédito
+          parcial a divergências de 1 ponto. O κ de Fleiss clássico vai ao lado como
+          piso conservador.
+        </div>
+      </div>
+
+      <!-- DIREITA: gate -->
+      <div class="direita">
+        <div class="secao">O gate — os três critérios que decidem</div>
+
+        <div class="criterio">
+          <div class="criterio-num">1</div>
+          <div class="criterio-texto">
+            <div class="criterio-nome">Concordância Humana</div>
+            <div class="criterio-teste">Concordância ordinal, com crédito parcial (κ<sub>w</sub> de Cohen)</div>
+          </div>
+          <div class="criterio-corte">≥ 0,60</div>
+        </div>
+
+        <div class="criterio">
+          <div class="criterio-num">2</div>
+          <div class="criterio-texto">
+            <div class="criterio-nome">Equivalência Média</div>
+            <div class="criterio-teste">Probabilidade da diferença média pertencer à ROPE</div>
+          </div>
+          <div class="criterio-corte">≥ 0,95</div>
+        </div>
+
+        <div class="criterio">
+          <div class="criterio-num">3</div>
+          <div class="criterio-texto">
+            <div class="criterio-nome">Equivalência Decisional</div>
+            <div class="criterio-teste">Probabilidade de equivalência na taxa de adequação (nota ≥ 3)</div>
+          </div>
+          <div class="criterio-corte">≥ 0,95</div>
+        </div>
+
+        <div class="resultados">
+          <div class="resultado ok">
+            <div class="resultado-topo"><span class="marca">✔</span><b>Validado</b></div>
+            <span>passa nos três</span>
+          </div>
+          <div class="resultado ressalva">
+            <div class="resultado-topo"><span class="marca">!</span><b>Com ressalva</b></div>
+            <span>concorda, mas a equivalência ficou inconclusiva</span>
+          </div>
+          <div class="resultado falha">
+            <div class="resultado-topo"><span class="marca">✘</span><b>Não validado</b></div>
+            <span>concordância baixa ou viés relevante</span>
+          </div>
+        </div>
+
+        <div class="margem">
+          <div class="margem-cabecalho">
+            <div class="margem-titulo">De onde vem a margem</div>
+            <div class="margem-frase">
+              Ela não é arbitrada: é <b>calibrada matematicamente</b> para englobar a divergência 
+              inerente aos especialistas humanos (controle negativo).
+            </div>
+          </div>
+          <div class="margem-grade">
+            <div class="cartao">
+              <div class="cartao-rotulo">Como é calculada</div>
+              <div class="cartao-texto">Busca numérica pela <b>menor margem</b> sob a qual 
+                todos os pares de especialistas alcançam 95% de probabilidade de equivalência.</div>
+            </div>
+            <div class="cartao controle">
+              <div class="cartao-rotulo">Controle negativo embutido</div>
+              <div class="cartao-texto">A própria calibração garante que os especialistas 
+                são <b>equivalentes entre si</b>. Se o juiz errar menos que isso, ele 
+                reproduz o ruído aceitável.</div>
+            </div>
+            <div class="cartao">
+              <div class="cartao-rotulo">O que ela julga</div>
+              <div class="cartao-texto"><b>Magnitude, não direção.</b> Um juiz pode ser
+                sempre um pouco mais leniente e ainda assim equivalente</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape">
+      Notas Likert 1–4, mediana por documento · fontes avaliadas: Qwen 235B (professor),
+      GPT-5 e Qwen 7B sem ajuste — <b>o piso e o teto da faixa de qualidade</b> em que os
+      protocolos da Etapa 2 vão cair
+    </div>
+
+  </div>
+</body>
+
+</html>

@@ -401,6 +401,7 @@ def tabela_pares(matriz: pd.DataFrame) -> pd.DataFrame:
             "Dif. média": _num(linha["diferenca_media"], 4),
             "IC 95%": (f"[{linha['ic_inf']:+.4f}; {linha['ic_sup']:+.4f}]"
                        .replace(".", ",")),
+            "ROPE Mín. (Eq)": _num(linha["rope_minima"], 4),
             "P(A > B)": _num(linha["p_esquerda"], 4),
             "P(equiv.)": _num(linha["p_rope"], 4),
             "P(A < B)": _num(linha["p_direita"], 4),

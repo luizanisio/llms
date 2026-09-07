@@ -1262,23 +1262,16 @@ def analisar_grupo(base: str, grupo: Grupo, saida: str, escala: tuple,
 
 def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
                   piso: int = PISO_ADEQUACAO) -> dict:
-    """Calibra as ROPEs pelo IC 95% da diferença média entre os pares de especialistas.
+    """Calibra as ROPEs pela busca numérica da equivalência entre especialistas.
 
-    A margem de "praticamente equivalente" deixa de ser arbitrada: passa a ser
-    o **máximo limite absoluto do IC 95% da diferença média** entre os pares de
-    especialistas humanos — medida entre eles, **nunca a partir do par julgado**.
+    A **ROPE é calibrada dinamicamente** pela divergência entre os especialistas:
+    ela é definida como a menor margem sob a qual TODOS os pares de
+    especialistas (o controle negativo) alcançariam o limiar exigido
+    de equivalência. A busca é feita numericamente (Brent) sobre a massa da
+    distribuição posterior da diferença média populacional.
 
-    O IC 95% vem da mesma posterior de Student usada pelo ``CorrelatedTTest`` de
-    Benavoli et al. (2017) — a ROPE fica na **mesma escala** que o teste avalia
-    (diferença média populacional), garantindo por construção que todos os pares
-    de especialistas saiam equivalentes. A versão anterior usava a divergência
-    absoluta média por item (MAE), que está numa escala diferente (desacordo
-    per-item vs viés populacional) e não garantia equivalência.
-
-    Duas margens, cada uma na sua unidade:
-
-    * ``rope_notas`` — max sobre os pares de max(|IC_inf|, |IC_sup|) da
-      diferença média das notas;
+    O resultado é o máximo sobre todos os pares de especialistas:
+    * ``rope_notas`` — teto da `rope_minima_equivalencia` das notas;
     * ``rope_decisao`` — o mesmo sobre a binarização em ``nota >= piso``
       (taxa de adequação).
 
@@ -1307,15 +1300,14 @@ def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
         y = matriz_avaliadores[a2].astype(float).to_numpy()
         bx, by = (x >= piso).astype(float), (y >= piso).astype(float)
 
-        # IC 95% da diferença média (mesma posterior do CorrelatedTTest)
         comp_notas = bayes.Comparacao(x, y, rope=BAYES_ROPE_MINIMO, limiar=BAYES_LIMIAR)
         comp_decisao = bayes.Comparacao(bx, by, rope=BAYES_ROPE_DECISAO_MINIMO,
                                         limiar=BAYES_LIMIAR)
         ic_notas = comp_notas.ic95
         ic_decisao = comp_decisao.ic95
 
-        ic_extremos_notas.append(max(abs(ic_notas[0]), abs(ic_notas[1])))
-        ic_extremos_decisao.append(max(abs(ic_decisao[0]), abs(ic_decisao[1])))
+        ic_extremos_notas.append(comp_notas.rope_minima_equivalencia())
+        ic_extremos_decisao.append(comp_decisao.rope_minima_equivalencia())
 
         pares.append({
             "Par": f"{a1} × {a2}",
@@ -1404,6 +1396,7 @@ def tabela_matriz_bayesiana(matriz: pd.DataFrame, rotulo: str = "Par") -> pd.Dat
             "B melhor": int(linha["y_melhor"]),
             "Dif. média": round(float(linha["diferenca_media"]), 4),
             "IC 95%": f"[{linha['ic_inf']:+.4f}; {linha['ic_sup']:+.4f}]".replace(".", ","),
+            "ROPE Mín. (Eq)": round(float(linha["rope_minima"]), 4),
             "P(A > B)": round(float(linha["p_esquerda"]), 4),
             "P(equiv.)": round(float(linha["p_rope"]), 4),
             "P(A < B)": round(float(linha["p_direita"]), 4),

@@ -85,9 +85,9 @@ O que ela acrescenta é o que o teste de hipótese nula não consegue expressar:
 ```yaml
 estatistica_bayesiana:
   ativo: true
-  eps: 0.05
+  likert:
+    rope: 0.1139
   metricas_automaticas:
-    rope: 0.01
     campos: ["(global)"]
     metricas: [bertscore, sbert_medio]
 ```
@@ -96,12 +96,12 @@ Sem a chave (ou com `ativo: false`) o pipeline se comporta exatamente como antes
 
 ### Os dois alvos
 
-| Alvo | Fonte | Modo | Margem | O que mede |
-|---|---|---|---|---|
-| **Likert do juiz LLM** (principal) | `{protocolo}_nota` dos arquivos `.avaliacao.json` | `proporcao` | `eps` sobre a posterior | qualidade percebida |
-| **Métricas automáticas** (complementar) | colunas `{protocolo}_{campo}_{métrica}_F1` | `baycomp` | `rope` sobre os escores brutos | fidelidade ao modelo base |
+| Alvo | Fonte | O que mede |
+|---|---|---|
+| **Likert do juiz LLM** (principal) | `{protocolo}_nota` dos arquivos `.avaliacao.json` | qualidade percebida |
+| **Métricas automáticas** (complementar) | colunas `{protocolo}_{campo}_{métrica}_F1` | fidelidade ao modelo base |
 
-Os rótulos coincidem sem que o significado coincida. No modo `proporcao`, equivalência é `P(|δ| ≤ ε)` — uma afirmação sobre **magnitude**, medida em proporção de documentos. No modo `baycomp`, é `P(a zona ROPE ser a maioritária)` — uma afirmação sobre **qual região concentra mais documentos**. O modo aparece na legenda de cada figura e no cabeçalho de cada seção do relatório.
+A matemática é exatamente a mesma para os dois alvos: `baycomp.CorrelatedTTest` medindo a probabilidade de a diferença média das distribuições estar contida na margem de irrelevância prática (a ROPE).
 
 ⚠️ As métricas automáticas comparam cada protocolo com o **modelo base**, portanto medem fidelidade de destilação, **não qualidade**: um protocolo que reproduz fielmente um erro do modelo base é premiado por elas. Entram como triangulação da Likert, nunca como veredito.
 
@@ -119,20 +119,17 @@ O JSON da avaliação precisa ter ao menos a chave `nota` (Likert). `precision`/
 | Chave | Padrão | Efeito |
 |---|---|---|
 | `ativo` | — | única chave que decide se a etapa existe |
-| `eps` | — | **obrigatório** para a Likert; margem sobre a posterior, em proporção de documentos |
-| `origem_eps` | `""` | texto livre citado no relatório para justificar o ε |
-| `limiar` | `0.80` | probabilidade mínima para classificar uma célula do heatmap |
-| `limiar_equivalencia` | `0.95` | limiar do veredito, na curva de sensibilidade ao ε |
-| `amostras` | `200000` | amostras da posterior |
-| `semente` | `42` | reprodutibilidade |
+| `likert.rope` | `0.0` | **obrigatória** (> 0) para a Likert; margem sobre a diferença média das notas |
+| `likert.origem_rope` | `""` | texto livre citado no relatório para justificar a ROPE |
+| `limiar_unico` | `0.95` | limite exigido para vereditos (heatmap e forest plot) |
 | `incluir_base` | `false` | inclui o modelo base na matriz da Likert (ignorado quando `protocolos` é usado) |
 | `protocolos` | todos | recorte(s) **e ordem** dos protocolos; lista simples ou `{nome: [protocolos]}` — ver abaixo |
-| `metricas_automaticas.rope` | `0.0` | **obrigatória** (> 0) para a seção complementar |
-| `metricas_automaticas.rope_sensibilidade` | `rope/2, rope, 2·rope` | valores da varredura |
 | `metricas_automaticas.campos` | — | campos declarados em `configuracao_comparacao.campos` |
 | `metricas_automaticas.metricas` | — | `bertscore`, `rouge_l`, `rouge_1`, `rouge_2`, `levenshtein`, `sbert_*` |
 
-**O ε e a ROPE são pré-registrados.** Este pipeline não tem avaliadores humanos para calibrar o ε — isso pertence à Fase A (`realizar_avaliacoes.py --bayes`), de onde o valor deve ser trazido e fixado aqui. As curvas e varreduras de sensibilidade existem para demonstrar que a conclusão **não** depende de um número escolhido a dedo; lê-las e então adotar o valor que produz o resultado desejado é a versão bayesiana do *p-hacking*, e é detectável. Sem `eps` informado, a seção da Likert é omitida em vez de rodar com um valor de conveniência.
+**A ROPE é pré-registrada.** Este pipeline de protocolos não tem avaliadores humanos para calibrar a margem da Likert — isso pertence à Fase A (`realizar_avaliacoes.py --bayes`), de onde o valor numérico exato deve ser copiado e fixado aqui. A transcrição manual força o pré-registro consciente. Já para as métricas contínuas, a ROPE ideal é automaticamente sugerida pelo algoritmo na Etapa 0, reportada em `00_rope_sugerido.md`.
+
+Sem `likert.rope` informada no YAML, a seção da Likert é executada com 0.0, devolvendo um teste determinístico pontual.
 
 ### Saída
 
@@ -143,18 +140,15 @@ bayesiana/
 ├── analise_bayesiana.md                     relatório consolidado (tabelas + leitura descritiva)
 ├── bayes_<recorte>_likert_juiz.csv          matriz de relações (formato longo)
 ├── bayes_<recorte>_likert_juiz_heatmap.png
-├── bayes_<recorte>_likert_juiz_curva_eps.png          P(equivalência) × ε, com o ε operacional marcado
-├── bayes_<recorte>_likert_juiz_sensibilidade_limiar.csv
 ├── bayes_<recorte>_<campo>_<metrica>.csv
-├── bayes_<recorte>_<campo>_<metrica>_heatmap.png
-└── bayes_<recorte>_<campo>_<metrica>_sensibilidade_rope.csv
+└── bayes_<recorte>_<campo>_<metrica>_heatmap.png
 ```
 
 `<recorte>` é o nome declarado em `protocolos`, normalizado (`Q1_ajuste_fino` → `q1_ajuste_fino_`). Sem recortes nomeados o prefixo é vazio: `bayes_likert_juiz_heatmap.png`.
 
 **Como ler o heatmap:** a cor comunica a categoria (verde = superior, azul = equivalente, vermelho = inferior, cinza = incerto), a intensidade comunica a magnitude da probabilidade posterior, e o número traz essa probabilidade explícita. `incerto` é categoria própria — ausência de evidência suficiente, não uma quarta relação. A diagonal é neutra porque `(Pi, Pi)` não é comparação.
 
-**Dois limiares, dois usos:** `0.80` classifica o panorama do heatmap; `0.95` é a exigência do veredito na curva de ε. Um par pode aparecer `equivalente` no heatmap e não alcançar equivalência na curva — são perguntas com exigências diferentes, não uma inconsistência.
+**Limiar Único (0.95):** Este mesmo limiar classifica as células do heatmap e os vereditos. Todas as células têm suas probabilidades balizadas por esse valor de exigência forte.
 
 ### Recortes de protocolos
 

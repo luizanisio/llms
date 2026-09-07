@@ -56,7 +56,7 @@ Uso:
     from util_est_bayesiana import Comparacao, matriz_pares, heatmap
     from util_est_bayesiana import grafico_diferencas, sintese
 
-    c = Comparacao(notas_A, notas_B, rope=0.32)      # ROPE calibrada
+    c = Comparacao(notas_A, notas_B, rope=0.1139)    # ROPE calibrada
     print(c.probabilidades, c.classificacao, c.ic95)
 
     m = matriz_pares(escores, rope=0.01)
@@ -72,7 +72,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+from scipy import stats, optimize
 
 import baycomp
 
@@ -108,9 +108,8 @@ class Comparacao:
         y: escores do segundo, **pareados** (posição i = mesmo documento).
         rope: largura da região de equivalência prática, sobre a **diferença
             média** dos escores. Obrigatória e > 0 — sem ela o baycomp devolve
-            só duas probabilidades. Na Likert, calibre pela divergência média
-            entre especialistas (Etapa 1); nas métricas contínuas, pela
-            variação entre execuções.
+            só duas probabilidades. Na Likert, ela é a menor margem que garante
+            equivalência no controle negativo humano (calibrada via busca numérica).
         limiar: probabilidade mínima para classificar (padrão 0,95 — limiar
             único do trabalho).
 
@@ -185,6 +184,42 @@ class Comparacao:
                 "empate": int((d == 0).sum()),
                 "y_melhor": int((d < 0).sum())}
 
+    def rope_minima_equivalencia(self, limiar=None, arredondar=True) -> float:
+        """Menor ROPE onde a probabilidade de equivalência alcança o limiar.
+
+        A busca é numérica (brentq) sobre a massa da posterior de Student-T
+        (Benavoli et al.). Retorna a ROPE exata (a fronteira onde a classificação
+        muda para 'equivalente' ao limiar exigido).
+        
+        Args:
+            limiar: se omitido, usa o `self.limiar` da instância.
+            arredondar: se True, arredonda para cima na 4ª casa decimal
+                para garantir que P >= limiar com o número arredondado.
+        """
+        lim = limiar if limiar is not None else self.limiar
+        media = abs(self.diferenca_media)
+        var = self.variancia
+        gl = self.gl
+        
+        def _teto(valor):
+            return float(np.ceil(valor * 1e4) / 1e4) if arredondar else float(valor)
+
+        if var <= 0.0 or gl <= 0:
+            return _teto(media)
+        
+        sd = float(np.sqrt(var))
+        lim_seguro = min(max(float(lim), 1e-6), 1.0 - 1e-9)
+
+        def excedente(r):
+            return (stats.t.cdf((r - media) / sd, gl)
+                    - stats.t.cdf((-r - media) / sd, gl)) - lim_seguro
+
+        alto = media + 40.0 * sd
+        if excedente(alto) <= 0.0:
+            return _teto(alto)
+        
+        return _teto(optimize.brentq(excedente, 0.0, alto, xtol=1e-12))
+
     def como_dict(self, nome_x="A", nome_y="B") -> dict:
         """Uma linha de resultado, pronta para virar tabela."""
         ic_inf, ic_sup = self.ic95
@@ -196,6 +231,7 @@ class Comparacao:
                 "ic_inf": ic_inf, "ic_sup": ic_sup,
                 "media_linha": float(np.mean(self.x)),
                 "media_coluna": float(np.mean(self.y)),
+                "rope_minima": self.rope_minima_equivalencia(),
                 "classificacao": self.classificacao,
                 "probabilidade": self.probabilidade}
 

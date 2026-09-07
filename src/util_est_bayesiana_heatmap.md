@@ -139,38 +139,13 @@ probabilidades não sustentam.
 
 ---
 
-## 4. Os dois modos afirmam coisas diferentes
+## 4. O Teste e a ROPE
 
-Esta é a distinção que mais custa caro se passar despercebida. As três
-probabilidades podem sair da posterior por dois caminhos, e os rótulos coincidem
-**sem que o significado coincida**.
+Toda a análise do pipeline (tanto para Likert quanto para métricas contínuas) é fundamentada no **`baycomp.CorrelatedTTest`**. 
 
-| modo | `p_equivalente` significa | usado em |
-|---|---|---|
-| `proporcao` | `P(\|δ\| ≤ ε)` — a vantagem, **medida em proporção de documentos**, não passa de ε | escalas ordinais (Likert), com `rope = 0` |
-| `baycomp` | `P(a zona ROPE ser a maioritária)` — cálculo padrão do pacote | escores contínuos (F1, BERTScore), com `rope > 0` |
+O teste calcula a probabilidade da **diferença média** das avaliações cair dentro de uma Região de Equivalência Prática (a ROPE). 
 
-O primeiro afirma algo sobre **magnitude do efeito**. O segundo, sobre **qual
-região concentra mais documentos**.
-
-A diferença é observável. Com 40% dos documentos acima, 35% dentro da ROPE e 25%
-abaixo, o modo `baycomp` devolve `superior`, ainda que um terço dos documentos
-esteja dentro da margem de irrelevância — enquanto o modo `proporcao`, com
-ε = 0,20, olharia δ = 0,15 e diria `equivalente`. Nenhum está errado: respondem
-perguntas diferentes.
-
-Por isso o rótulo da faixa central **muda na legenda**: no modo `baycomp` ele
-aparece como `ROPE maioritária`, não como `equivalente`. E por isso o modo é
-gravado na matriz e impresso na figura — não existe padrão implícito seguro.
-
-**Duas guardas no código**, que valem conhecer porque produzem erro em vez de
-resultado silencioso:
-
-- `modo="baycomp"` com `rope = 0` **levanta `ValueError`**. A zona central
-  recolheria apenas os empates exatos e o triplet degeneraria em `(0, 1, 0)` —
-  "equivalente" em todas as células, com aparência de resultado.
-- `modo="proporcao"` com `ε = 0` emite **aviso**: a faixa de equivalência tem
-  medida nula e nenhuma célula poderá ser classificada como equivalente.
+A ROPE (sempre > 0) determina o resultado. Com escores comprimidos (caso típico de BERTScore e SBERT), uma ROPE pequena demais esvazia a zona central e satura a figura em verde/vermelho; grande demais engole tudo e ela fica azul. A transição entre os extremos é rápida. Reportar a matriz explorando a sensibilidade à ROPE (via `ROPE Mín. (Eq)`) resolve esse problema demonstrando a robustez da decisão.
 
 ---
 
@@ -221,16 +196,7 @@ podem ser ambas altas: A vence de forma confiável, por uma margem irrelevante.
 Não é contradição — é exatamente a situação que o teste de hipótese nula não
 consegue expressar, e a razão de reportar as duas quantidades.
 
-**Dois limiares, dois usos.** O heatmap classifica a 0,80, adequado para
-descrever o panorama. Vereditos (validação do juiz, contrastes pré-registrados)
-exigem 0,95. Um par pode aparecer `equivalente` na figura e `inconclusivo` no
-veredito: são perguntas com exigências diferentes, não uma inconsistência.
-
-**No modo `baycomp`, a ROPE determina o resultado.** Com escores comprimidos
-(caso típico de BERTScore e SBERT), uma ROPE pequena demais esvazia a zona
-central e satura a figura em verde/vermelho; grande demais engole tudo e ela fica
-azul. A transição entre os extremos é rápida. Reportar a matriz em três ROPEs
-(`sensibilidade_margem`) é o mínimo defensável.
+**Limiar único (0,95).** O heatmap classifica a 0,95. É o mesmo valor de exigência forte cobrado na validação do juiz e nos contrastes pré-registrados. Nenhuma inferência bayesiana deste projeto é classificada com probabilidade menor que 0,95.
 
 **Métricas de similaridade com um modelo de referência medem fidelidade, não
 qualidade.** Quando a comparação é contra um professor/gabarito, um protocolo que
@@ -318,12 +284,12 @@ discussão no texto.
 | `linha`, `coluna` | os dois protocolos do par |
 | `p_inferior`, `p_equivalente`, `p_superior` | as três probabilidades |
 | `classificacao`, `probabilidade` | o que a figura desenha |
-| `p_dom` | `P(θ_esq > θ_dir)` — direção pura, **não usa margem** |
+| `p_dom` | `P(θ_esq > θ_dir)` — direção pura |
 | `delta`, `ic_inf`, `ic_sup` | δ médio e intervalo de credibilidade 95% |
 | `contagem_superior/empate/inferior` | documentos em cada zona |
-| `eps_critico` | menor ε que estabeleceria equivalência — um **tamanho de efeito** |
-| `n`, `massa_empate` | tamanho e massa da zona de empate |
-| `eps`, `rope`, `modo`, `origem` | parâmetros da execução |
+| `rope_minima` | menor ROPE sob a qual as duas distribuições seriam matematicamente equivalentes ao nível de 0.95 |
+| `n` | tamanho da amostra pareada |
+| `rope`, `limiar` | parâmetros da execução |
 
 Os parâmetros globais ficam em `matriz.attrs` e são lidos pelo heatmap.
 **O pandas descarta `attrs` em várias operações** — quem filtrar ou serializar a
@@ -336,16 +302,11 @@ matriz precisa recopiá-los, senão a figura perde o subtítulo.
 | ferramenta | responde |
 |---|---|
 | `resumo_relacoes` | quantas vezes cada protocolo é superior/equivalente/inferior/incerto |
-| `grafico_curva_sensibilidade_eps` | a qual ε mínimo cada par precisaria para ser equivalente |
-| `sensibilidade_limiar` | quantas células mudam de categoria ao variar o limiar |
-| `sensibilidade_margem` | idem, ao variar a margem (ε ou ROPE) |
+| `calibrar_rope` | encontra numericamente (brentq) a ROPE da equivalência |
 | `tabela_convergencia` | onde duas métricas concordam, divergem ou não decidem |
-| `calibrar_rope` + `controle_negativo` | ancorar a ROPE empiricamente e validá-la |
 
-Sobre o custo, que é assimétrico e importa no planejamento: **o ε atua sobre a
-posterior já amostrada** — variar o limiar ou percorrer a curva de ε sai
-praticamente de graça. **A ROPE atua sobre os escores brutos** e muda as
-contagens: cada valor exige nova amostragem.
+Sobre o custo, que é assimétrico e importa no planejamento: **a ROPE atua sobre os escores brutos** e muda as
+integrais de equivalência: cada valor exige recalcular as áreas da distribuição.
 
 Sobre `tabela_convergencia`: divergir **não é erro**. Métricas diferentes podem
 capturar propriedades distintas do desempenho. O que não vale é deixar a
@@ -355,17 +316,12 @@ divergência implícita para o leitor descobrir comparando duas figuras a olho.
 
 ## 10. O que declarar ao reportar
 
-- o **método**: teste de sinais bayesiano pareado (Benavoli et al., 2017, JMLR
-  18:1-36), com o pacote `baycomp` como implementação de referência;
-- que a amostragem da posterior foi **reimplementada** em `util_est_bayesiana`
-  para expor as amostras e permitir análise de sensibilidade ao prior e
-  reprodutibilidade, com equivalência numérica verificada;
-- o **modo** (`proporcao` ou `baycomp`) e a **margem** correspondente, com a
-  origem do valor — calibrado empiricamente ou pré-registrado;
-- o **limiar de classificação** e, se diferente, o limiar dos vereditos;
-- `nsamples` e `seed`;
-- as **análises de sensibilidade** ao limiar e à margem;
-- os pares em que `P(direção)` saturou, com as contagens e o δ correspondentes.
+- o **método**: `baycomp.CorrelatedTTest` (Benavoli et al., 2017, JMLR
+  18:1-36), de forma analítica e determinística (via aproximação t de Student);
+- a **margem (ROPE)**, com a origem do valor — calibrada empiricamente via controle negativo ou sugerida;
+- o **limiar único** de classificação e vereditos (0.95);
+- as **análises de sensibilidade** (explorando a métrica `ROPE Mínima`);
+- os pares em que a amostra é tão grande que `P(direção)` satura, ressaltando a interpretação via contagens ordinais e `ROPE Mínima`.
 
 ---
 

@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats, optimize
 from itertools import combinations
+from util_est_bayesiana import Comparacao
 
 # Lazy imports para scikit_posthocs e matplotlib (evita overhead se não usado)
 _sp = None
@@ -557,39 +558,25 @@ class AnaliseEstatistica:
 
             P(-R < δ < R) ≥ limiar,   δ ~ t(Δ, var_posterior, n-1)
 
-        isto é, ``R ≈ |Δ| + t_limiar · sd_posterior``: o Δ observado entre as
-        réplicas **mais** a margem de incerteza sobre esse próprio Δ. A
-        posterior é a do `baycomp.CorrelatedTTest` (Nadeau-Bengio, runs=1),
-        de modo que o número devolvido aqui é o que a camada bayesiana de fato
-        consome.
-
         Com ``arredondar=True`` o valor sai arredondado **para cima** na 4ª casa
         decimal — a mesma precisão com que é transcrito no YAML. Arredondar para
         o mais próximo quebraria a garantia: uma ROPE exigida de 0,005731 viraria
         0,0057 e devolveria `incerto` justamente no par que a definiu.
         """
-        def _teto(valor):
-            """Arredonda para cima na 4ª casa — nunca para baixo do exigido."""
-            return float(np.ceil(valor * 1e4) / 1e4) if arredondar else float(valor)
-
-        media = abs(float(resultado.get('diferenca', 0.0)))
+        # Recupera as estatísticas já calculadas do par (para não refazer o teste)
+        media = float(resultado.get('diferenca', 0.0))
         var = float(resultado.get('var_posterior', 0.0))
         gl = int(resultado.get('gl_posterior', 0))
-        if var <= 0.0 or gl <= 0:
-            return _teto(media)
-        sd = float(np.sqrt(var))
-        limiar = min(max(float(self.limiar_bayes), 1e-6), 1.0 - 1e-9)
-
-        def excedente(r):
-            """Massa da posterior dentro de [-r, r], menos o limiar."""
-            return (stats.t.cdf((r - media) / sd, gl)
-                    - stats.t.cdf((-r - media) / sd, gl)) - limiar
-
-        # excedente(0) = -limiar < 0 e cresce monotonicamente com r.
-        alto = media + 40.0 * sd
-        if excedente(alto) <= 0.0:
-            return _teto(alto)  # guarda numérica: inalcançável na prática
-        return _teto(optimize.brentq(excedente, 0.0, alto, xtol=1e-12))
+        
+        # Cria uma comparação "fantasma" apenas para usar o método analítico
+        # Injetando diretamente as propriedades na instância para pular o __init__
+        comp = Comparacao.__new__(Comparacao)
+        comp.diferenca_media = media
+        comp.variancia = var
+        comp.gl = gl
+        comp.limiar = min(max(float(self.limiar_bayes), 1e-6), 1.0 - 1e-9)
+        
+        return comp.rope_minima_equivalencia(arredondar=arredondar)
 
     def _calcular_effect_sizes(self):
         """Cohen's d para cada par nos resultados de Wilcoxon (métrica secundária)."""

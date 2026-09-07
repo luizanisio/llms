@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Arcabouço estatístico — visão geral (1/3)</title>
+  <!--
+  EXPORTAÇÃO — Canvas 1280 × 720 px (16:9).
+  Chrome/Edge: Ctrl+P → "Salvar como PDF" → Paisagem → Margens "Nenhuma"
+  → marcar "Gráficos de segundo plano".
+
+  UMA mensagem: a Etapa 2 herda DUAS coisas da Etapa 1 — o juiz validado
+  (instrumento de medida) e a ROPE calibrada (margem de equivalência). O
+  conector tem dois elos de propósito; a versão anterior mostrava só um.
+-->
+  <style>
+    :root {
+      --ink: #16202b;
+      --muted: #566472;
+      --line: #b7c2cc;
+      --line-2: #7d8b99;
+      --surface: #f3f6f8;
+      --etapa1: #1d6b4b;
+      --etapa1-bg: #e6f3ec;
+      --etapa2: #1a4f7a;
+      --etapa2-bg: #e8f0f7;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: #e9edf1;
+      color: var(--ink);
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+
+    .slide {
+      width: 1280px; height: 720px; background: #fff;
+      padding: 40px 52px 34px;
+      display: flex; flex-direction: column;
+    }
+
+    .titulo { font-size: 31px; font-weight: 700; letter-spacing: -0.015em; }
+    .subtitulo { font-size: 19px; color: var(--muted); margin-top: 6px; }
+    .regua { height: 3px; background: var(--ink); width: 62px; margin: 12px 0 20px; }
+
+    .corpo { display: flex; align-items: stretch; flex: 1; }
+
+    /* ── Etapas ──────────────────────────────────────────────── */
+    .etapa {
+      flex: 1; border: 1.5px solid var(--line); border-radius: 7px;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .cabecalho { padding: 12px 20px 13px; color: #fff; }
+    .rotulo {
+      font-size: 13px; font-weight: 700; letter-spacing: 0.11em;
+      text-transform: uppercase; opacity: 0.85;
+    }
+    .nome { font-size: 22px; font-weight: 700; margin-top: 2px; }
+    .etapa-1 .cabecalho { background: var(--etapa1); }
+    .etapa-2 .cabecalho { background: var(--etapa2); }
+
+    .conteudo { padding: 16px 19px 15px; display: flex; flex-direction: column; flex: 1; }
+
+    .escopo {
+      font-size: 15.5px; color: var(--muted); background: var(--surface);
+      border-radius: 5px; padding: 10px 14px; line-height: 1.5;
+    }
+    .escopo b { color: var(--ink); font-weight: 700; }
+
+    .pergunta {
+      font-size: 18px; font-weight: 600; line-height: 1.35;
+      border-left: 4px solid var(--line-2); padding: 3px 0 3px 12px; margin-top: 18px;
+    }
+    .etapa-1 .pergunta { border-left-color: var(--etapa1); }
+    .etapa-2 .pergunta { border-left-color: var(--etapa2); }
+    .pergunta small {
+      display: block; font-size: 14.5px; font-weight: 400;
+      color: var(--muted); margin-top: 4px;
+    }
+
+    .lista { margin-top: 16px; font-size: 15.5px; line-height: 1.55; }
+    .lista div { display: flex; gap: 9px; }
+    .lista div + div { margin-top: 5px; }
+    .lista .marca { color: var(--line-2); font-weight: 700; flex-shrink: 0; }
+    .lista b { font-weight: 700; }
+
+    .saida {
+      margin-top: auto; border-radius: 5px; padding: 11px 15px;
+      font-size: 16px; line-height: 1.45;
+    }
+    .etapa-1 .saida { background: var(--etapa1-bg); color: var(--etapa1); border: 1.5px solid var(--etapa1); }
+    .etapa-2 .saida { background: var(--etapa2-bg); color: var(--etapa2); border: 1.5px solid var(--etapa2); }
+
+    /* ── Conector: DOIS elos ─────────────────────────────────── */
+    .conector {
+      width: 210px; display: flex; flex-direction: column;
+      justify-content: center; gap: 26px; padding: 0 14px;
+    }
+    .elo { text-align: center; }
+    .elo-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--ink); color: #fff;
+      font-size: 13px; font-weight: 700; margin-bottom: 6px;
+    }
+    .elo-nome { font-size: 16px; font-weight: 700; line-height: 1.3; }
+    .elo-desc { font-size: 13.5px; color: var(--muted); line-height: 1.35; margin-top: 3px; }
+    .seta { display: flex; align-items: center; width: 100%; margin-top: 8px; }
+    .seta .haste { height: 2px; background: var(--line-2); flex: 1; }
+    .seta .ponta {
+      border-top: 7px solid transparent; border-bottom: 7px solid transparent;
+      border-left: 10px solid var(--line-2);
+    }
+
+    /* ── Faixa ───────────────────────────────────────────────── */
+    .faixa {
+      border: 1.5px solid var(--line); border-radius: 6px;
+      padding: 12px 18px; margin-top: 18px;
+      display: flex; gap: 24px; align-items: center;
+    }
+    .faixa-rotulo {
+      font-size: 13px; font-weight: 700; letter-spacing: 0.09em;
+      text-transform: uppercase; color: var(--muted); white-space: nowrap;
+    }
+    .faixa-texto { font-size: 16px; line-height: 1.45; }
+    .faixa-texto b { font-weight: 700; }
+
+    .rodape {
+      font-size: 13.5px; color: var(--muted);
+      border-top: 1px solid var(--line); padding-top: 10px; margin-top: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="slide">
+
+    <div class="titulo">Arcabouço estatístico — duas etapas encadeadas</div>
+    <div class="subtitulo">A Etapa 2 herda da Etapa 1 duas coisas: o instrumento de medida e a margem</div>
+    <div class="regua"></div>
+
+    <div class="corpo">
+
+      <!-- ETAPA 1 -->
+      <div class="etapa etapa-1">
+        <div class="cabecalho">
+          <div class="rotulo">Etapa 1 · pré-requisito</div>
+          <div class="nome">Escolha e validação do juiz</div>
+        </div>
+        <div class="conteudo">
+          <div class="escopo">
+            <b>Gold Set:</b> 70 acórdãos × 3 fontes = <b>210 itens pareados</b><br>
+            3 especialistas em direito · <b>630 julgamentos humanos</b><br>
+            4 candidatos a juiz LLM, 3 rodadas cada
+          </div>
+
+          <div class="pergunta">
+            Qual modelo replica o julgamento humano?
+            <small>E qual a divergência inerente aos próprios especialistas?</small>
+          </div>
+
+          <div class="lista">
+            <div><span class="marca">→</span><span>Exclusão de modelos com instabilidade inter-rodadas</span></div>
+            <div><span class="marca">→</span><span>Eleição do candidato com menor erro absoluto</span></div>
+            <div><span class="marca">→</span><span>Validação empírica simultânea em <b>três critérios</b></span></div>
+          </div>
+
+          <div class="saida">
+            <b>Saída:</b> um juiz validado — e a divergência entre especialistas
+            medida em pontos da escala
+          </div>
+        </div>
+      </div>
+
+      <!-- CONECTOR -->
+      <div class="conector">
+        <div class="elo">
+          <div class="elo-num">1</div>
+          <div class="elo-nome">O juiz validado</div>
+          <div class="elo-desc">vira o instrumento<br>de medida, em rodada única</div>
+          <div class="seta"><div class="haste"></div><div class="ponta"></div></div>
+        </div>
+        <div class="elo">
+          <div class="elo-num">2</div>
+          <div class="elo-nome">A margem calibrada</div>
+          <div class="elo-desc">transcrita à mão para<br>a configuração da Etapa 2</div>
+          <div class="seta"><div class="haste"></div><div class="ponta"></div></div>
+        </div>
+      </div>
+
+      <!-- ETAPA 2 -->
+      <div class="etapa etapa-2">
+        <div class="cabecalho">
+          <div class="rotulo">Etapa 2 · experimento</div>
+          <div class="nome">Comparação entre protocolos</div>
+        </div>
+        <div class="conteudo">
+          <div class="escopo">
+            <b>SUMMA:</b> 20.000 acórdãos → 14.000 treino · 2.000 validação ·
+            <b>4.000 teste</b><br>
+            <b>25 protocolos</b> de treinamento, avaliados nos mesmos documentos
+          </div>
+
+          <div class="pergunta">
+            Como os protocolos se comparam entre si?
+            <small>Probabilidade de superioridade, equivalência ou inferioridade</small>
+          </div>
+
+          <div class="lista">
+            <div><span class="marca">→</span><span>Análise restrita a recortes pré-especificados</span></div>
+            <div><span class="marca">→</span><span>Escala Likert avaliada pelo juiz como métrica principal</span></div>
+            <div><span class="marca">→</span><span>Métricas automáticas empregadas como triangulação</span></div>
+          </div>
+
+          <div class="saida">
+            <b>Saída:</b> 12 figuras cobrindo <b>79 contrastes</b> pré-especificados,
+            das 300 comparações possíveis
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="faixa">
+      <div class="faixa-rotulo">Por que dois elos</div>
+      <div class="faixa-texto">
+        Sem o primeiro, não se sabe se o juiz mede o que deveria. Sem o segundo, <b>“equivalente”
+        não teria unidade</b>: a margem é calibrada matematicamente para englobar a divergência 
+        dos especialistas humanos, de modo que dois protocolos são equivalentes quando diferem 
+        menos do que os especialistas diferem entre si.
+      </div>
+    </div>
+
+    <div class="rodape">
+      Comparação bayesiana pareada com o pacote <b>baycomp</b> (Benavoli et al., 2017) ·
+      limiar único de <b>0,95</b> nas duas etapas
+    </div>
+
+  </div>
+</body>
+
+</html>

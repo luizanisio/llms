@@ -97,16 +97,11 @@ roda exatamente como antes:
 | Parâmetro | Padrão | Efeito |
 |---|---|---|
 | `--bayes` | desligado | ativa a etapa; é a única chave que decide se ela existe |
-| `--bayes-rope R` | `0.5` | largura da ROPE sobre as notas; na escala inteira, "notas iguais". Deve ser > 0 |
-| `--bayes-metodo M` | `sinais` | `sinais` (SignTest), `postos` (SignedRankTest) ou `t` (CorrelatedTTest) |
-| `--bayes-limiar P` | `0.80` | probabilidade mínima para classificar uma célula do heatmap |
-| `--bayes-limiar-veredito P` | `0.95` | probabilidade mínima para o veredito juiz × referência |
-| `--bayes-amostras N` | `50000` | amostras da posterior; ignorado por `--bayes-metodo t` |
-| `--bayes-semente S` | `42` | semente da amostragem |
+| `--bayes-rope R` | calibrada | largura mínima exigida; por padrão é calibrada dinamicamente entre os humanos |
+| `--bayes-rope-decisao R` | calibrada | idem para a decisão prática |
+| `--bayes-limiar P` | `0.95` | probabilidade mínima exigida para veredito e relatórios |
 
-Informar um `--bayes-*` sem `--bayes` é **erro**, não silêncio: quem escreveu
-`--bayes-metodo t` esperava a seção no relatório, e ignorar a flag devolveria um
-documento sem ela e sem nenhum aviso.
+O teste é unificado no `baycomp.CorrelatedTTest` (analítico, determinístico, sem amostras nem sementes). Informar um `--bayes-*` sem `--bayes` é **erro**, não silêncio.
 
 Um grupo → análise interna. Dois ou mais → análise interna de cada um **mais** a
 validação dos juízes contra a referência.
@@ -118,33 +113,42 @@ validação dos juízes contra a referência.
 Três critérios, **todos aferidos no agregado** — as fontes empilhadas numa única
 série, sem estratificação. O juiz precisa passar nos três.
 
-| # | Critério | Estatística | Aprova se |
+| # | Critério | Instrumento | Aprova se |
 |---|---|---|---|
 | 1 | Concordância ordinal com o humano | κw de Cohen ponderado | κw ≥ 0,60 |
-| 2 | Ausência de viés sistemático | Wilcoxon bilateral pareado | p > 0,05 |
-| 3 | Equivalência na decisão prática | McNemar sobre nota ≥ 3 | p > 0,05 |
+| 2 | Ausência de viés sistemático | P(equivalência) na diferença média das notas | ≥ 0,95 |
+| 3 | Decisão prática (nota ≥ piso) | P(equivalência) na taxa de adequação | ≥ 0,95 |
 
 Concordância sozinha não basta: um juiz pode concordar razoavelmente e ainda
 assim ser sistematicamente mais leniente, o que enviesaria toda a aplicação em
 massa na mesma direção. Daí os critérios 2 e 3.
+
+Os critérios 2 e 3 são **bayesianos** (`baycomp.CorrelatedTTest`): a probabilidade
+posterior de a diferença **média** caber na ROPE. Diferentemente de falhar em
+rejeitar H₀, uma posterior concentrada dentro da ROPE é evidência **a favor**
+da equivalência. O limiar de 0,95 é único em todo o trabalho.
+
+### Calibração da ROPE (Fronteira de Equivalência)
+
+A margem ("ROPE") não é arbitrada. Ela é **calibrada dinamicamente** pela
+divergência entre os próprios especialistas humanos de referência.
+
+O algoritmo busca numericamente (Brent) a menor margem sob a qual **todos os
+pares de especialistas (o controle negativo)** alcançam o limiar de 0,95 de
+probabilidade de equivalência. É a fronteira matemática exata do ruído humano;
+se o juiz LLM divergir da referência por menos do que isso, ele é indistinguível
+do ruído inerente aos especialistas.
 
 ### Os três status possíveis
 
 | Status | Condição |
 |---|---|
 | **VALIDADO** | os três critérios atendidos |
-| **VALIDADO COM RESSALVA** | critérios 1 e 3 atendidos; viés significativo (critério 2) porém com magnitude média abaixo da margem de relevância prática |
-| **NÃO VALIDADO** | demais casos |
+| **VALIDADO COM RESSALVA** | critério 1 atendido, e equivalência (2 ou 3) **inconclusiva**. |
+| **NÃO VALIDADO** | κw abaixo do corte **ou** viés relevante (a diferença quase certamente excede a ROPE em alguma direção). |
 
-A **margem de relevância prática** é 0,5 desvio-padrão das notas do grupo de
-referência — a regra da meia-DP de Norman, Sloan & Wyrwich (2003), que mostra
-convergência empírica da diferença minimamente importante para ~0,5 DP através de
-instrumentos e populações. A margem é derivada dos dados, não arbitrada. O status
-intermediário operacionaliza o plano contingencial já declarado no método
-("resultados reportados com a devida ressalva") e existe porque, com n grande, o
-Wilcoxon detecta como significativas diferenças praticamente irrelevantes. É
-classificação descritiva, não teste de equivalência (que exigiria TOST com margem
-pré-registrada; Lakens, 2017).
+O status intermediário existe porque "incerto" é um desfecho bayesiano legítimo
+quando a amostra não basta para afirmar equivalência nem para afirmar viés relevante.
 
 A acurácia contra o humano é **reportada, não é critério** — não há limiar
 teórico defensável para ela, e ela varia com a prevalência de itens adequados na

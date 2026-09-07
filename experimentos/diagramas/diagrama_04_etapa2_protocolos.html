@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Etapa 2 — comparação entre protocolos (4/5)</title>
+  <!--
+  EXPORTAÇÃO — Canvas 1280 × 720 px (16:9).
+  Chrome/Edge: Ctrl+P → "Salvar como PDF" → Paisagem → Margens "Nenhuma"
+  → marcar "Gráficos de segundo plano".
+
+  UMA mensagem: 25 protocolos dariam 300 comparações e um heatmap ilegível.
+  Os recortes por questão de pesquisa reduzem a 79 contrastes fixados ANTES
+  da análise. O contraste 300 → 79 é o argumento visual; a lista de recortes
+  é a evidência de que foram declarados.
+
+  Recortes conforme configuracao_comparacao.protocolos (ver YAML da análise).
+-->
+  <style>
+    :root {
+      --ink: #16202b;
+      --muted: #566472;
+      --line: #b7c2cc;
+      --line-2: #7d8b99;
+      --surface: #f3f6f8;
+      --etapa2: #1a4f7a;
+      --principal: #16202b;
+      --compl: #8a6200;
+      --compl-bg: #fdf8ec;
+      --superior: #2e7d4f;
+      --equiv: #2c6e91;
+      --inferior: #b23a48;
+      --incerto: #8a8a8a;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: #e9edf1;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .slide {
+      width: 1280px;
+      height: 720px;
+      background: #fff;
+      padding: 32px 52px 30px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tag {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--etapa2);
+    }
+
+    .titulo {
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      margin-top: 3px;
+    }
+
+    .subtitulo {
+      font-size: 18px;
+      color: var(--muted);
+      margin-top: 5px;
+    }
+
+    .regua {
+      height: 3px;
+      background: var(--ink);
+      width: 62px;
+      margin: 11px 0 16px;
+    }
+
+    .corpo {
+      display: flex;
+      gap: 30px;
+      flex: 1;
+    }
+
+    .esquerda {
+      width: 600px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .direita {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .secao {
+      font-size: 13.5px;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── 300 → 79 ────────────────────────────────────────────── */
+    .reducao {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      background: var(--surface);
+      border-radius: 6px;
+      padding: 13px 20px;
+      margin-bottom: 15px;
+    }
+
+    .num {
+      text-align: center;
+    }
+
+    .num-valor {
+      font-size: 33px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .num-rotulo {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 4px;
+      line-height: 1.3;
+    }
+
+    .num.antes .num-valor {
+      color: var(--line-2);
+    }
+
+    .num.depois .num-valor {
+      color: var(--etapa2);
+    }
+
+    .reducao-seta {
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      border-left: 12px solid var(--line-2);
+      flex-shrink: 0;
+    }
+
+    .reducao-texto {
+      font-size: 15px;
+      line-height: 1.45;
+      flex: 1;
+    }
+
+    .reducao-texto b {
+      font-weight: 700;
+    }
+
+    /* ── Recortes ────────────────────────────────────────────── */
+    .recorte {
+      display: flex;
+      align-items: baseline;
+      gap: 11px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .recorte:last-child {
+      border-bottom: none;
+    }
+
+    .recorte-q {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--etapa2);
+      border-radius: 4px;
+      padding: 2px 8px;
+      flex-shrink: 0;
+      width: 34px;
+      text-align: center;
+    }
+
+    .recorte-pergunta {
+      font-size: 15.5px;
+      font-weight: 600;
+      flex: 1;
+      line-height: 1.3;
+    }
+
+    .recorte-figs {
+      font-size: 13.5px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ── Métricas ────────────────────────────────────────────── */
+    .metrica {
+      border: 1.5px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .metrica+.metrica {
+      margin-top: 10px;
+    }
+
+    .metrica-cab {
+      padding: 7px 14px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .metrica.p .metrica-cab {
+      background: var(--principal);
+    }
+
+    .metrica.c .metrica-cab {
+      background: var(--compl);
+    }
+
+    .metrica-nome {
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .selo {
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1.5px solid rgba(255, 255, 255, 0.65);
+      border-radius: 11px;
+      padding: 2px 9px;
+      white-space: nowrap;
+    }
+
+    .metrica-corpo {
+      padding: 9px 14px;
+      font-size: 14.5px;
+      line-height: 1.45;
+    }
+
+    .metrica.c .metrica-corpo {
+      background: var(--compl-bg);
+    }
+
+    .metrica-corpo b {
+      font-weight: 700;
+    }
+
+    .metrica-margem {
+      color: var(--muted);
+      margin-top: 5px;
+    }
+
+    /* ── Estados ─────────────────────────────────────────────── */
+    .estados {
+      display: flex;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .estado {
+      flex: 1;
+      border-radius: 5px;
+      padding: 6px 9px;
+      color: #fff;
+      text-align: center;
+    }
+
+    .estado-nome {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .estado.sup {
+      background: var(--superior);
+    }
+
+    .estado.equ {
+      background: var(--equiv);
+    }
+
+    .estado.inf {
+      background: var(--inferior);
+    }
+
+    .estado.inc {
+      background: var(--incerto);
+    }
+
+    .saidas {
+      margin-top: auto;
+      border: 1.5px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 14.5px;
+      line-height: 1.5;
+    }
+
+    .saidas-rotulo {
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .saidas b {
+      font-weight: 700;
+    }
+
+    .rodape {
+      font-size: 13px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      padding-top: 9px;
+      margin-top: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="slide">
+
+    <div class="tag">Etapa 2 · 4.000 acórdãos de teste · 29 protocolos</div>
+    <div class="titulo">Comparação pareada entre os protocolos de treinamento</div>
+    <div class="subtitulo">Contrastes pré-especificados orientam a análise comparativa</div>
+    <div class="regua"></div>
+
+    <div class="corpo">
+
+      <!-- ESQUERDA -->
+      <div class="esquerda">
+        <div class="reducao">
+          <div class="num antes">
+            <div class="num-valor">406</div>
+            <div class="num-rotulo">pares possíveis</div>
+          </div>
+          <div class="reducao-seta"></div>
+          <div class="num depois">
+            <div class="num-valor">79</div>
+            <div class="num-rotulo">contrastes<br>pré-especificados</div>
+          </div>
+          <div class="reducao-texto">
+            <b>25 protocolos experimentais</b> mais três controles diretos e o modelo sem treino.
+            Para garantir rigor analítico e clareza na exposição, as comparações concentram-se
+            em recortes definidos a priori, focados em <b>uma questão</b>.
+          </div>
+        </div>
+
+        <div class="secao">As seis questões</div>
+
+        <div class="recorte">
+          <div class="recorte-q">Q1</div>
+          <div class="recorte-pergunta">O ajuste fino ganha do modelo sem treino?</div>
+          <div class="recorte-figs">1 figura</div>
+        </div>
+        <div class="recorte">
+          <div class="recorte-q">Q2</div>
+          <div class="recorte-pergunta">O currículo por dificuldade ajuda?</div>
+          <div class="recorte-figs">3 figuras</div>
+        </div>
+        <div class="recorte">
+          <div class="recorte-q">Q3</div>
+          <div class="recorte-pergunta">A direção do escalonamento de capacidade importa?</div>
+          <div class="recorte-figs">2 figuras</div>
+        </div>
+        <div class="recorte">
+          <div class="recorte-q">Q4</div>
+          <div class="recorte-pergunta">O ganho vem do currículo ou do escalonamento?</div>
+          <div class="recorte-figs">2 figuras</div>
+        </div>
+        <div class="recorte">
+          <div class="recorte-q">Q5</div>
+          <div class="recorte-pergunta">A ordem importa — fácil→difícil ou o inverso?</div>
+          <div class="recorte-figs">1 figura</div>
+        </div>
+        <div class="recorte">
+          <div class="recorte-q">Q6</div>
+          <div class="recorte-pergunta">Quanto custa a fronteira entre as etapas de treino?</div>
+          <div class="recorte-figs">3 figuras</div>
+        </div>
+
+        <div class="saidas">
+          <div class="saidas-rotulo">Resultados extraídos por recorte</div>
+          <b>Mensuração de diferenças</b> — magnitude da divergência pareada, incerteza
+          e aderência à margem · <b>Mapas de calor</b> — relação visual de cada par · <b>Contagem de desfechos</b> —
+          frequência de relações de superioridade, equivalência ou inferioridade
+        </div>
+      </div>
+
+      <!-- DIREITA -->
+      <div class="direita">
+        <div class="secao">Duas métricas, hierarquia declarada antes</div>
+
+        <div class="metrica p">
+          <div class="metrica-cab">
+            <div class="metrica-nome">Nota Likert 1–4</div>
+            <div class="selo">principal</div>
+          </div>
+          <div class="metrica-corpo">
+            Qualidade percebida, atribuída pelo juiz validado em rodada única.
+            <div class="metrica-margem">Margem: calibrada matematicamente sobre a
+              divergência humana (Etapa 1)</div>
+          </div>
+        </div>
+
+        <div class="metrica c">
+          <div class="metrica-cab">
+            <div class="metrica-nome">BERTScore · ROUGE-L · SBERT</div>
+            <div class="selo">complementar</div>
+          </div>
+          <div class="metrica-corpo">
+            Semelhança com o modelo professor — <b>fidelidade da destilação, não
+              qualidade</b>: reproduzir fielmente um erro do professor é premiado aqui.
+            <div class="metrica-margem">Margem: calibrada matematicamente sobre a
+              variação de 3 execuções do mesmo protocolo</div>
+          </div>
+        </div>
+
+        <div class="secao" style="margin-top:16px">Os quatro resultados possíveis</div>
+        <div class="estados" style="margin-top:0">
+          <div class="estado sup">
+            <div class="estado-nome">Superior</div>
+          </div>
+          <div class="estado equ">
+            <div class="estado-nome">Equivalente</div>
+          </div>
+          <div class="estado inf">
+            <div class="estado-nome">Inferior</div>
+          </div>
+          <div class="estado inc">
+            <div class="estado-nome">Incerto</div>
+          </div>
+        </div>
+
+        <div class="saidas">
+          <div class="saidas-rotulo">Critérios de Interpretação e Desempate</div>
+          <b>Equivalência constitui achado positivo</b> — a diferença atesta aderência à margem.
+          <b>Incerteza indica insuficiência amostral</b>, demandando maior robustez e não equivalência.
+          Em caso de divergência entre métricas, <b>prevalece a Likert (métrica principal)</b>.
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape">
+      Limitação metodológica declarada: recortes específicos comparam protocolos com <b>orçamentos de treinamento
+      distintos</b> (o acúmulo dinâmico de dados impede equalização estrita). O custo computacional associado é
+      reportado de forma transparente por instâncias e tokens processados por passo
+    </div>
+
+  </div>
+</body>
+
+</html>
