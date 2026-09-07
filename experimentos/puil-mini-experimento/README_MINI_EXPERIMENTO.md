@@ -24,6 +24,7 @@ Você pode rodar o ajuste do modelo tanto usando adaptação LoRA quanto Full Fi
 Exemplos de configurações disponíveis:
 - `04_treinar_puil_lora.yaml`
 - `04_treinar_puil_full.yaml`
+- `04_treinar_puil_lora_etapas.yaml` (demonstração de currículo por fusão em etapas)
 
 Para rodar (exemplo em shell):
 ```bash
@@ -37,6 +38,7 @@ Após o treino, use o motor de inferência (vLLM em batch) para extrair as respo
 ```bash
 python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_lora.yaml
 python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_full.yaml
+python ../../src/util_vllm_batch.py --config 05_extracao_treino_puil_lora_etapas.yaml
 ```
 Os arquivos gerados (`.parquet`) contendo as predições do modelo serão salvos na pasta `saidas/`.
 
@@ -52,7 +54,7 @@ python ../../src/comparar_extracoes.py --config 06_comparar_treinos.yaml
 
 ## 🛠️ Comparação de Saídas de Texto Livre (Não-JSON)
 
-Se o modelo foi treinado para gerar um texto livre em vez de um JSON estruturado (como é o caso proeminente desse mini experimento), a engine de avaliação possui suporte nativo para converter a saída de texto puro em um JSON padronizado no formato `{"resposta": <texto puro>}`, permitindo o uso imediato do pacote de comparação. 
+Se o modelo foi treinado para gerar um texto livre em vez de um JSON estruturado (como é o caso desse mini experimento), a engine de avaliação vai converter a saída de texto puro em um JSON padronizado no formato `{"resposta": <texto puro>}`, permitindo o uso do pacote de comparação. 
 
 Para habilitar isso, certifique-se de configurar a flag `saida_json: false` no YAML da comparação (`06_comparar_treinos.yaml`), por exemplo:
 
