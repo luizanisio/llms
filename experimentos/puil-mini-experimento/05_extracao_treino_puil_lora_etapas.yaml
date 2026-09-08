@@ -38,6 +38,8 @@ geracao:
   top_k: 2
   top_p: 0.9
   batch_size: 16
+  tentativas: 20      # tentativas de extração (em caso de erro, tenta novamente apenas para os que tiveram falha)
+  pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
 
 # --- Entrada ---
 entrada:
