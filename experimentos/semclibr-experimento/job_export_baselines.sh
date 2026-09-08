@@ -23,7 +23,7 @@
 #SBATCH --mem=64G
 
 # Tempo máximo de execução (HH:MM:SS). Job é cancelado ao atingir o limite.
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 
 # Arquivo de saída padrão: <job-name>_<job-id>.out
 #SBATCH --output=jobs_logs/%x_%j.out
