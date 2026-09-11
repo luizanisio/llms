@@ -368,6 +368,18 @@ def gerar_graficos_estatisticos(yaml_config, silencioso: bool = False,
             stats_report.append(legenda)
         else:
             logger.warning("<amarelo>   ⚠️ Erro ao gerar gráfico de loss.</amarelo>")
+            
+        lr_graph_path = os.path.join(report_dir, "treinamento_lr.png")
+        if GraficoTreinamento.evolucao_lr(
+            train_data, checkpoints, lr_graph_path,
+            etapas_curriculum=etapas_curriculum,
+        ):
+            logger.info("<verde>   ✅ Gráfico de learning rate salvo: treinamento_lr.png</verde>")
+            stats_report.append("\n### Gráfico de Evolução do Learning Rate\n")
+            stats_report.append("![Learning Rate](treinamento_lr.png)\n")
+        else:
+            if not silencioso:
+                logger.info("<cinza>   ℹ️ Gráfico de learning rate não gerado.</cinza>")
 
     # ---- Gráfico de Eficiência (tokens/instâncias acumulados) ----
     if train_data:

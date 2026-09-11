@@ -711,6 +711,102 @@ class GraficoTreinamento:
         except Exception as e:
             logger.error(f"Erro ao gerar gráfico de loss: {e}")
             return False
+            
+    @staticmethod
+    def evolucao_lr(
+        train_data: List[Dict],
+        checkpoints: List[str],
+        output_path: str,
+        titulo: str = "Evolução do Learning Rate",
+        etapas_curriculum: List[Dict] = None,
+    ) -> bool:
+        """
+        Gera gráfico de evolução do learning rate.
+        """
+        if not train_data:
+            return False
+            
+        try:
+            from util_graficos import UtilGraficos
+            import math
+            
+            def _is_valid(v):
+                return v is not None and isinstance(v, (int, float)) and not math.isnan(v)
+            
+            # --- Coleta dados válidos ---
+            valid_train = [(t["step"], t["lr"]) for t in train_data if "lr" in t and _is_valid(t["lr"]) and t["lr"] > 0]
+            if not valid_train:
+                return False
+                
+            is_denso = len(valid_train) > 150
+            
+            # --- Séries ---
+            series = {
+                'Learning Rate': {
+                    'x': [v[0] for v in valid_train],
+                    'y': [v[1] for v in valid_train],
+                    'cor': 'purple',
+                    'marcador': None if is_denso else 'o',
+                    'tamanho_marcador': 3 if not is_denso else 0,
+                    'largura': 1.5 if is_denso else 2,
+                    'alpha': 0.8,
+                }
+            }
+            
+            # --- Steps para limites do eixo x ---
+            all_steps = [t["step"] for t in train_data]
+            
+            # --- Marcadores de época ---
+            marcadores_epoca = construir_marcadores_epocas(train_data, etapas_curriculum)
+            construir_marcadores_etapas(marcadores_epoca, etapas_curriculum, all_steps)
+            
+            _epoca_markers = [m for m in marcadores_epoca if m.get('cor') == 'green']
+            if len(_epoca_markers) > 10:
+                intervalo = max(2, len(_epoca_markers) // 8)
+                for i, m in enumerate(_epoca_markers):
+                    if (i + 1) % intervalo != 0 and i != len(_epoca_markers) - 1:
+                        m['label'] = ''
+                        m['alpha'] = 0.3
+            
+            # --- Marcadores de checkpoints ---
+            marcadores_verticais = []
+            for chkpt in checkpoints:
+                parts = chkpt.replace("checkpoint-", "").split("-")
+                try:
+                    step_num = int(parts[-1])
+                    marcadores_verticais.append({
+                        'x': step_num,
+                        'cor': 'gray',
+                        'estilo': ':',
+                        'alpha': 0.4
+                    })
+                except ValueError:
+                    continue
+                    
+            # --- Limites do eixo x ---
+            xlim = None
+            if all_steps:
+                x_min, x_max = min(all_steps), max(all_steps)
+                margem = max(0.5, (x_max - x_min) * 0.05)
+                xlim = (x_min - margem, x_max + margem)
+                
+            # --- Gera gráfico ---
+            resultado = UtilGraficos.gerar_grafico_linhas(
+                series=series,
+                titulo=titulo,
+                ylabel='Learning Rate',
+                xlabel='Step (global)',
+                arquivo_saida=output_path,
+                marcadores_verticais=marcadores_verticais,
+                marcadores_epoca=marcadores_epoca,
+                xlim=xlim,
+            )
+            
+            return resultado is not None
+            
+        except Exception as e:
+            logger.error(f"Erro ao gerar gráfico de LR: {e}")
+            return False
     
     @staticmethod
     def tabela_loss_markdown(train_data: List[Dict], eval_data: List[Dict],

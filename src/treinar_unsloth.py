@@ -4505,6 +4505,7 @@ def _cli() -> None:
   --reset           Limpa o treinamento atual (com confirmação)
   --reset --treinar Limpa e inicia treinamento do zero
   --dicas           Injeta comentários de dicas no YAML de configuração
+  --graficos        Regenera os gráficos estatísticos do treinamento
   
 Sem argumentos: modo interativo (seleciona YAML e ação via menu).
 
@@ -4515,6 +4516,7 @@ Exemplos:
   %(prog)s config.yaml                     # Seleciona ação via menu
   %(prog)s config.yaml --treinar           # Inicia treinamento
   %(prog)s config.yaml --reset --treinar   # Limpa e treina do zero
+  %(prog)s config.yaml --graficos          # Regenera gráficos do treinamento
 """
     )
     parser.add_argument("config", nargs='?', default=None,
@@ -4531,6 +4533,10 @@ Exemplos:
     # Injeção de dicas
     parser.add_argument("--dicas", action="store_true", 
                         help="Injeta comentários de dicas no YAML de configuração")
+    
+    # Gráficos
+    parser.add_argument("--graficos", action="store_true",
+                        help="Regenera os gráficos estatísticos do treinamento (loss, tokens, hardware)")
     
     # Opções
     parser.add_argument("--log-level", type=str, default=None, 
@@ -4592,7 +4598,18 @@ Exemplos:
     from treinar_unsloth_actions import executar_treinar, executar_reset
     
     # --- Identifica se há ação explícita ---
-    tem_acao_explicita = args.treinar or args.reset or args.datasets
+    tem_acao_explicita = args.treinar or args.reset or args.datasets or args.graficos
+    
+    if args.graficos and not args.treinar and not args.reset:
+        # Modo apenas gráficos: regenera a partir dos dados em disco
+        yaml_config = YamlTreinamento(cfg_path)
+        from treinar_unsloth_avaliar import gerar_graficos_estatisticos
+        report_path = gerar_graficos_estatisticos(yaml_config)
+        if report_path:
+            logger.info(f"\n✅ Relatório estatístico gerado: {report_path}")
+        else:
+            logger.warning("⚠️ Sem dados de métricas suficientes para gerar gráficos.")
+        sys.exit(0)
     
     if args.datasets and not args.treinar and not args.reset:
         # Modo apenas dry-run: gera relatório e sai
