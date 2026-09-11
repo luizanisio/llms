@@ -16,7 +16,7 @@
 #SBATCH --cpus-per-task=16
 
 # RAM do sistema (CPU)
-#SBATCH --mem=64G
+#SBATCH --mem=80G
 
 # Tempo máximo de execução (HH:MM:SS)
 #SBATCH --time=120:00:00
