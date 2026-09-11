@@ -205,15 +205,15 @@ def configurar_metricas(config_yaml, base_dir="", pasta_modelos_ativa=""):
         'campos_sbert_medio': campos.get('sbert_medio') or [],
         'campos_sbert_grande': campos.get('sbert_grande') or [],
         # Configuração de modelos personalizados (opcional)
-        'modelos_sbert': conf_comp.get('modelos', {}).get('sbert', {}),
-        'modelo_bertscore': conf_comp.get('modelos', {}).get('bertscore', None),
-        'bertscore_batch_size': conf_comp.get('modelos', {}).get('bertscore_batch_size', None),
-        'sbert_batch_size': conf_comp.get('modelos', {}).get('sbert_batch_size', None),
+        'modelos_sbert': (conf_comp.get('modelos') or {}).get('sbert', {}),
+        'modelo_bertscore': (conf_comp.get('modelos') or {}).get('bertscore', None),
+        'bertscore_batch_size': (conf_comp.get('modelos') or {}).get('bertscore_batch_size', None),
+        'sbert_batch_size': (conf_comp.get('modelos') or {}).get('sbert_batch_size', None),
         'campos_virtuais': config_yaml.get('campos_virtuais', {})
     }
     
     # Processamento de Aliases para Modelos
-    modelos_conf = conf_comp.get('modelos', {})
+    modelos_conf = conf_comp.get('modelos') or {}
     sbert_conf = modelos_conf.get('sbert', {})
     
     defaults_modelos = {
