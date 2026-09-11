@@ -44,8 +44,9 @@ execucao:
   # divisão original — sem isso a dificuldade reembaralharia treino/teste e
   # abriria data leakage.
   # =========================================================================
-  divisao:
-    arquivo_referencia: "dados/divisao_Gold_Qwen7B.csv"
+  # aqui a divisão não é fixa porque o SemClinBR não tem divisão pré-fixada
+  #divisao:
+  #  arquivo_referencia: "dados/divisao_Gold_Qwen7B.csv"
 
 # Modelo Base (Gabarito humano do corpus SemClinBr)
 modelo_base:
