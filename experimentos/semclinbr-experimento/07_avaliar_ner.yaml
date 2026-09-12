@@ -16,9 +16,9 @@
 
 misc:
   pastas_base:
-    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
-    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
-    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+    - /students/luiz.abatitucci/llms/experimentos/semclinbr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclinbr-experimento
 
 # --- Corpus de referência (gabarito COM offsets, que o parquet não carrega) ---
 corpus:

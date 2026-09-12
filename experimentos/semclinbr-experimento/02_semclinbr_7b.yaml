@@ -12,9 +12,9 @@
 # --- Miscelânea ---
 misc:
   pastas_base:
-    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
-    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
-    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+    - /students/luiz.abatitucci/llms/experimentos/semclinbr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclinbr-experimento
   pastas_modelos:
     - /students/luiz.abatitucci/models
     - /mnt/d/wsl_ollama/hf-models

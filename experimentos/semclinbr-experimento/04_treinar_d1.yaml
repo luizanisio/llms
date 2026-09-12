@@ -21,13 +21,13 @@
 #| Configurações diversas (logs, variáveis de ambiente).
 misc:
   pastas_base:
-    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento
-    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento
-    - /opt/app-root/src/luiz/llms/experimentos/semclibr-experimento
+    - /students/luiz.abatitucci/llms/experimentos/semclinbr-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/semclinbr-experimento
   pastas_modelos:
     - /students/luiz.abatitucci/models
-    - /students/luiz.abatitucci/llms/experimentos/semclibr-experimento/treinos
-    - /mnt/d/wsl_dev/llms/experimentos/semclibr-experimento/treinos
+    - /students/luiz.abatitucci/llms/experimentos/semclinbr-experimento/treinos
+    - /mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento/treinos
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
 #| =========================================================================
