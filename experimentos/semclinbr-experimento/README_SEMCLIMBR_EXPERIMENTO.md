@@ -348,3 +348,17 @@ teste formal sustentando a comparação entre experimentos.
 5. **Tokenização.** Notas em CAIXA ALTA são comuns e fragmentam mais no
    tokenizador do Qwen. Se algum proxy de dificuldade usar contagem de tokens,
    isso vira viés; `n_chars` evita.
+6. **Instâncias não anotadas (IDs 8994, 8995, 8996).** Três documentos do corpus
+   possuem `<TAGS>` e `<RELATIONS>` vazias nos XMLs originais, resultando em
+   gabarito gold `{"entities": [], "relations": []}`. Contudo, seus textos
+   contêm dezenas de entidades clínicas evidentes (e.g., "ACIDENTE VASCULAR
+   CEREBRAL", "SEPTICEMIA", "GLASGOW 13", "CIRROSE HEPATICA", "PUPILAS
+   ISOCÓRICAS", "TRAQUEOSTOMIZADA", termos farmacológicos e dispositivos).
+   Trata-se de instâncias **não anotadas**, não de documentos genuinamente vazios.
+   **Decisão conservadora:** descartar os três casos do pipeline de comparação e
+   treinamento. O método `_filtro_origem` de `util_json_carga.py` já os exclui
+   automaticamente ao detectar que todos os campos do gabarito são listas vazias,
+   reduzindo o corpus efetivo de 1.000 para **997 instâncias** em
+   `divisao_Gold_Qwen7B.csv`. Incluí-los introduziria ruído: o gabarito vazio
+   puniria injustamente qualquer extração do modelo, distorcendo tanto as métricas
+   de dificuldade ($S_i$) quanto o F1 por documento.
