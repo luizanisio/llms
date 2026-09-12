@@ -247,7 +247,7 @@ configuracao_comparacao:
   campos_parquet:
     id: "chave"
     resposta: "resposta"
-    resumo_tokens: "resumo"
+    #resumo_tokens: "resumo"
     avaliacao: ""
     erro: "erro"
 
