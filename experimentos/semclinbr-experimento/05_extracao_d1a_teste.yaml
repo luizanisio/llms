@@ -14,6 +14,7 @@ misc:
     - /students/luiz.abatitucci/models
     - /students/luiz.abatitucci/llms/experimentos/semclinbr-experimento/treinos
     - /mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento/treinos
+    - /opt/app-root/src/luiz/llms/experimentos/semclinbr-experimento/treinos
     - /mnt/d/wsl_ollama/hf-models
     - /opt/app-root/src/luiz/llms/_models
 
