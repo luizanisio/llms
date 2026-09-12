@@ -1,5 +1,6 @@
 '''
 Autor: Luiz Anísio
+Fonte: https://github.com/luizanisio/llms/tree/main/src
 
 Varre todos os experimentos principais (pubmed-experimento, semclinbr-experimento, summa-experimento)
 e gera um RESUMO_EXPERIMENTOS.md com as principais configurações dos protocolos.
