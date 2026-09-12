@@ -236,16 +236,25 @@ experimentos/pubmed-experimento/treinos/*
 !experimentos/pubmed-experimento/treinos/zip_treinos.sh
 !experimentos/pubmed-experimento/treinos/zip_treinos_metricas.sh
 !experimentos/pubmed-experimento/treinos/zip_treinos_lite.sh
+!experimentos/pubmed-experimento/treinos/graficos.md
 
 experimentos/summa-experimento/treinos/*
 !experimentos/summa-experimento/treinos/zip_treinos.sh
 !experimentos/summa-experimento/treinos/zip_treinos_metricas.sh
 !experimentos/summa-experimento/treinos/zip_treinos_lite.sh
+!experimentos/summa-experimento/treinos/graficos.md
+
+experimentos/semclinbr-experimento/treinos/*
+!experimentos/semclinbr-experimento/treinos/zip_treinos.sh
+!experimentos/semclinbr-experimento/treinos/zip_treinos_metricas.sh
+!experimentos/semclinbr-experimento/treinos/zip_treinos_lite.sh
+!experimentos/semclinbr-experimento/treinos/graficos.md
 
 experimentos/puil-mini-experimento/treinos_local/*
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos.sh
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos_metricas.sh
 !experimentos/puil-mini-experimento/treinos_local/zip_treinos_lite.sh
+!experimentos/puil-mini-experimento/treinos_local/graficos.md
 
 # comparações
 experimentos/puil-mini-experimento/compara**
@@ -255,6 +264,7 @@ experimentos/summa-experimento/avaliacao_humana/tarefas_avaliacao_label_studio_*
 experimentos/pubmed-experimento/test_extracao**
 experimentos/summa-experimento/treinos_local/**
 experimentos/pubmed-experimento/treinos_local/**
+experimentos/semclinbr-experimento/treinos_local/**
 experimentos/puil-mini-experimento/treinos_local/**
 src/_teste_estatistica/**
 src/dummy_input.csv
@@ -265,7 +275,8 @@ experimentos/summa-experimento/avaliacao_llm_humana/analise_llm/*
 experimentos/summa-experimento/avaliacao_llm_humana/saida_**
 experimentos/summa-experimento/avaliacao_llm_humana/analise_avaliacoes**
 experimentos/_notas_*.md
-experimentos/semclibr-experimento/dados**
-experimentos/semclibr-experimento/saidas**
 
-experimentos/semclibr-experimento/compara**
+# ATENÇÃO - SEMCLINBR dados não podem ser publicados
+experimentos/semclinbr-experimento/dados**
+experimentos/semclinbr-experimento/saidas**
+experimentos/semclinbr-experimento/compara**
