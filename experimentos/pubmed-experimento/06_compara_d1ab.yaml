@@ -134,40 +134,64 @@ campos_virtuais:
     - keywords
 
 
+# ==========================================================================
+# Estatística — camada frequentista + camada bayesiana
+# ==========================================================================
+# Frequentista (Friedman → Wilcoxon com Holm → Nemenyi/CD): diz SE existe
+#   diferença entre os protocolos.
+# Bayesiana (baycomp.CorrelatedTTest — analítico, sem amostragem nem semente):
+#   diz O QUANTO acreditar — P(A > B) e P(equivalência prática dentro da ROPE).
+#   Aqui "equivalente" é um achado, e "inconclusivo" é um desfecho legítimo.
+# As duas camadas usam os mesmos recortes de `protocolos`.
+# Saída: compara/analises_comparacao_pubmed_d1ab/estatisticas/ e .../bayesiana/
+# Reexecutar só esta etapa (não refaz a comparação pesada):
+#   python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml --estatisticas
+# ==========================================================================
+
 estatistica:
-  bayesiana: true
-  frequentista: true
-  # Bateria de CALIBRAÇÃO: as réplicas D1/D1a/D1b compartilham regime e dados,
-  # entao toda diferenca entre elas e ruido. So com esta marca o pipeline gera
-  # `estatisticas/00_rope_sugerido.md` — em comparacoes entre protocolos
-  # distintos o mesmo calculo somaria efeitos reais ao ruido e inflaria a ROPE.
+  frequentista: true     # Friedman, Wilcoxon (Holm), Nemenyi e CD diagram
+  bayesiana: true        # heatmaps de P(A > B) e P(equivalência), relatório bayesiano
+  limiar: 0.95           # probabilidade mínima para decidir um par;
+                         #   abaixo disso o par sai como "inconclusivo"
+  incluir_base: false    # ignorado quando `protocolos` é um dicionário
+  # Bateria de CALIBRAÇÃO: D1/D1a/D1b são réplicas do MESMO protocolo (mesmos
+  # dados, mesmos hiperparâmetros), então toda diferença entre elas é ruído.
+  # Só com esta marca o pipeline gera `estatisticas/00_rope_sugerido.md`, cujos
+  # valores são transcritos para a ROPE dos YAMLs de comparação entre protocolos.
+  # Em comparações entre protocolos distintos o mesmo cálculo somaria efeito real
+  # ao ruído e inflaria a ROPE — por isso a marca fica só aqui.
   calibracao_rope: true
+
+  # Um único recorte: as três réplicas, todas contra todas.
   protocolos:
     Panorama_Geral: "TODOS"
-  # Configuração das análises estatísticas (Friedman, Wilcoxon, Nemenyi, etc.)
+
+  # --- Métricas automáticas (camada COMPLEMENTAR) ---
+  # Medem similaridade com o modelo base = FIDELIDADE DE DESTILAÇÃO, não
+  # qualidade: quem copia fielmente um erro do professor é premiado por elas.
+  # Servem para triangular, nunca como veredito.
   metricas_automaticas:
-    # ROPE: margem sobre os ESCORES BRUTOS — |x - y| <= rope conta como empate.
-    # Obrigatoria (> 0). Com escores comprimidos e a ROPE que determina o
-    # resultado: pequena demais satura o heatmap em verde/vermelho, grande
-    # demais deixa tudo azul. Por isso a varredura abaixo e obrigatoria de
-    # reportar — a matriz em tres ROPEs e o minimo defensavel.
-    # Valores transcritos de `estatisticas/00_rope_sugerido.md`: para cada
-    # campo, a menor margem sob a qual TODOS os pares de replicas atingem
-    # P(equivalencia) >= 0,95 — o |Delta| observado MAIS a incerteza sobre ele.
-    # O |Delta| pontual (0,0013 / 0,0030 / 0,0006) NAO serve como ROPE: centra
-    # a posterior na borda do intervalo e trava P(equiv.) em ~0,50.
+    # ROPE = margem de empate sobre os ESCORES BRUTOS: |x - y| <= rope é empate.
+    # Obrigatória (> 0) e decisiva — pequena demais pinta o heatmap de
+    # vencedores/perdedores, grande demais deixa tudo empatado. A varredura de
+    # sensibilidade (rope/2, rope, 2·rope) é calculada automaticamente por campo.
+    # Aqui a ROPE é só o valor EM TESTE: a sugestão do relatório vem dos dados e
+    # do `limiar`, não deste número. Ciclo de calibração:
+    #   1) rodar com qualquer valor > 0;
+    #   2) transcrever os valores de `estatisticas/00_rope_sugerido.md`;
+    #   3) rodar de novo — a calibração está confirmada quando todos os pares de
+    #      réplicas saem como "equivalentes".
+    # `rope` é o fallback dos campos não listados em `rope_por_campo`.
     rope: 0.0058
     rope_por_campo:
       (global): 0.0030
       MetaDados: 0.0058
       Sentencas: 0.0022
 
-    # Sentenças e MetaDados são os alvos de interesse das comparações pareadas 
+    # Sentencas e MetaDados são os alvos de interesse; (global) fica como âncora.
     campos:
       - "(global)"
       - "Sentencas"
       - "MetaDados"
     metricas:
       - rouge_l
-
-
