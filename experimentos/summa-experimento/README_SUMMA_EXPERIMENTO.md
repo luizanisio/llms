@@ -58,7 +58,7 @@ python ../../src/util_vllm_batch.py --config arquivo_config_batch.yaml
 ## 3. Referência: GPT-5
 - **API:** Azure
 - **Versão do modelo:** `gpt-5-2025-08-07`
-- **Configurações:** Reasoning=Médio / Verbose=Low
+- **Configurações:** Reasoning=Médio / Verbose=Low (extração de referência); como **juiz LLM** usa Reasoning=High / Verbose=Low (ver `avaliacao_llm_humana/02_extracao_70.yaml`)
 
 **Variáveis de Ambiente:**
 - `OA_KEY`
@@ -85,18 +85,24 @@ Esse arquivo pode ser usado diretamente para o arquivo yaml de treinamento para 
 
 # Passo 04 - Treinamento
 
-O modelo-alvo é o **Qwen 2.5 7B Instruct**, que permite validar o framework CL+PT em um modelo de maior capacidade que o experimento PubMed (1.5B), testando escalabilidade.
+O modelo-alvo é o **Qwen2.5-7B-Instruct**, que permite validar o framework CL+PT em um modelo de maior capacidade que o experimento PubMed (1.5B), testando escalabilidade.
 
-O experimento conta com **13 protocolos** organizados em 5 camadas:
+> 📖 **A malha completa é a mesma dos três experimentos**: 28 protocolos de treinamento (`b`, `c`, `b16` e `d1`–`d25`) + o modelo sem ajuste (`A`), mais o controle auxiliar `b16r8` e as réplicas de calibração `d1a`/`d1b`. O mapa completo, as seis questões de pesquisa e os 12 recortes estão em [README_protocolos.md](../README_protocolos.md) e na tabela gerada automaticamente [RESUMO_EXPERIMENTOS.md](../RESUMO_EXPERIMENTOS.md). As tabelas abaixo cobrem apenas as cinco camadas iniciais (`b`, `c`, `d1`–`d10`); os protocolos `b16`, `b16r8`, `d11`–`d25`, `d1a` e `d1b` seguem os YAMLs homônimos do PubMed/SemClinBr.
+>
+> ⚠️ Pendência (set/2026): `04_treinar_b16.yaml` e `04_treinar_b16r8.yaml` ainda não existem no SUMMA — criar a partir dos do PubMed (mesmos parâmetros; `max_seq_length: 32768`, `batch_size: 1`).
+
+As cinco camadas iniciais:
 
 ## Perguntas de pesquisa
 
-| Pergunta | Descrição |
-|---|---|
-| **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? |
-| **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto? |
-| **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos? |
-| **Q4** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? |
+| Pergunta | Descrição | Recortes (`06_compara_todos.yaml`) |
+|---|---|---|
+| **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? | `Q1_ajuste_fino` |
+| **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto — e o ganho persiste quando a segmentação é controlada? | `Q2a_cl_controlado`, `Q2b_cl_puro`, `Q2c_granularidade` |
+| **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos, com e sem CL? | `Q3a_direcao_com_cl`, `Q3b_direcao_sem_cl` |
+| **Q4** | Decomposição: o ganho vem do CL, do escalonamento ou da combinação? | `Q4a_decomposicao`, `Q4b_unfreeze` |
+| **Q5** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? | `Q5_anti_curriculo` |
+| **Q6** | Custo da fronteira entre etapas: desaparece quando a fronteira é virtual? | `Q6a_fusao`, `Q6b_fusao_granular`, `Q6c_transicao_regime` |
 
 ## Camada 1 — Baselines (sem CL, sem escalonamento)
 
@@ -148,13 +154,13 @@ O experimento conta com **13 protocolos** organizados em 5 camadas:
 
 ## Arquivos de comparação
 
+Os relatórios temáticos foram consolidados em um único arquivo com recortes internos (ver [README_protocolos.md §5](../README_protocolos.md)):
+
 | Arquivo | Modelos incluídos | Propósito |
 |---|---|---|
-| `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4 | Q1 + Q2 + Q3 (experimento principal) |
-| `06_compara_ablacoes.yaml` | A, b, c, D5, D6, D7, D8 | Decomposição CL vs escalonamento |
-| `06_compara_ordem_cl.yaml` | A, b, D7, D8, D9, D10 | Q4 (efeito da direção do currículo) |
-| `06_compara_ordem_pt.yaml` | A, b, c, D5, D6 | Q3 (efeito da direção do escalonamento) |
-| `06_compara_todos.yaml` | A, b, c, D1–D10 | Panorama completo |
+| `06_compara_todos.yaml` | A, b, c, b16, D1–D25 | Relatório completo: 12 recortes (Q1–Q6) + `Panorama_Geral` (descritivo) |
+| `06_compara_todos_parcial.yaml` | idem, com os protocolos ainda em treinamento comentados | Relatório incremental |
+| `06_compara_d1ab.yaml` | D1, D1a, D1b | Calibração da ROPE por campo (`00_rope_sugerido.md`) — transcrever para `rope_por_campo` |
 
 ---
 
@@ -171,7 +177,7 @@ python ../../src/util_vllm_batch.py --config 05_extracao_d1_teste.yaml
 
 # Passo 06 - Comparação dos Resultados
 
-Comparamos as extrações geradas contra o gabarito do professor (Qwen3-235B). O processo lê os parquets de saída, aplica métricas automáticas (BERTScore, ROUGE-L, Levenshtein, SBERT) e compila as tabelas de resultados.
+Comparamos as extrações geradas contra o gabarito do professor (Qwen3-235B-A22B-2507). O processo lê os parquets de saída, aplica métricas automáticas (BERTScore e SBERT com o encoder jurídico `stjiris/bert-large-portuguese-cased-legal-mlm-mkd-nli-sts-v1`, ROUGE-L/2, Levenshtein) sobre os campos e os agregados virtuais `Likert` (6 campos críticos) e `MetaDados` (4 campos literais), e roda a análise estatística por recorte: **bayesiana** (`baycomp.CorrelatedTTest`, ROPE calibrada por campo, limiar 0,95) como análise principal e frequentista (Friedman/Wilcoxon-Holm/Nemenyi) apenas exploratória. A avaliação de qualidade pelo juiz LLM (Likert 1–4, 3 rodadas) entra quando `campos_parquet.avaliacao` apontar para as avaliações (ver `avaliacao_llm_humana/`).
 
 ```bash
 # Exemplo:

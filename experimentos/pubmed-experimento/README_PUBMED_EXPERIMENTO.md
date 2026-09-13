@@ -58,7 +58,7 @@ bash manual_export_1_5b_testes.sh
 ```
 
 ### 6. Geração das Comparações dos Resultados
-Por fim, comparamos as extrações geradas contra o gabarito. O processo lê os arquivos parquet de saída, aplica métricas automáticas (ROUGE-L, BERTScore, Exact Match, etc.) e compila as tabelas de resultados através do `06_compara_testes.yaml`.
+Por fim, comparamos as extrações geradas contra o gabarito. O processo lê os arquivos parquet de saída, aplica as métricas automáticas (ROUGE-L principal; ROUGE-2 e Levenshtein complementares) e roda a análise bayesiana por recorte através do `06_compara_todos.yaml` (calibração da ROPE em `06_compara_d1ab.yaml`).
 ```bash
 sbatch job_compara_testes.sh
 ```
@@ -165,6 +165,10 @@ Todos os campos vêm de anotações humanas (autores do artigo e indexadores do 
 
 ### Esquema JSON de saída (gabarito)
 
+> Os nomes reais dos campos no prompt/gabarito (`dados/prompt_pubmed_rct.txt`) são em inglês:
+> `title`, `publication`, `journal`, `keywords`, `background`, `objective`, `methods`, `results`, `conclusions`.
+> A versão abaixo, em português, é apenas descritiva.
+
 ```json
 {
   "titulo":          "string — extraído do cabeçalho",
@@ -205,8 +209,10 @@ Aplicar os filtros abaixo antes de montar os splits de treino/validação/teste:
 - **Descartar** abstracts com `total_lines < 5` (instâncias degeneradas).
 - Verificar se o PMID retorna metadados válidos na API antes de incluir no corpus.
 
-Após filtragem, o corpus esperado é de aproximadamente **15–17k abstracts**
-para treino, com splits de dev e test já definidos oficialmente no dataset.
+Após filtragem e enriquecimento, o corpus efetivo tem **19.995 abstracts**
+(`divisao_Professor_Qwen1_5B.csv`): 14.996 treino / 2.499 validação / 2.500 teste,
+preservando os splits oficiais do dataset; faixas de dificuldade 5.998 / 7.999 / 5.998
+(fácil / médio / difícil), sendo 767 / 979 / 754 no teste.
 
 ### Estratificação de dificuldade (proxy $S_i$)
 
@@ -236,7 +242,7 @@ O modelo-alvo é o **Qwen 2.5 1.5B Instruct**, escolhido porque o domínio biom�
 em inglês é genuinamente difícil para modelos pequenos sem fine-tuning — garantindo
 espaço real de ganho para o CL demonstrar efeito.
 
-O experimento conta com **15 protocolos** organizados em 5 camadas:
+O experimento executa a **malha completa** (28 protocolos de treinamento `b`, `c`, `b16`, `d1`–`d25` + `A`, mais `b16r8` e as réplicas `d1a`/`d1b` — 30 treinamentos). As tabelas abaixo cobrem as camadas iniciais; o mapa completo está em [README_protocolos.md](../README_protocolos.md):
 
 #### Perguntas de pesquisa
 
@@ -410,17 +416,27 @@ Uma análise complementar por token-equivalente pode ser reportada se necessári
 
 ### Métricas de avaliação
 
-Sem LLM-as-a-Judge nesta instanciação (gabarito determinístico, sem necessidade
-de âncora humana). Métricas automáticas aplicadas campo a campo:
+Sem LLM-as-a-Judge nesta instanciação (gabarito humano determinístico: concordar
+com o gabarito **é** acertar). Como o gabarito é literal, recompensar paráfrase
+seria o erro — a métrica é lexical. Conforme `06_compara_todos.yaml`:
 
-- **ROUGE-L** — campos de seção (background, methods, results, conclusions)
-- **BERTScore F₁** — todos os campos textuais
-- **Exact Match** — `data_publicacao`, `journal`
-- **F1 de lista** — `palavras_chave` (comparação de conjuntos)
+- **ROUGE-L** — métrica principal, em todos os campos e nos agregados virtuais
+  `Sentencas` (background, objective, methods, results, conclusions — alvo
+  composto), `MetaDados` (title, publication, journal, keywords — alvo atômico)
+  e `(global)`;
+- **ROUGE-2** — complementar nos metadados (title, publication, journal, keywords);
+- **Levenshtein** — complementar em `publication` e `journal`.
 
-Análise estatística: Wilcoxon signed-rank bilateral para todos os pares de
-protocolos relevantes (A vs B, A vs D-best, B vs D1, D1 vs D2, etc.).
-Tamanho de efeito $r = |z| / \sqrt{n}$.
+BERTScore só é usado no cálculo do proxy de dificuldade (`03_compara_prof_full.yaml`),
+não na avaliação final.
+
+Análise estatística (por recorte, mesma estrutura dos três experimentos):
+**bayesiana** como análise principal — `baycomp.CorrelatedTTest` sobre a
+diferença pareada por documento, ROPE calibrada por campo a partir de
+D1/D1a/D1b (`06_compara_d1ab.yaml` → `00_rope_sugerido.md` → `rope_por_campo`:
+`(global)` 0,0030 · `MetaDados` 0,0058 · `Sentencas` 0,0022), limiar único 0,95;
+a camada frequentista (Friedman → Wilcoxon com Holm → Nemenyi) é apenas
+exploratória.
 
 ### Alguns datasets considerados para um experimento com o framework
 

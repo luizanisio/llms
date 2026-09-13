@@ -60,7 +60,8 @@ número baixo por um motivo alheio à capacidade do modelo, inviabilizando a
 comparação externa. Fornecer o vocabulário iguala essa condição.
 
 **Escopo da lista.** Os 25 rótulos acima cobrem a maior parte das anotações.
-O prompt real vai usar todos os rótulos do split de treino.
+O prompt real (`dados/prompt_semclinbr.txt`) usa o inventário derivado do split
+de treino: **84 rótulos** (`dados/inventario_semclinbr.csv`).
 
 ### Idioma
 
@@ -99,7 +100,7 @@ corpus.exportar("dados/")
 |---|---|
 | `id` | nome do arquivo XML, sem extensão |
 | `texto` | conteúdo de `<TEXT>` |
-| `split` | `treino` (70%) / `teste` (20%) / `validacao` (10%) |
+| `split` | `treino` (70%) / `teste` (20%) / `validacao` (10%) — 697 / 197 / 103 documentos em `divisao_Gold_Qwen7B.csv` |
 | `resposta` | gabarito JSON serializado |
 | *extras* | `n_entidades`, `n_relacoes`, `n_rotulos_distintos`, `n_multirotulo`, `n_chars`, `n_tags_fora_do_prompt` |
 
@@ -228,15 +229,28 @@ Recomendação: **(a)** como principal, **(b)** como análise secundária.
 
 ## 6. Variável primária e análise inferencial
 
+Duas trilhas sobre as **mesmas saídas** (`saidas/*.parquet`):
+
+**Trilha 1 — `06_compara_todos.yaml` (comum aos três experimentos).** Métricas
+ROUGE-L e ROUGE-2 sobre os agregados virtuais `Entidades` (entities.text/tag/abbr —
+alvo atômico), `Relacoes` (relations.reltype — alvo composto) e `(global)`; os ids
+(`id`, `annotation1`, `annotation2`) ficam fora de propósito. É a trilha que ordena o
+currículo (passo 03) e alimenta a **análise bayesiana por recorte** (análise
+principal: `baycomp.CorrelatedTTest`, ROPE calibrada por campo via
+`06_compara_d1ab.yaml`, limiar 0,95); Friedman/Wilcoxon/Nemenyi só exploratórios.
+
+**Trilha 2 — `07_avaliar_ner.py` / `07_avaliar_ner.yaml` (específica do corpus).**
+F1 de reconhecimento de entidades por documento, para comparabilidade com os
+sistemas publicados:
+
 | Item | Definição |
 |---|---|
 | Unidade de análise | documento de teste (desenho pareado: todos os protocolos veem os mesmos documentos) |
-| **Variável primária** | **F1 strict por documento** (`f1_strict`) |
+| **Variável primária da trilha** | **F1 strict por documento** (`f1_strict`) |
 | Complementares | lenient, flexible, relaxed, span exato/parcial, F1 de relações |
-| Omnibus | Friedman sobre `f1_strict`, $k$ = nº de protocolos |
-| Post-hoc | Wilcoxon signed-rank bilateral com Holm |
-| Tamanho de efeito | $r = \lvert z \rvert / \sqrt{n}$ |
+| Estatística | Friedman + Wilcoxon (Holm) + $r = \lvert z \rvert / \sqrt{n}$ — **exploratória** (P6: o bayesiano da trilha 1 é a fonte dos vereditos) |
 | Robustez | taxa de falha de parsing e taxa de não-alinhamento por protocolo |
+| Piso de viabilidade | 0,70 (`piso_viabilidade`), fixado antes dos resultados |
 
 Escolha do strict como primária: é a métrica mais exigente e a que menos depende
 do mapeamento STY→SGR (que é uma escolha nossa, não do corpus). Declarar a
@@ -244,8 +258,11 @@ hierarquia antes de olhar os resultados; divergências entre strict e relaxed s�
 **achados** sobre onde o erro se concentra (fronteira de span vs. escolha de
 rótulo), não inconsistências.
 
-**ROPE (análise bayesiana).** a ROPE é ancorada na divergência entre
-treinos distintos do protocolo D1.
+**ROPE (análise bayesiana).** A ROPE é ancorada na divergência entre os três
+treinos do protocolo D1 (`d1`, `d1a`, `d1b`), por campo e por métrica — a menor
+margem sob a qual todos os pares de réplicas saem equivalentes ao limiar de 0,95
+(`00_rope_sugerido.md`), transcrita à mão para `rope_por_campo`. Ainda pendente
+neste experimento (`rope: 0.01` é placeholder).
 
 ---
 
@@ -335,12 +352,14 @@ teste formal sustentando a comparação entre experimentos.
 1. **Direção de `negation_of`.** O artigo não fixa se `annotation1` é a pista ou
    o conceito negado. `auditar_direcao_relacoes()` resolve com um passe nos XMLs;
    ajuste as descrições no esquema se a convenção for a inversa.
-2. **Tamanho do corpus.** 1.000 documentos, contra 22k do SUMMA e ~16k do PubMed.
-   Com split 700/100/200 e 3 faixas, cada fase curricular fica com ~200
-   instâncias — pouco para full fine-tuning, com alta variância entre seeds
-   esperada. Planeje ≥3 seeds por protocolo e reporte desvio. Alternativa:
-   currículo em granularidade de sentença, ao custo de quebrar as relações entre
-   entidades de sentenças distintas.
+2. **Tamanho do corpus.** 997 documentos efetivos (ver item 6), contra 19,7k do
+   SUMMA e 20k do PubMed. Com split 697/103/197 (treino/validação/teste) e 3
+   faixas, cada fase curricular fica com ~200 instâncias — pouco para full
+   fine-tuning, com alta variância entre execuções esperada. A variância é medida
+   pelo trio D1/D1a/D1b e absorvida pela ROPE calibrada (previsão declarada:
+   margens mais largas e mais desfechos equivalentes/incertos). Alternativa
+   (trabalho futuro): currículo em granularidade de sentença, ao custo de quebrar
+   as relações entre entidades de sentenças distintas.
 3. **Acesso ao corpus.** Formulário de solicitação com termo de licença para uso
    científico e não comercial. Considere o prazo no cronograma.
 4. **Sigilo.** A licença restringe redistribuição — não exponha texto integral em

@@ -10,17 +10,17 @@ Este documento centraliza a arquitetura dos experimentos: os objetivos de cada f
 
 ### ⚖️ Summa-Experimento *(experimento principal)*
 - **Objetivo:** Extração de metadados jurídicos de acórdãos judiciais.
-- **Modelo Base:** `Qwen2.5-7B-Instruct` (28 blocos) — professor: `Qwen3-235B`
+- **Modelo Base:** `Qwen2.5-7B-Instruct` (28 blocos) — professor: `Qwen3-235B-A22B-2507` (OpenRouter, ZDR)
 - **Ambiente de Treino:** Cluster Slurm (H100 80GB) e H200 em treinos FF
 - **Detalhes Técnicos:** Textos muito extensos, exigindo contexto longo (`max_seq_length: 32768`), processados com lotes cuidadosos (`batch_size: 1`, `grad_batch_size: 16`).
-- **Protocolos disponíveis:** `b`, `c`, `d1`–`d25`
+- **Protocolos disponíveis:** `b`, `c`, `d1`–`d25`, `d1a`, `d1b` (`b16`/`b16r8` a treinar — YAMLs a criar)
 
 ### 🩺 Pubmed-Experimento *(generalização do framework)*
 - **Objetivo:** Extração e classificação de partes (Background, Methods, Results, Conclusions) em abstracts médicos (RCTs) sobre o PubMed 20k.
 - **Modelo Base:** `Qwen2.5-1.5B-Instruct` (28 blocos)
 - **Ambiente de Treino:** Cluster Slurm (H100 80GB)
 - **Detalhes Técnicos:** Menor comprimento de contexto (`max_seq_length: 8192`), mas grande volume de amostras (`batch_size: 2`, `grad_batch_size: 8`).
-- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`
+- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (malha completa executada)
 
 ### 🔬 Puil-Mini-Experimento
 - **Objetivo:** Validação local rápida da máquina de estados do código-fonte (transições entre QLoRA e Full Fine-tuning, recarregamentos de modelo, modo fusão, scripts utilitários).
@@ -30,10 +30,10 @@ Este documento centraliza a arquitetura dos experimentos: os objetivos de cada f
 
 ### 🏥 SemClinBR-Experimento *(generalização do framework — NER clínico)*
 - **Objetivo:** Extração de entidades clínicas e relações (NER + RE) em notas clínicas em português, sobre o corpus **SemClinBr** (Oliveira et al., 2022 — 1.000 notas, 65.129 entidades, 11.263 relações, 100 STYs UMLS + `Abbreviation` + `Negation`).
-- **Modelo Base:** `Qwen2.5-1.5B-Instruct` e `Qwen2.5-7B-Instruct`
+- **Modelo Base:** `Qwen2.5-7B-Instruct` (o 1.5B foi usado apenas em testes iniciais — `02_semclinbr_1_5b.yaml`)
 - **Ambiente de Treino:** Cluster Slurm (H100 80GB)
-- **Detalhes Técnicos:** Experimento isolado com avaliação própria (F1 de entidades e relações), comparação interna entre protocolos e comparação com a extração realizada pelo modelo publicado. Avaliação via script dedicado (`07_avaliar_ner.py`).
-- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`
+- **Detalhes Técnicos:** 997 notas efetivas (3 não anotadas descartadas), split 697/103/197, `max_seq_length: 12288`. Duas trilhas de avaliação sobre as mesmas saídas: `06_compara_todos.yaml` (ROUGE-L/2 em `Entidades`/`Relacoes`, análise bayesiana por recorte — comum aos três experimentos) e `07_avaliar_ner.py` (F1 strict/lenient/flexible/relaxed de NER, para comparação com CRF/BioBERTpt publicados).
+- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (em treinamento)
 
 ### 📝 Summa-Qualifica *(trabalho inicial da qualificação)*
 - **Objetivo:** Versão preliminar do experimento Summa, utilizada durante a qualificação do mestrado. Mantida como referência histórica.
@@ -66,13 +66,13 @@ Legenda de fronteiras: **real** = nova execução de trainer (reset de otimizado
 
 | ID | Papel | Configuração | Disp. |
 | :-- | :-- | :-- | :-- |
-| **A** | Referência | Zero-shot, sem ajuste fino | ambos |
-| **b** | Baseline FT | LoRA **4 bits**, r=16, direto, dados completos, execução única | ambos |
-| **b16** | Controle de `b` | LoRA **16 bits**, r=16 — isola o erro de quantização NF4 | pubmed |
-| **b16r8** | Controle de `b` | LoRA **16 bits**, r=8 — isola o posto do adaptador | pubmed |
-| **c** | Baseline FT | Full FT 16 bits direto, dados completos, execução única | ambos |
+| **A** | Referência | Zero-shot, sem ajuste fino | todos |
+| **b** | Baseline FT | LoRA **4 bits**, r=16, direto, dados completos, execução única | todos |
+| **b16** | Controle de `b` | LoRA **16 bits**, r=16 — isola o erro de quantização NF4 | pubmed, semclinbr (summa: a treinar) |
+| **b16r8** | Controle de `b` | LoRA **16 bits**, r=8 — isola o posto do adaptador | pubmed, semclinbr (summa: a treinar) |
+| **c** | Baseline FT | Full FT 16 bits direto, dados completos, execução única | todos |
 
-> Os controles `b16`/`b16r8` só existem no pubmed: são específicos para calibrar o baseline `b`, que é a referência de comparação da maioria dos protocolos. `b16` é também a **execução única em LoRA 16b r=16** — a referência que faltava para ler `d16` e `d17` sem confundir fronteira/ordenação com precisão.
+> Os controles `b16`/`b16r8` existem no pubmed e no semclinbr e serão treinados no summa (malha idêntica nos três). `b16` entra nos recortes `Q2a_cl_controlado` e `Q6a_fusao`: é a **execução única em LoRA 16b r=16** que permite ler `d16` e `d17` sem confundir fronteira/ordenação com precisão; `b16r8` (posto 8) é auxiliar e entra só no `Panorama_Geral`.
 
 ### CL + escalonamento por troca de regime (fronteiras reais)
 
@@ -160,7 +160,7 @@ As perguntas de pesquisa são respondidas por **recortes** (subconjuntos de mode
 | **Q6a_fusao** | Fundido vs segmentado (custo de fronteira) | B, C, B16, D17, D21, D22, D23 |
 | **Q6b_fusao_granular** | Fusão granular: regime full vs LoRA | B, C, D12, D24, D25 |
 | **Q6c_transicao_regime** | Pré-treino LoRA e estabilização pós-merge | B, C, D13, D14, D15 |
-| **Panorama_Geral** | Visão global: ranking, Friedman/Nemenyi | TODOS |
+| **Panorama_Geral** | Visão global descritiva (precisões e orçamentos misturados) — nunca fonte de conclusão | TODOS |
 
 > **Nota de numeração:** alguns cabeçalhos de `04_treinar_*.yaml` ainda usam Q6/Q7/Q8 com outro sentido (warm-up LoRA no d14, estabilização no d15, regime full vs LoRA no d24/d25). Os recortes do `06_compara_todos*.yaml` seguem a numeração desta tabela.
 
@@ -207,6 +207,6 @@ Dois 2×2 independentes. Descongelamento: `d19` (CL+PT) × `d20` (PT) × `d13` (
 ## 7. Notas de Comparabilidade
 
 - **Precisão.** `b` e d1–d15 rodam LoRA em 4 bits (NF4); d16–d23 rodam em 16 bits; d24 volta a 4 bits de propósito (espelho do d12) e d25 é full 16 bits. Cruzamentos entre grupos carregam **{efeito estudado + quantização}** como diferença conjunta — por isso existem `d17` (d7 em 16b), `d16` (b segmentado em 16b) e, no pubmed, `b16` (b em 16b, execução única). O contraste `b` × `b16` dá o fator de correção para ler os cruzamentos 4b×16b restantes. Etapas `full` sempre executam em 16 bits, independentemente do `nbits` global.
-- **Orçamento.** d16–d25 são calibrados em **4N instâncias** (mesmo total de `b` com 4 épocas), o que torna suas comparações pareadas. Protocolos anteriores não seguem essa paridade estrita.
+- **Orçamento.** Em dataset-equivalentes (fração × épocas), os protocolos caem em quatro faixas: **4N** (b, b16, c, d1–d6, d13, d16–d23), **8N** (d7–d10, d14 — 4 épocas por etapa nos YAMLs), **9N** (d15) e **11N** (d11, d12, d24, d25 — acúmulo granular). Contrastes dentro de uma faixa são limpos; entre faixas carregam o orçamento junto e são declarados, com custo por instâncias/tokens ao lado.
 - **Posição das ativações no d22 × d23.** O d23 usa 1 época por span (dataset completo) e o d22 usa 2 (fatias), para equalizar o orçamento — os grupos de camadas acordam em pontos diferentes do stream. Registrar como limitação.
 - **Evidência de eficiência.** As comparações leem `training_metrics.jsonl` via `pasta_treinamento`: o *spike* de loss em cada fronteira dos segmentados e sua ausência nos fundidos é a evidência primária da Q6, não apenas o score final.
