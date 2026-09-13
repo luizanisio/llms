@@ -37,8 +37,8 @@
 | ID | Grupo | Descrição | #Et. | Sequência | #FF | #L | CL | Modo CL | PT | Fronteira | Precisão | LR | LoRA r | grad_norm | warmup | P | S | Su |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
 | b | Q1 | Baseline LoRA 4b direto | 1 | L | 0 | 1 | — | N/A | — | N/A | 4b | 2e-5 | 16 | 1 | 5 | ✓ | ✓ | ✓ |
-| b16 | Q2a | Controle LoRA 16b r=16 | 1 | L | 0 | 1 | — | N/A | — | N/A | 16b | 2e-5 | 16 | 1 | 5 | ✓ | ✓ | ✗ |
-| b16r8 | Q2a | Controle LoRA 16b r=8 | 1 | L | 0 | 1 | — | N/A | — | N/A | 16b | 2e-5 | 8 | 1 | 5 | ✓ | ✓ | ✗ |
+| b16 | Q2a | Controle LoRA 16b r=16 | 1 | L | 0 | 1 | — | N/A | — | N/A | 16b | 2e-5 | 16 | 1 | 5 | ✓ | ✓ | ✓ |
+| b16r8 | Q2a | Controle LoRA 16b r=8 | 1 | L | 0 | 1 | — | N/A | — | N/A | 16b | 2e-5 | 8 | 1 | 5 | ✓ | ✓ | ✓ |
 | c | Q1 | Baseline Full FT 16b direto | 1 | F | 1 | 0 | — | N/A | — | N/A | 16b | 5e-6 | N/A | 1 | 5 | ✓ | ✓ | ✓ |
 | d1 | Q2a,Q3a | CL disj. FF→LoRA (FF precoce) | 4 | F→L→L→L | 1 | 3 | ↑ | disj. | troca | real | misto | 5e-6/2e-5 | 16 | 1 | 5 | ✓ | ✓ | ✓ |
 | d2 | Q2a,Q3a | CL disj. LoRA→FF (FF tardio) | 4 | L→L→L→F | 1 | 3 | ↑ | disj. | troca | real | misto | 5e-6/2e-5 | 16 | 1 | 5 | ✓ | ✓ | ✓ |

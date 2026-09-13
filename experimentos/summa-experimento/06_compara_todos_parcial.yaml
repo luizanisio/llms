@@ -66,12 +66,18 @@ modelos_comparacao:
     alias: "B"
     familia: "Qwen-7B"
     pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b)"
-  # --- B16: LoRA 16b direto, dados completos, warmup 100 (sem CL) ---
-  # - arquivo: "saida/saida_qwen7b(b16)_teste.parquet"
-  #   rotulo: "Qwen7B(b16)"
-  #   alias: "B16"
-  #   familia: "Qwen-7B"
-  #   pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b16)"
+  # --- B16: LoRA 16b direto, dados completos (sem CL) ---
+  - arquivo: "saida/saida_qwen7b(b16)_teste.parquet"
+    rotulo: "Qwen7B(b16)"
+    alias: "B16"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b16)"
+  # --- B16R8: LoRA 16b r=8 direto, dados completos (sem CL) ---
+  - arquivo: "saida/saida_qwen7b(b16r8)_teste.parquet"
+    rotulo: "Qwen7B(b16r8)"
+    alias: "B16R8"
+    familia: "Qwen-7B"
+    pasta_treinamento: "treinos/Qwen2.5-7B-Instruct(b16r8)"
   # --- C: Full FT 16b direto, dados completos (sem CL) ---
   - arquivo: "saida/saida_qwen7b(c)_teste.parquet"
     rotulo: "Qwen7B(c)"

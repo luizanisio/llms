@@ -1,0 +1,155 @@
+# Executar com: python ../../src/treinar_unsloth.py --treinar 04_treinar_b16r8.yaml
+# Executar com: python ../../src/treinar_unsloth.py --datasets 04_treinar_b16r8.yaml
+
+# ==========================================================================
+# CONFIGURAÇÃO DE TREINAMENTO - Qwen2.5-7B-Instruct (Direto / sem Curriculum)
+# ==========================================================================
+# Ambiente: H100 80GB (1 GPU via Slurm)
+# Modo: curriculum (etapa única, treino direto)
+# Protocolo B16R8: Controle do B — LoRA r=8 em 16 bits (isola o efeito do posto do adaptador)
+# ==========================================================================
+
+#| =========================================================================
+#| MISCELÂNEA
+#| =========================================================================
+#| Configurações diversas (logs, variáveis de ambiente).
+misc:
+  pastas_base: 
+    - /students/luiz.abatitucci/llms/experimentos/summa-experimento
+    - /mnt/d/wsl_dev/llms/experimentos/summa-experimento
+    - /opt/app-root/src/luiz/llms/experimentos/summa-experimento
+  pastas_modelos:  
+    - /students/luiz.abatitucci/models
+    - /mnt/d/wsl_ollama/hf-models
+    - /opt/app-root/src/luiz/llms/_models
+
+#   log_level: DEBUG
+#   env_chave_criptografia: CHAVE_CRIPT
+
+#| =========================================================================
+#| CURRICULUM
+#| =========================================================================
+#| Cada etapa corresponde a uma divisão do dataset com parâmetros de treino.
+#| O campo 'arquivo' é o CSV de divisão (equivalente a pastas.divisao.arquivo).
+curriculum:
+  #| Saida: Especifica o "Gold Dataset", ou seja, os resultados esperados no gabarito
+  saida:
+    #| Caminho do arquivo parquet que contém as respostas esperadas
+    dataframe: saida/saida_or_235b.parquet
+    #| Nome da coluna que contém o JSON de resposta
+    dataframe_col: resposta
+    #| Nome da coluna que contém o identificador do item
+    dataframe_id: chave
+    #| Formato estruturado esperado
+    formato: json
+    texto_criptografado: false
+
+  #| Entrada: Especifica os dados que o modelo vai receber como prompt
+  entrada:
+    #| Arquivo parquet com o texto fonte a ser processado
+    dataframe: dados/integras_experimento_summa_novos.parquet
+    dataset_filtro: {"fold": "<=10"}
+    #| Nome da coluna que contém o texto (prompt)
+    dataframe_col: integra
+    #| Nome da coluna que contém o identificador do item
+    dataframe_id: seq_documento_acordao
+    #| Arquivo TXT com o template que dita como o texto bruto será empacotado
+    prompt_template: dados/prompt_summa_raw.txt
+    tag_texto: '<<--TEXTO-->>'
+    texto_criptografado: false
+    prompt_criptografado: false
+
+  validacao:
+    exigir_json_valido: true
+    #| exigir_ids_pareados: Validação estrita de pares. Se `true`, o treinamento será interrompido com erro se houver IDs na entrada sem correspondente na saída (gold dataset) ou se existirem dados pareados ausentes no arquivo de divisão (CSV). Se `false`, o sistema ignora as sobras e treina apenas com os itens em comum (interseção), útil quando a entrada possui itens extras que ainda não têm gabarito na saída.
+    exigir_ids_pareados: false
+
+  #| Divisao: Define as etapas do treinamento (o currículo em si)
+  divisao:
+    #| Divisão principal, pois é um treinamento direto de etapa única
+  - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
+      #dataset_filtro: {"dificuldade": "facil"}
+    alias: "completo"
+    tipo: "lora"
+      #| Número de vezes que o modelo verá o dataset (epochs)
+    pace_epochs: 4
+      #| Limite de tokens da janela de contexto para este dataset
+      #max_seq_length: 8192
+
+#| =========================================================================
+#| MODELO
+#| =========================================================================
+#| Configurações do modelo base e diretório de saída.
+modelo:
+  #| Caminho do modelo pré-treinado usado como fundação
+  base_model_name: Qwen2.5-7B-Instruct
+  #| Diretório final onde os pesos atualizados (adaptador LoRA) serão salvos
+  saida: treinos/Qwen2.5-7B-Instruct(b16r8)
+  #| Mapeamentos úteis se o modelo for servido via Ollama após o treinamento
+  ollama: Qwen2.5-7B-Instruct(b16r8):latest
+  ollama_base: qwen2.5:7b
+  ollama_url:
+
+#| =========================================================================
+#| TREINAMENTO
+#| =========================================================================
+#| Configurações de hiperparâmetros (Unsloth).
+treinamento:
+  flash_attention_2: true   # Atenção O(n) em VRAM em vez de O(n²)
+  full_com_sdpa: true       # Permite fallback para SDPA se o flash_attention_2 não puder ser ativado, salvando VRAM no modo Full FT.
+  liger_kernel: true        # Fused cross-entropy, RoPE, RMSNorm (~40% menos pico de VRAM)
+
+  eval_steps: 20%
+
+  #| Configuração do tamanho do lote (batch). Lote por GPU é 2, com acumulação de 8.
+  batch_size:
+    efetivo: 16
+    batch_size: 1
+  grad_batch_size: 8
+
+  #| Número total de épocas (passagens pelo dataset completo)
+  num_train_epochs: 4
+  max_seq_length: 32768
+  validar_max_seq_length: true
+  #| Remove os exemplos de treino e validação que ultrapassam o limite definido
+  filtrar_max_seq_length: true
+
+  #| Taxa de aprendizado base, otimizada para LoRA
+  #learning_rate: 0.0002
+  learning_rate: 2e-05
+  save_checkpoints: true
+  resume_from_checkpoint: true
+  warmup_steps: 5
+  weight_decay: 0.01
+  optim: adamw_8bit
+
+  #| Curva de decaimento da taxa de aprendizado (suaviza nos passos finais)
+  lr_scheduler_type: cosine
+  seed: 3407
+
+  #| Realiza o treinamento em 16-bits (isola o efeito da quantização NF4 do protocolo B)
+  nbits: 16
+
+  #| Aplica o aprendizado apenas nos tokens da resposta, ignorando o prompt do usuário
+  train_on_responses_only: true
+
+#| =========================================================================
+#| LORA (Low-Rank Adaptation)
+#| =========================================================================
+#| Configura a técnica de Parameter-Efficient Fine-Tuning.
+lora:
+  #| Dimensão da atualização de pesos. 8 para testar o efeito do posto reduzido.
+  r: 8
+  #| Fator de escala, geralmente o dobro do rank.
+  alpha: 16
+  dropout: 0.05
+
+  #| Conecta os adaptadores em todas as projeções lineares para melhorar a expressividade.
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
