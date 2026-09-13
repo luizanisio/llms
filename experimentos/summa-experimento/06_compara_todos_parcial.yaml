@@ -424,10 +424,10 @@ estatistica:
     # os valores de `estatisticas/00_rope_sugerido.md` (a menor margem sob a qual
     # TODOS os pares de réplicas atingem P(equivalência) >= `limiar`).
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.
-    rope: 0.01               # PROVISÓRIO
-    # rope_por_campo:        # transcrever de 00_rope_sugerido.md
-    #   Likert: 0.0000
-    #   MetaDados: 0.0000
+    rope: 0.0118
+    rope_por_campo:
+      Likert: 0.0108
+      MetaDados: 0.0118
 
     # Likert e MetaDados são os alvos de interesse das comparações pareadas.
     campos:

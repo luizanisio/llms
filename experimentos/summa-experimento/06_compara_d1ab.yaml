@@ -231,10 +231,10 @@ estatistica:
     #   3) rodar de novo — a calibração está confirmada quando todos os pares de
     #      réplicas saem como "equivalentes".
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.
-    rope: 0.01               # PROVISÓRIO — substituir pelo valor sugerido
-    # rope_por_campo:        # transcrever de 00_rope_sugerido.md
-    #   Likert: 0.0000
-    #   MetaDados: 0.0000
+    rope: 0.0118
+    rope_por_campo:
+      Likert: 0.0108
+      MetaDados: 0.0118
 
     # Likert e MetaDados são os alvos de interesse das comparações pareadas.
     campos:
