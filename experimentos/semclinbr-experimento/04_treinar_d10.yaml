@@ -11,6 +11,9 @@
 #           Espelho reverso de D8 para isolar o efeito da direção do CL.
 # Pergunta: Q4 (a direção do currículo importa?)
 # Comparar: d10 vs d8 (Q4 acumulado), d10 vs b (anti-CL vs baseline)
+# Orçamento: (>7 = 0,3N) × 2 + (>3 = 0,7N) × 2 + completo N × 2 = 4N instâncias —
+#            pareado com D8 (espelho reverso), para que o contraste de Q5 isole
+#            a direção do currículo sem carregar diferença de orçamento.
 # Ambiente: H100 80GB (1 GPU via Slurm)
 # ==========================================================================
 
@@ -62,16 +65,16 @@ curriculum:
     dataset_filtro: {"dificuldade_int": ">7"}
     alias: "difícil"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: dados/divisao_Gold_Qwen7B.csv
     dataset_filtro: {"dificuldade_int": ">3"}
     alias: "médio-ac"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: dados/divisao_Gold_Qwen7B.csv
     alias: "completo"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
 
 #| =========================================================================
 #| MODELO

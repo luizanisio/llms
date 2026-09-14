@@ -50,21 +50,21 @@ curriculum:
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
   - arquivo: dados/divisao_Qwen235b_Qwen7b.csv
     alias: "completo"
     tipo: "lora"
-    pace_epochs: 4
+    pace_epochs: 2
 
 modelo:
   base_model_name: Qwen2.5-7B-Instruct
