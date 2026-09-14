@@ -88,8 +88,6 @@ Esse arquivo pode ser usado diretamente para o arquivo yaml de treinamento para 
 O modelo-alvo é o **Qwen2.5-7B-Instruct**, que permite validar o framework CL+PT em um modelo de maior capacidade que o experimento PubMed (1.5B), testando escalabilidade.
 
 > 📖 **A malha completa é a mesma dos três experimentos**: 28 protocolos de treinamento (`b`, `c`, `b16` e `d1`–`d25`) + o modelo sem ajuste (`A`), mais o controle auxiliar `b16r8` e as réplicas de calibração `d1a`/`d1b`. O mapa completo, as seis questões de pesquisa e os 12 recortes estão em [README_protocolos.md](../README_protocolos.md) e na tabela gerada automaticamente [RESUMO_EXPERIMENTOS.md](../RESUMO_EXPERIMENTOS.md). As tabelas abaixo cobrem apenas as cinco camadas iniciais (`b`, `c`, `d1`–`d10`); os protocolos `b16`, `b16r8`, `d11`–`d25`, `d1a` e `d1b` seguem os YAMLs homônimos do PubMed/SemClinBr.
->
-> ⚠️ Pendência (set/2026): `04_treinar_b16.yaml` e `04_treinar_b16r8.yaml` ainda não existem no SUMMA — criar a partir dos do PubMed (mesmos parâmetros; `max_seq_length: 32768`, `batch_size: 1`).
 
 As cinco camadas iniciais:
 
@@ -158,7 +156,7 @@ Os relatórios temáticos foram consolidados em um único arquivo com recortes i
 
 | Arquivo | Modelos incluídos | Propósito |
 |---|---|---|
-| `06_compara_todos.yaml` | A, b, c, b16, D1–D25 | Relatório completo: 12 recortes (Q1–Q6) + `Panorama_Geral` (descritivo) |
+| `06_compara_todos.yaml` | A, b, b16, b16r8, c, D1–D25 | Relatório completo: 12 recortes (Q1–Q6) + `Panorama_Geral` (descritivo) |
 | `06_compara_todos_parcial.yaml` | idem, com os protocolos ainda em treinamento comentados | Relatório incremental |
 | `06_compara_d1ab.yaml` | D1, D1a, D1b | Calibração da ROPE por campo (`00_rope_sugerido.md`) — transcrever para `rope_por_campo` |
 
@@ -183,6 +181,124 @@ Comparamos as extrações geradas contra o gabarito do professor (Qwen3-235B-A22
 # Exemplo:
 python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
 ```
+
+---
+
+# Passo 07 - Validação out-of-time (documentos de 2026)
+
+O SUMMA é o único dos experimentos com um conjunto posterior ao corte de
+treinamento dos modelos envolvidos: o **fold 12**, com acórdãos publicados em
+25/05/2026. Esta seção descreve como ele é usado.
+
+## 7.1 Por que ele existe e onde ele está hoje
+
+Todos os 32 YAMLs de treino e os 31 de extração de teste declaram
+`dataset_filtro: {"fold": "<=10"}` no bloco `curriculum.entrada` / `entrada.filtro`.
+O filtro atua no carregamento, antes de qualquer etapa, e é por isso que o corpus
+efetivo do experimento é **19.712** e não as 22.155 linhas do arquivo de divisão:
+
+| Conjunto | Na divisão | Após `fold <= 10` |
+|---|---:|---:|
+| Treino | 15.508 | **13.788** |
+| Validação | 2.217 | **1.976** |
+| Teste | 4.430 | **3.948** |
+| **Total** | 22.155 | **19.712** |
+
+Os 2.443 descartados são os folds 11 e 12. O **fold 12 tem 471 documentos**, todos
+com gabarito do professor (Qwen3-235B) já gerado e JSON válido — nenhum deles
+entrou em treino, validação ou teste de nenhum protocolo.
+
+> ⚠️ **A coluna `alvo` do fold 12 é lixo.** O sorteio da divisão marcou 327 como
+> treino, 48 como validação e 94 como teste, mas o filtro `fold <= 10` os removeu
+> antes de qualquer uso. Os **471 são igualmente inéditos**. Filtrar por
+> `alvo: teste` aqui reduziria o conjunto a 94 documentos e jogaria fora 80% do
+> poder estatístico sem nenhum ganho.
+
+## 7.2 Desenho: duas análises independentes
+
+O fold 12 **não é somado** ao conjunto de teste. Somar os 471 aos 3.948 estreitaria
+o posterior em apenas ~5% (√(3948/4419) = 0,945) e, em troca, eliminaria a
+possibilidade de qualquer afirmação out-of-time. São duas análises separadas, cada
+uma com sua própria ROPE:
+
+| | Análise principal | Confirmatória out-of-time |
+|---|---|---|
+| Documentos | 3.948 (fold ≤ 10, `alvo: teste`) | 471 (fold 12, **todos**) |
+| Período | 2022–2024 | 2026 (posterior ao cutoff) |
+| Recortes | os 12 — 104 contrastes | 2 pré-especificados — 12 contrastes |
+| Protocolos | todos | `B`, `B16`, `C`, `D16`, `D17`, `D18`, `D19`, `D20` |
+| ROPE | calibrada em D1/D1a/D1b sobre **esses 3.948** | recalibrada em D1/D1a/D1b sobre **esses 471** |
+| Papel | os vereditos do trabalho | replicação sob documentos não memorizáveis |
+
+**Por que só dois recortes.** Rodar os 104 contrastes em 471 documentos gastaria o
+holdout em multiplicidade. Os dois escolhidos carregam as afirmações centrais e já
+trazem o próprio controle:
+
+- **`Q2a_cl_controlado`** (`B16`, `D16`, `D18`, `D17`) — ordenação × efeito de bloco
+  × custo de fronteira. O `D18` (blocos aleatórios) é o controle negativo: se a
+  ordenação replicar em 2026 e os blocos aleatórios não, a confirmação é forte.
+- **`Q4b_unfreeze`** (`B`, `C`, `D20`, `D19`) — sinergia CL+PT por descongelamento.
+
+**Por que recalibrar a ROPE.** O desvio-padrão posterior escala com 1/√n: de 3.948
+para 471 ele fica ~2,9× mais largo. Aplicar aos 471 a ROPE calibrada no conjunto
+grande faria quase todos os pares saírem `incerto` — o que **pareceria falha de
+replicação quando é só falta de poder**. A ROPE de 2026 será mais larga, e isso
+precisa ser declarado antes de rodar: a análise confirmatória detecta efeitos
+grandes e devolve `incerto` para os moderados.
+
+## 7.3 Roteiro
+
+1. **Criar os YAMLs de extração de 2026** para os 8 protocolos dos recortes
+   (`B`, `B16`, `C`, `D16`, `D17`, `D18`, `D19`, `D20`) e para as 3 réplicas da
+   calibração (`D1`, `D1a`, `D1b`) — 11 arquivos. Partir dos
+   `05_extracao_*_teste.yaml` e trocar **apenas** o bloco de filtro e a saída:
+   ```yaml
+   entrada:
+     filtro:
+       dataset_filtro: {"fold": 12}   # sem filtro_externo: a coluna alvo não vale aqui
+   saida:
+     arquivo: "saida/saida_qwen7b(d19)_2026.parquet"
+   ```
+2. **Rodar as 11 extrações** sobre os 471 documentos (`util_vllm_batch.py`).
+   Nenhum retreino: os pesos são os mesmos da análise principal.
+3. **Calibrar a ROPE de 2026** com um `06_compara_d1ab_2026.yaml` — cópia do
+   `06_compara_d1ab.yaml` apontando para as saídas `*_2026.parquet`, com
+   `calibracao_rope: true` e o mesmo filtro `{"fold": 12}`. Transcrever
+   `00_rope_sugerido.md` → `rope_por_campo`.
+4. **Rodar a comparação** com um `06_compara_2026.yaml` contendo só os recortes
+   `Q2a_cl_controlado` e `Q4b_unfreeze` e a ROPE do passo 3.
+5. **Reportar os dois períodos lado a lado**, mesmos contrastes em duas colunas
+   (2022–2024 / 2026), marcando que a coluna de 2026 opera sob ROPE mais larga.
+   Distinguir no texto `incerto por poder` de `equivalente` — são leituras
+   diferentes.
+
+> O passo 4 é **de uso único**. O valor do fold 12 vem de ele nunca ter
+> participado de nenhuma decisão. Rodar, não gostar do resultado e reselecionar
+> protocolos ou recortes destrói o holdout.
+
+## 7.4 Leitura dos resultados
+
+**Deriva de distribuição não invalida os contrastes.** Acórdãos de 2026 podem
+diferir dos de 2022–2024 por outros motivos além do tempo (matéria, redação,
+composição do colegiado). Mas a análise é sobre **diferenças pareadas por
+documento** entre protocolos: uma deriva que afete todos os protocolos igualmente
+cancela no delta. O que ela muda são os escores absolutos, não os contrastes — a
+menos que interaja com o protocolo, o que já seria achado. Reportar os escores
+absolutos dos dois períodos torna a deriva visível e mensurável.
+
+**Não comparar escores absolutos entre períodos sem normalizar por faixa.** A
+estratificação de dificuldade do fold 12 é 162 fácil / 179 médio / 128 difícil
+(34/38/27%), contra os 30/40/30 do conjunto principal, porque os percentis foram
+calculados globalmente. Isso não afeta os contrastes (pareados dentro do mesmo
+conjunto), mas desaconselha a leitura direta entre períodos.
+
+**A referência de 2026 é o professor, não humano.** O que a análise confirma é que
+*a concordância com o professor persiste em documentos posteriores ao cutoff* — não
+que a qualidade persiste. Mesma ressalva de referência fraca da análise principal.
+
+**O que isso entrega.** Um controle de contaminação out-of-time sobre documentos
+que nenhum dos modelos envolvidos poderia ter memorizado, respondendo
+antecipadamente à crítica de que os ganhos do currículo vieram do pré-treino.
 
 ---
 

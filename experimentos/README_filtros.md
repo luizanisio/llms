@@ -250,7 +250,7 @@ Aqui o filtro é **ausente de propósito**: a dificuldade precisa ser calculada 
 Objetivo: comparar N modelos treinados contra o professor, só no split reservado.
 
 ```yaml
-# 06_compara_ablacoes.yaml
+# 06_compara_todos.yaml
 configuracao_comparacao:
   filtro:
     arquivo: "dados/pubmed-rct-20k.parquet"

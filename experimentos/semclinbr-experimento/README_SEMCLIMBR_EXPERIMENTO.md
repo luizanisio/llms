@@ -353,7 +353,10 @@ teste formal sustentando a comparação entre experimentos.
    o conceito negado. `auditar_direcao_relacoes()` resolve com um passe nos XMLs;
    ajuste as descrições no esquema se a convenção for a inversa.
 2. **Tamanho do corpus.** 997 documentos efetivos (ver item 6), contra 19,7k do
-   SUMMA e 20k do PubMed. Com split 697/103/197 (treino/validação/teste) e 3
+   SUMMA e 20k do PubMed. O número do SUMMA é o corpus **efetivo**: a divisão
+   tem 22.155 linhas, mas todos os YAMLs de treino e de extração aplicam
+   `dataset_filtro: {"fold": "<=10"}` em `curriculum.entrada`, reservando os
+   folds 11 e 12 fora do experimento — restam 19.712 (13.788 / 1.976 / 3.948). Com split 697/103/197 (treino/validação/teste) e 3
    faixas, cada fase curricular fica com ~200 instâncias — pouco para full
    fine-tuning, com alta variância entre execuções esperada. A variância é medida
    pelo trio D1/D1a/D1b e absorvida pela ROPE calibrada (previsão declarada:

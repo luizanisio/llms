@@ -12,7 +12,7 @@ A garantia de isolamento do conjunto de teste (*data leakage prevention*) é um 
 1. **Extração e Preservação Inicial:** O script `util_pubmed.py` constrói o `pubmed-rct-20k.parquet` lendo os CSVs originais do PubMed. Ele preserva a flag de origem criando uma coluna `split` (`train`, `dev`, `test`), e salva simultaneamente o gabarito das divisões em `dados/divisao_pubmed.csv` (contendo `id_arquivo` e `alvo`).
 2. **Gabarito (Goldset) e Inferência Base:** Como o PubMed-RCT já possui o "Ground Truth" (Goldset) publicado e verificado na base original, não utilizamos um "Modelo Professor" para gerar as predições ideais. A extração inicial do Baseline (Qwen1.5B zero-shot) será comparada diretamente contra esse gabarito real da base.
 3. **Mapeamento de Dificuldades (O Segredo do CL):** Rodamos a comparação primária (`03_compara_prof_full.yaml`), que analisa o quão distante as predições do modelo baseline (Qwen1.5B) ficaram do Goldset. **Importante:** Nesse YAML, o parâmetro `arquivo_referencia` DEVE apontar para o `divisao_pubmed.csv`. Isso garante que o framework absorva as métricas de "Dificuldade" (fácil, médio, difícil) baseadas no Baseline, mas *respeite* a marcação original dos alvos em vez de sortear uma nova divisão aleatória de treino.
-4. **Treinamento e Filtragem:** Por fim, os currículos em `04_treinar_*.yaml` consomem o CSV gerado na comparação (ex: `divisoes/divisao_Qwen1.5B.csv`). Eles treinam apenas com as linhas marcadas como `alvo: treino`, criando fases lógicas baseadas na coluna `dificuldade`.
+4. **Treinamento e Filtragem:** Por fim, os currículos em `04_treinar_*.yaml` consomem o CSV gerado na comparação (`dados/divisao_Professor_Qwen1_5B.csv`). Eles treinam apenas com as linhas marcadas como `alvo: treino`, criando fases lógicas baseadas na coluna `dificuldade`.
 
 ---
 
@@ -34,16 +34,15 @@ Isso gerará os arquivos prontos na pasta `dados/` (ex: `pubmed-rct-20k.parquet`
 ### 3. Extração de Dados com Modelos Base (Baseline)
 Antes de treinar, extraímos os dados usando o modelo original (zero-shot, Protocolo A) para gerar o baseline de comparação. O script de job submete a inferência no HPC utilizando a configuração do arquivo YAML.
 ```bash
-sbatch job_export_1_5b.sh
-# Internamente chama o util_vllm_batch.py com a config 02_pubmed_rct_1_5b.yaml
+python ../../src/util_vllm_batch.py --config 02_pubmed_rct_1_5b.yaml
 ```
-Também é possível rodar diretamente pela linha de comando em uma máquina com GPU. Ajuste os caminhos no arquivo yaml se necessário.
+Ajuste os caminhos no arquivo yaml se necessário.
 
 ### 4. Treinamento
 Os diferentes protocolos de treinamento (B, C, D1, D2, etc.) estão mapeados em arquivos YAML específicos. Submeta o job de treinamento desejado para o gerenciador Slurm.
-*Exemplo para treinar o modelo do protocolo D1 (que internamente aponta para `04_treinar_d1.yaml`):*
+*Os scripts `job_treinar_*.sh` levam uma lista de YAMLs na variável `CONFIGS` (ex.: `job_treinar_bc.sh` para os baselines, `job_treinar_d0509.sh` para D5–D9, `job_treinar_d1ab.sh` para as réplicas):*
 ```bash
-sbatch job_treinar_d12.sh
+sbatch job_treinar_bc.sh
 ```
 *Dica: O script `job_treinar_*.sh` aloca a GPU e inicia o processo `treinar_unsloth.py`. Os logs podem ser acompanhados na pasta `saidas/`.*
 
@@ -242,17 +241,26 @@ O modelo-alvo é o **Qwen 2.5 1.5B Instruct**, escolhido porque o domínio biom�
 em inglês é genuinamente difícil para modelos pequenos sem fine-tuning — garantindo
 espaço real de ganho para o CL demonstrar efeito.
 
-O experimento executa a **malha completa** (28 protocolos de treinamento `b`, `c`, `b16`, `d1`–`d25` + `A`, mais `b16r8` e as réplicas `d1a`/`d1b` — 30 treinamentos). As tabelas abaixo cobrem as camadas iniciais; o mapa completo está em [README_protocolos.md](../README_protocolos.md):
+O experimento executa a **malha completa** (28 protocolos de treinamento `b`, `c`, `b16`, `d1`–`d25` + `A`, mais `b16r8` e as réplicas `d1a`/`d1b` — 31 treinamentos). As tabelas abaixo cobrem as camadas iniciais; o mapa completo está em [README_protocolos.md](../README_protocolos.md):
 
 #### Perguntas de pesquisa
 
-| Pergunta | Descrição |
-|---|---|
-| **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? |
-| **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto? |
-| **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos? |
-| **Q4** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? |
-| **Q5** | Pace do currículo: progressão suave (unitária) melhora sobre saltos? |
+A numeração é a mesma dos três experimentos, definida pelos recortes de
+`06_compara_todos.yaml` (ver [README_protocolos.md §4](../README_protocolos.md)):
+
+| Pergunta | Descrição | Recortes |
+|---|---|---|
+| **Q1** | Efeito do ajuste fino: FT (qualquer variante) produz ganho sobre baseline zero-shot? | `Q1_ajuste_fino` |
+| **Q2** | Efeito do CL: a progressão de dificuldade melhora sobre FT direto — e o ganho persiste quando a segmentação é controlada? | `Q2a_cl_controlado`, `Q2b_cl_puro`, `Q2c_granularidade` |
+| **Q3** | Direção do escalonamento: FF→LoRA vs LoRA→FF produz desempenhos distintos, com e sem CL? | `Q3a_direcao_com_cl`, `Q3b_direcao_sem_cl` |
+| **Q4** | Decomposição: o ganho vem do CL, do escalonamento ou da combinação? | `Q4a_decomposicao`, `Q4b_unfreeze` |
+| **Q5** | Direção do currículo: a ordem fácil→difícil importa vs difícil→fácil? | `Q5_anti_curriculo` |
+| **Q6** | Custo da fronteira entre etapas: desaparece quando a fronteira é virtual? | `Q6a_fusao`, `Q6b_fusao_granular`, `Q6c_transicao_regime` |
+
+> ⚠️ As cinco camadas e a matriz de comparações abaixo cobrem apenas os protocolos
+> `b`, `c`, `d1`–`d12`, que foram a primeira leva do experimento. Os recortes
+> completos — incluindo `b16`, `d13`–`d25` e os controles de fronteira — estão em
+> [README_protocolos.md](../README_protocolos.md).
 
 #### Camada 1 — Baselines (sem CL, sem escalonamento)
 
@@ -309,7 +317,7 @@ O design forma um fatorial quase completo em 3 dimensões:
 
 #### Matriz de comparações por pergunta
 
-**Q1 — Efeito do ajuste fino:**
+**Q1 — Efeito do ajuste fino** — recorte `Q1_ajuste_fino`:
 
 | Comparação | Interpretação |
 |---|---|
@@ -317,7 +325,7 @@ O design forma um fatorial quase completo em 3 dimensões:
 | A vs c | Efeito do FF direto |
 | A vs D1/D2 | Efeito do melhor protocolo CL |
 
-**Q2 — Efeito do CL (decomposição):**
+**Q2b/Q4a — Efeito do CL (decomposição)** — recortes `Q2b_cl_puro`, `Q4a_decomposicao`:
 
 | Comparação | O que isola | Interpretação |
 |---|---|---|
@@ -327,7 +335,7 @@ O design forma um fatorial quase completo em 3 dimensões:
 | D7 vs D1 | Escalonamento sobre CL | O escalonamento adiciona valor ao CL? |
 | D7 vs D8 | Pace por etapas vs acumulado | Qual pace funciona melhor? |
 
-**Q3 — Direção do escalonamento:**
+**Q3 — Direção do escalonamento** — recortes `Q3a_direcao_com_cl`, `Q3b_direcao_sem_cl`:
 
 | Comparação | Contexto |
 |---|---|
@@ -335,7 +343,7 @@ O design forma um fatorial quase completo em 3 dimensões:
 | D3 vs D4 | Com CL acumulado |
 | D5 vs D6 | Sem CL (controle) |
 
-**Q4 — Direção do currículo (anti-CL):**
+**Q5 — Direção do currículo (anti-CL)** — recorte `Q5_anti_curriculo`:
 
 | Comparação | O que isola | Interpretação |
 |---|---|---|
@@ -344,7 +352,7 @@ O design forma um fatorial quase completo em 3 dimensões:
 | D9 vs b | Anti-CL vs baseline | Anti-CL pelo menos melhora sobre FT direto? |
 | D10 vs b | Anti-CL acum vs baseline | Anti-CL acum melhora sobre FT direto? |
 
-**Q5 — Granularidade do currículo (progressão suave):**
+**Q2c — Granularidade do currículo (progressão suave)** — recorte `Q2c_granularidade`:
 
 | Comparação | O que isola | Interpretação |
 |---|---|---|
@@ -355,18 +363,20 @@ O design forma um fatorial quase completo em 3 dimensões:
 
 #### Arquivos de comparação
 
+Os relatórios temáticos foram consolidados em um único arquivo com recortes
+internos (ver [README_protocolos.md §5](../README_protocolos.md)):
+
 | Arquivo | Modelos incluídos | Propósito |
 |---|---|---|
-| `06_compara_experimentais.yaml` | A, b, c, D1, D2, D3, D4, D11, D12 | Q1 + Q2 + Q3 + Q5 (experimento principal) |
-| `06_compara_ablacoes.yaml` | A, b, c, D5, D6, D7, D8 | Decomposição CL vs escalonamento |
-| `06_compara_ordem_cl.yaml` | A, b, D7, D8, D9, D10 | Q4 (efeito da direção do currículo) |
-| `06_compara_ordem_pt.yaml` | A, b, c, D5, D6 | Q3 (efeito da direção do escalonamento) |
-| `06_compara_todos.yaml` | A, b, c, D1–D12 | Panorama completo |
+| `06_compara_todos.yaml` | A, b, b16, b16r8, c, D1–D25 | Relatório completo: 12 recortes (Q1–Q6) + `Panorama_Geral` (descritivo) |
+| `06_compara_d1ab.yaml` | D1, D1a, D1b | Calibração da ROPE por campo (`00_rope_sugerido.md`) |
 
 #### Controle de volume de treinamento entre estratégias de pacing
 
-Todos os protocolos utilizam `pace_epochs=2` por estágio, resultando em volume total
-de treinamento equivalente entre as duas estratégias de pacing:
+Os protocolos segmentados usam `pace_epochs=2` por estágio e os baselines de etapa
+única (`b`, `b16`, `b16r8`, `c`) usam 4 épocas, resultando em volume total equivalente
+entre as duas estratégias de pacing. As exceções declaradas são `d14` e `d15`, cujo
+warm-up LoRA roda 4 épocas sobre o dataset inteiro antes do currículo:
 
 | Protocolo | Estágios | Cálculo (% dataset × epochs) | Total |
 |---|---|---|---|

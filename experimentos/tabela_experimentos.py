@@ -56,9 +56,12 @@ IDS_PROTOCOLOS = [
 # ===========================================================================
 # MAPA ESTÁTICO SEMÂNTICO
 # ===========================================================================
-# Campos que NÃO podem ser extraídos dos YAMLs: grupo de pesquisa, direção
-# do currículo (CL), modo do currículo, tipo de Progressive Training (PT),
-# e descrição curta.
+# Campos que NÃO podem ser extraídos dos YAMLs: direção do currículo (CL),
+# modo do currículo, tipo de Progressive Training (PT) e descrição curta.
+#
+# A coluna 'grupo' NÃO é mantida aqui: é derivada em tempo de execução dos
+# recortes de `06_compara_todos.yaml` (ver derivar_grupos()). Mantê-la à mão
+# fazia a tabela divergir silenciosamente da definição real dos contrastes.
 #
 # Legenda CL: ↑=ascendente  ↓=anti-CL  ∼=aleatório  —=sem CL
 # Legenda Modo CL: disj.=disjunto  acum.=acumulado  gran.=granular
@@ -119,6 +122,93 @@ PROTOCOLOS = {
 
 
 # ===========================================================================
+# RECORTES E ORÇAMENTO (derivados, nunca mantidos à mão)
+# ===========================================================================
+
+def derivar_grupos() -> dict:
+    """Inverte os recortes de `06_compara_todos.yaml`: protocolo -> recortes.
+
+    Os recortes são a definição normativa dos contrastes; a coluna 'Grupo' da
+    tabela precisa sair deles, senão passa a contradizer a própria análise.
+    Os três experimentos declaram os mesmos recortes — divergência é erro e
+    vira warning.
+    """
+    mapas = {}
+    for exp_nome, exp_dir in EXPERIMENTOS.items():
+        caminho = exp_dir / '06_compara_todos.yaml'
+        if not caminho.exists():
+            continue
+        cfg = carregar_yaml(caminho) or {}
+        recortes = (cfg.get('estatistica') or {}).get('protocolos') or {}
+        mapas[exp_nome] = {k: v for k, v in recortes.items() if isinstance(v, list)}
+
+    if not mapas:
+        return {}
+
+    ref_nome, ref = next(iter(mapas.items()))
+    for exp_nome, m in mapas.items():
+        if m != ref:
+            print(f'⚠️  Recortes de {exp_nome} divergem de {ref_nome} '
+                  f'(06_compara_todos.yaml).', file=sys.stderr)
+
+    grupos = {}
+    for recorte, protos in ref.items():
+        curto = recorte.split('_')[0]          # Q2a_cl_controlado -> Q2a
+        for proto in protos:
+            grupos.setdefault(proto.lower(), []).append(curto)
+    return {k: ','.join(v) for k, v in grupos.items()}
+
+
+def _fracao_divisao(exp_dir, arquivo, filtro):
+    """Fração do split de treino coberta por um `dataset_filtro` de etapa."""
+    import csv
+    caminho = exp_dir / arquivo
+    if not caminho.exists():
+        return None
+    with open(caminho, encoding='utf-8') as f:
+        linhas = [r for r in csv.DictReader(f) if r.get('alvo') == 'treino']
+    if not linhas:
+        return None
+    if not filtro:
+        return 1.0
+    sel = linhas
+    for campo, valor in filtro.items():
+        if isinstance(valor, str) and valor[:2] in ('<=', '>=') or \
+           (isinstance(valor, str) and valor[:1] in ('<', '>', '=')):
+            op = valor[:2] if valor[:2] in ('<=', '>=', '==') else valor[:1]
+            alvo = float(valor[len(op):])
+            cmp = {'<=': lambda a: a <= alvo, '>=': lambda a: a >= alvo,
+                   '==': lambda a: a == alvo, '<': lambda a: a < alvo,
+                   '>': lambda a: a > alvo}[op]
+            sel = [r for r in sel if r.get(campo) not in (None, '') and cmp(float(r[campo]))]
+        else:
+            sel = [r for r in sel if r.get(campo) == str(valor)]
+    return len(sel) / len(linhas)
+
+
+def calcular_orcamento(cfg: dict, exp_dir) -> float:
+    """Orçamento de dados em dataset-equivalentes (N-eq): Σ (fração × épocas).
+
+    É o número que torna auditável se um contraste compara protocolos sob o
+    mesmo volume de dados. Sem ele, uma divergência de `pace_epochs` entre
+    experimentos passa despercebida na tabela.
+    """
+    curriculum = cfg.get('curriculum', {}) or {}
+    treinamento = cfg.get('treinamento', {}) or {}
+    divisao = curriculum.get('divisao') or []
+    epochs_global = treinamento.get('num_train_epochs', 1)
+    if not divisao:
+        return float(epochs_global)
+    total = 0.0
+    for etapa in divisao:
+        frac = _fracao_divisao(exp_dir, etapa.get('arquivo', ''), etapa.get('dataset_filtro'))
+        if frac is None:
+            return None
+        total += frac * etapa.get('pace_epochs', epochs_global)
+    return total
+
+
+# ===========================================================================
 # PARSER DE YAML
 # ===========================================================================
 
@@ -128,7 +218,7 @@ def carregar_yaml(caminho: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def extrair_parametros(cfg: dict) -> dict:
+def extrair_parametros(cfg: dict, exp_dir=None) -> dict:
     """
     Extrai parâmetros diferenciadores de um YAML de treinamento já carregado.
     Retorna um dict com os campos normalizados.
@@ -250,8 +340,11 @@ def extrair_parametros(cfg: dict) -> dict:
     lora_alpha = lora_cfg.get('alpha', '?')
     target_modules = lora_cfg.get('target_modules', [])
     train_resp_only = treinamento.get('train_on_responses_only', '?')
+    n_eq = calcular_orcamento(cfg, exp_dir) if exp_dir is not None else None
+
 
     return {
+        'n_eq': n_eq,
         'n_etapas': n_etapas,
         'sequencia': seq_tipos,
         'n_ff': n_ff,
@@ -276,6 +369,21 @@ def extrair_parametros(cfg: dict) -> dict:
         '_target_modules': sorted(target_modules) if isinstance(target_modules, list) else target_modules,
         '_train_resp_only': train_resp_only,
     }
+
+
+def chave_ordem(pid: str):
+    """Ordena b, b16, c, d1, d2, ... d25, d1a — numérico, não lexicográfico."""
+    try:
+        return (IDS_PROTOCOLOS.index(pid), pid)
+    except ValueError:
+        return (len(IDS_PROTOCOLOS), pid)
+
+
+def formatar_n_eq(v) -> str:
+    """N-equivalente arredondado: '4N', '11N'. '?' quando a divisão não foi lida."""
+    if v is None:
+        return '?'
+    return f'{round(v)}N'
 
 
 def formatar_lr(lr) -> str:
@@ -323,7 +431,7 @@ def varrer_experimentos() -> dict:
             if yaml_path.exists():
                 try:
                     cfg = carregar_yaml(yaml_path)
-                    params = extrair_parametros(cfg)
+                    params = extrair_parametros(cfg, exp_dir)
                     resultados[proto_id][exp_nome] = params
                 except Exception as e:
                     print(f'⚠️  Erro ao processar {yaml_path}: {e}', file=sys.stderr)
@@ -501,11 +609,14 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
     linhas.append('- **PT**: —=sem · troca=merge LoRA↔FF · unfreeze=descongelamento · gating=gating de LR')
     linhas.append('- **Fronteira**: real=reset otimizador · virtual=um único train() · N/A=etapa única')
     linhas.append('- **Precisão**: 4b=NF4 QLoRA · 16b=bf16 · misto=etapas FF 16b + LoRA 4b')
+    linhas.append('- **N-eq**: orçamento de dados em dataset-equivalentes (Σ fração × épocas)')
+    linhas.append('- **Grupo**: recortes de contraste de `06_compara_todos.yaml` · '
+                  '— = fora de todo recorte (só `Panorama_Geral`)')
     linhas.append('- **P/S/Su**: disponibilidade em Pubmed/SemClinBR/Summa')
     linhas.append('')
 
     # Cabeçalho da tabela
-    colunas = ['ID', 'Grupo', 'Descrição', '#Et.', 'Sequência', '#FF', '#L',
+    colunas = ['ID', 'Grupo', 'Descrição', '#Et.', 'N-eq', 'Sequência', '#FF', '#L',
                'CL', 'Modo CL', 'PT', 'Fronteira', 'Precisão', 'LR',
                'LoRA r', 'grad_norm', 'warmup', 'P', 'S', 'Su']
     linhas.append('| ' + ' | '.join(colunas) + ' |')
@@ -529,7 +640,7 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
             disponibilidade = ['✗'] * len(EXPERIMENTOS)
             linhas.append(
                 f'| {proto_id} | {meta.get("grupo","?")} | {meta.get("descricao","?")} | '
-                f'? | ? | ? | ? | {meta.get("cl","?")} | {meta.get("modo_cl","?")} | '
+                f'? | ? | ? | ? | ? | {meta.get("cl","?")} | {meta.get("modo_cl","?")} | '
                 f'{meta.get("pt","?")} | ? | ? | ? | ? | ? | ? | '
                 + ' | '.join(disponibilidade) + ' |'
             )
@@ -545,6 +656,7 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
             f'| {meta.get("grupo", "?")} '
             f'| {meta.get("descricao", "?")} '
             f'| {params["n_etapas"]} '
+            f'| {formatar_n_eq(params.get("n_eq"))} '
             f'| {params["sequencia"]} '
             f'| {params["n_ff"]} '
             f'| {params["n_lora"]} '
@@ -597,8 +709,18 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
     linhas.append('- **Precisão:** Protocolos com precisão "misto" têm etapas FF (sempre 16b) '
                   'e etapas LoRA (4b NF4). Cruzamentos entre grupos de precisão carregam '
                   '{efeito estudado + quantização} como diferença conjunta.')
-    linhas.append('- **Orçamento:** d16–d25 são calibrados em 4N instâncias (mesmo total de '
-                  'B com 4 épocas). Protocolos anteriores podem não seguir essa paridade.')
+    faixas = {}
+    for proto_id in IDS_PROTOCOLOS:
+        for exp_nome in EXPERIMENTOS:
+            p = resultados.get(proto_id, {}).get(exp_nome)
+            if p and p.get('n_eq') is not None:
+                faixas.setdefault(round(p['n_eq']), set()).add(proto_id)
+                break
+    desc = ' · '.join(f'**{n}N** ({", ".join(sorted(ids, key=chave_ordem))})'
+                      for n, ids in sorted(faixas.items()))
+    linhas.append(f'- **Orçamento (N-eq):** {desc}. Contrastes dentro de uma faixa '
+                  'são limpos; entre faixas carregam o orçamento junto e precisam '
+                  'declará-lo ao lado do resultado.')
     linhas.append('- **Fronteiras reais** resetam otimizador Adam e scheduler cosine. '
                   'Fronteiras virtuais (protocolos fundidos) mantêm trajetória contínua.')
     linhas.append('- **Gating ≠ Congelamento:** No d19/d20 blocos congelados não entram no '
@@ -636,6 +758,20 @@ def main():
     print()
 
     # 3. Verificar consistência
+    grupos = derivar_grupos()
+    if grupos:
+        for pid, meta in PROTOCOLOS.items():
+            if pid in grupos:
+                meta['grupo'] = grupos[pid]
+            elif meta.get('grupo') != 'Réplica':
+                # Sem recorte de contraste: entra apenas no Panorama_Geral.
+                # Nunca cair de volta num rótulo manual — foi assim que a
+                # coluna passou a contradizer os recortes.
+                meta['grupo'] = '—'
+        sem_recorte = [p for p in IDS_PROTOCOLOS if p not in grupos]
+        if sem_recorte:
+            print(f'   ℹ️  Fora de qualquer recorte de contraste: {", ".join(sem_recorte)}')
+
     print('🔎 Verificando consistência entre experimentos...')
     warnings_consistencia = verificar_consistencia(resultados)
     warnings_constantes = verificar_constantes(resultados)

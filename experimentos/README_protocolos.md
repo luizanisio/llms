@@ -13,14 +13,14 @@ Este documento centraliza a arquitetura dos experimentos: os objetivos de cada f
 - **Modelo Base:** `Qwen2.5-7B-Instruct` (28 blocos) — professor: `Qwen3-235B-A22B-2507` (OpenRouter, ZDR)
 - **Ambiente de Treino:** Cluster Slurm (H100 80GB) e H200 em treinos FF
 - **Detalhes Técnicos:** Textos muito extensos, exigindo contexto longo (`max_seq_length: 32768`), processados com lotes cuidadosos (`batch_size: 1`, `grad_batch_size: 16`).
-- **Protocolos disponíveis:** `b`, `c`, `d1`–`d25`, `d1a`, `d1b` (`b16`/`b16r8` a treinar — YAMLs a criar)
+- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (31 YAMLs — malha completa)
 
 ### 🩺 Pubmed-Experimento *(generalização do framework)*
 - **Objetivo:** Extração e classificação de partes (Background, Methods, Results, Conclusions) em abstracts médicos (RCTs) sobre o PubMed 20k.
 - **Modelo Base:** `Qwen2.5-1.5B-Instruct` (28 blocos)
 - **Ambiente de Treino:** Cluster Slurm (H100 80GB)
 - **Detalhes Técnicos:** Menor comprimento de contexto (`max_seq_length: 8192`), mas grande volume de amostras (`batch_size: 2`, `grad_batch_size: 8`).
-- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (malha completa executada)
+- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (31 YAMLs — malha completa)
 
 ### 🔬 Puil-Mini-Experimento
 - **Objetivo:** Validação local rápida da máquina de estados do código-fonte (transições entre QLoRA e Full Fine-tuning, recarregamentos de modelo, modo fusão, scripts utilitários).
@@ -33,7 +33,7 @@ Este documento centraliza a arquitetura dos experimentos: os objetivos de cada f
 - **Modelo Base:** `Qwen2.5-7B-Instruct` (o 1.5B foi usado apenas em testes iniciais — `02_semclinbr_1_5b.yaml`)
 - **Ambiente de Treino:** Cluster Slurm (H100 80GB)
 - **Detalhes Técnicos:** 997 notas efetivas (3 não anotadas descartadas), split 697/103/197, `max_seq_length: 12288`. Duas trilhas de avaliação sobre as mesmas saídas: `06_compara_todos.yaml` (ROUGE-L/2 em `Entidades`/`Relacoes`, análise bayesiana por recorte — comum aos três experimentos) e `07_avaliar_ner.py` (F1 strict/lenient/flexible/relaxed de NER, para comparação com CRF/BioBERTpt publicados).
-- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (em treinamento)
+- **Protocolos disponíveis:** `b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b` (31 YAMLs — malha completa)
 
 ### 📝 Summa-Qualifica *(trabalho inicial da qualificação)*
 - **Objetivo:** Versão preliminar do experimento Summa, utilizada durante a qualificação do mestrado. Mantida como referência histórica.
@@ -68,66 +68,66 @@ Legenda de fronteiras: **real** = nova execução de trainer (reset de otimizado
 | :-- | :-- | :-- | :-- |
 | **A** | Referência | Zero-shot, sem ajuste fino | todos |
 | **b** | Baseline FT | LoRA **4 bits**, r=16, direto, dados completos, execução única | todos |
-| **b16** | Controle de `b` | LoRA **16 bits**, r=16 — isola o erro de quantização NF4 | pubmed, semclinbr (summa: a treinar) |
-| **b16r8** | Controle de `b` | LoRA **16 bits**, r=8 — isola o posto do adaptador | pubmed, semclinbr (summa: a treinar) |
+| **b16** | Controle de `b` | LoRA **16 bits**, r=16 — isola o erro de quantização NF4 | todos |
+| **b16r8** | Controle de `b` | LoRA **16 bits**, r=8 — isola o posto do adaptador | todos |
 | **c** | Baseline FT | Full FT 16 bits direto, dados completos, execução única | todos |
 
-> Os controles `b16`/`b16r8` existem no pubmed e no semclinbr e serão treinados no summa (malha idêntica nos três). `b16` entra nos recortes `Q2a_cl_controlado` e `Q6a_fusao`: é a **execução única em LoRA 16b r=16** que permite ler `d16` e `d17` sem confundir fronteira/ordenação com precisão; `b16r8` (posto 8) é auxiliar e entra só no `Panorama_Geral`.
+> Os controles `b16`/`b16r8` existem nos três experimentos (malha idêntica). `b16` entra nos recortes `Q2a_cl_controlado` e `Q6a_fusao`: é a **execução única em LoRA 16b r=16** que permite ler `d16` e `d17` sem confundir fronteira/ordenação com precisão; `b16r8` (posto 8) é auxiliar e entra só no `Panorama_Geral`.
 
 ### CL + escalonamento por troca de regime (fronteiras reais)
 
 | ID | Etapas | O que testa | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d1** | FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | CL por etapas com FF precoce (capacidade decrescente) | ambos |
-| **d2** | LoRA-fácil → LoRA-médio → LoRA-difícil → FF-completo | CL por etapas com FF tardio (consolidação final) | ambos |
-| **d3** | FF-fácil → LoRA-(fácil+médio) → LoRA-tudo | Variante **acumulada** do d1 (replay elimina a etapa de consolidação) | ambos |
-| **d4** | LoRA-fácil → LoRA-(fácil+médio) → FF-tudo | Variante **acumulada** do d2 | ambos |
-| **d11** | FF(≤1) → LoRA(≤2) → … → LoRA(≤9) → LoRA-tudo | d3 com **pace granular**: 10 etapas, incremento unitário | ambos |
-| **d12** | LoRA(≤1) → LoRA(≤2) → … → LoRA(≤9) → FF-tudo | d4 com pace granular | ambos |
+| **d1** | FF-fácil → LoRA-médio → LoRA-difícil → LoRA-completo | CL por etapas com FF precoce (capacidade decrescente) | todos |
+| **d2** | LoRA-fácil → LoRA-médio → LoRA-difícil → FF-completo | CL por etapas com FF tardio (consolidação final) | todos |
+| **d3** | FF-fácil → LoRA-(fácil+médio) → LoRA-tudo | Variante **acumulada** do d1 (replay elimina a etapa de consolidação) | todos |
+| **d4** | LoRA-fácil → LoRA-(fácil+médio) → FF-tudo | Variante **acumulada** do d2 | todos |
+| **d11** | FF(≤1) → LoRA(≤2) → … → LoRA(≤9) → LoRA-tudo | d3 com **pace granular**: 10 etapas, incremento unitário | todos |
+| **d12** | LoRA(≤1) → LoRA(≤2) → … → LoRA(≤9) → FF-tudo | d4 com pace granular | todos |
 
 ### Ablações — isolam um eixo de cada vez (fronteiras reais)
 
 | ID | Etapas | O que isola | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d5** | FF-completo → LoRA-completo | Escalonamento FF→LoRA **sem CL** | ambos |
-| **d6** | LoRA-completo → FF-completo | Escalonamento LoRA→FF **sem CL** | ambos |
-| **d7** | LoRA fácil → médio → difícil → completo (4b) | **CL puro**, sem escalonamento | ambos |
-| **d8** | LoRA fácil → (fácil+médio) → tudo (4b) | CL puro acumulado | ambos |
-| **d13** | FF fácil → médio → difícil → completo (16b) | Contraparte FF-only do d7 | ambos |
-| **d17** | LoRA fácil → médio → difícil → completo (**16b**) | d7 **sem a variável de quantização NF4** | ambos |
+| **d5** | FF-completo → LoRA-completo | Escalonamento FF→LoRA **sem CL** | todos |
+| **d6** | LoRA-completo → FF-completo | Escalonamento LoRA→FF **sem CL** | todos |
+| **d7** | LoRA fácil → médio → difícil → completo (4b) | **CL puro**, sem escalonamento | todos |
+| **d8** | LoRA fácil → (fácil+médio) → tudo (4b) | CL puro acumulado | todos |
+| **d13** | FF fácil → médio → difícil → completo (16b) | Contraparte FF-only do d7 | todos |
+| **d17** | LoRA fácil → médio → difícil → completo (**16b**) | d7 **sem a variável de quantização NF4** | todos |
 
 ### Direção do currículo (controle negativo)
 
 | ID | Etapas | O que testa | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d9** | LoRA completo → difícil → médio → fácil | **Anti-CL** por etapas (espelho reverso do d7) | ambos |
-| **d10** | LoRA (>7) → (>3) → tudo | Anti-CL acumulado (espelho reverso do d8) | ambos |
-| **d18** | LoRA b1 → b2 → b3 → completo (16b) | **Terços aleatórios**: separa "ordenar por dificuldade" de "treinar em blocos com recência" | ambos |
+| **d9** | LoRA completo → difícil → médio → fácil | **Anti-CL** por etapas (espelho reverso do d7) | todos |
+| **d10** | LoRA (>7) → (>3) → tudo | Anti-CL acumulado (espelho reverso do d8) | todos |
+| **d18** | LoRA b1 → b2 → b3 → completo (16b) | **Terços aleatórios**: separa "ordenar por dificuldade" de "treinar em blocos com recência" | todos |
 
 ### PT como pré-treino / estabilização
 
 | ID | Etapas | O que testa | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d14** | LoRA-completo → FF fácil → médio → difícil → completo | Warm-up LoRA no dataset inteiro **antes** do CL FF-only (d13) | ambos |
-| **d15** | d14 + etapa de estabilização FF (LR 1e-6) após o merge | A estabilização suaviza o *spike* de loss da transição LoRA→FF? | ambos |
+| **d14** | LoRA-completo → FF fácil → médio → difícil → completo | Warm-up LoRA no dataset inteiro **antes** do CL FF-only (d13) | todos |
+| **d15** | d14 + etapa de estabilização FF (LR 1e-6) após o merge | A estabilização suaviza o *spike* de loss da transição LoRA→FF? | todos |
 
 ### Controles de fronteira e de capacidade (16 bits, orçamento 4N)
 
 | ID | Etapas | O que testa | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d16** | 4 × LoRA-completo (16b), 1 época cada | **Custo puro de fronteira**: mesma configuração de `b16`, só que segmentada em 4 execuções | ambos |
-| **d19** | FF fácil(75% congelado) → médio(50%) → difícil(25%) → completo(0%) | **CL + PT por descongelamento** — sinergia (tese central) | ambos |
-| **d20** | FF completo(75%) → completo(50%) → completo(25%) → completo(0%) | Descongelamento **sem CL** (controle do d19) | ambos |
+| **d16** | 4 × LoRA-completo (16b), 1 época cada | **Custo puro de fronteira**: mesma configuração de `b16`, só que segmentada em 4 execuções | todos |
+| **d19** | FF fácil(75% congelado) → médio(50%) → difícil(25%) → completo(0%) | **CL + PT por descongelamento** — sinergia (tese central) | todos |
+| **d20** | FF completo(75%) → completo(50%) → completo(25%) → completo(0%) | Descongelamento **sem CL** (controle do d19) | todos |
 
 ### Protocolos fundidos — fronteiras virtuais
 
 | ID | Spans | O que testa | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d21** | fácil ×2 → médio ×2 → difícil ×2 → completo ×2 (LoRA 16b) | **Espelho exato do d17 sem fronteiras reais** — a medida mais limpa de custo de fronteira | ambos |
-| **d22** | fácil(uf 75%) ×2 → médio(50%) ×2 → difícil(25%) ×2 → completo(0%) ×2 | CL + PT por **gating de LR**, otimizador contínuo | ambos |
-| **d23** | completo(uf 75%) → (50%) → (25%) → (0%), ×1 cada | Gating **sem CL** (controle do d22) | ambos |
-| **d24** | ≤1(uf 90%) → ≤2(80%) → … → tudo(0%), LoRA **4b** | Espelho fundido do **d12**: CL granular sem fronteiras, gating em passos de 10% | ambos |
-| **d25** | idem d24, em **Full FT 16b** | Mesma topologia do d24 em regime full — isola "regime" dado CL+PT granular fundido | ambos |
+| **d21** | fácil ×2 → médio ×2 → difícil ×2 → completo ×2 (LoRA 16b) | **Espelho exato do d17 sem fronteiras reais** — a medida mais limpa de custo de fronteira | todos |
+| **d22** | fácil(uf 75%) ×2 → médio(50%) ×2 → difícil(25%) ×2 → completo(0%) ×2 | CL + PT por **gating de LR**, otimizador contínuo | todos |
+| **d23** | completo(uf 75%) → (50%) → (25%) → (0%), ×1 cada | Gating **sem CL** (controle do d22) | todos |
+| **d24** | ≤1(uf 90%) → ≤2(80%) → … → tudo(0%), LoRA **4b** | Espelho fundido do **d12**: CL granular sem fronteiras, gating em passos de 10% | todos |
+| **d25** | idem d24, em **Full FT 16b** | Mesma topologia do d24 em regime full — isola "regime" dado CL+PT granular fundido | todos |
 
 > **Gating ≠ congelamento.** No d19/d20 os blocos congelados não entram no otimizador (economia real de VRAM). No gating (d22–d25) todos os grupos estão no otimizador desde o step 0, com LR 0 até acordarem — não há economia de memória. Isso pesa no **d25 do summa**: full FT 16 bits no 7B com contexto 32768 mantém pesos, gradientes e estados Adam de todos os parâmetros simultaneamente. Preferir H200 e validar o pico de VRAM nos primeiros steps.
 
@@ -135,8 +135,8 @@ Legenda de fronteiras: **real** = nova execução de trainer (reset de otimizado
 
 | ID | Etapas | O que testa | Disp. |
 | :-- | :-- | :-- | :-- |
-| **d1a** | Idêntico ao d1 | **Réplica 2** do d1 — mede variância não-determinística do treinamento | ambos |
-| **d1b** | Idêntico ao d1 | **Réplica 3** do d1 — mesmos hiperparâmetros, saída distinta | ambos |
+| **d1a** | Idêntico ao d1 | **Réplica 2** do d1 — mede variância não-determinística do treinamento | todos |
+| **d1b** | Idêntico ao d1 | **Réplica 3** do d1 — mesmos hiperparâmetros, saída distinta | todos |
 
 > Os protocolos `d1a`/`d1b` são réplicas idênticas ao `d1` para medir a variância não-determinística do treinamento (mesmos hiperparâmetros, apenas saída distinta). A comparação `d1` × `d1a` × `d1b` (via `06_compara_d1ab.yaml`) serve para calibrar a ROPE bayesiana e separar efeito real de ruído estocástico.
 
@@ -207,6 +207,7 @@ Dois 2×2 independentes. Descongelamento: `d19` (CL+PT) × `d20` (PT) × `d13` (
 ## 7. Notas de Comparabilidade
 
 - **Precisão.** `b` e d1–d15 rodam LoRA em 4 bits (NF4); d16–d23 rodam em 16 bits; d24 volta a 4 bits de propósito (espelho do d12) e d25 é full 16 bits. Cruzamentos entre grupos carregam **{efeito estudado + quantização}** como diferença conjunta — por isso existem `d17` (d7 em 16b), `d16` (b segmentado em 16b) e, no pubmed, `b16` (b em 16b, execução única). O contraste `b` × `b16` dá o fator de correção para ler os cruzamentos 4b×16b restantes. Etapas `full` sempre executam em 16 bits, independentemente do `nbits` global.
-- **Orçamento.** Em dataset-equivalentes (fração × épocas), os protocolos caem em quatro faixas: **4N** (b, b16, c, d1–d6, d13, d16–d23), **8N** (d7–d10, d14 — 4 épocas por etapa nos YAMLs), **9N** (d15) e **11N** (d11, d12, d24, d25 — acúmulo granular). Contrastes dentro de uma faixa são limpos; entre faixas carregam o orçamento junto e são declarados, com custo por instâncias/tokens ao lado.
+- **Orçamento.** Em dataset-equivalentes (fração × épocas), os protocolos caem em quatro faixas: **4N** (b, b16, b16r8, c, d1–d10, d13, d16–d23, d1a, d1b), **8N** (d14 — warm-up LoRA sobre o dataset inteiro antes do CL), **9N** (d15 — d14 mais a etapa de estabilização) e **11N** (d11, d12, d24, d25 — acúmulo granular). As faixas são idênticas nos três experimentos. Contrastes dentro de uma faixa são limpos; entre faixas carregam o orçamento junto e são declarados, com custo por instâncias/tokens ao lado.
+- **Recortes pareados em orçamento.** Oito dos doze recortes têm todos os protocolos em 4N: Q1, Q2a, Q3a, Q3b, Q4a, Q4b, Q5 e Q6a. Os quatro restantes são heterogêneos **por desenho** — Q2c e Q6b comparam 4N com a progressão granular (11N), Q6c inclui o warm-up (8N) e a estabilização (9N), e Q2b inclui o d14 (8N). Nesses, o orçamento faz parte do que o contraste mede e é declarado junto do resultado.
 - **Posição das ativações no d22 × d23.** O d23 usa 1 época por span (dataset completo) e o d22 usa 2 (fatias), para equalizar o orçamento — os grupos de camadas acordam em pontos diferentes do stream. Registrar como limitação.
 - **Evidência de eficiência.** As comparações leem `training_metrics.jsonl` via `pasta_treinamento`: o *spike* de loss em cada fronteira dos segmentados e sua ausência nos fundidos é a evidência primária da Q6, não apenas o score final.

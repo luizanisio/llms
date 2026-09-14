@@ -1,6 +1,6 @@
 # 🧪 Dicas e Configurações de Ambiente para Experimentos
 
-> 📖 **Para detalhes sobre o design conceitual, os objetivos de pesquisa (Summa, PubMed, Puil) e as ablações (d1 a d8), consulte o [README_protocolos.md](./README_protocolos.md).**
+> 📖 **Para detalhes sobre o design conceitual, os objetivos de pesquisa (Summa, PubMed, SemClinBr, Puil) e as ablações (`d1`–`d25`), consulte o [README_protocolos.md](./README_protocolos.md).**
 
 Este guia centraliza as práticas recomendadas para execução de experimentos, configuração do ambiente e resolução de problemas comuns.
 
@@ -10,7 +10,7 @@ Este guia centraliza as práticas recomendadas para execução de experimentos, 
 | :-- | :-- |
 | [`summa-experimento/`](./summa-experimento/) | Experimento principal — extração de metadados jurídicos (Qwen 7B, H100/H200) |
 | [`pubmed-experimento/`](./pubmed-experimento/) | Generalização — classificação de seções de abstracts médicos PubMed 20k (Qwen 1.5B) |
-| [`semclibr-experimento/`](./semclibr-experimento/) | Generalização — NER + RE clínico em notas pt-br do SemClinBr (Qwen 1.5B/7B) |
+| [`semclinbr-experimento/`](./semclinbr-experimento/) | Generalização — NER + RE clínico em notas pt-br do SemClinBr (Qwen 7B) |
 | [`puil-mini-experimento/`](./puil-mini-experimento/) | Validação local rápida do pipeline (RTX 3060/2060) |
 | [`summa_qualifica/`](./summa_qualifica/) | Versão preliminar do Summa usada na qualificação do mestrado (referência histórica) |
 
