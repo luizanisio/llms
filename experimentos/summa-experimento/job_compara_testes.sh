@@ -59,25 +59,7 @@ echo "==============================="
 #echo "1/8 - Executando 03_compara_q235_full.yaml..."
 #python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/03_compara_q235_full.yaml"
 
-echo "2/8 - Executando 06_compara_experimentais.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_experimentais.yaml"
-
-echo "3/8 - Executando 06_compara_ablacoes.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ablacoes.yaml"
-
-echo "4/8 - Executando 06_compara_ordem_cl.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_cl.yaml"
-
-echo "5/8 - Executando 06_compara_ordem_pt.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_ordem_pt.yaml"
-
-echo "6/8 - Executando 06_compara_fronteiras.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_fronteiras.yaml"
-
-echo "7/8 - Executando 06_compara_capacidade.yaml..."
-python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_capacidade.yaml"
-
-echo "8/8 - Executando 06_compara_todos.yaml..."
+echo "Executando 06_compara_todos.yaml..."
 python "$SRC_DIR/comparar_extracoes.py" --config "$BASE_DIR/06_compara_todos.yaml"
 
 echo "=== Job finalizado: $(date) ==="
