@@ -119,6 +119,14 @@ PROTOCOLOS_ALERTA = 8
 #: Nome da subpasta de saída, no mesmo padrão de `estatisticas/` e `graficos/`.
 PASTA_SAIDA = 'bayesiana'
 
+#: Alias especial do protocolo virtual "professor perfeito": escores = 1.0 em
+#: todas as métricas automáticas, simulando concordância total com o Gold.
+#: Reconhecido em `estatistica.protocolos` — NÃO precisa de parquet nem de
+#: entrada em `modelos_comparacao`. Na seção Likert é ignorado: para comparar
+#: notas do juiz com o professor, inclua-o como modelo real.
+PROTOCOLO_PROFESSOR = "*"
+PROTOCOLO_PROFESSOR_DISPLAY = "★Prof"
+
 
 def _slug(texto) -> str:
     """Normaliza um nome de recorte para uso em nome de arquivo."""
@@ -646,6 +654,13 @@ def selecionar_protocolos(selecao, rotulos, mapa_aliases) -> tuple:
 
     escolhidos, ausentes, vistos = [], [], set()
     for nome in selecao:
+        # Protocolo virtual "*" (professor perfeito): passa adiante sem
+        # precisar existir no índice de modelos reais.
+        if str(nome).strip() == PROTOCOLO_PROFESSOR:
+            if PROTOCOLO_PROFESSOR_DISPLAY not in vistos:
+                vistos.add(PROTOCOLO_PROFESSOR_DISPLAY)
+                escolhidos.append(PROTOCOLO_PROFESSOR_DISPLAY)
+            continue
         rotulo = indice.get(str(nome).strip().lower())
         if rotulo is None:
             ausentes.append(str(nome))
@@ -675,14 +690,26 @@ def _dados_metrica(df_resultados, protocolos, campo, sufixo, mapa_aliases) -> pd
 
     Mesmo padrão de coluna usado por `executar_analise_estatistica`:
     `{protocolo}_{campo}_{sufixo}_F1`.
+
+    O protocolo virtual ``★Prof`` (originado do alias ``*`` no YAML) recebe
+    uma coluna sintética com valor 1.0 para todos os IDs — concordância
+    perfeita com o Gold.
     """
+    tem_professor = PROTOCOLO_PROFESSOR_DISPLAY in protocolos
     df_largo = pd.DataFrame()
     for proto in protocolos:
+        if proto == PROTOCOLO_PROFESSOR_DISPLAY:
+            continue  # inserido após os demais, quando o índice já existe
         coluna = f'{proto}_{campo}_{sufixo}_F1'
         if coluna in df_resultados.columns:
             df_largo[mapa_aliases.get(proto, proto)] = df_resultados[coluna]
     if df_largo.empty:
         return df_largo
+    # Insere a coluna sintética do professor APÓS as demais, para usar o
+    # índice (IDs dos documentos) já definido pelas colunas reais.
+    if tem_professor and not df_largo.empty:
+        df_largo.insert(0, PROTOCOLO_PROFESSOR_DISPLAY,
+                        pd.Series(1.0, index=df_largo.index))
     return df_largo.dropna()
 
 
@@ -1114,13 +1141,24 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
             )
             print(f"   ⚠️  {avisos[-1]}")
 
+    # Filtra o protocolo virtual "*" da Likert: ele não tem notas reais do juiz.
+    # Para a Likert o professor precisa estar como modelo real com parquet.
+    recorte_sem_prof = [p for p in recorte.protocolos
+                        if str(p).strip() != PROTOCOLO_PROFESSOR]
+
     # A base só entra na Likert quando pedida — explicitamente na lista ou por
     # `incluir_base`. Nas métricas automáticas ela nunca entra: as colunas medem
     # similaridade COM a base, e base contra si mesma é 1,0 por construção.
     candidatos_likert = (([rotulo_base] + protocolos)
                          if (recorte.protocolos or cfg.incluir_base) else list(protocolos))
-    rotulos_likert, _ = selecionar_protocolos(recorte.protocolos, candidatos_likert, mapa_aliases)
+    rotulos_likert, _ = selecionar_protocolos(recorte_sem_prof, candidatos_likert, mapa_aliases)
     rotulos_metricas, _ = selecionar_protocolos(recorte.protocolos, protocolos, mapa_aliases)
+
+    # "TODOS" (recorte.protocolos vazio) inclui automaticamente o professor
+    # virtual nas métricas automáticas — ele não precisa ser listado
+    # explicitamente para aparecer no panorama geral.
+    if not recorte.protocolos:
+        rotulos_metricas.append(PROTOCOLO_PROFESSOR_DISPLAY)
 
     if recorte.protocolos:
         selecionados = [mapa_aliases.get(r, r) for r in rotulos_likert]

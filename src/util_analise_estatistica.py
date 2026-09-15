@@ -77,6 +77,13 @@ MAPA_METRICA_DISPLAY = {
     'sbert_grande': 'SBERT-Large',
 }
 
+#: Alias especial do protocolo virtual "professor perfeito": escores = 1.0 em
+#: todas as métricas automáticas, simulando concordância total com o Gold.
+#: Mesma semântica de ``comparar_extracoes_baycomp.PROTOCOLO_PROFESSOR``;
+#: duplicado aqui para evitar import circular.
+PROTOCOLO_PROFESSOR = "*"
+PROTOCOLO_PROFESSOR_DISPLAY = "★Prof"
+
 
 # ============================================================================
 # Textos i18n
@@ -1361,6 +1368,15 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
                     if col_encontrada:
                         df_largo[alias] = df_resultados[col_encontrada]
                 
+                # Protocolo virtual "*" (professor perfeito): coluna sintética
+                # com 1.0 para todos os IDs, inserida na posição 0 do DataFrame.
+                # Ativo tanto em recortes explícitos com "*" quanto em "TODOS".
+                if not df_largo.empty and (
+                        aliases_recorte is None
+                        or PROTOCOLO_PROFESSOR_DISPLAY in aliases_recorte):
+                    df_largo.insert(0, PROTOCOLO_PROFESSOR_DISPLAY,
+                                    pd.Series(1.0, index=df_largo.index))
+                
                 if df_largo.empty or len(df_largo.columns) < 2:
                     continue
                 
@@ -1499,6 +1515,13 @@ def _resolver_aliases(selecao, protocolos_disponiveis, mapa_aliases):
 
     aliases, vistos = [], set()
     for nome in selecao:
+        # Protocolo virtual "*" (professor perfeito): passa adiante sem
+        # precisar existir no índice de modelos reais.
+        if str(nome).strip() == PROTOCOLO_PROFESSOR:
+            if PROTOCOLO_PROFESSOR_DISPLAY not in vistos:
+                vistos.add(PROTOCOLO_PROFESSOR_DISPLAY)
+                aliases.append(PROTOCOLO_PROFESSOR_DISPLAY)
+            continue
         rotulo = indice.get(str(nome).strip().lower())
         if rotulo is not None and rotulo not in vistos:
             vistos.add(rotulo)
