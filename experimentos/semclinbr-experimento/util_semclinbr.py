@@ -76,6 +76,13 @@ class Documento:
     texto: str
     entidades: list[Entidade] = field(default_factory=list)
     relacoes: list[Relacao] = field(default_factory=list)
+    stats_parse: dict = field(default_factory=dict)
+
+
+def _esc_md(texto: str) -> str:
+    """Escapa um valor para caber numa célula de tabela Markdown."""
+    return (texto.replace("\\", "\\\\").replace("|", "\\|")
+                 .replace("\r", "\\r").replace("\n", "\\n"))
 
 
 def _split_tags(valor) -> list[str]:
@@ -158,53 +165,239 @@ def para_sgr(tags: Sequence[str]) -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
-def _mapa_offsets_crlf(texto: str) -> dict[int, int]:
-    """Mapeia offset no espaço CRLF original -> offset no texto normalizado.
+def _mapa_crlf_para_lf(texto_crlf: str) -> dict[int, int]:
+    """Mapeia offset no espaço CRLF -> offset no texto normalizado (LF).
 
-    Os offsets gravados no XML do SemClinBr foram calculados sobre o texto
-    original, em que cada quebra de linha ocupa DOIS caracteres (`\\r\\n`).
-    A normalização de fim de linha é obrigatória para qualquer parser XML
-    (XML 1.0 §2.11), então `texto` chega aqui com `\\n` — um caractere a menos
-    por quebra. Sem esta conversão, todo span depois da primeira quebra fica
-    deslocado, e o deslocamento cresce com o número de quebras anteriores:
-    o F1 por span vira ruído em vez de medir reconhecimento.
+    Para cada posição no texto CRLF, calcula a posição correspondente no
+    texto onde ``\\r\\n`` foi substituído por ``\\n`` (normalização XML 1.0 §2.11).
     """
     mapa: dict[int, int] = {}
-    desloc = 0
-    for i, ch in enumerate(texto):
-        mapa[i + desloc] = i
-        if ch == "\n":
-            # a posição do `\r` que existia no original aponta para o mesmo `\n`
-            desloc += 1
-            mapa[i + desloc] = i
-    mapa[len(texto) + desloc] = len(texto)
+    pos_lf = 0
+    for pos_crlf, ch in enumerate(texto_crlf):
+        mapa[pos_crlf] = pos_lf
+        if ch != "\r":          # \r é absorvido; \n avança normalmente
+            pos_lf += 1
+    mapa[len(texto_crlf)] = pos_lf
     return mapa
 
 
-def parse_semclinbr_xml(path: str | Path) -> Documento:
+def _spans_compativeis(span: str, attr: str) -> bool:
+    """Verifica se o span (do texto) corresponde ao atributo text do XML.
+
+    A ferramenta de anotação tokeniza o atributo text (insere espaços antes
+    de pontuação, colapsa espaços duplos, escapa entidades XML). A comparação
+    ignora todas as diferenças de whitespace e de entidades XML.
+    """
+    def normalizar(t: str) -> str:
+        t = t.replace("&gt;", ">").replace("&lt;", "<").replace("&amp;", "&")
+        return re.sub(r"\s+", "", t)
+    return normalizar(span) == normalizar(attr)
+
+
+def _trim_span(texto: str, start: int, end: int) -> tuple[int, int]:
+    """Remove whitespace das bordas do span (espaço, tab, ``\\n``, ``\\r``)."""
+    while start < end and texto[start] in " \t\n\r":
+        start += 1
+    while end > start and texto[end - 1] in " \t\n\r":
+        end -= 1
+    return start, end
+
+
+def _candidato_valido(
+    texto: str, start: int, end: int, attr: str
+) -> tuple[int, int] | None:
+    """Devolve o span (já trimado) se ele corresponder ao atributo text; senão None."""
+    if start < 0 or end > len(texto) or start >= end:
+        return None
+    s, e = _trim_span(texto, start, end)
+    if s >= e:
+        return None
+    return (s, e) if _spans_compativeis(texto[s:e], attr) else None
+
+
+def _deltas_por_raio(raio: int) -> list[tuple[int, int]]:
+    """Deslocamentos (Δstart, Δend) ordenados da menor para a maior correção.
+
+    A ordem garante que a entidade seja fixada pelo ajuste mínimo que a torna
+    compatível com o atributo ``text``: primeiro os que mexem em uma borda só,
+    depois os que mexem nas duas. ``(0, 0)`` fica de fora (já foi testado).
+    """
+    deltas = [
+        (ds, de)
+        for ds in range(-raio, raio + 1)
+        for de in range(-raio, raio + 1)
+        if (ds, de) != (0, 0)
+    ]
+    deltas.sort(key=lambda d: (abs(d[0]) + abs(d[1]), abs(d[0]), abs(d[1]), d[0], d[1]))
+    return deltas
+
+
+def resolver_span(
+    texto: str, start: int, end: int, attr: str, raio: int = 1
+) -> tuple[int, int, str, tuple[int, int]]:
+    """Passada única que fixa a posição final de uma entidade.
+
+    Cascata, da correção nula à maior, parando na primeira que valida contra o
+    atributo ``text`` do XML (via :func:`_spans_compativeis`):
+
+    1. ``exata``       — o span já corresponde;
+    2. ``trim``        — corresponde depois de remover whitespace das bordas;
+    3. ``shift``       — corresponde deslocando as bordas em até ``raio``
+       caracteres para a esquerda e/ou direita (o corpus tem ~400 spans com a
+       borda esquerda um caractere adiantada: ``"ORADA"`` para ``"CORADA"``);
+    4. ``descartada``  — nenhum candidato valida; a entidade é removida.
+
+    Retorna ``(start, end, tipo, (Δstart, Δend))``. Em ``descartada`` os
+    offsets voltam inalterados, para o relatório poder mostrar o span original.
+    """
+    alvo = _candidato_valido(texto, start, end, attr)
+    if alvo is not None:
+        tipo = "exata" if alvo == (start, end) else "trim"
+        return alvo[0], alvo[1], tipo, (0, 0)
+
+    for ds, de in _deltas_por_raio(raio):
+        alvo = _candidato_valido(texto, start + ds, end + de, attr)
+        if alvo is not None:
+            return alvo[0], alvo[1], "shift", (ds, de)
+
+    return start, end, "descartada", (0, 0)
+
+
+def _pontuar_espaco(texto_lf: str, pares: list[tuple[int, int]], attrs: list[str]) -> int:
+    """Quantas anotações validam contra o atributo text sob um espaço de offset."""
+    return sum(
+        1
+        for (s, e), attr in zip(pares, attrs)
+        if _candidato_valido(texto_lf, s, e, attr) is not None
+    )
+
+
+def _escolher_espaco_offsets(
+    texto_crlf: str, texto_lf: str, offsets: list[tuple[int, int]], attrs: list[str]
+) -> tuple[list[tuple[int, int]], str]:
+    """Decide se os offsets do documento estão no espaço CRLF ou LF.
+
+    O corpus SemClinBr é inconsistente: a maioria dos documentos com quebra de
+    linha tem offsets calculados sobre o texto CRLF original, mas parte já está
+    no espaço LF (pós-normalização XML 1.0 §2.11).
+
+    A decisão pontua **todas** as anotações do documento nos dois espaços, com a
+    comparação tolerante de :func:`_spans_compativeis`, e fica com o que validar
+    mais. As duas exigências são necessárias: anotações que caem antes da
+    primeira quebra de linha validam nos dois espaços e não discriminam, e o
+    atributo ``text`` cru não casa nos documentos com entidades XML duplamente
+    escapadas (``&amp;gt;``). Amostrar poucas anotações, ou comparar sem
+    tolerância, escolhe LF indevidamente em 26 documentos (932 anotações).
+
+    Empate mantém LF (nenhum mapeamento aplicado), que é o caso conservador.
+    """
+    fim = len(texto_lf)
+    pares_lf = [(min(s, fim), min(e, fim)) for s, e in offsets]
+    if "\r\n" not in texto_crlf or not offsets:
+        return pares_lf, "LF"
+
+    mapa = _mapa_crlf_para_lf(texto_crlf)
+    pares_crlf = [(mapa.get(s, fim), mapa.get(e, fim)) for s, e in offsets]
+
+    n_lf = _pontuar_espaco(texto_lf, pares_lf, attrs)
+    n_crlf = _pontuar_espaco(texto_lf, pares_crlf, attrs)
+    return (pares_crlf, "CRLF") if n_crlf > n_lf else (pares_lf, "LF")
+
+
+def parse_semclinbr_xml(path: str | Path, raio_ajuste: int = 2) -> Documento:
     """Lê um arquivo .xml do SemClinBr, convertendo os offsets para o texto lido.
 
-    Ver `_mapa_offsets_crlf`: os offsets do XML estão no espaço CRLF original e
-    precisam ser reancorados no texto normalizado que o modelo de fato recebe.
+    O corpus é inconsistente na convenção de offsets: a maioria dos documentos
+    grava offsets no espaço CRLF (texto com ``\\r\\n``), mas um subconjunto já
+    usa o espaço LF (pós-normalização XML). ``_escolher_espaco_offsets``
+    auto-detecta qual convenção cada documento segue, pontuando as duas.
+
+    Resolvido o espaço, **uma única passada** (:func:`resolver_span`) fixa a
+    posição de cada entidade, sempre validando contra o atributo ``text`` do
+    XML: span exato → trim de whitespace nas bordas → deslocamento de até
+    ``raio_ajuste`` caracteres em cada borda → descarte.
+
+    ``raio_ajuste=1`` (padrão) cobre o erro de borda de um caractere, que é o
+    padrão dominante no corpus. ``raio_ajuste=2`` recupera ~16 entidades a mais;
+    ``0`` desliga o ajuste por deslocamento.
+
+    As estatísticas de correção ficam em ``doc.stats_parse``.
     """
     path = Path(path)
-    raiz = ET.fromstring(path.read_text(encoding="utf-8"))
-    texto = raiz.findtext("TEXT") or ""
-    mapa = _mapa_offsets_crlf(texto)
-    fim = len(texto)
+    raw_bytes = path.read_bytes()
+    raiz = ET.fromstring(raw_bytes.decode("utf-8"))
+    texto_lf = raiz.findtext("TEXT") or ""      # parser XML normaliza CRLF→LF
 
-    entidades = [
-        Entidade(
+    annotations = raiz.findall("./TAGS/annotation")
+
+    # --- extrair o TEXT com \r\n preservado (antes da normalização XML) ---
+    marcador_ini = b"<TEXT>"
+    marcador_fim = b"</TEXT>"
+    idx_ini = raw_bytes.find(marcador_ini)
+    idx_fim = raw_bytes.find(marcador_fim)
+    if idx_ini >= 0 and idx_fim > idx_ini:
+        texto_crlf = raw_bytes[idx_ini + len(marcador_ini):idx_fim].decode("utf-8")
+    else:
+        texto_crlf = texto_lf               # fallback conservador
+
+    # --- decidir o espaço de offsets e mapear ---
+    offsets = [(int(a.get("start")), int(a.get("end"))) for a in annotations]
+    attrs = [a.get("text", "") for a in annotations]
+    pares, espaco = _escolher_espaco_offsets(texto_crlf, texto_lf, offsets, attrs)
+
+    # --- passada única de ajuste de posição + validação ---
+    entidades: list[Entidade] = []
+    contagem = {"exata": 0, "trim": 0, "shift": 0, "descartada": 0}
+    descartadas: list[dict] = []
+    ajustadas: list[dict] = []
+
+    n_trim_aplicado = 0
+
+    for ann, attr, (start, end) in zip(annotations, attrs, pares):
+        s, e, tipo, delta = resolver_span(texto_lf, start, end, attr, raio=raio_ajuste)
+        contagem[tipo] += 1
+        # o trim pode atuar sozinho ou depois do deslocamento ("IRC " -> "IRC")
+        trim_atuou = tipo != "descartada" and (s, e) != (start + delta[0], end + delta[1])
+        n_trim_aplicado += int(trim_atuou)
+
+        if tipo == "descartada":
+            descartadas.append({
+                "doc_id": path.stem,
+                "id": int(ann.get("id")),
+                "attr_text": attr,
+                "span": texto_lf[start:end] if 0 <= start < end <= len(texto_lf)
+                        else "(fora do texto)",
+                "start": start,
+                "end": end,
+            })
+            continue
+
+        if tipo != "exata":
+            ajustadas.append({
+                "doc_id": path.stem,
+                "id": int(ann.get("id")),
+                "tipo": tipo,
+                "attr_text": attr,
+                "span_antes": texto_lf[start:end] if 0 <= start < end <= len(texto_lf)
+                              else "(fora do texto)",
+                "span_depois": texto_lf[s:e],
+                "delta": delta,
+                "trim": trim_atuou,
+                "start": s,
+                "end": e,
+            })
+
+        entidades.append(Entidade(
             id=int(ann.get("id")),
-            text=ann.get("text", ""),
+            text=attr,
             tags=_split_tags(ann.get("tag", "")),
             abbr=ann.get("abbr", "") or "",
-            start=mapa.get(int(ann.get("start")), fim),
-            end=mapa.get(int(ann.get("end")), fim),
-        )
-        for ann in raiz.findall("./TAGS/annotation")
-    ]
+            start=s,
+            end=e,
+        ))
 
+    # Relações: manter apenas as que referenciam entidades preservadas
+    ids_preservados = {ent.id for ent in entidades}
     relacoes = [
         Relacao(
             annotation1=int(rel.get("annotation1")),
@@ -212,9 +405,27 @@ def parse_semclinbr_xml(path: str | Path) -> Documento:
             reltype=rel.get("reltype", ""),
         )
         for rel in raiz.findall("./RELATIONS/rel")
+        if int(rel.get("annotation1")) in ids_preservados
+        and int(rel.get("annotation2")) in ids_preservados
     ]
 
-    return Documento(doc_id=path.stem, texto=texto, entidades=entidades, relacoes=relacoes)
+    stats = {
+        "n_exatas": contagem["exata"],
+        "n_corrigidas_trim": contagem["trim"],
+        "n_corrigidas_shift": contagem["shift"],
+        "n_descartadas": contagem["descartada"],
+        "n_trim_aplicado": n_trim_aplicado,
+        "raio_ajuste": raio_ajuste,
+        "n_total_xml": len(annotations),
+        "espaco_offsets": espaco,
+        "descartadas": descartadas,
+        "ajustadas": ajustadas,
+    }
+
+    return Documento(
+        doc_id=path.stem, texto=texto_lf,
+        entidades=entidades, relacoes=relacoes, stats_parse=stats,
+    )
 
 
 def xml_to_target_json(doc: Documento) -> dict:
@@ -785,128 +996,100 @@ Make sure to extract the spans exactly as they appear in the original text, pres
 
 
 class CorpusSemClinBr:
-    """Carrega o corpus, define splits, deriva o inventário de rótulos e exporta
-    o dataset de treinamento.
+    """Carrega o corpus, deriva o inventário de rótulos e exporta o dataset.
 
-    Ordem obrigatória das operações:
+    **Esta classe não divide o corpus em treino/teste/validação.** Quem define
+    os alvos é o passo 03 (`03_compara_gold_full.yaml`), que calcula a
+    dificuldade de cada documento e grava `dados/divisao_Gold_Qwen7B.csv` com
+    as colunas `id`, `alvo` e `dificuldade`. Todos os passos seguintes (04
+    treino, 05 extração, 07 NER, 08 baseline) se apoiam nesse arquivo, e só nos
+    ids que constam nele. Um segundo sorteio aqui criaria uma divisão paralela
+    que não coincide com a operativa — caminho direto para data leakage.
 
-        1. definir_splits()      -- particiona 70/20/10 de forma determinística
-        2. inventario_tags()     -- deriva os rótulos APENAS do split de treino
-        3. exportar()            -- grava dataset + divisão + prompt + inventário
+    Ordem das operações:
 
-    O inventário sai só do treino de propósito: derivá-lo do corpus inteiro
-    deixaria vazar para o prompt a existência de STYs que só ocorrem no teste.
-    É vazamento fraco (metadado, não rótulo por instância), mas evitá-lo é
-    gratuito. Use apenas_treino=False apenas se quiser declarar o contrário.
+        1. inventario_tags(arquivo_divisao=...)  -- rótulos do prompt
+        2. exportar()                            -- dataset + prompt + inventário
 
     Uso:
-        corpus = CorpusSemClinBr("dados/semclinbr_xml", seed=42)
-        corpus.definir_splits()
-        corpus.inventario_tags(cobertura=0.95)
+        corpus = CorpusSemClinBr("dados/SemClinBr-xml-public-v1")
+        corpus.inventario_tags(arquivo_divisao="dados/divisao_Gold_Qwen7B.csv")
         corpus.exportar("dados/")
     """
 
-    SPLITS = ("treino", "teste", "validacao")
-
-    def __init__(self, diretorio: str | Path, seed: int = 42):
+    def __init__(self, diretorio: str | Path):
         self.diretorio = Path(diretorio)
-        self.seed = seed
         self.documentos: list[Documento] = carregar_corpus(self.diretorio)
         if not self.documentos:
             raise ValueError(f"Nenhum .xml encontrado em {self.diretorio}")
-        self.split: dict[str, str] = {}
         self.tags: list[str] = []
         self.freq_tags: dict[str, int] = {}
         self.cobertura_inventario: float | None = None
-
-    # -- splits -------------------------------------------------------------
-
-    def _chave_estavel(self, doc_id: str) -> str:
-        """Hash determinístico e independente da ordem dos arquivos no disco."""
-        import hashlib
-
-        return hashlib.md5(f"{self.seed}:{doc_id}".encode()).hexdigest()
-
-    def _estrato(self, doc: Documento, n_faixas: int = 4) -> int:
-        """Faixa de complexidade por quantidade de entidades (quartis)."""
-        contagens = sorted(len(d.entidades) for d in self.documentos)
-        if not contagens:
-            return 0
-        n = len(doc.entidades)
-        for i in range(1, n_faixas):
-            corte = contagens[int(len(contagens) * i / n_faixas)]
-            if n < corte:
-                return i - 1
-        return n_faixas - 1
-
-    def definir_splits(
-        self,
-        proporcoes: tuple[float, float, float] = (0.70, 0.20, 0.10),
-        estratificar: bool = True,
-    ) -> dict[str, str]:
-        """Particiona em treino / teste / validação de forma determinística.
-
-        A partição é estável sob mudança do conjunto de arquivos (usa hash do
-        id, não a posição na lista) e estratificada por quartil de quantidade
-        de entidades, para que as três partições tenham distribuição de
-        complexidade comparável — pré-condição para o proxy S_i fazer sentido.
-        """
-        if abs(sum(proporcoes) - 1.0) > 1e-9:
-            raise ValueError("proporcoes deve somar 1.0")
-
-        grupos: dict[int, list[Documento]] = {}
-        for doc in self.documentos:
-            grupos.setdefault(self._estrato(doc) if estratificar else 0, []).append(doc)
-
-        self.split = {}
-        for docs in grupos.values():
-            docs = sorted(docs, key=lambda d: self._chave_estavel(d.doc_id))
-            n = len(docs)
-            # maior resto: evita que o arredondamento por estrato acumule e
-            # desloque as proporções globais (85/24/11 em vez de 84/24/12).
-            exatos = [n * p for p in proporcoes]
-            cotas = [int(x) for x in exatos]
-            sobra = n - sum(cotas)
-            ordem = sorted(range(3), key=lambda i: -(exatos[i] - cotas[i]))
-            for i in ordem[:sobra]:
-                cotas[i] += 1
-            n_tr, n_te = cotas[0], cotas[1]
-            for i, doc in enumerate(docs):
-                if i < n_tr:
-                    self.split[doc.doc_id] = "treino"
-                elif i < n_tr + n_te:
-                    self.split[doc.doc_id] = "teste"
-                else:
-                    self.split[doc.doc_id] = "validacao"
-        return self.split
-
-    def docs_do_split(self, nome: str) -> list[Documento]:
-        return [d for d in self.documentos if self.split.get(d.doc_id) == nome]
+        self.inventario_do_treino: bool = False
+        self.ids_inventario: int = 0
 
     # -- inventário de rótulos ---------------------------------------------
 
+    def _ids_do_alvo(self, arquivo_divisao: str | Path, alvo: str) -> set[str] | None:
+        """Lê os ids de um alvo no arquivo de divisão do passo 03.
+
+        Devolve None quando o arquivo ainda não existe (bootstrap) ou não traz
+        as colunas esperadas — o chamador cai para o corpus inteiro.
+        """
+        caminho = Path(arquivo_divisao)
+        if not caminho.is_file():
+            return None
+        import csv as _csv
+
+        with caminho.open(encoding="utf-8", newline="") as fh:
+            linhas = list(_csv.DictReader(fh))
+        if not linhas:
+            return None
+        campos = linhas[0].keys()
+        col_id = "id_arquivo" if "id_arquivo" in campos else "id"
+        if col_id not in campos or "alvo" not in campos:
+            return None
+        return {
+            str(ln[col_id]).strip()
+            for ln in linhas
+            if str(ln.get("alvo", "")).strip() == alvo
+        }
+
     def inventario_tags(
         self,
-        apenas_treino: bool = True,
+        arquivo_divisao: str | Path | None = None,
+        alvo: str = "treino",
         cobertura: float | None = None,
         minimo: int = 1,
     ) -> list[str]:
         """Deriva a lista de rótulos que vai no prompt, a partir do corpus real.
 
+        arquivo_divisao: divisão gerada pelo passo 03. Quando informada **e o
+                   arquivo existe**, os rótulos saem apenas dos documentos com
+                   `alvo` igual a `alvo` (por padrão, o treino). Quando o
+                   arquivo ainda não existe — o caso do bootstrap, antes de
+                   rodar o 03 — o inventário sai do corpus inteiro e
+                   `self.inventario_do_treino` fica False, o que faz
+                   `exportar()` emitir o aviso de que é preciso rodar de novo.
         cobertura: se informado (ex.: 0.95), trunca a lista nos rótulos mais
                    frequentes que cobrem essa fração das anotações; o resto vira
                    cauda longa fora do prompt.
         minimo:    frequência mínima para entrar na lista.
+
+        Derivar do treino evita vazar para o prompt a existência de STYs que só
+        ocorrem no teste. É vazamento fraco (metadado, não rótulo por
+        instância), mas evitá-lo é gratuito depois que o 03 rodou.
 
         Retorna a lista ordenada por frequência decrescente e registra
         self.cobertura_inventario — a fração das anotações do corpus INTEIRO
         cujos rótulos aparecem na lista. Esse número é característica declarada
         do experimento: é o teto imposto pelo prompt.
         """
-        if apenas_treino and not self.split:
-            raise RuntimeError("Chame definir_splits() antes de inventario_tags()")
+        ids = self._ids_do_alvo(arquivo_divisao, alvo) if arquivo_divisao else None
+        self.inventario_do_treino = bool(ids)
+        base = [d for d in self.documentos if d.doc_id in ids] if ids else self.documentos
+        self.ids_inventario = len(base)
 
-        base = self.docs_do_split("treino") if apenas_treino else self.documentos
         freq: dict[str, int] = {}
         for doc in base:
             for ent in doc.entidades:
@@ -929,7 +1112,7 @@ class CorpusSemClinBr:
         self.tags = [t for t, _ in ordenadas]
         self.freq_tags = dict(ordenadas)
 
-        # cobertura medida sobre o corpus inteiro, não só o treino
+        # cobertura medida sobre o corpus inteiro, não só a base do inventário
         no_prompt = set(self.tags)
         dentro = fora = 0
         for doc in self.documentos:
@@ -941,6 +1124,20 @@ class CorpusSemClinBr:
                         fora += 1
         self.cobertura_inventario = dentro / (dentro + fora) if (dentro + fora) else 0.0
         return self.tags
+
+    def aviso_inventario(self) -> str:
+        """Aviso a exibir quando o inventário não pôde sair do split de treino."""
+        if self.inventario_do_treino or not self.tags:
+            return ""
+        return (
+            "⚠️  ATENÇÃO — o prompt contém TODOS os rótulos do corpus "
+            f"({len(self.tags)}), não apenas os do treino.\n"
+            "    O arquivo de divisão (dados/divisao_Gold_Qwen7B.csv) ainda não\n"
+            "    existe, então não há como saber quais documentos são de treino.\n"
+            "    O parquet está pronto e pode seguir para os passos 02 e 03.\n"
+            "    Depois que o 03 gerar a divisão, RODE ESTE SCRIPT DE NOVO para\n"
+            "    que o prompt fique só com os rótulos do treino."
+        )
 
     def montar_prompt(self, template: str = PROMPT_TEMPLATE,
                       por_linha: int = 3) -> str:
@@ -963,9 +1160,13 @@ class CorpusSemClinBr:
 
     def linhas_dataset(self, incluir_prompt: bool = False,
                        colunas_extras: bool = True) -> list[dict]:
-        """Gera as linhas do dataset: id, texto, split, resposta (+ extras)."""
-        if not self.split:
-            raise RuntimeError("Chame definir_splits() antes de exportar")
+        """Gera as linhas do dataset: id, texto, resposta (+ extras).
+
+        **Sem coluna `split`**: a divisão treino/teste/validação é atribuição do
+        passo 03, que a grava em `divisao_Gold_Qwen7B.csv`. Quem precisa de um
+        subconjunto filtra por aquele arquivo (nos YAMLs, via `filtro_externo`
+        ou `arquivo_referencia`), nunca por uma coluna deste parquet.
+        """
         prompt = self.montar_prompt() if incluir_prompt else None
 
         linhas = []
@@ -974,7 +1175,6 @@ class CorpusSemClinBr:
             linha = {
                 "id": doc.doc_id,
                 "texto": doc.texto,
-                "split": self.split[doc.doc_id],
                 "resposta": json.dumps(gabarito, ensure_ascii=False),
             }
             if incluir_prompt:
@@ -1000,13 +1200,17 @@ class CorpusSemClinBr:
         incluir_prompt: bool = False,
         formato: str = "auto",
     ) -> dict[str, Path]:
-        """Grava dataset, divisão, prompt e inventário.
+        """Grava dataset, prompt e inventário.
 
         Arquivos gerados em `destino`:
-          {nome}.parquet | {nome}.csv  -- id, texto, split, resposta (+ extras)
-          divisao_{nome}.csv           -- id_arquivo, alvo (formato do framework)
+          {nome}.parquet | {nome}.csv  -- id, texto, resposta (+ extras)
           prompt_{nome}.txt            -- prompt com o inventário já injetado
-          inventario_{nome}.csv        -- rotulo, frequencia (no treino)
+          inventario_{nome}.csv        -- rotulo, frequencia
+          {nome}.md                    -- relatório de qualidade das anotações
+
+        **Nenhum arquivo de divisão é gerado aqui.** A divisão operativa é
+        `divisao_Gold_Qwen7B.csv`, produzida pelo passo 03 a partir dos
+        critérios de dificuldade.
 
         O prompt é gravado junto porque o inventário é derivado dos dados:
         sem esse arquivo, o experimento não é reprodutível.
@@ -1038,14 +1242,6 @@ class CorpusSemClinBr:
 
         import csv as _csv
 
-        caminho = destino / f"divisao_{nome}.csv"
-        with caminho.open("w", encoding="utf-8", newline="") as fh:
-            w = _csv.writer(fh)
-            w.writerow(["id_arquivo", "alvo"])
-            for ln in linhas:
-                w.writerow([ln["id"], ln["split"]])
-        gerados["divisao"] = caminho
-
         if self.tags:
             caminho = destino / f"prompt_{nome}.txt"
             caminho.write_text(self.montar_prompt(), encoding="utf-8")
@@ -1054,18 +1250,134 @@ class CorpusSemClinBr:
             caminho = destino / f"inventario_{nome}.csv"
             with caminho.open("w", encoding="utf-8", newline="") as fh:
                 w = _csv.writer(fh)
-                w.writerow(["rotulo", "frequencia_treino"])
+                # o cabeçalho declara de onde saiu a frequência
+                w.writerow(["rotulo",
+                            "frequencia_treino" if self.inventario_do_treino
+                            else "frequencia_corpus"])
                 for t in self.tags:
                     w.writerow([t, self.freq_tags[t]])
             gerados["inventario"] = caminho
 
+        # Relatório de qualidade das anotações (mesmo nome base do dataset)
+        caminho_md = destino / f"{nome}.md"
+        self.gerar_relatorio_qualidade_md(caminho_md)
+        gerados["relatorio_qualidade"] = caminho_md
+
         return gerados
+
+    def gerar_relatorio_qualidade_md(self, caminho_md: Path) -> None:
+        """Gera um relatório .md com as estatísticas de qualidade das anotações.
+
+        O relatório reflete a passada única de ajuste de posição
+        (:func:`resolver_span`), separando cada desfecho:
+
+        - ``exata``      — o offset do XML já casava com o atributo ``text``;
+        - ``trim``       — casou após remover whitespace das bordas;
+        - ``shift``      — casou após deslocar as bordas em até ``raio_ajuste``
+          caracteres;
+        - ``descartada`` — nenhum candidato validou; entidade removida.
+
+        Lista individualmente as entidades ajustadas e as descartadas.
+        """
+        def soma(chave: str) -> int:
+            return sum(d.stats_parse.get(chave, 0) for d in self.documentos)
+
+        n_exatas = soma("n_exatas")
+        n_trim = soma("n_corrigidas_trim")
+        n_shift = soma("n_corrigidas_shift")
+        n_desc = soma("n_descartadas")
+        n_trim_aplicado = soma("n_trim_aplicado")
+        n_xml = soma("n_total_xml")
+        raios = {d.stats_parse.get("raio_ajuste", 1) for d in self.documentos}
+        raio = max(raios) if raios else 1
+        n_preservadas = n_exatas + n_trim + n_shift
+        pct = lambda v: f"{v / n_xml * 100:.2f}%" if n_xml else "—"
+
+        docs_crlf = sum(
+            1 for d in self.documentos if d.stats_parse.get("espaco_offsets") == "CRLF"
+        )
+        docs_com_desc = sum(
+            1 for d in self.documentos if d.stats_parse.get("n_descartadas", 0) > 0
+        )
+
+        todas_desc: list[dict] = []
+        todas_aj: list[dict] = []
+        for d in self.documentos:
+            todas_desc.extend(d.stats_parse.get("descartadas", []))
+            todas_aj.extend(d.stats_parse.get("ajustadas", []))
+
+        linhas_md = [
+            "# Relatório de qualidade das anotações\n",
+            "Resultado da passada única de ajuste de posição aplicada na leitura",
+            "dos XMLs (`resolver_span`): cada entidade é validada contra o atributo",
+            "`text` do XML e, quando necessário, reposicionada pela menor correção",
+            "que a torna compatível.\n",
+            "## Resumo\n",
+            "| Métrica | Valor |",
+            "|---|---|",
+            f"| Total no XML original | {n_xml} |",
+            f"| Exatas (offset já correto) | {n_exatas} ({pct(n_exatas)}) |",
+            f"| Corrigidas só por trim de whitespace | {n_trim} ({pct(n_trim)}) |",
+            f"| Corrigidas por deslocamento de borda (±{raio} caractere{'s' if raio > 1 else ''}) | {n_shift} ({pct(n_shift)}) |",
+            f"| **Preservadas (exatas + trim + shift)** | **{n_preservadas}** ({pct(n_preservadas)}) |",
+            f"| Descartadas (offset irrecuperável) | {n_desc} ({pct(n_desc)}) |",
+            f"| Documentos com offsets no espaço CRLF | {docs_crlf} de {len(self.documentos)} |",
+            f"| Documentos afetados por descarte | {docs_com_desc} |\n",
+            f"O trim de whitespace nunca resgata uma entidade sozinho ({n_trim}"
+            " casos): a comparação com o atributo `text` já ignora whitespace."
+            f" Ele é aplicado em {n_trim_aplicado} spans, sempre depois do"
+            " deslocamento, para encostar a borda no token (`\"IRC \"` →"
+            " `\"IRC\"`).\n",
+        ]
+
+        if todas_aj:
+            contagem: dict[tuple[int, int], int] = {}
+            for a in todas_aj:
+                if a["tipo"] == "shift":
+                    d = tuple(a["delta"])
+                    contagem[d] = contagem.get(d, 0) + 1
+            if contagem:
+                linhas_md.append("### Deslocamentos aplicados\n")
+                linhas_md.append("| Δinício | Δfim | Entidades |")
+                linhas_md.append("|---|---|---|")
+                for (ds, de), n in sorted(contagem.items(), key=lambda kv: -kv[1]):
+                    linhas_md.append(f"| {ds:+d} | {de:+d} | {n} |")
+                linhas_md.append("")
+
+            linhas_md.append("## Anotações ajustadas\n")
+            linhas_md.append(
+                "| doc_id | id | Ajuste | Atributo text | Span antes | Span depois | start | end |"
+            )
+            linhas_md.append("|---|---|---|---|---|---|---|---|")
+            for a in sorted(todas_aj, key=lambda x: (x["doc_id"], x["id"])):
+                ds, de = a["delta"]
+                rotulo = a["tipo"] if a["tipo"] != "shift" else f"shift ({ds:+d},{de:+d})"
+                linhas_md.append(
+                    f"| {a['doc_id']} | {a['id']} | {rotulo} | {_esc_md(a['attr_text'])} "
+                    f"| {_esc_md(a['span_antes'])} | {_esc_md(a['span_depois'])} "
+                    f"| {a['start']} | {a['end']} |"
+                )
+            linhas_md.append("")
+
+        if todas_desc:
+            linhas_md.append("## Anotações descartadas\n")
+            linhas_md.append("| doc_id | id | Atributo text | Span encontrado | start | end |")
+            linhas_md.append("|---|---|---|---|---|---|")
+            for d in sorted(todas_desc, key=lambda x: (x["doc_id"], x["id"])):
+                linhas_md.append(
+                    f"| {d['doc_id']} | {d['id']} | {_esc_md(d['attr_text'])} "
+                    f"| {_esc_md(d['span'])} | {d['start']} | {d['end']} |"
+                )
+
+        caminho_md.write_text("\n".join(linhas_md) + "\n", encoding="utf-8")
 
     # -- diagnóstico --------------------------------------------------------
 
     def estatisticas(self) -> dict:
-        """Resumo para conferência antes de treinar."""
-        por_split = {s: len(self.docs_do_split(s)) for s in self.SPLITS} if self.split else {}
+        """Resumo para conferência antes de treinar.
+
+        Sem contagem por split: a divisão é do passo 03 (`divisao_Gold_Qwen7B.csv`).
+        """
         n = len(self.documentos)
         ents = [len(d.entidades) for d in self.documentos]
         return {
@@ -1075,13 +1387,13 @@ class CorpusSemClinBr:
             "entidades_por_doc_min_mediana_max": (
                 min(ents), sorted(ents)[len(ents) // 2], max(ents)
             ) if ents else None,
-            "docs_por_split": por_split,
-            "proporcao_por_split": {s: round(v / n, 4) for s, v in por_split.items()},
             "n_rotulos_no_corpus": len(
                 {t for d in self.documentos for e in d.entidades for t in e.tags}
             ),
             "n_rotulos_no_prompt": len(self.tags),
             "cobertura_inventario": self.cobertura_inventario,
+            "inventario_do_treino": self.inventario_do_treino,
+            "docs_base_do_inventario": self.ids_inventario,
         }
 
 
@@ -1091,16 +1403,20 @@ if __name__ == '__main__':
     diretorio_base = Path(__file__).parent / "dados"
     diretorio_xml = diretorio_base / "SemClinBr-xml-public-v1"
     
+    # Divisão operativa do experimento, gerada pelo passo 03 a partir dos
+    # critérios de dificuldade. Este script NÃO divide o corpus: apenas lê a
+    # divisão, quando ela já existe, para derivar o inventário só do treino.
+    arquivo_divisao = diretorio_base / "divisao_Gold_Qwen7B.csv"
+
     print(f"Carregando corpus de {diretorio_xml}...")
-    corpus = CorpusSemClinBr(diretorio_xml, seed=42)
-    
-    print("Definindo splits (70/20/10)...")
-    corpus.definir_splits()
-    
-    print("Derivando inventário de rótulos do conjunto de treinamento...")
-    # Apenas do treino para não vazar tags exclusivas de teste no prompt
-    corpus.inventario_tags(apenas_treino=True)
-    
+    corpus = CorpusSemClinBr(diretorio_xml)
+
+    if arquivo_divisao.is_file():
+        print(f"Derivando inventário de rótulos do treino ({arquivo_divisao.name})...")
+    else:
+        print("Divisão ainda não existe — inventário sairá do corpus inteiro...")
+    corpus.inventario_tags(arquivo_divisao=arquivo_divisao, alvo="treino")
+
     print(f"Exportando arquivos para {diretorio_base}...")
     arquivos_gerados = corpus.exportar(
         destino=diretorio_base, 
@@ -1125,9 +1441,18 @@ if __name__ == '__main__':
     df_gabarito.to_parquet(arquivo_gabarito, index=False)
     arquivos_gerados["gabarito"] = arquivo_gabarito
 
+    # Relatório de qualidade das anotações
+    caminho_md = arquivo_gabarito.with_suffix(".md")
+    corpus.gerar_relatorio_qualidade_md(caminho_md)
+    print(f"Relatório de qualidade: {caminho_md}")
+
     print("\nEstatísticas do Corpus:")
     pprint(corpus.estatisticas())
 
     print("\nArquivos gerados:")
     for tipo, caminho in arquivos_gerados.items():
         print(f"  {tipo}: {caminho}")
+
+    aviso = corpus.aviso_inventario()
+    if aviso:
+        print(f"\n{aviso}")

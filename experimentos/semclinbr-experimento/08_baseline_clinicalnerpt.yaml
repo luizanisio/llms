@@ -1,0 +1,77 @@
+# 08_baseline_clinicalnerpt.yaml — configuração do baseline externo
+#
+# Cada modelo clinicalnerpt-* do HAILab-PUCPR (BioBERTpt) é um sequence
+# labeler especializado em UM tipo de entidade.  Este script roda cada
+# modelo sobre o split de teste do SemClinBr e compara o F1 por STY
+# coberto com os nossos protocolos.
+
+corpus:
+  xml: "dados/SemClinBr-xml-public-v1"
+  # Divisão gerada pelo passo 03 a partir dos critérios de dificuldade:
+  # fonte única de treino/teste/validação do experimento.
+  divisao: "dados/divisao_Gold_Qwen7B.csv"
+  split: "teste"
+  semgroups: "dados/SemGroups.txt"
+
+# Modelos baseline do HuggingFace.
+# label_iob: label IOB2 usada pelo modelo (sem o prefixo B-/I-)
+# stys: lista de STYs do SemClinBr que este modelo cobre
+modelos_baseline:
+  - nome: "pucpr/clinicalnerpt-medical"
+    label_iob: "MedicalDevice"
+    stys:
+      - "Medical Device"
+      - "Drug Delivery Device"
+
+  - nome: "pucpr/clinicalnerpt-disease"
+    label_iob: "DiseaseOrSyndrome"
+    stys:
+      - "Disease or Syndrome"
+
+  - nome: "pucpr/clinicalnerpt-disorder"
+    label_iob: "Disorder"
+    stys:
+      - "Sign or Symptom"
+      - "Finding"
+      - "Injury or Poisoning"
+      - "Pathologic Function"
+      - "Mental or Behavioral Dysfunction"
+      - "Neoplastic Process"
+      - "Anatomical Abnormality"
+
+  - nome: "pucpr/clinicalnerpt-chemical"
+    label_iob: "ChemicalDrugs"
+    stys:
+      - "Organic Chemical"
+      - "Antibiotic"
+      - "Element, Ion, or Isotope"
+
+  - nome: "pucpr/clinicalnerpt-pharmacologic"
+    label_iob: "PharmacologicSubstance"
+    stys:
+      - "Pharmacologic Substance"
+
+  - nome: "pucpr/clinicalnerpt-diagnostic"
+    label_iob: "DiagnosticProcedure"
+    stys:
+      - "Diagnostic Procedure"
+
+# Protocolos nossos para comparação (referência aos parquets de saída)
+protocolos:
+  - alias: "gold"
+    arquivo: "saidas/saida_semclinbr_gold.parquet"
+
+execucao:
+  campos_parquet:
+    id: "chave"
+    resposta: "resposta"
+  batch_size: 8
+  max_length: 512
+
+saida:
+  pasta: "saidas/avaliacao_ner"
+  arquivo_comparacao: "comparacao_baseline.md"
+
+misc:
+  pastas_base:
+    - "/mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento"

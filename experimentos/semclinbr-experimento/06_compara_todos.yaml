@@ -237,9 +237,11 @@ configuracao_comparacao:
   rouge_stemmer: true
 
   filtro:
-    arquivo: "dados/semclinbr.parquet"
+    # Divisão gerada pelo passo 03 a partir dos critérios de dificuldade:
+    # fonte única de treino/teste/validação do experimento.
+    arquivo: "dados/divisao_Gold_Qwen7B.csv"
     campo_id: "id"
-    dataset_filtro: {"split": "teste"}
+    dataset_filtro: {"alvo": "teste"}
 
   nome_campo_id: "id"
   rotulo_campo_id: "ID"

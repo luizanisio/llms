@@ -53,7 +53,13 @@ entrada:
   variavel_texto: "<<--TEXTO-->>"
   system_prompt: "You are an expert clinical annotator."
   filtro:
-    dataset_filtro: {"split": "teste"}
+    # A divisão treino/teste/validação vem de dados/divisao_Gold_Qwen7B.csv,
+    # gerado pelo passo 03. O filtro externo carrega esse arquivo, seleciona
+    # alvo=teste e processa apenas esses ids.
+    filtro_externo:
+      arquivo: "dados/divisao_Gold_Qwen7B.csv"
+      campo_id: "id"
+      dataset_filtro: {"alvo": "teste"}
 
 # --- Saída ---
 saida:

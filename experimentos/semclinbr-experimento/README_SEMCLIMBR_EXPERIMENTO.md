@@ -5,6 +5,10 @@ Instanciação do framework CL+PT sobre o corpus **SemClinBr**
 65.129 entidades, 11.263 relações, 100 STYs do UMLS + `Abbreviation` + `Negation`,
 2 RTYs: `associated_with` e `negation_of`).
 
+> Os números acima são os do artigo. O release público (`SemClinBr-xml-public-v1`)
+> traz **45 508 anotações** nos 1.000 XMLs — é sobre esse total que as taxas de
+> §2.1 são calculadas.
+
 Experimento **isolado**: avaliação própria, comparação interna entre protocolos e
 comparação externa contra os sistemas publicados sobre o mesmo corpus. 
 
@@ -81,6 +85,111 @@ sem ganho.
 | `tag` multi-rótulo | **String com `\|`**, como no XML | Evita divergência de formato entre gabarito e alvo |
 | Canonicalização | `text` reescrito a partir do offset após alinhar | O span é a autoridade, não a cópia do modelo; garante round-trip exato |
 
+### 2.1. Limpeza de offsets do corpus
+
+Os offsets de anotação do SemClinBr são inconsistentes. `parse_semclinbr_xml`
+os corrige em **duas etapas**: primeiro decide em que espaço o documento gravou
+os offsets, depois fixa a posição de cada entidade numa **passada única**
+(`resolver_span`), sempre validando contra o atributo `text` do XML.
+
+**Etapa 1 — espaço de offsets (por documento).** Parte do corpus grava offsets
+sobre o texto CRLF original, parte sobre o texto LF (pós-normalização XML 1.0
+§2.11). `_escolher_espaco_offsets` pontua **todas** as anotações do documento
+nos dois espaços e fica com o que validar mais; empate mantém LF (conservador).
+Resultado: **421 documentos em CRLF**, 579 em LF.
+
+> Duas condições tornam a pontuação sensível e por isso ela percorre **todas**
+> as anotações com a comparação tolerante de `_spans_compativeis`: anotações
+> que caem antes da primeira quebra de linha validam nos dois espaços e não
+> discriminam nada, e documentos com entidades XML duplamente escapadas
+> (`&amp;gt;`) não casam contra o atributo `text` cru. Amostrar poucas
+> anotações, ou comparar sem tolerância, escolhe LF indevidamente em 26
+> documentos — 932 anotações perdidas.
+
+**Etapa 2 — passada única de ajuste (`resolver_span`).** Para cada entidade,
+da correção nula à maior, parando na primeira que valida:
+
+| Ordem | Ajuste | O que corrige | Entidades |
+|---|---|---|---|
+| 1 | `exata` | offset já correto | 45 061 (99,02%) |
+| 2 | `trim` | whitespace nas bordas do span | 0 (0,00%) |
+| 3 | `shift` | borda deslocada em até **`raio_ajuste` caracteres** para a esquerda e/ou direita | 421 (0,93%) |
+| 4 | `descartada` | nenhum candidato valida — entidade removida | 26 (0,06%) |
+
+**Preservadas: 45 482 de 45 508 (99,94%)**, com `raio_ajuste=2` (o padrão).
+As relações que referenciam entidades descartadas também são removidas
+(11 458 relações preservadas).
+
+O deslocamento é dominado por um padrão único: **387 casos de `(−1, 0)`**, a
+borda esquerda um caractere adiantada (`"ORADA"` anotado para `"CORADA"`), mais
+18 de `(−1, −1)`; o raio 2 acrescenta 16 casos (9 de `(−2, 0)`, 3 de `(−2, −2)`,
+3 de `(−2, −1)`, 1 de `(−1, −2)`). O raio é parametrizável
+(`parse_semclinbr_xml(..., raio_ajuste=2)`); `raio_ajuste=1` cobre só o erro de
+um caractere e `0` desliga o ajuste. O relatório sempre imprime o raio efetivo.
+
+O `trim` nunca resgata uma entidade sozinho (0 casos) porque a comparação com o
+atributo `text` já ignora whitespace — mas ele **é** carregado: atua em 43 spans
+*depois* do deslocamento, encostando a borda no token (`"IRC "` → `"IRC"`).
+
+**Critério de validação e descarte:** o span resultante é comparado com o
+atributo `text` do XML ignorando whitespace e entidades XML (`&gt;`, `&lt;`,
+`&amp;`) — a ferramenta de anotação tokeniza o atributo ao salvar (`"35 , 7ºC"`
+em vez de `"35,7ºC"`). As 26 descartadas restantes são irrecuperáveis de fato: o
+texto foi editado após a anotação (ex: doc 8965, atributo `"TRAUMATISMOS NAO
+ESPECIFICADOS"` contra o span `"TRAUMATISMOS MULTIPLOS NAO ESPECIFICADOS"`).
+
+**Invariante garantida:** toda entidade preservada satisfaz
+`_spans_compativeis(texto[start:end], text)`. O parquet de treinamento é gerado
+a partir desses offsets já corrigidos — `xml_to_target_json` reescreve o campo
+`text` a partir do span, então o gabarito carrega o texto real da nota.
+
+**Relatório de qualidade:** cada exportação (parquet/CSV) gera um `.md` com o
+mesmo nome base (`dados/semclinbr.md`, `saidas/saida_semclinbr_gold.md`) com o
+resumo acima, a distribuição dos deslocamentos aplicados e a lista individual
+das entidades ajustadas e descartadas.
+
+### 2.2. Comparação com baseline externo (ClinicalNERpt)
+
+Para contextualizar a performance dos nossos modelos (LLM generativa),
+comparamos com os **modelos ClinicalNERpt** do HAILab-PUCPR
+(`pucpr/clinicalnerpt-*` no HuggingFace), que são sequence labelers
+(BertForTokenClassification) fine-tunados sobre o BioBERTpt com dados do
+SemClinBr.
+
+**Limitações importantes:**
+
+1. **Cobertura parcial de STYs.** Cada `clinicalnerpt-*` cobre apenas **1 tipo
+   de entidade** (ex: `MedicalDevice`, `DiseaseOrSyndrome`). Os 6 modelos
+   disponíveis cobrem ~6 dos 84 STYs do nosso prompt. Entidades de STYs não
+   cobertos (como `Sign or Symptom`, `Finding`) não têm predição do baseline.
+
+2. **Split de treino desconhecido.** Schneider et al. não publicaram a divisão
+   treino/teste usada para treinar os clinicalnerpt. Não há como garantir que
+   nosso split de teste não vazou para o treino deles.
+
+3. **Paradigma diferente.** Os clinicalnerpt são token classifiers IOB2
+   (discriminativos, supervisionados); nossos modelos são LLMs generativas
+   com prompt instruction-following. A comparação é informativa, não conclusiva.
+
+**Decisão de agrupamento:** o relatório (`08_baseline_clinicalnerpt.py`)
+é **agrupado por modelo baseline**. Para cada modelo:
+- Lista os labels e acurácias do baseline
+- Compara com os mesmos labels/acurácias dos nossos modelos
+- Filtra **apenas os STYs que o modelo do HuggingFace possui**, garantindo
+  comparação justa
+
+**Split usado.** `08_baseline_clinicalnerpt.yaml` lê
+`dados/divisao_Gold_Qwen7B.csv` — a fonte única de treino/teste/validação do
+experimento (§3), a mesma dos treinos (`04_*`), das extrações (`05_*`), da
+comparação (`06_*`) e da avaliação de NER (`07_*`).
+
+**Limitação conhecida do script.** `rodar_modelo_ner` rotula toda entidade
+detectada com `stys[0]`. Para os 3 modelos que cobrem mais de um STY
+(`-medical` 2, `-chemical` 3, `-disorder` 7) as linhas dos demais STYs saem
+com F1 0 por construção, não por erro do baseline — esses modelos foram
+treinados com os STYs já fundidos numa classe e não os distinguem. Ler essas
+linhas como agrupadas, ou comparar no nível do grupo.
+
 ---
 
 ## 3. Preparação do dataset (`CorpusSemClinBr`)
@@ -88,11 +197,64 @@ sem ganho.
 ```python
 from util_semclinbr import CorpusSemClinBr
 
-corpus = CorpusSemClinBr("dados/semclinbr_xml", seed=42)
-corpus.definir_splits()                  # 70 / 20 / 10, estratificado
-corpus.inventario_tags(cobertura=0.95)   # rótulos derivados SÓ do treino
+corpus = CorpusSemClinBr("dados/SemClinBr-xml-public-v1")
+corpus.inventario_tags(arquivo_divisao="dados/divisao_Gold_Qwen7B.csv")
 corpus.exportar("dados/")
 ```
+
+### Quem define treino / teste / validação
+
+**Uma única fonte: `dados/divisao_Gold_Qwen7B.csv`, gerada pelo passo 03**
+(`03_compara_gold_full.yaml`). A comparação calcula a dificuldade de cada
+documento a partir das métricas do modelo base contra o gabarito e grava, num
+só arquivo, as colunas `id`, `alvo` (`treino` / `teste` / `validacao`),
+`dificuldade` e `dificuldade_int`. Todos os passos seguintes se apoiam nele, e
+**apenas nos ids que constam nele**:
+
+| Passo | Como consome a divisão |
+|---|---|
+| 04 — treino | `curriculum.divisao[].arquivo: dados/divisao_Gold_Qwen7B.csv`, com `dataset_filtro: {"dificuldade": ...}` por bloco curricular |
+| 05 — extração no teste | `entrada.filtro.filtro_externo` → `arquivo: divisao_Gold_Qwen7B.csv`, `dataset_filtro: {"alvo": "teste"}` |
+| 06 — comparação | `configuracao_comparacao.filtro` → mesmo arquivo, `dataset_filtro: {"alvo": "teste"}` |
+| 07 — avaliação NER | `corpus.divisao` / `corpus.split` |
+| 08 — baseline externo | `corpus.divisao` / `corpus.split` |
+
+`util_semclinbr.py` **não divide o corpus** e a divisão **não é coluna do
+parquet** — é sempre o arquivo do passo 03. Manter uma única fonte é o que
+impede data leakage: duas divisões sorteadas independentemente sobre o mesmo
+corpus divergem, e um filtro que use a divisão errada monta um "teste" com
+documentos que o modelo viu no treino.
+
+> **Ordem de execução.** O passo 03 precisa do parquet e do gabarito para
+> calcular a dificuldade, então na primeira vez a divisão ainda não existe:
+> `python util_semclinbr.py` → 02 (extração do modelo base) → 03 (**gera a
+> divisão**) → `python util_semclinbr.py` de novo → 04 → 05 → 06 / 07 / 08.
+> A segunda execução é o que faz o inventário de rótulos sair só do treino; o
+> script avisa em voz alta quando roda sem a divisão (ver abaixo).
+
+### Inventário de rótulos e a segunda execução
+
+`inventario_tags(arquivo_divisao=..., alvo="treino")` deriva os rótulos do
+prompt apenas dos documentos de treino, para não vazar a existência de STYs que
+só ocorrem no teste. É vazamento fraco — metadado, não rótulo por instância —
+mas evitá-lo é gratuito depois que o 03 rodou.
+
+Quando o arquivo de divisão ainda não existe, o inventário sai do corpus
+inteiro (89 rótulos em vez de 85) e `exportar()` imprime:
+
+```
+⚠️  ATENÇÃO — o prompt contém TODOS os rótulos do corpus (89), não apenas os do treino.
+    O arquivo de divisão (dados/divisao_Gold_Qwen7B.csv) ainda não
+    existe, então não há como saber quais documentos são de treino.
+    O parquet está pronto e pode seguir para os passos 02 e 03.
+    Depois que o 03 gerar a divisão, RODE ESTE SCRIPT DE NOVO para
+    que o prompt fique só com os rótulos do treino.
+```
+
+Os 5 rótulos extras (`Amino Acid Sequence`, `Behavior`, `Fish`, `Regulation or
+Law`, `Social Behavior`) têm frequência 1 cada, então o bootstrap serve
+perfeitamente para rodar 02 e 03 — mas o prompt definitivo é o da segunda
+execução.
 
 ### Dataset gerado
 
@@ -100,8 +262,8 @@ corpus.exportar("dados/")
 |---|---|
 | `id` | nome do arquivo XML, sem extensão |
 | `texto` | conteúdo de `<TEXT>` |
-| `split` | `treino` (70%) / `teste` (20%) / `validacao` (10%) — 697 / 197 / 103 documentos em `divisao_Gold_Qwen7B.csv` |
-| `resposta` | gabarito JSON serializado |
+| `resposta` | gabarito JSON serializado, com os offsets já corrigidos (§2.1) |
+| `prompt` | prompt com o inventário e o texto injetados (só com `incluir_prompt=True`) |
 | *extras* | `n_entidades`, `n_relacoes`, `n_rotulos_distintos`, `n_multirotulo`, `n_chars`, `n_tags_fora_do_prompt` |
 
 As colunas extras alimentam o componente estrutural do proxy $S_i$ e podem ser
@@ -112,27 +274,15 @@ descartadas se não forem usadas.
 | Arquivo | Papel |
 |---|---|
 | `semclinbr.parquet` (ou `.csv`) | o dataset acima |
-| `divisao_Gold_Qwen7B.csv` | `id`, `alvo`, `dificuldade` — formato esperado pelo framework em `arquivo_referencia` |
+| `semclinbr.md` | relatório de qualidade das anotações (§2.1) |
 | `prompt_semclinbr.txt` | prompt com o inventário já injetado |
-| `inventario_semclinbr.csv` | `rotulo`, `frequencia_treino` |
+| `inventario_semclinbr.csv` | `rotulo` + `frequencia_treino` (ou `frequencia_corpus`, no bootstrap — o cabeçalho declara a origem) |
+| `saidas/saida_semclinbr_gold.parquet` | gabarito no formato do framework (`chave`, `resposta`, `erro`) — é o `modelo_base` dos passos 03 e 06 |
+| `saidas/saida_semclinbr_gold.md` | o mesmo relatório de qualidade, junto do gabarito |
 
-O prompt é gravado junto com os dados de propósito: **o inventário é derivado do
-corpus**, então sem esse arquivo o experimento não é reprodutível. 
-
-### Splits
-
-Determinísticos e **estáveis sob mudança do conjunto de arquivos**: a atribuição
-usa hash de `(seed, id)`, não a posição na lista ordenada. Remover ou adicionar
-documentos não reembaralha os demais — relevante se o corpus chegar em lotes ou
-se algum XML for descartado por defeito de parsing.
-
-Estratificados por quartil de quantidade de entidades, para que as três
-partições tenham distribuição de complexidade comparável. Sem isso, o proxy
-$S_i$ poderia estar medindo diferença entre partições em vez de dificuldade.
-Alocação por maior resto, para que o arredondamento por estrato não desloque as
-proporções globais.
-
-**Divisão de Dificuldade:** A divisão de dificuldade é realizada no momento da comparação, configurada através do arquivo `03_compara_gold_full.yaml`. O script de comparação calcula a dificuldade de cada documento e faz o cruzamento (merge) utilizando o arquivo de referência (`dados/divisao_Gold_Qwen7B.csv`). Isso garante que a divisão original, já sorteada e estratificada, seja estritamente preservada. Sem essa referência explícita, o cálculo de dificuldade poderia reembaralhar as partições de treino e teste, causando vazamento de dados (data leakage).
+Nenhum arquivo de divisão é gerado aqui. O prompt é gravado junto com os dados
+de propósito: **o inventário é derivado do corpus**, então sem esse arquivo o
+experimento não é reprodutível.
 
 ---
 

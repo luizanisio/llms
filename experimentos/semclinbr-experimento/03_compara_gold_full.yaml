@@ -38,13 +38,17 @@ execucao:
   # =========================================================================
   # CONFIGURAÇÃO DE DIVISÃO
   # =========================================================================
-  # `arquivo_referencia` é o split já sorteado por CorpusSemClinBr.definir_splits()
-  # (hash estável de (seed, id), estratificado por quartil de nº de entidades).
-  # O script calcula a dificuldade e faz merge com este arquivo, preservando a
-  # divisão original — sem isso a dificuldade reembaralharia treino/teste e
-  # abriria data leakage.
+  # O SemClinBr não tem divisão pré-fixada, então este passo é quem a define:
+  # calcula a dificuldade de cada documento e sorteia treino/teste/validação,
+  # gravando tudo em dados/divisao_Gold_Qwen7B.csv. É a fonte única da divisão
+  # para os passos 04 a 08.
+  #
+  # `arquivo_referencia` serve para PRESERVAR uma divisão já existente: quando
+  # informado, o script calcula a dificuldade e faz merge com esse arquivo em
+  # vez de sortear de novo. Use-o ao reexecutar este passo depois que os
+  # treinos já rodaram — sem ele, um novo sorteio reembaralha treino/teste e
+  # abre data leakage.
   # =========================================================================
-  # aqui a divisão não é fixa porque o SemClinBR não tem divisão pré-fixada
   #divisao:
   #  arquivo_referencia: "dados/divisao_Gold_Qwen7B.csv"
 
