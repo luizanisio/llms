@@ -64,8 +64,9 @@ número baixo por um motivo alheio à capacidade do modelo, inviabilizando a
 comparação externa. Fornecer o vocabulário iguala essa condição.
 
 **Escopo da lista.** Os 25 rótulos acima cobrem a maior parte das anotações.
-O prompt real (`dados/prompt_semclinbr.txt`) usa o inventário derivado do split
-de treino: **84 rótulos** (`dados/inventario_semclinbr.csv`).
+O prompt real (`dados/prompt_semclinbr.txt`) usa o inventário derivado do
+corpus: **89 rótulos** (`dados/inventario_semclinbr.csv`), com cobertura 1,0 —
+ver §3, "Inventário de rótulos".
 
 ### Idioma
 
@@ -198,7 +199,7 @@ linhas como agrupadas, ou comparar no nível do grupo.
 from util_semclinbr import CorpusSemClinBr
 
 corpus = CorpusSemClinBr("dados/SemClinBr-xml-public-v1")
-corpus.inventario_tags(arquivo_divisao="dados/divisao_Gold_Qwen7B.csv")
+corpus.inventario_tags()
 corpus.exportar("dados/")
 ```
 
@@ -225,36 +226,35 @@ impede data leakage: duas divisões sorteadas independentemente sobre o mesmo
 corpus divergem, e um filtro que use a divisão errada monta um "teste" com
 documentos que o modelo viu no treino.
 
-> **Ordem de execução.** O passo 03 precisa do parquet e do gabarito para
-> calcular a dificuldade, então na primeira vez a divisão ainda não existe:
-> `python util_semclinbr.py` → 02 (extração do modelo base) → 03 (**gera a
-> divisão**) → `python util_semclinbr.py` de novo → 04 → 05 → 06 / 07 / 08.
-> A segunda execução é o que faz o inventário de rótulos sair só do treino; o
-> script avisa em voz alta quando roda sem a divisão (ver abaixo).
+**Ordem de execução:** `python util_semclinbr.py` → 02 (extração do modelo
+base sobre os 1.000 documentos) → 03 (**gera a divisão**) → 04 → 05 → 06 / 07 / 08.
 
-### Inventário de rótulos e a segunda execução
+### Inventário de rótulos
 
-`inventario_tags(arquivo_divisao=..., alvo="treino")` deriva os rótulos do
-prompt apenas dos documentos de treino, para não vazar a existência de STYs que
-só ocorrem no teste. É vazamento fraco — metadado, não rótulo por instância —
-mas evitá-lo é gratuito depois que o 03 rodou.
+`inventario_tags()` deriva os 89 rótulos do prompt do **corpus inteiro**, não de
+um split. O prompt é, portanto, uma propriedade do corpus, fixada antes de
+existir qualquer divisão.
 
-Quando o arquivo de divisão ainda não existe, o inventário sai do corpus
-inteiro (89 rótulos em vez de 85) e `exportar()` imprime:
+Isso é deliberado, e é o que mantém a comparação controlada. O protocolo A
+(zero-shot, `saida_semclinbr_7b.parquet`) não é só o instrumento que calibra a
+dificuldade no passo 03: ele é `baseline: true` no passo 06, comparado contra B,
+C e todos os D*. Num desenho pareado, o prompt é o estímulo — se o baseline
+rodasse com um inventário e os tratamentos com outro, a diferença entre eles
+deixaria de ser atribuível só ao protocolo. Derivar o inventário do treino
+também seria circular: a saída de A define a dificuldade, que define o split,
+que definiria os rótulos do treino, que definiriam o prompt que gerou a saída
+de A.
 
-```
-⚠️  ATENÇÃO — o prompt contém TODOS os rótulos do corpus (89), não apenas os do treino.
-    O arquivo de divisão (dados/divisao_Gold_Qwen7B.csv) ainda não
-    existe, então não há como saber quais documentos são de treino.
-    O parquet está pronto e pode seguir para os passos 02 e 03.
-    Depois que o 03 gerar a divisão, RODE ESTE SCRIPT DE NOVO para
-    que o prompt fique só com os rótulos do treino.
-```
+**O custo, declarado.** Quatro STYs do corpus ocorrem apenas no split de teste
+— `Physical Object` (×2), `Behavior`, `Regulation or Law`, `Social Behavior` —,
+somando **5 de 8.699 anotações de teste (0,06%)**. Listá-los no prompt é
+vazamento de *metadado*, não de rótulo por instância: o prompt não informa qual
+documento tem qual rótulo. Na prática os modelos ajustados sequer conseguem
+emiti-los, porque esses tipos nunca aparecem nos alvos de treino — o efeito
+real fica abaixo desse teto já desprezível.
 
-Os 5 rótulos extras (`Amino Acid Sequence`, `Behavior`, `Fish`, `Regulation or
-Law`, `Social Behavior`) têm frequência 1 cada, então o bootstrap serve
-perfeitamente para rodar 02 e 03 — mas o prompt definitivo é o da segunda
-execução.
+A cobertura do inventário é, assim, **1,0**: nenhuma anotação do corpus tem
+rótulo fora do prompt.
 
 ### Dataset gerado
 
@@ -276,7 +276,7 @@ descartadas se não forem usadas.
 | `semclinbr.parquet` (ou `.csv`) | o dataset acima |
 | `semclinbr.md` | relatório de qualidade das anotações (§2.1) |
 | `prompt_semclinbr.txt` | prompt com o inventário já injetado |
-| `inventario_semclinbr.csv` | `rotulo` + `frequencia_treino` (ou `frequencia_corpus`, no bootstrap — o cabeçalho declara a origem) |
+| `inventario_semclinbr.csv` | `rotulo`, `frequencia_corpus` |
 | `saidas/saida_semclinbr_gold.parquet` | gabarito no formato do framework (`chave`, `resposta`, `erro`) — é o `modelo_base` dos passos 03 e 06 |
 | `saidas/saida_semclinbr_gold.md` | o mesmo relatório de qualidade, junto do gabarito |
 

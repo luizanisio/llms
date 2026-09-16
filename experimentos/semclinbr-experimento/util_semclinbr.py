@@ -1008,12 +1008,12 @@ class CorpusSemClinBr:
 
     Ordem das operações:
 
-        1. inventario_tags(arquivo_divisao=...)  -- rótulos do prompt
-        2. exportar()                            -- dataset + prompt + inventário
+        1. inventario_tags()  -- rótulos do prompt, derivados do corpus
+        2. exportar()         -- dataset + prompt + inventário
 
     Uso:
         corpus = CorpusSemClinBr("dados/SemClinBr-xml-public-v1")
-        corpus.inventario_tags(arquivo_divisao="dados/divisao_Gold_Qwen7B.csv")
+        corpus.inventario_tags()
         corpus.exportar("dados/")
     """
 
@@ -1025,73 +1025,42 @@ class CorpusSemClinBr:
         self.tags: list[str] = []
         self.freq_tags: dict[str, int] = {}
         self.cobertura_inventario: float | None = None
-        self.inventario_do_treino: bool = False
-        self.ids_inventario: int = 0
 
     # -- inventário de rótulos ---------------------------------------------
 
-    def _ids_do_alvo(self, arquivo_divisao: str | Path, alvo: str) -> set[str] | None:
-        """Lê os ids de um alvo no arquivo de divisão do passo 03.
-
-        Devolve None quando o arquivo ainda não existe (bootstrap) ou não traz
-        as colunas esperadas — o chamador cai para o corpus inteiro.
-        """
-        caminho = Path(arquivo_divisao)
-        if not caminho.is_file():
-            return None
-        import csv as _csv
-
-        with caminho.open(encoding="utf-8", newline="") as fh:
-            linhas = list(_csv.DictReader(fh))
-        if not linhas:
-            return None
-        campos = linhas[0].keys()
-        col_id = "id_arquivo" if "id_arquivo" in campos else "id"
-        if col_id not in campos or "alvo" not in campos:
-            return None
-        return {
-            str(ln[col_id]).strip()
-            for ln in linhas
-            if str(ln.get("alvo", "")).strip() == alvo
-        }
-
     def inventario_tags(
         self,
-        arquivo_divisao: str | Path | None = None,
-        alvo: str = "treino",
         cobertura: float | None = None,
         minimo: int = 1,
     ) -> list[str]:
-        """Deriva a lista de rótulos que vai no prompt, a partir do corpus real.
+        """Deriva a lista de rótulos que vai no prompt, a partir do corpus.
 
-        arquivo_divisao: divisão gerada pelo passo 03. Quando informada **e o
-                   arquivo existe**, os rótulos saem apenas dos documentos com
-                   `alvo` igual a `alvo` (por padrão, o treino). Quando o
-                   arquivo ainda não existe — o caso do bootstrap, antes de
-                   rodar o 03 — o inventário sai do corpus inteiro e
-                   `self.inventario_do_treino` fica False, o que faz
-                   `exportar()` emitir o aviso de que é preciso rodar de novo.
         cobertura: se informado (ex.: 0.95), trunca a lista nos rótulos mais
                    frequentes que cobrem essa fração das anotações; o resto vira
                    cauda longa fora do prompt.
         minimo:    frequência mínima para entrar na lista.
 
-        Derivar do treino evita vazar para o prompt a existência de STYs que só
-        ocorrem no teste. É vazamento fraco (metadado, não rótulo por
-        instância), mas evitá-lo é gratuito depois que o 03 rodou.
+        O inventário sai do **corpus inteiro**, não de um split. Isso torna o
+        prompt uma propriedade do corpus, fixada antes de existir qualquer
+        divisão: os quatro protocolos comparados (A zero-shot, B, C, D*) recebem
+        exatamente o mesmo estímulo, que é a condição do desenho pareado. Derivar
+        do treino exigiria a saída do modelo base, que por sua vez depende do
+        prompt — circularidade — e faria o protocolo A rodar com um prompt
+        diferente dos demais.
+
+        O custo é declarado no README §3: quatro STYs do corpus só ocorrem no
+        split de teste (5 de 8 699 anotações, 0,06%). É vazamento de metadado,
+        não de rótulo por instância — o prompt não diz qual documento tem qual
+        rótulo, e os modelos ajustados sequer conseguem emitir esses tipos,
+        porque eles nunca aparecem nos alvos de treino.
 
         Retorna a lista ordenada por frequência decrescente e registra
-        self.cobertura_inventario — a fração das anotações do corpus INTEIRO
-        cujos rótulos aparecem na lista. Esse número é característica declarada
-        do experimento: é o teto imposto pelo prompt.
+        self.cobertura_inventario — a fração das anotações do corpus cujos
+        rótulos aparecem na lista. Esse número é característica declarada do
+        experimento: é o teto imposto pelo prompt.
         """
-        ids = self._ids_do_alvo(arquivo_divisao, alvo) if arquivo_divisao else None
-        self.inventario_do_treino = bool(ids)
-        base = [d for d in self.documentos if d.doc_id in ids] if ids else self.documentos
-        self.ids_inventario = len(base)
-
         freq: dict[str, int] = {}
-        for doc in base:
+        for doc in self.documentos:
             for ent in doc.entidades:
                 for t in ent.tags:
                     freq[t] = freq.get(t, 0) + 1
@@ -1112,7 +1081,6 @@ class CorpusSemClinBr:
         self.tags = [t for t, _ in ordenadas]
         self.freq_tags = dict(ordenadas)
 
-        # cobertura medida sobre o corpus inteiro, não só a base do inventário
         no_prompt = set(self.tags)
         dentro = fora = 0
         for doc in self.documentos:
@@ -1124,20 +1092,6 @@ class CorpusSemClinBr:
                         fora += 1
         self.cobertura_inventario = dentro / (dentro + fora) if (dentro + fora) else 0.0
         return self.tags
-
-    def aviso_inventario(self) -> str:
-        """Aviso a exibir quando o inventário não pôde sair do split de treino."""
-        if self.inventario_do_treino or not self.tags:
-            return ""
-        return (
-            "⚠️  ATENÇÃO — o prompt contém TODOS os rótulos do corpus "
-            f"({len(self.tags)}), não apenas os do treino.\n"
-            "    O arquivo de divisão (dados/divisao_Gold_Qwen7B.csv) ainda não\n"
-            "    existe, então não há como saber quais documentos são de treino.\n"
-            "    O parquet está pronto e pode seguir para os passos 02 e 03.\n"
-            "    Depois que o 03 gerar a divisão, RODE ESTE SCRIPT DE NOVO para\n"
-            "    que o prompt fique só com os rótulos do treino."
-        )
 
     def montar_prompt(self, template: str = PROMPT_TEMPLATE,
                       por_linha: int = 3) -> str:
@@ -1250,10 +1204,7 @@ class CorpusSemClinBr:
             caminho = destino / f"inventario_{nome}.csv"
             with caminho.open("w", encoding="utf-8", newline="") as fh:
                 w = _csv.writer(fh)
-                # o cabeçalho declara de onde saiu a frequência
-                w.writerow(["rotulo",
-                            "frequencia_treino" if self.inventario_do_treino
-                            else "frequencia_corpus"])
+                w.writerow(["rotulo", "frequencia_corpus"])
                 for t in self.tags:
                     w.writerow([t, self.freq_tags[t]])
             gerados["inventario"] = caminho
@@ -1392,8 +1343,6 @@ class CorpusSemClinBr:
             ),
             "n_rotulos_no_prompt": len(self.tags),
             "cobertura_inventario": self.cobertura_inventario,
-            "inventario_do_treino": self.inventario_do_treino,
-            "docs_base_do_inventario": self.ids_inventario,
         }
 
 
@@ -1403,19 +1352,11 @@ if __name__ == '__main__':
     diretorio_base = Path(__file__).parent / "dados"
     diretorio_xml = diretorio_base / "SemClinBr-xml-public-v1"
     
-    # Divisão operativa do experimento, gerada pelo passo 03 a partir dos
-    # critérios de dificuldade. Este script NÃO divide o corpus: apenas lê a
-    # divisão, quando ela já existe, para derivar o inventário só do treino.
-    arquivo_divisao = diretorio_base / "divisao_Gold_Qwen7B.csv"
-
     print(f"Carregando corpus de {diretorio_xml}...")
     corpus = CorpusSemClinBr(diretorio_xml)
 
-    if arquivo_divisao.is_file():
-        print(f"Derivando inventário de rótulos do treino ({arquivo_divisao.name})...")
-    else:
-        print("Divisão ainda não existe — inventário sairá do corpus inteiro...")
-    corpus.inventario_tags(arquivo_divisao=arquivo_divisao, alvo="treino")
+    print("Derivando inventário de rótulos do corpus...")
+    corpus.inventario_tags()
 
     print(f"Exportando arquivos para {diretorio_base}...")
     arquivos_gerados = corpus.exportar(
@@ -1452,7 +1393,3 @@ if __name__ == '__main__':
     print("\nArquivos gerados:")
     for tipo, caminho in arquivos_gerados.items():
         print(f"  {tipo}: {caminho}")
-
-    aviso = corpus.aviso_inventario()
-    if aviso:
-        print(f"\n{aviso}")
