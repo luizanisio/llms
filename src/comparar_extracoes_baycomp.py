@@ -208,6 +208,7 @@ class ConfigBayes:
     ativo: bool = False
     limiar: float = LIMIAR_PADRAO
     incluir_base: bool = False
+    calibracao_rope: bool = False
     recortes: list = field(default_factory=lambda: [Recorte()])
     # --- Likert (principal) ---
     rope_likert: float = 0.0        # transcrita da Etapa 1; 0 = ausente
@@ -337,6 +338,7 @@ def configurar_bayesiana(config: dict) -> ConfigBayes:
         ativo=True,
         limiar=float(bloco.get('limiar', LIMIAR_PADRAO)),
         incluir_base=bool(bloco.get('incluir_base', False)),
+        calibracao_rope=bool(bloco.get('calibracao_rope', False)),
         recortes=_ler_recortes(bloco.get('protocolos')),
         rope_likert=float(bloco.get('rope_likert', 0.0) or 0.0),
         rope=float(automaticas.get('rope', 0.0) or 0.0),
@@ -1156,8 +1158,8 @@ def _processar_recorte(recorte: Recorte, cfg: ConfigBayes, analisador, dados_ana
 
     # "TODOS" (recorte.protocolos vazio) inclui automaticamente o professor
     # virtual nas métricas automáticas — ele não precisa ser listado
-    # explicitamente para aparecer no panorama geral.
-    if not recorte.protocolos:
+    # explicitamente para aparecer no panorama geral. NUNCA inclui em calibração da ROPE.
+    if not recorte.protocolos and not cfg.calibracao_rope:
         rotulos_metricas.append(PROTOCOLO_PROFESSOR_DISPLAY)
 
     if recorte.protocolos:

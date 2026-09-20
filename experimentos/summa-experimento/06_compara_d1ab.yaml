@@ -71,6 +71,10 @@ configuracao_comparacao:
   rouge_stemmer: true
 
   filtro:
+    # Divisão gerada na etapa 04 a partir da comparação da linha de base:
+    # O arquivo deve estar presente em dados/divisao_Qwen235b_Qwen7b.csv.
+    # Sem este filtro, documentos de treino/validação seriam avaliados contra saídas de teste,
+    # gerando predições vazias e escores 0.0.
     arquivo: "dados/divisao_Qwen235b_Qwen7b.csv"
     campo_id: "id"
     dataset_filtro: {"alvo": "teste"}
@@ -212,8 +216,17 @@ estatistica:
   calibracao_rope: true
 
   # Um único recorte: as três réplicas, todas contra todas.
+  # CRÍTICO: NUNCA usar "TODOS" em bateria de calibração (calibracao_rope: true).
+  # O uso de "TODOS" injeta automaticamente o protocolo virtual ★Prof (gabarito = 1.0)
+  # nas métricas automáticas. Como a calibração da ROPE seleciona o par de maior
+  # discrepância (|Δ|), se ★Prof estiver presente ela medirá a distância de destilação
+  # (aluno vs professor) em vez do ruído não-determinístico entre réplicas idênticas,
+  # inflando a ROPE. Portanto, listamos explicitamente apenas as réplicas a calibrar:
   protocolos:
-    Panorama_Geral: "TODOS"
+    Replicas_D1:
+      - D1
+      - D1a
+      - D1b
 
   # --- Métricas automáticas (camada COMPLEMENTAR) ---
   # Medem similaridade com o modelo base = FIDELIDADE DE DESTILAÇÃO, não

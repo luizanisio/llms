@@ -69,7 +69,22 @@ python ../../src/comparar_extracoes.py --config 03_compara_q235_full.yaml
 python ../../src/comparar_extracoes.py --config 03_compara_gpt5_curadoria.yaml
 ```
 
-> **Saída importante:** o arquivo de divisão (`divisao_*.parquet`) com as colunas `alvo` (treino/teste/validação) e `dificuldade_int` (1–9), que alimentará as etapas seguintes.
+> **Saída importante:** o arquivo de divisão (`divisao_*.csv` ou `.parquet`) com as colunas `alvo` (treino/teste/validação) e `dificuldade_int` (1–9), que alimentará as etapas seguintes.
+>
+> ⚠️ **Atenção Crítica — Copiar para `dados/`:**  
+> O script salva as divisões dentro da pasta de saída da comparação:  
+> `compara/<pasta_saida_analises>/divisoes/divisao_<modelo>.csv` (ou `.parquet`).  
+> **Você DEVE copiar esse arquivo para a pasta `dados/` do experimento antes de prosseguir:**
+> ```bash
+> # Exemplo no SemClinBr:
+> cp "compara/analises_comparacao_semclinbr (full)/divisoes/divisao_Gold_Qwen7B.csv" dados/
+> 
+> # Exemplo no Summa:
+> cp "compara/analises_comparacao_summa_full/divisoes/divisao_Qwen235b_Qwen7b.csv" dados/
+> ```
+> Todos os passos seguintes (05_extracao, 06_compara, 07_avaliar) procuram esse arquivo exclusivamente em `dados/`. Se ele não estiver lá, os filtros de partição falharão silenciosamente!
+> 
+> 🛑 **NUNCA apague ou compacte (`zip -r ... && rm -rf ...`) a pasta de análises da etapa 04 antes de garantir que a divisão foi copiada para `dados/`.**
 
 ---
 
@@ -141,14 +156,72 @@ python ../../src/util_vllm_batch.py --config 05_extracao_d1_teste.yaml
 
 ## 08 — Calibrar a ROPE (comparar réplicas D1/D1a/D1b)
 
-Compare as 3 execuções do mesmo protocolo para estimar a variabilidade natural e calibrar a ROPE por campo.
+Compare as 3 execuções do mesmo protocolo para estimar a variabilidade natural não-determinística (hardware/framework) e calibrar a ROPE (*Region of Practical Equivalence*) por campo.
+
+A calibração segue obrigatoriamente um **ciclo de verificação em duas rodadas**:
+
+### 8.1 — Primeira rodada: Rodar calibração inicial
+Execute a comparação das réplicas com qualquer valor provisório de ROPE (ex.: `rope: 0.01`):
 
 ```bash
-# Comparar réplicas para calibração
+# Comparar réplicas para estimar o ruído
 python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml
 ```
 
-> **Saída importante:** o arquivo `00_rope_sugerido.md` com os valores de ROPE por campo, que devem ser transcritos para o bloco `rope_por_campo` no YAML de comparação geral.
+> **Saída gerada:** o arquivo `compara/analises_comparacao_*_d1ab/estatisticas/00_rope_sugerido.md` contendo a tabela de deltas observados e a sugestão analítica de ROPE global e por campo (`rope_por_campo`).
+
+### 8.2 — Transcrever os valores sugeridos no próprio YAML
+Abra `00_rope_sugerido.md`, copie o bloco YAML sugerido e cole na seção `estatistica.metricas_automaticas` do **próprio** `06_compara_d1ab.yaml`:
+
+```yaml
+metricas_automaticas:
+  rope: 0.0210             # valor global sugerido
+  rope_por_campo:
+    (global): 0.0145
+    Entidades: 0.0120
+    Relacoes: 0.0210
+  campos:
+    - "(global)"
+    - "Entidades"
+    - "Relacoes"
+  metricas:
+    - rouge_l
+    - rouge_2
+```
+
+### 8.3 — Segunda rodada: Verificação de Sanidade (Teste de Equivalência)
+Rode novamente a análise estatística sobre o mesmo resultado (usando a flag `--estatisticas` para ser rápido e não recalcular as métricas pesadas de extração):
+
+```bash
+# Reexecutar apenas a camada estatística com a nova ROPE calculada
+python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml --estatisticas
+```
+
+> 🔍 **Verificação de Sanidade Obrigatória:**  
+> Abra o relatório bayesiano (`bayesiana/analise_bayesiana.md`) e os relatórios estatísticos.  
+> **A calibração só está confirmada quando 100% dos pares de réplicas (`D1 × D1a`, `D1 × D1b`, `D1a × D1b`) saírem classificados como `equivalentes` ao limiar de 0.95.**  
+> Se algum par sair como "inconclusivo" ou indicar diferença real, a calibração falhou e deve ser investigada.
+
+### 8.4 — Transcrever para a comparação geral
+Após confirmar a equivalência de 100% das réplicas no passo 8.3, copie esse mesmo bloco `rope` e `rope_por_campo` para os YAMLs de comparação geral entre protocolos distintos (`06_compara_todos.yaml` e `06_compara_todos_parcial.yaml`).
+
+> ⚠️ **Cuidados Críticos na Configuração da Calibração (`06_compara_d1ab.yaml`):**
+> 1. **Filtro obrigatório do conjunto de teste (`alvo: teste`):**
+>    - O gabarito humano/base geralmente contém todos os documentos do corpus (ex: 1.000 documentos), mas os modelos foram executados na etapa 07 **apenas sobre a partição de teste** (ex: 197 documentos).
+>    - O bloco `configuracao_comparacao.filtro` **DEVE** apontar para `dados/divisao_*.csv` com `dataset_filtro: {"alvo": "teste"}`.
+>    - *Se o arquivo de divisão não existir em `dados/` ou o filtro for omitido:* o comparador tentará avaliar todos os 1.000 documentos; para os 800 de treino/validação, o modelo não terá arquivo de saída, ficando marcado como `Inexistente` (com campo `pred` **vazio** e escore `0.0`), o que derruba drasticamente a média do modelo e distorce as estatísticas.
+> 2. **NUNCA usar `"TODOS"` em `estatistica.protocolos`:**
+>    - Em arquivos com `calibracao_rope: true`, declare explicitamente apenas as réplicas a comparar:
+>      ```yaml
+>      estatistica:
+>        calibracao_rope: true
+>        protocolos:
+>          Replicas_D1:
+>            - D1
+>            - D1a
+>            - D1b
+>      ```
+>    - *Por que não usar `"TODOS"`?* O valor `"TODOS"` instrui o pipeline a incluir o protocolo virtual `★Prof` (gabarito perfeito = 1.0). Como a calibração busca a maior discrepância ($|Δ|$) para garantir equivalência de 100% dos pares, se `★Prof` estiver no recorte, o script medirá a distância do aluno ao teto do professor em vez do ruído não-determinístico entre réplicas idênticas, gerando uma ROPE inflada próxima de `0.95`!
 
 ---
 

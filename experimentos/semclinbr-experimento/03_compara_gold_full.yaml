@@ -6,12 +6,20 @@
 #   o currículo dos protocolos D*. Roda sobre os 1.000 documentos — inclusive
 #   os de treino — porque é o treino que precisa da ordenação.
 #
-# Produz: dados/divisao_Gold_Qwen7B.csv com as colunas `dificuldade`,
-#   `dificuldade_int` e `alvo`, consumido por todos os 04_treinar_*.yaml.
+# Produz: compara/analises_comparacao_semclinbr (full)/divisoes/divisao_Gold_Qwen7B.csv
+#   com as colunas `dificuldade`, `dificuldade_int` e `alvo`.
+#
+# ATENÇÃO CRÍTICA (COPIAR PARA DADOS/):
+#   Após a execução deste passo, você DEVE copiar o arquivo de divisão para a pasta dados/:
+#     cp "compara/analises_comparacao_semclinbr (full)/divisoes/divisao_Gold_Qwen7B.csv" dados/
+#   Esse arquivo é consumido por todos os passos seguintes (04_treinar, 05_extracao, 06_compara, 07_avaliar).
+#   NUNCA apague a pasta de saída antes de copiar o arquivo de divisão!
 #
 # Executar com: python ../../src/comparar_extracoes.py --config 03_compara_gold_full.yaml
-# Zipar e apagar a pasta: zip -r "analises_comparacao_semclinbr (full).zip" "analises_comparacao_semclinbr (full)"
-#                         rm -rf "analises_comparacao_semclinbr (full)"
+#
+# Apenas após copiar para dados/, se desejar arquivar e limpar a pasta pesada de análise:
+#   zip -r "compara/analises_comparacao_semclinbr (full).zip" "compara/analises_comparacao_semclinbr (full)"
+#   rm -rf "compara/analises_comparacao_semclinbr (full)"
 # ==========================================================================
 
 misc:

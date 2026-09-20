@@ -68,6 +68,13 @@ configuracao_comparacao:
   filtro:
     # Divisão gerada pelo passo 03 a partir dos critérios de dificuldade:
     # fonte única de treino/teste/validação do experimento.
+    # ATENÇÃO: O arquivo de divisão é gerado pelo passo 03 dentro de:
+    #   compara/analises_comparacao_semclinbr (full)/divisoes/divisao_Gold_Qwen7B.csv
+    # e DEVE ser copiado para dados/divisao_Gold_Qwen7B.csv.
+    # Sem este filtro, a comparação avalia todos os 1.000 documentos do gabarito humano,
+    # enquanto as extrações de teste dos modelos possuem apenas os 197 casos de teste.
+    # Os 800 documentos de treino/validação ficam como 'Inexistente' (campo 'pred' vazio
+    # e escore 0.0), derrubando artificialmente as métricas e falseando a calibração.
     arquivo: "dados/divisao_Gold_Qwen7B.csv"
     campo_id: "id"
     dataset_filtro: {"alvo": "teste"}
@@ -167,8 +174,18 @@ estatistica:
   calibracao_rope: true
 
   # Um único recorte: as três réplicas, todas contra todas.
+  # CRÍTICO: NUNCA usar "TODOS" em bateria de calibração (calibracao_rope: true).
+  # O uso de "TODOS" injeta automaticamente o protocolo virtual ★Prof (gabarito humano = 1.0)
+  # nas métricas automáticas. Como a calibração da ROPE seleciona o par de maior
+  # discrepância (|Δ|), se ★Prof estiver presente ela medirá a distância de destilação
+  # (aluno vs professor) em vez do ruído não-determinístico entre réplicas idênticas,
+  # inflando a ROPE para valores próximos de 0.95!
+  # Portanto, listamos explicitamente apenas as réplicas a calibrar:
   protocolos:
-    Panorama_Geral: "TODOS"
+    Replicas_D1:
+      - D1
+      - D1a
+      - D1b
 
   # --- Métricas automáticas (camada COMPLEMENTAR) ---
   # Medem similaridade com o modelo base = FIDELIDADE DE DESTILAÇÃO, não

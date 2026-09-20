@@ -1371,7 +1371,9 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
                 # Protocolo virtual "*" (professor perfeito): coluna sintética
                 # com 1.0 para todos os IDs, inserida na posição 0 do DataFrame.
                 # Ativo tanto em recortes explícitos com "*" quanto em "TODOS".
-                if not df_largo.empty and (
+                # NUNCA ativo em calibração da ROPE (calibracao_rope: true), onde mediria
+                # a distância ao professor em vez do ruído entre réplicas idênticas.
+                if not df_largo.empty and not calibracao_rope and (
                         aliases_recorte is None
                         or PROTOCOLO_PROFESSOR_DISPLAY in aliases_recorte):
                     df_largo.insert(0, PROTOCOLO_PROFESSOR_DISPLAY,
