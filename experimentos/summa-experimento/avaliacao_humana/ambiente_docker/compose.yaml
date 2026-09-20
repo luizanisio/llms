@@ -4,6 +4,8 @@ version: "3.8"
 #  Label Studio — 4 instâncias isoladas
 #  Credenciais fixas, definidas abaixo. Sem arquivo .env.
 #
+#  ATENÇÃO: são dados de exemplo para subir os containers em uma máquina local
+#
 #  Instância      Porta   Login                        Senha
 #  ─────────────  ─────   ──────────────────────────   ──────────────────
 #  TESTE          8081    teste@summa.pesquisa         Summa2026-Teste
