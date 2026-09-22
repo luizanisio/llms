@@ -203,11 +203,11 @@ estatistica:
     #   3) rodar de novo — a calibração está confirmada quando todos os pares de
     #      réplicas saem como "equivalentes".
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.
-    rope: 0.01               # PROVISÓRIO — substituir pelo valor sugerido
-    # rope_por_campo:        # transcrever de 00_rope_sugerido.md
-    #   (global): 0.0000
-    #   Entidades: 0.0000
-    #   Relacoes: 0.0000
+    rope: 0.0526
+    rope_por_campo:
+      (global): 0.0329
+      Entidades: 0.0217
+      Relacoes: 0.0526
 
     # Entidades e Relacoes são os alvos de interesse; (global) fica como âncora.
     campos:

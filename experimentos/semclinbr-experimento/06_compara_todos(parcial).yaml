@@ -391,7 +391,7 @@ estatistica:
     rope_por_campo:
       (global): 0.0329
       Entidades: 0.0217
-      Relacoes: 0.0526
+      Relacoes: 0.0526      
     campos:
       - "(global)"
       - "Entidades"

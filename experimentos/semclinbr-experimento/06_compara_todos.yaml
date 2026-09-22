@@ -383,19 +383,24 @@ estatistica:
     # Obrigatória (> 0) e decisiva — pequena demais pinta o heatmap de
     # vencedores/perdedores, grande demais deixa tudo empatado. A varredura de
     # sensibilidade (rope/2, rope, 2·rope) é calculada automaticamente por campo.
-    # PENDENTE DE CALIBRAÇÃO: rodar antes `06_compara_d1ab.yaml` e transcrever
-    # os valores de `estatisticas/00_rope_sugerido.md` (a menor margem sob a qual
-    # TODOS os pares de réplicas atingem P(equivalência) >= `limiar`).
+    # Aqui a ROPE é só o valor EM TESTE: a sugestão do relatório vem dos dados e
+    # do `limiar`, não deste número. Ciclo de calibração:
+    #   1) rodar com qualquer valor > 0;
+    #   2) transcrever os valores de `estatisticas/00_rope_sugerido.md`;
+    #   3) rodar de novo — a calibração está confirmada quando todos os pares de
+    #      réplicas saem como "equivalentes".
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.
     rope: 0.0526
     rope_por_campo:
       (global): 0.0329
       Entidades: 0.0217
       Relacoes: 0.0526
+
+    # Entidades e Relacoes são os alvos de interesse; (global) fica como âncora.
     campos:
       - "(global)"
       - "Entidades"
       - "Relacoes"
     metricas:
-      - rouge_2
       - rouge_l
+      - rouge_2
