@@ -167,6 +167,15 @@ def tabela_ancora(df: pd.DataFrame, metricas: list[str], piso: float,
         if g.empty:
             continue
         linha = {"protocolo": alias, "n_documentos": len(g)}
+        # Micro F1 global no teste (comparável à literatura e aos baselines)
+        if "acertos_strict" in g.columns:
+            tot_acertos = g["acertos_strict"].sum()
+            tot_gold = g["n_entidades_gold"].sum()
+            tot_pred = g["n_entidades_pred"].sum()
+            p_micro = tot_acertos / tot_pred if tot_pred else 0.0
+            r_micro = tot_acertos / tot_gold if tot_gold else 0.0
+            f1_micro = 2 * p_micro * r_micro / (p_micro + r_micro) if (p_micro + r_micro) else 0.0
+            linha["f1_strict_micro"] = f"{f1_micro:.3f} (P={p_micro:.3f}, R={r_micro:.3f})"
         for m in metricas:
             linha[m] = _mediana_iqr(g[m])
         linha["precisao_strict"] = _mediana_iqr(g["precisao_strict"])
@@ -191,15 +200,20 @@ def tabela_por_rotulo(df_rot: pd.DataFrame, ordem: list[str]) -> pd.DataFrame:
     """§7.2 — mediana de F1 por STY e por SGR, por protocolo."""
     if df_rot.empty:
         return pd.DataFrame()
-    agg = (df_rot.groupby(["escopo", "rotulo", "protocolo"])
-           .agg(f1_mediana=("f1", "median"),
-                n_documentos=("f1", "size"),
-                n_gold_total=("n_gold", "sum"))
-           .reset_index())
-    pivot = agg.pivot_table(index=["escopo", "rotulo", "n_gold_total"],
-                            columns="protocolo", values="f1_mediana")
-    colunas = [c for c in ordem if c in pivot.columns]
-    return (pivot[colunas].reset_index()
+    # n_gold canônico por (escopo, rotulo) evitando fragmentação por variação de parsing
+    n_gold = (df_rot.groupby(["escopo", "rotulo", "protocolo"])["n_gold"]
+              .sum()
+              .groupby(["escopo", "rotulo"])
+              .max()
+              .reset_index(name="n_gold_total"))
+    agg = (df_rot.groupby(["escopo", "rotulo", "protocolo"])["f1"]
+           .median()
+           .reset_index(name="f1_mediana"))
+    pivot = agg.pivot_table(index=["escopo", "rotulo"],
+                            columns="protocolo", values="f1_mediana").reset_index()
+    pivot = pivot.merge(n_gold, on=["escopo", "rotulo"], how="left")
+    colunas = ["escopo", "rotulo", "n_gold_total"] + [c for c in ordem if c in pivot.columns]
+    return (pivot[colunas]
             .sort_values(["escopo", "n_gold_total"], ascending=[True, False]))
 
 

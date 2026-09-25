@@ -44,6 +44,7 @@ execucao:
   metrica_primaria: "f1_strict"
   # Complementares, também tabuladas e analisadas
   metricas_complementares:
+    - f1_strict_overlap
     - f1_lenient
     - f1_flexible
     - f1_relaxed

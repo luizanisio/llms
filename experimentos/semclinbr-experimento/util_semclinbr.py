@@ -100,49 +100,108 @@ def _split_tags(valor) -> list[str]:
 # ---------------------------------------------------------------------------
 
 STY2SGR: dict[str, str] = {
+    # Anatomy
     "Body Location or Region": "Anatomy",
     "Body Part, Organ, or Organ Component": "Anatomy",
     "Body Space or Junction": "Anatomy",
+    "Body Substance": "Anatomy",
     "Body System": "Anatomy",
+    "Cell": "Anatomy",
     "Tissue": "Anatomy",
+    # Chemicals & Drugs
+    "Amino Acid, Peptide, or Protein": "Chemicals & Drugs",
+    "Antibiotic": "Chemicals & Drugs",
+    "Biologically Active Substance": "Chemicals & Drugs",
+    "Clinical Drug": "Chemicals & Drugs",
+    "Element, Ion, or Isotope": "Chemicals & Drugs",
+    "Enzyme": "Chemicals & Drugs",
+    "Hazardous or Poisonous Substance": "Chemicals & Drugs",
+    "Hormone": "Chemicals & Drugs",
+    "Immunologic Factor": "Chemicals & Drugs",
+    "Inorganic Chemical": "Chemicals & Drugs",
+    "Nucleic Acid, Nucleoside, or Nucleotide": "Chemicals & Drugs",
     "Organic Chemical": "Chemicals & Drugs",
     "Pharmacologic Substance": "Chemicals & Drugs",
-    "Antibiotic": "Chemicals & Drugs",
-    "Element, Ion, or Isotope": "Chemicals & Drugs",
-    "Quantitative Concept": "Concepts & Ideas",
-    "Qualitative Concept": "Concepts & Ideas",
-    "Temporal Concept": "Concepts & Ideas",
-    "Spatial Concept": "Concepts & Ideas",
+    "Substance": "Chemicals & Drugs",
+    "Vitamin": "Chemicals & Drugs",
+    # Concepts & Ideas
+    "Classification": "Concepts & Ideas",
     "Functional Concept": "Concepts & Ideas",
     "Idea or Concept": "Concepts & Ideas",
     "Intellectual Product": "Concepts & Ideas",
-    "Medical Device": "Devices",
+    "Qualitative Concept": "Concepts & Ideas",
+    "Quantitative Concept": "Concepts & Ideas",
+    "Regulation or Law": "Concepts & Ideas",
+    "Spatial Concept": "Concepts & Ideas",
+    "Temporal Concept": "Concepts & Ideas",
+    # Devices
     "Drug Delivery Device": "Devices",
+    "Medical Device": "Devices",
+    # Disorders
+    "Acquired Abnormality": "Disorders",
+    "Anatomical Abnormality": "Disorders",
+    "Cell or Molecular Dysfunction": "Disorders",
+    "Congenital Abnormality": "Disorders",
     "Disease or Syndrome": "Disorders",
     "Finding": "Disorders",
     "Injury or Poisoning": "Disorders",
-    "Sign or Symptom": "Disorders",
-    "Pathologic Function": "Disorders",
     "Mental or Behavioral Dysfunction": "Disorders",
     "Neoplastic Process": "Disorders",
-    "Anatomical Abnormality": "Disorders",
-    "Patient or Disabled Group": "Living Beings",
-    "Professional or Occupational Group": "Living Beings",
-    "Population Group": "Living Beings",
+    "Pathologic Function": "Disorders",
+    "Sign or Symptom": "Disorders",
+    # Genes & Molecular Sequences
+    "Amino Acid Sequence": "Genes & Molecular Sequences",
+    # Living Beings
     "Age Group": "Living Beings",
+    "Bacterium": "Living Beings",
     "Family Group": "Living Beings",
+    "Fish": "Living Beings",
+    "Fungus": "Living Beings",
+    "Group": "Living Beings",
+    "Patient or Disabled Group": "Living Beings",
+    "Plant": "Living Beings",
+    "Population Group": "Living Beings",
+    "Professional or Occupational Group": "Living Beings",
+    "Virus": "Living Beings",
+    # Objects / Manufactured Objects
+    "Biomedical or Dental Material": "Objects",
+    "Food": "Objects",
+    "Manufactured Object": "Objects",
+    "Physical Object": "Objects",
+    # Occupations
+    "Biomedical Occupation or Discipline": "Occupations",
+    # Organizations
     "Health Care Related Organization": "Organizations",
+    "Organization": "Organizations",
+    # Phenomena
+    "Event": "Phenomena",
     "Laboratory or Test Result": "Phenomena",
+    "Natural Phenomenon or Process": "Phenomena",
     "Phenomenon or Process": "Phenomena",
+    # Physiology
     "Clinical Attribute": "Physiology",
+    "Mental Process": "Physiology",
+    "Molecular Function": "Physiology",
+    "Organ or Tissue Function": "Physiology",
+    "Organism Attribute": "Physiology",
     "Organism Function": "Physiology",
     "Physiologic Function": "Physiology",
+    # Procedures
     "Diagnostic Procedure": "Procedures",
-    "Health Care Activity": "Procedures",
-    "Therapeutic or Preventive Procedure": "Procedures",
-    "Laboratory Procedure": "Procedures",
     "Educational Activity": "Procedures",
-    # STYs extras do SemClinBr (não pertencem ao UMLS)
+    "Health Care Activity": "Procedures",
+    "Laboratory Procedure": "Procedures",
+    "Therapeutic or Preventive Procedure": "Procedures",
+    # Activities & Behaviors
+    "Activity": "Activities & Behaviors",
+    "Behavior": "Activities & Behaviors",
+    "Daily or Recreational Activity": "Activities & Behaviors",
+    "Individual Behavior": "Activities & Behaviors",
+    "Machine Activity": "Activities & Behaviors",
+    "Occupational Activity": "Activities & Behaviors",
+    "Research Activity": "Activities & Behaviors",
+    "Social Behavior": "Activities & Behaviors",
+    # Corpus specific
     "Abbreviation": "Abbreviation",
     "Negation": "Negation",
 }
@@ -583,6 +642,8 @@ def alinhar_entidades(
     Estratégia de cursor: a busca de cada entidade parte do `start` da entidade
     anterior (não do `end`), o que permite spans aninhados e sobrepostos
     ("CURATIVO" dentro de "CURATIVO COM CARVÃO ATIVADO") sem quebrar a ordem.
+    Spans já ocupados são rastreados para que palavras repetidas avancem para a
+    próxima ocorrência em vez de colapsarem na primeira.
     Cascata: exata -> flexível a espaços -> fuzzy -> global -> falha.
 
     Entidades não alinhadas recebem alinhada=False e contam como falso-positivo
@@ -590,21 +651,59 @@ def alinhar_entidades(
     """
     resultado: list[Entidade] = []
     cursor = 0
+    spans_ocupados: set[tuple[int, int]] = set()
 
     for bruta in entidades:
         ent = bruta if isinstance(bruta, Entidade) else _para_entidade(bruta, len(resultado) + 1)
 
         alvo = ent.text
-        pos = texto.find(alvo, cursor) if alvo else -1
-        achado = (pos, pos + len(alvo)) if pos != -1 else None
+        if not alvo:
+            ent.start = ent.end = None
+            ent.alinhada = False
+            resultado.append(ent)
+            continue
 
+        # 1. Busca exata a partir do cursor, pulando spans já ocupados
+        achado = None
+        pos = cursor
+        while pos < len(texto):
+            p = texto.find(alvo, pos)
+            if p == -1:
+                break
+            cand = (p, p + len(alvo))
+            if cand not in spans_ocupados:
+                achado = cand
+                break
+            pos = p + 1
+
+        # 2. Busca flexível a partir do cursor
         if achado is None:
-            achado = _busca_flexivel(texto, alvo, cursor)
+            cand = _busca_flexivel(texto, alvo, cursor)
+            if cand and cand not in spans_ocupados:
+                achado = cand
+
+        # 3. Busca fuzzy a partir do cursor
         if achado is None:
-            achado = _busca_fuzzy(texto, alvo, cursor, limiar_fuzzy)
-        if achado is None:  # recomeça do zero: a LLM pode ter quebrado a ordem
-            pos = texto.find(alvo) if alvo else -1
-            achado = (pos, pos + len(alvo)) if pos != -1 else _busca_flexivel(texto, alvo, 0)
+            cand = _busca_fuzzy(texto, alvo, cursor, limiar_fuzzy)
+            if cand and cand not in spans_ocupados:
+                achado = cand
+
+        # 4. Recomeça do zero: a LLM pode ter quebrado a ordem do texto
+        if achado is None:
+            pos = 0
+            while pos < len(texto):
+                p = texto.find(alvo, pos)
+                if p == -1:
+                    break
+                cand = (p, p + len(alvo))
+                if cand not in spans_ocupados:
+                    achado = cand
+                    break
+                pos = p + 1
+            if achado is None:
+                cand = _busca_flexivel(texto, alvo, 0)
+                if cand and cand not in spans_ocupados:
+                    achado = cand
 
         if achado is None:
             ent.start = ent.end = None
@@ -613,9 +712,8 @@ def alinhar_entidades(
             ent.start, ent.end = achado
             ent.alinhada = True
             # canonicaliza: o offset é a autoridade, não a cópia do modelo.
-            # Corrige espaço duplicado, caixa e acento alterados pela LLM e
-            # garante que o XML gerado seja internamente consistente.
             ent.text = texto[ent.start : ent.end]
+            spans_ocupados.add(achado)
             cursor = ent.start  # permite aninhamento
 
         resultado.append(ent)
@@ -825,16 +923,21 @@ def avaliar_relacoes(
 
     Uma relação acerta quando os spans de origem e destino coincidem com os do
     gabarito e o reltype é igual. Ancorar em span evita punir a predição por
-    numeração diferente.
+    numeração diferente. A relação 'associated_with' é simétrica (não-direcionada).
     """
 
     def chave(ents: Sequence[Entidade], rels: Sequence[Relacao]) -> set:
         idx = {e.id: e for e in ents if getattr(e, "alinhada", True) and e.start is not None}
-        return {
-            (idx[r.annotation1].span, idx[r.annotation2].span, r.reltype)
-            for r in rels
-            if r.annotation1 in idx and r.annotation2 in idx
-        }
+        chaves = set()
+        for r in rels:
+            if r.annotation1 in idx and r.annotation2 in idx:
+                s1, s2 = idx[r.annotation1].span, idx[r.annotation2].span
+                if r.reltype == "associated_with":
+                    # associacao é nao-direcionada: canonicaliza por ordem de span
+                    chaves.add((min(s1, s2), max(s1, s2), r.reltype))
+                else:
+                    chaves.add((s1, s2, r.reltype))
+        return chaves
 
     g = chave(gold_doc.entidades, gold_doc.relacoes)
     p = chave(pred_ents, pred_rels)
@@ -874,6 +977,11 @@ def avaliar_documento(
             linha[f"f1_{m}"] = 0.0
             linha[f"precisao_{m}"] = 0.0
             linha[f"revocacao_{m}"] = 0.0
+        linha["acertos_strict"] = 0.0
+        linha["f1_strict_overlap"] = 0.0
+        linha["precisao_strict_overlap"] = 0.0
+        linha["revocacao_strict_overlap"] = 0.0
+        linha["acertos_strict_overlap"] = 0.0
         linha.update({"f1_span_exato": 0.0, "f1_span_parcial": 0.0,
                       "f1_relacoes": 0.0, "n_entidades_pred": 0,
                       "nao_alinhadas": 0, "taxa_nao_alinhamento": 0.0})
@@ -887,6 +995,15 @@ def avaliar_documento(
         linha[f"f1_{m}"] = r["f1"]
         linha[f"precisao_{m}"] = r["precisao"]
         linha[f"revocacao_{m}"] = r["revocacao"]
+        if m == "strict":
+            linha["acertos_strict"] = r["acertos"]
+
+    # F1 estrito tolerante a multi-rótulo (interseção não-vazia de rótulos)
+    r_ov = avaliar(doc.entidades, ents, modo="strict", rotulo_exato=False)
+    linha["f1_strict_overlap"] = r_ov["f1"]
+    linha["precisao_strict_overlap"] = r_ov["precisao"]
+    linha["revocacao_strict_overlap"] = r_ov["revocacao"]
+    linha["acertos_strict_overlap"] = r_ov["acertos"]
 
     linha["f1_span_exato"] = avaliar_spans(doc.entidades, ents)["f1"]
     linha["f1_span_parcial"] = avaliar_spans(doc.entidades, ents, parcial=True)["f1"]

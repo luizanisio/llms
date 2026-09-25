@@ -2,16 +2,8 @@
 """Baseline externo — ClinicalNERpt (BioBERTpt, HAILab-PUCPR).
 
 Roda os modelos `pucpr/clinicalnerpt-*` do HuggingFace sobre o split de
-teste do SemClinBr e compara o F1 por STY coberto com os nossos protocolos.
-
-Cada clinicalnerpt-* é um sequence labeler (BertForTokenClassification)
-especializado em UM tipo de entidade.  Este script:
-1. Carrega os docs do split de teste via `parse_semclinbr_xml`
-2. Roda cada modelo e extrai entidades via token-classification pipeline
-3. Converte spans IOB2 para Entidade com tags do SemClinBr
-4. Calcula F1 por STY usando `avaliar_por_sty`
-5. Carrega as predições dos nossos protocolos e calcula o mesmo F1 filtrado
-6. Gera `comparacao_baseline.md` agrupado por modelo baseline
+teste do SemClinBr e compara o desempenho contra todos os nossos protocolos
+em uma tabela mestra invertida (linhas = protocolos, colunas = categorias).
 
 Executar com:
     python 08_baseline_clinicalnerpt.py --config 08_baseline_clinicalnerpt.yaml
@@ -34,7 +26,7 @@ sys.path.insert(0, str(_BASE.parent.parent / "src"))
 from util_semclinbr import (  # noqa: E402
     Entidade,
     alinhar_entidades,
-    avaliar,
+    avaliar_por_sgr,
     avaliar_por_sty,
     carregar_predicao,
     carregar_semgroups,
@@ -60,7 +52,7 @@ def caminho(pasta_base: Path, relativo: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Carga do corpus
+# Carga do corpus de teste
 # ---------------------------------------------------------------------------
 
 
@@ -84,61 +76,86 @@ def carregar_docs_teste(pasta_base: Path, cfg_corpus: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Inference com clinicalnerpt
+# Fusão de subwords e Inferência com ClinicalNERpt
 # ---------------------------------------------------------------------------
+
+
+def merge_contiguous_tokens(preds: list[dict], texto: str) -> list[dict]:
+    """Funde subwords (WordPiece ##) e fragmentos contíguos do mesmo tipo.
+
+    Modelos treinados com WordPiece rotulam subwords individuais com B- ou I-.
+    Esta função agrega os fragmentos adjacentes no span completo da palavra/termo.
+    """
+    if not preds:
+        return []
+    merged = []
+    curr = None
+    for p in preds:
+        s, e = p["start"], p["end"]
+        if curr is not None and s <= curr["end"] + 1:
+            curr["end"] = max(curr["end"], e)
+            curr["score"] = max(curr.get("score", 0), p.get("score", 0))
+        else:
+            if curr is not None:
+                curr["word"] = texto[curr["start"] : curr["end"]]
+                merged.append(curr)
+            curr = {"start": s, "end": e, "score": p.get("score", 0)}
+    if curr is not None:
+        curr["word"] = texto[curr["start"] : curr["end"]]
+        merged.append(curr)
+    return merged
 
 
 def rodar_modelo_ner(
     modelo_hf: str,
+    target_tag: str,
     docs: dict,
-    stys: list[str],
     batch_size: int = 8,
     max_length: int = 512,
 ) -> dict[str, list[Entidade]]:
-    """Roda um modelo clinicalnerpt-* sobre os documentos.
-
-    Retorna {doc_id: [Entidade, ...]} com as tags mapeadas para os STYs.
-    """
-    from transformers import pipeline
+    """Roda um modelo clinicalnerpt-* do HuggingFace sobre os documentos."""
     import torch
+    from transformers import pipeline
 
     device = 0 if torch.cuda.is_available() else -1
     ner_pipe = pipeline(
         "token-classification",
         model=modelo_hf,
-        aggregation_strategy="simple",
         batch_size=batch_size,
         device=device,
     )
 
-    # Tag padrão: usa o primeiro STY para entidades detectadas
-    tag_padrao = stys[0] if stys else "Unknown"
-    resultados = {}
-
     textos = []
     doc_ids = []
     for doc_id, doc in docs.items():
-        # Truncar para max_length tokens (BERT limit)
-        texto = doc.texto[:max_length * 4]  # heurística conservadora
+        # Truncar para limite BERT de contexto
+        texto = doc.texto[: max_length * 4]
         textos.append(texto)
         doc_ids.append(doc_id)
 
     print(f"   🔄 Rodando {modelo_hf} em {len(textos)} docs...")
-    saidas = ner_pipe(textos)
+    saidas_raw = ner_pipe(textos)
 
-    for doc_id, preds in zip(doc_ids, saidas):
-        ents = []
-        for i, pred in enumerate(preds):
-            ents.append(Entidade(
+    resultados = {}
+    total_ents = 0
+    for doc_id, raw_preds in zip(doc_ids, saidas_raw):
+        doc_texto = docs[doc_id].texto
+        merged = merge_contiguous_tokens(raw_preds, doc_texto)
+        ents = [
+            Entidade(
                 id=i + 1,
-                text=pred["word"],
-                tags=[tag_padrao],
-                start=pred["start"],
-                end=pred["end"],
+                text=m["word"],
+                tags=[target_tag],
+                start=m["start"],
+                end=m["end"],
                 alinhada=True,
-            ))
+            )
+            for i, m in enumerate(merged)
+        ]
         resultados[doc_id] = ents
+        total_ents += len(ents)
 
+    print(f"   📊 {modelo_hf}: {total_ents} entidades extraídas (com fusão de subwords)")
     return resultados
 
 
@@ -150,20 +167,18 @@ def rodar_modelo_ner(
 def carregar_nossos_protocolos(
     pasta_base: Path, protocolos: list[dict], campos: dict, docs: dict
 ) -> dict[str, dict[str, list[Entidade]]]:
-    """Carrega e alinha as predições dos nossos protocolos.
-
-    Retorna {alias: {doc_id: [Entidade, ...]}}
-    """
+    """Carrega e alinha as predições dos nossos protocolos (A, B, C, D*...)."""
     resultado = {}
+    col_id, col_resp = campos["id"], campos["resposta"]
+
     for proto in protocolos:
         alias = proto["alias"]
         arquivo = caminho(pasta_base, proto["arquivo"])
         if not arquivo.is_file():
-            print(f"   ⏭️  {alias}: {arquivo} não existe")
+            print(f"   ⏭️  {alias}: {arquivo.name} ainda não existe")
             continue
 
         df = pd.read_parquet(arquivo)
-        col_id, col_resp = campos["id"], campos["resposta"]
         df[col_id] = df[col_id].astype(str).str.strip()
         saidas_map = dict(zip(df[col_id], df[col_resp].fillna("")))
 
@@ -178,102 +193,125 @@ def carregar_nossos_protocolos(
             ents_por_doc[doc_id] = ents
 
         resultado[alias] = ents_por_doc
-        print(f"   ✅ {alias}: {len(ents_por_doc)} docs")
+        print(f"   ✅ Protocolo {alias:6s}: {len(ents_por_doc)} docs alinhados")
 
     return resultado
 
 
 # ---------------------------------------------------------------------------
-# Comparação e geração do relatório
+# Avaliação de um alvo específico (STY ou SGR)
 # ---------------------------------------------------------------------------
 
 
-def calcular_f1_por_sty_filtrado(
+def avaliar_alvo(
     docs: dict,
-    ents_pred: dict[str, list[Entidade]],
-    stys_filtro: set[str],
-    modo: str = "strict",
-) -> dict[str, dict]:
-    """Calcula F1 por STY, filtrando apenas os STYs do filtro."""
-    f1_por_sty: dict[str, list[float]] = {}
-    n_gold_por_sty: dict[str, int] = {}
+    ents_por_doc: dict[str, list[Entidade]],
+    escopo: str,
+    alvo: str,
+) -> dict:
+    """Calcula Micro F1 (P/R) e Mediana por documento para um alvo (STY ou SGR)."""
+    f1_docs = []
+    tot_tp = 0.0
+    tot_gold = 0
+    tot_pred = 0
 
     for doc_id, doc in docs.items():
-        pred = ents_pred.get(doc_id, [])
-        gold_filtrado = [e for e in doc.entidades if set(e.tags) & stys_filtro]
-        pred_filtrado = [e for e in pred if set(e.tags) & stys_filtro]
+        ents = ents_por_doc.get(doc_id, [])
+        if escopo == "SGR":
+            res = avaliar_por_sgr(doc.entidades, ents, modo="flexible").get(alvo)
+        else:
+            res = avaliar_por_sty(doc.entidades, ents, modo="strict").get(alvo)
 
-        if not gold_filtrado:
-            continue
+        if res and res["n_gold"] > 0:
+            f1_docs.append(res["f1"])
+            tot_tp += res["acertos"]
+            tot_gold += res["n_gold"]
+            tot_pred += res["n_pred"]
 
-        resultados = avaliar_por_sty(gold_filtrado, pred_filtrado, modo=modo)
-        for sty, r in resultados.items():
-            if sty in stys_filtro:
-                if sty not in f1_por_sty:
-                    f1_por_sty[sty] = []
-                    n_gold_por_sty[sty] = 0
-                f1_por_sty[sty].append(r["f1"])
-                n_gold_por_sty[sty] += r["n_gold"]
+    p_mic = tot_tp / tot_pred if tot_pred else 0.0
+    r_mic = tot_tp / tot_gold if tot_gold else 0.0
+    f1_mic = 2 * p_mic * r_mic / (p_mic + r_mic) if (p_mic + r_mic) else 0.0
+    f1_med = float(np.median(f1_docs)) if f1_docs else 0.0
 
-    resumo = {}
-    for sty in sorted(f1_por_sty):
-        valores = f1_por_sty[sty]
-        resumo[sty] = {
-            "f1_mediano": float(np.median(valores)) if valores else 0.0,
-            "f1_medio": float(np.mean(valores)) if valores else 0.0,
-            "n_gold": n_gold_por_sty.get(sty, 0),
-            "n_docs": len(valores),
-        }
-    return resumo
+    return {
+        "micro_f1": f1_mic,
+        "precisao_micro": p_mic,
+        "revocacao_micro": r_mic,
+        "mediana_f1": f1_med,
+        "n_gold": tot_gold,
+        "n_pred": tot_pred,
+        "n_docs": len(f1_docs),
+    }
 
 
-def gerar_relatorio_md(
-    modelos_resultados: list[dict],
-    nossos_resultados: dict[str, dict[str, dict]],
+# ---------------------------------------------------------------------------
+# Geração de Relatórios (Markdown, XLSX e CSV)
+# ---------------------------------------------------------------------------
+
+
+def gerar_relatorios(
+    linhas_tabela: list[dict],
+    linhas_num_micro: list[dict],
+    linhas_num_med: list[dict],
+    colunas_ordem: list[str],
+    totais_gold: dict[str, int],
     caminho_md: Path,
+    caminho_xlsx: Path,
+    caminho_csv: Path,
 ) -> None:
-    """Gera o relatório .md agrupado por modelo baseline."""
-    linhas = [
-        "# Comparação com baseline externo — ClinicalNERpt\n",
-        "Modelos do [HAILab-PUCPR](https://huggingface.co/pucpr) (BioBERTpt),",
-        "cada um especializado em um tipo de entidade, avaliados sobre o",
-        "split de teste do SemClinBr.\n",
-        "> **Nota:** Cada modelo `clinicalnerpt-*` cobre apenas 1 tipo de",
-        "> entidade. A comparação filtra apenas os STYs que o modelo baseline",
-        "> possui — garantindo uma comparação justa.\n",
+    """Gera o relatório em Markdown, planilha Excel (.xlsx) e CSV."""
+    df_formatado = pd.DataFrame(linhas_tabela)
+    df_micro = pd.DataFrame(linhas_num_micro)
+    df_med = pd.DataFrame(linhas_num_med)
+
+    # 1. Markdown
+    linhas_md = [
+        "# Comparação com Baseline Externo — ClinicalNERpt (BioBERTpt)\n",
+        "Tabela mestra consolidada invertida: **linhas representam os protocolos** e ",
+        "**colunas representam as categorias clínicas** cobertas pelos modelos especializados ",
+        "do [HAILab-PUCPR](https://huggingface.co/pucpr) (BioBERTpt).\n",
+        "> **Convenção das células:** `Micro F1 (Mediana F1)`.",
+        "> - **Micro F1**: Métrica clássica da literatura de NER (soma de TP, FP, FN no split de teste inteiro).",
+        "> - **Mediana F1**: Mediana do F1 por documento clínico (métrica primária da análise pareada).\n",
     ]
 
-    for mr in modelos_resultados:
-        nome_curto = mr["nome"].split("/")[-1]
-        linhas.append(f"## {nome_curto}\n")
-        linhas.append(f"**Modelo:** `{mr['nome']}`\n")
-        linhas.append(f"**STYs cobertos:** {', '.join(mr['stys'])}\n")
+    # Linha de total de anotações gold por coluna
+    linha_gold_header = "| **Anotações Gold** | " + " | ".join(
+        str(totais_gold.get(c, "—")) for c in colunas_ordem if c != "Protocolo"
+    ) + " |"
 
-        # Cabeçalho da tabela
-        aliases_nossos = sorted(nossos_resultados.keys())
-        cols = ["STY", "n_gold", nome_curto] + aliases_nossos
-        linhas.append("| " + " | ".join(cols) + " |")
-        linhas.append("| " + " | ".join(["---"] * len(cols)) + " |")
+    cols = ["Protocolo"] + [c for c in colunas_ordem if c != "Protocolo"]
+    linhas_md.append("| " + " | ".join(cols) + " |")
+    linhas_md.append("| " + " | ".join(["---"] * len(cols)) + " |")
+    linhas_md.append(linha_gold_header)
 
-        stys_set = set(mr["stys"])
-        baseline_resumo = mr["resumo"]
+    for linha in linhas_tabela:
+        valores = [str(linha.get(c, "—")) for c in cols]
+        linhas_md.append("| " + " | ".join(valores) + " |")
 
-        for sty in sorted(stys_set):
-            bl = baseline_resumo.get(sty, {})
-            f1_bl = f"{bl.get('f1_mediano', 0):.3f}" if bl else "—"
-            n_gold = str(bl.get("n_gold", 0)) if bl else "—"
+    linhas_md.append("\n## Legenda das Categorias:\n")
+    linhas_md.append("- **Farmaco (STY)**: `Pharmacologic Substance` — substâncias farmacológicas específicas (ex.: propofol, fentanil).")
+    linhas_md.append("- **Quimicos (SGR)**: `Chemicals & Drugs` — grupo semântico completo do UMLS (fármacos, enzimas, hormônios).")
+    linhas_md.append("- **Doenca (STY)**: `Disease or Syndrome` — patologias e síndromes formais.")
+    linhas_md.append("- **Desordens (SGR)**: `Disorders` — grupo semântico completo de desordens (sintomas, achados, lesões).")
+    linhas_md.append("- **Diag. (STY)**: `Diagnostic Procedure` — procedimentos diagnósticos (ex.: exames, biópsias, tomografias).")
+    linhas_md.append("- **Dispositivo (STY)**: `Medical Device` — dispositivos e equipamentos médicos (ex.: cateter, dreno, prótese).")
+    linhas_md.append("- **Media Macro**: Média aritmética simples do desempenho nas 6 categorias avaliadas.")
 
-            valores = [sty, n_gold, f1_bl]
-            for alias in aliases_nossos:
-                nosso = nossos_resultados.get(alias, {}).get(sty, {})
-                f1_nosso = f"{nosso.get('f1_mediano', 0):.3f}" if nosso else "—"
-                valores.append(f1_nosso)
+    caminho_md.write_text("\n".join(linhas_md) + "\n", encoding="utf-8")
 
-            linhas.append("| " + " | ".join(valores) + " |")
+    # 2. CSV
+    df_formatado.to_csv(caminho_csv, index=False)
 
-        linhas.append("")
+    # 3. Excel (.xlsx) com múltiplas abas: Formatada, Micro F1 Puro e Mediana Pura
+    with pd.ExcelWriter(caminho_xlsx, engine="openpyxl") as writer:
+        df_formatado.to_excel(writer, sheet_name="Comparativo Completo", index=False)
+        df_micro.to_excel(writer, sheet_name="Micro F1 (Puro)", index=False)
+        df_med.to_excel(writer, sheet_name="Mediana F1 (Puro)", index=False)
 
-    caminho_md.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    print(f"   📄 Markdown salvo em: {caminho_md}")
+    print(f"   📊 Planilha XLSX salva em: {caminho_xlsx}")
+    print(f"   📑 Planilha CSV salva em: {caminho_csv}")
 
 
 # ---------------------------------------------------------------------------
@@ -302,73 +340,130 @@ def main() -> None:
             carregar_semgroups(arquivo_sg)
             print(f"🗺️  SemGroups: {arquivo_sg.name}")
 
-    # 1. Carregar docs de teste
+    # 1. Carregar documentos do split de teste
     docs = carregar_docs_teste(pasta_base, cfg_corpus)
 
-    # 2. Rodar cada modelo baseline
-    modelos_resultados = []
-    for cfg_modelo in config["modelos_baseline"]:
-        nome = cfg_modelo["nome"]
-        stys = cfg_modelo["stys"]
-        stys_set = set(stys)
-
+    # 2. Rodar modelos baseline do HuggingFace
+    predicoes_baseline = {}
+    for cfg_m in config["modelos_baseline"]:
+        nome = cfg_m["nome"]
+        alvo = cfg_m["alvo"]
         try:
-            ents_baseline = rodar_modelo_ner(
-                nome, docs, stys,
+            ents_b = rodar_modelo_ner(
+                nome,
+                alvo,
+                docs,
                 batch_size=cfg_exec.get("batch_size", 8),
                 max_length=cfg_exec.get("max_length", 512),
             )
-
-            # Calcular F1 por STY para o baseline
-            resumo = calcular_f1_por_sty_filtrado(
-                docs, ents_baseline, stys_set, modo="strict"
-            )
-
-            n_ents = sum(len(e) for e in ents_baseline.values())
-            print(f"   📊 {nome}: {n_ents} entidades extraídas")
-            for sty, r in resumo.items():
-                print(f"      {sty}: F1 mediano={r['f1_mediano']:.3f} "
-                      f"({r['n_docs']} docs, {r['n_gold']} gold)")
-
-            modelos_resultados.append({
-                "nome": nome,
-                "stys": stys,
-                "resumo": resumo,
-            })
-
+            predicoes_baseline[nome] = ents_b
         except Exception as e:
-            print(f"   ⚠️  {nome}: erro — {e}")
-            modelos_resultados.append({
-                "nome": nome,
-                "stys": stys,
-                "resumo": {},
-            })
+            print(f"   ⚠️  Erro em {nome}: {e}")
+            predicoes_baseline[nome] = {cid: [] for cid in docs}
 
-    # 3. Carregar nossos protocolos
+    # 3. Carregar predições de todos os nossos protocolos
     nossos_protocolos = carregar_nossos_protocolos(
-        pasta_base, config["protocolos"],
-        cfg_exec["campos_parquet"], docs,
+        pasta_base, config["protocolos"], cfg_exec["campos_parquet"], docs
     )
 
-    # 4. Calcular F1 dos nossos protocolos filtrado por STYs de cada baseline
-    nossos_resultados: dict[str, dict[str, dict]] = {}
-    for alias, ents_por_doc in nossos_protocolos.items():
-        todos_stys = set()
-        for mr in modelos_resultados:
-            todos_stys.update(mr["stys"])
+    # 4. Montar a tabela mestre invertida
+    # Lista de alvos a avaliar
+    alvos_config = config["modelos_baseline"]
+    nomes_colunas = [m["coluna"] for m in alvos_config] + ["Media Macro"]
 
-        resumo_nosso = calcular_f1_por_sty_filtrado(
-            docs, ents_por_doc, todos_stys, modo="strict"
-        )
-        nossos_resultados[alias] = resumo_nosso
+    # Calcular contagem gold por alvo
+    totais_gold = {}
+    for cfg_m in alvos_config:
+        col = cfg_m["coluna"]
+        esc = cfg_m["escopo"]
+        alv = cfg_m["alvo"]
+        # Gold é obtido avaliando os próprios docs
+        gold_eval = avaliar_alvo(docs, {cid: docs[cid].entidades for cid in docs}, esc, alv)
+        totais_gold[col] = gold_eval["n_gold"]
 
-    # 5. Gerar relatório
+    linhas_tabela = []
+    linhas_num_micro = []
+    linhas_num_med = []
+
+    # A) Linha do ClinicalNERpt (BioBERTpt)
+    linha_bl = {"Protocolo": "ClinicalNERpt (BioBERTpt)"}
+    linha_bl_micro = {"Protocolo": "ClinicalNERpt (BioBERTpt)"}
+    linha_bl_med = {"Protocolo": "ClinicalNERpt (BioBERTpt)"}
+
+    micros_bl = []
+    meds_bl = []
+    for cfg_m in alvos_config:
+        nome_mod = cfg_m["nome"]
+        col = cfg_m["coluna"]
+        esc = cfg_m["escopo"]
+        alv = cfg_m["alvo"]
+        ents_m = predicoes_baseline.get(nome_mod, {})
+        res = avaliar_alvo(docs, ents_m, esc, alv)
+
+        micros_bl.append(res["micro_f1"])
+        meds_bl.append(res["mediana_f1"])
+        linha_bl[col] = f"{res['micro_f1']:.3f} ({res['mediana_f1']:.3f})"
+        linha_bl_micro[col] = round(res["micro_f1"], 4)
+        linha_bl_med[col] = round(res["mediana_f1"], 4)
+
+    media_mic_bl = float(np.mean(micros_bl)) if micros_bl else 0.0
+    media_med_bl = float(np.mean(meds_bl)) if meds_bl else 0.0
+    linha_bl["Media Macro"] = f"{media_mic_bl:.3f} ({media_med_bl:.3f})"
+    linha_bl_micro["Media Macro"] = round(media_mic_bl, 4)
+    linha_bl_med["Media Macro"] = round(media_med_bl, 4)
+
+    linhas_tabela.append(linha_bl)
+    linhas_num_micro.append(linha_bl_micro)
+    linhas_num_med.append(linha_bl_med)
+
+    # B) Linhas de cada protocolo nosso (A, B, C, D1...D25, Gold)
+    for alias, ents_p in nossos_protocolos.items():
+        linha_p = {"Protocolo": alias}
+        linha_p_micro = {"Protocolo": alias}
+        linha_p_med = {"Protocolo": alias}
+
+        micros_p = []
+        meds_p = []
+        for cfg_m in alvos_config:
+            col = cfg_m["coluna"]
+            esc = cfg_m["escopo"]
+            alv = cfg_m["alvo"]
+            res = avaliar_alvo(docs, ents_p, esc, alv)
+
+            micros_p.append(res["micro_f1"])
+            meds_p.append(res["mediana_f1"])
+            linha_p[col] = f"{res['micro_f1']:.3f} ({res['mediana_f1']:.3f})"
+            linha_p_micro[col] = round(res["micro_f1"], 4)
+            linha_p_med[col] = round(res["mediana_f1"], 4)
+
+        media_mic_p = float(np.mean(micros_p)) if micros_p else 0.0
+        media_med_p = float(np.mean(meds_p)) if meds_p else 0.0
+        linha_p["Media Macro"] = f"{media_mic_p:.3f} ({media_med_p:.3f})"
+        linha_p_micro["Media Macro"] = round(media_mic_p, 4)
+        linha_p_med["Media Macro"] = round(media_med_p, 4)
+
+        linhas_tabela.append(linha_p)
+        linhas_num_micro.append(linha_p_micro)
+        linhas_num_med.append(linha_p_med)
+
+    # 5. Salvar arquivos
     pasta_saida = caminho(pasta_base, config["saida"]["pasta"])
     pasta_saida.mkdir(parents=True, exist_ok=True)
     caminho_md = pasta_saida / config["saida"]["arquivo_comparacao"]
+    caminho_xlsx = pasta_saida / config["saida"].get("arquivo_xlsx", "comparacao_baseline.xlsx")
+    caminho_csv = pasta_saida / config["saida"].get("arquivo_csv", "comparacao_baseline.csv")
 
-    gerar_relatorio_md(modelos_resultados, nossos_resultados, caminho_md)
-    print(f"\n🏁 Relatório: {caminho_md}")
+    print("\n🏁 Gerando relatórios consolidados...")
+    gerar_relatorios(
+        linhas_tabela,
+        linhas_num_micro,
+        linhas_num_med,
+        nomes_colunas,
+        totais_gold,
+        caminho_md,
+        caminho_xlsx,
+        caminho_csv,
+    )
 
 
 if __name__ == "__main__":
