@@ -387,7 +387,7 @@ estatistica:
       (global): 0.0030
       MetaDados: 0.0058
       Sentencas: 0.0022
-
+      
     # Sentencas e MetaDados são os alvos de interesse; (global) fica como âncora.
     campos:
       - "(global)"

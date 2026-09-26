@@ -259,6 +259,7 @@ experimentos/puil-mini-experimento/treinos_local/*
 # comparações
 experimentos/puil-mini-experimento/compara**
 experimentos/summa-experimento/avaliacao_humana/tarefas_avaliacao_label_studio_*.json
+experimentos/summa-experimento/avaliacao_humana/tarefas_treino_*.json
 
 # extrações
 experimentos/pubmed-experimento/test_extracao**
