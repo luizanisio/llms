@@ -275,6 +275,7 @@ experimentos/summa-experimento/Plano_codificacao_fusao.md
 experimentos/summa-experimento/avaliacao_llm_humana/analise_llm/*
 experimentos/summa-experimento/avaliacao_llm_humana/saida_**
 experimentos/summa-experimento/avaliacao_llm_humana/analise_avaliacoes**
+experimentos/summa-experimento/avaliacao_llm/*
 experimentos/_notas_*.md
 
 # ATENÇÃO - SEMCLINBR dados não podem ser publicados
