@@ -35,6 +35,8 @@ Parâmetros de linha de comando:
 
 --refazer = ignora as colunas de avaliação e envia o prompt novamente, substituindo os valores existentes
 > sem o --refazer = ignora as instâncieas com a coluna já preenchida
+
+--protocolos "d24" "d25" seleciona os protocolos a serem processados
 '''
 
 import os
@@ -57,7 +59,8 @@ PASTA_SAIDA_EXTRACAO = './saida'
 PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
 PROTOCOLOS = ['b', 'd24', 'd25', 'c']
 QTD_TENTATIVAS = 20
-WORKERS_YAML = 10
+WORKERS_YAML = 20
+#MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
 MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
 
 # Caminhos derivados
