@@ -21,8 +21,8 @@ misc:
 # --- Modelo ---
 # Protocolo D11: CL granular FF→LoRA — termina com LoRA, usa base + lora separados
 modelo:
-  caminho: "Qwen2.5-7B-Instruct"
-  lora: "Qwen2.5-7B-Instruct(d11)"
+  caminho: "Qwen2.5-7B-Instruct(d11)"
+  lora: ""
 
 # --- Configuração do vLLM ---
 vllm:
