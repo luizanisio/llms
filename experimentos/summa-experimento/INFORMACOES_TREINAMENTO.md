@@ -25,10 +25,14 @@ vllm:
 | **C** | 16 | Full FT | bitsandbytes 4-bit |
 | **D1–D25** | 4 ou 16 | Misto | bitsandbytes 4-bit |
 
-**PubMed (Qwen 1.5B):** não usa quantização na inferência — modelo pequeno o
-suficiente para rodar em precisão nativa (`dtype: auto`).
+**PubMed (Qwen 1.5B):** não usa quantização na inferência. O Qwen2.5-1.5B-Instruct
+ocupa ~3 GB em bf16, cabendo com folga na H100 80 GB mesmo com KV cache para
+sequências de 8k tokens. Os YAMLs usam apenas `enforce_eager: true` (sem
+`quantization` nem `load_format`), e o `dtype: auto` resulta em bf16 nativo.
 
-**SemClinBr (Qwen 7B):** mesma configuração bitsandbytes do SUMMA.
+**SemClinBr (Qwen 7B):** mesma configuração bitsandbytes do SUMMA. O Qwen2.5-7B
+em bf16 ocupa ~14 GB só de pesos; com KV cache para sequências de 38k tokens em
+batch, a quantização 4-bit é necessária para caber na GPU sem OOM.
 
 ### Implicação observada
 
