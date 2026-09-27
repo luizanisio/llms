@@ -242,7 +242,7 @@ configuracao_comparacao:
   filtro:
     arquivo: "dados/divisao_Qwen235b_Qwen7b.csv"
     campo_id: "id"
-    dataset_filtro: {"alvo": "teste"}
+    dataset_filtro: {"alvo": "teste", "fold": "<=10"}
 
   nome_campo_id: "id"
   rotulo_campo_id: "ID"
