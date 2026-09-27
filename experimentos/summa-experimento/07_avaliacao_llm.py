@@ -49,7 +49,9 @@ import shutil
 import logging
 import argparse
 import subprocess
+import statistics
 import pandas as pd
+import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -63,8 +65,8 @@ PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
 PROTOCOLOS = ['b', 'd24', 'd25', 'c']
 QTD_TENTATIVAS = 20
 WORKERS_YAML = 20
-#MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
-MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
+MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
+#MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
 
 # Caminhos derivados
 ARQUIVO_INTEGRAS = os.path.join(SCRIPT_DIR, 'dados', 'integras_experimento_summa_novos.parquet')
@@ -106,6 +108,10 @@ AVALIACAO_INVALIDA = json.dumps(
 # high ~2000, medium ~800, low ~400 tokens/instância.
 TOKENS_SAIDA_ESTIMADO_POR_INSTANCIA = 800
 MAX_TOKENS_SAIDA = 8192
+
+# ROPE padrão para a análise bayesiana Likert (margem de equivalência prática)
+# Calibrada a partir do controle negativo — corresponde ao rope_likert dos YAMLs de comparação.
+ROPE_LIKERT = 0.1579  # calibrada pela divergência média entre os 3 avaliadores do grupo
 
 
 # ---------------------------------------------------------------------------
@@ -806,6 +812,371 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 
 
 # ---------------------------------------------------------------------------
+# Geração do resumo (--resumo)
+# ---------------------------------------------------------------------------
+
+def _extrair_nota(valor_avaliacao):
+    """Extrai a nota numérica e se é json_invalido a partir do valor da coluna avaliacao.
+
+    Returns:
+        (nota, eh_invalido): nota int ou None, e se a nota 1 veio de json_invalido.
+    """
+    if pd.isna(valor_avaliacao):
+        return None, False
+    s = str(valor_avaliacao).strip()
+    if not s or s == '{}':
+        return None, False
+    try:
+        d = json.loads(s)
+        nota = d.get('nota')
+        if nota is None:
+            return None, False
+        nota = int(nota)
+        problemas = d.get('problemas', [])
+        eh_inv = nota == 1 and 'json_invalido' in problemas
+        return nota, eh_inv
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None, False
+
+
+def _analisar_notas_protocolo(proto, df):
+    """Analisa as notas da coluna avaliacao de um DataFrame.
+
+    Returns:
+        dict com métricas do protocolo ou None se não houver coluna avaliacao.
+    """
+    if 'avaliacao' not in df.columns:
+        return None
+
+    total = len(df)
+    notas = []
+    n1_invalido = 0
+    n1_juiz = 0
+    n2 = 0
+    n3 = 0
+    n4 = 0
+    pendentes = 0
+
+    for val in df['avaliacao']:
+        nota, eh_inv = _extrair_nota(val)
+        if nota is None:
+            pendentes += 1
+            continue
+        notas.append(nota)
+        if nota == 1:
+            if eh_inv:
+                n1_invalido += 1
+            else:
+                n1_juiz += 1
+        elif nota == 2:
+            n2 += 1
+        elif nota == 3:
+            n3 += 1
+        elif nota == 4:
+            n4 += 1
+
+    avaliados = len(notas)
+    pct_bom = (n3 + n4) / avaliados * 100 if avaliados > 0 else 0.0
+    media = statistics.mean(notas) if notas else 0.0
+    mediana = statistics.median(notas) if notas else 0.0
+
+    return {
+        'protocolo': proto,
+        'total': total,
+        'avaliados': avaliados,
+        'pendentes': pendentes,
+        'n1_inv': n1_invalido,
+        'n1_juiz': n1_juiz,
+        'n2': n2,
+        'n3': n3,
+        'n4': n4,
+        'pct_gte3': pct_bom,
+        'media': media,
+        'mediana': mediana,
+        'notas': notas,  # lista bruta para análise bayesiana
+    }
+
+
+def _ler_resumo_juiz(proto):
+    """Lê o resumo.json do juiz para um protocolo, se existir."""
+    caminho = os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO, f'saida_juiz_{proto}_resumo.json')
+    if not os.path.isfile(caminho):
+        return None
+    try:
+        with open(caminho, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _fmt_num(n):
+    """Formata número inteiro com separador de milhar (ponto)."""
+    return f"{n:,.0f}".replace(',', '.')
+
+
+def gerar_resumo_avaliacao(protocolos, rope):
+    """Gera o RESUMO_AVALIACAO_LLM.md com tabelas, CSVs e análise bayesiana."""
+    from datetime import datetime
+
+    pasta = os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO)
+    os.makedirs(pasta, exist_ok=True)
+
+    dados_protocolos = []  # lista de dicts com métricas por protocolo
+    dados_notas = {}       # {proto: [notas]} para análise bayesiana
+    dados_chave_nota = {}  # {proto: {chave: nota}} para pareamento
+
+    print(f"\n{'='*70}")
+    print(f"  Gerando resumo de avaliações")
+    print(f"{'='*70}\n")
+
+    for proto in protocolos:
+        df, caminho_leitura, _, _ = carregar_dataframe_protocolo(proto)
+        if df is None:
+            print(f"  ✗ {proto:>5}: ARQUIVO NÃO ENCONTRADO")
+            continue
+
+        info = _analisar_notas_protocolo(proto, df)
+        if info is None:
+            print(f"  ✗ {proto:>5}: sem coluna 'avaliacao'")
+            continue
+
+        dados_protocolos.append(info)
+        dados_notas[proto] = info['notas']
+
+        # Guardar mapeamento chave→nota para pareamento bayesiano
+        if 'chave' in df.columns and 'avaliacao' in df.columns:
+            mapa = {}
+            for _, row in df[['chave', 'avaliacao']].iterrows():
+                nota, _ = _extrair_nota(row['avaliacao'])
+                if nota is not None:
+                    mapa[str(row['chave']).strip()] = nota
+            dados_chave_nota[proto] = mapa
+
+        status = '✓' if info['pendentes'] == 0 else '→'
+        print(f"  {status} {proto:>5}: {info['avaliados']}/{info['total']} avaliados "
+              f"(média {info['media']:.2f}, %≥3 {info['pct_gte3']:.1f}%)")
+
+    if not dados_protocolos:
+        logging.error("Nenhum protocolo com avaliações encontrado.")
+        return
+
+    # =====================================================================
+    # 1. Tabela de avaliações (markdown + CSV)
+    # =====================================================================
+    md = []
+    md.append('# Avaliação LLM-as-a-Judge — Resumo\n')
+    md.append(f'> Gerado em: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  ')
+    md.append(f'> ROPE Likert: {rope}  \n')
+
+    md.append('## 1. Tabela de Avaliações por Protocolo\n')
+    md.append('| Proto | Total | Avaliados | Pend. | N1 (inv.) | N1 (juiz) | N2 | N3 | N4 | %≥3 | Média | Mediana |')
+    md.append('|-------|------:|----------:|------:|----------:|----------:|---:|---:|---:|----:|------:|--------:|')
+
+    csv_rows = []
+    for d in dados_protocolos:
+        md.append(
+            f"| {d['protocolo']} | {d['total']} | {d['avaliados']} | {d['pendentes']} | "
+            f"{d['n1_inv']} | {d['n1_juiz']} | {d['n2']} | {d['n3']} | {d['n4']} | "
+            f"{d['pct_gte3']:.1f}% | {d['media']:.2f} | {d['mediana']:.0f} |"
+        )
+        csv_rows.append(d)
+
+    # Salvar CSV de avaliações
+    df_csv = pd.DataFrame([{k: v for k, v in r.items() if k != 'notas'} for r in csv_rows])
+    csv_path = os.path.join(pasta, 'resumo_avaliacoes.csv')
+    df_csv.to_csv(csv_path, index=False, encoding='utf-8')
+    md.append(f'\n> Dados exportados: `resumo_avaliacoes.csv`\n')
+
+    # =====================================================================
+    # 2. Custos e Tokens
+    # =====================================================================
+    custos = []
+    for d in dados_protocolos:
+        resumo_juiz = _ler_resumo_juiz(d['protocolo'])
+        if resumo_juiz:
+            custos.append({
+                'protocolo': d['protocolo'],
+                'tokens_entrada': resumo_juiz.get('input_tokens_total', 0),
+                'tokens_saida': resumo_juiz.get('output_tokens_total', 0),
+                'tempo_s': resumo_juiz.get('tempo_total_s', 0),
+                'modelo': resumo_juiz.get('modelo_usado', ''),
+            })
+
+    if custos:
+        md.append('## 2. Custos e Tokens\n')
+        md.append('| Proto | Tokens Entrada | Tokens Saída | Tempo (h) | Modelo |')
+        md.append('|-------|---------------:|-------------:|----------:|--------|')
+        for c in custos:
+            horas = c['tempo_s'] / 3600 if c['tempo_s'] else 0
+            md.append(
+                f"| {c['protocolo']} | {_fmt_num(c['tokens_entrada'])} | "
+                f"{_fmt_num(c['tokens_saida'])} | {horas:.1f} | {c['modelo']} |"
+            )
+        md.append('')
+
+    # =====================================================================
+    # 3. Análise Bayesiana
+    # =====================================================================
+    # Filtrar protocolos completos (sem pendentes) para análise bayesiana
+    protos_completos = [d['protocolo'] for d in dados_protocolos if d['pendentes'] == 0 and d['avaliados'] > 0]
+    protos_incompletos = [d['protocolo'] for d in dados_protocolos if d['pendentes'] > 0]
+
+    if len(protos_completos) >= 2:
+        md.append('## 3. Análise Bayesiana (Likert)\n')
+        md.append(f'> Protocolos incluídos: {", ".join(protos_completos)} (100% avaliados)  ')
+        if protos_incompletos:
+            md.append(f'> Protocolos excluídos: {", ".join(protos_incompletos)} (em andamento)  ')
+        md.append('')
+
+        try:
+            # Importar o módulo de análise bayesiana
+            sys.path.insert(0, os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', 'src')))
+            from util_est_bayesiana import matriz_pares, sintese, heatmap, grafico_diferencas
+
+            # Montar DataFrame pareado: alinhar por chave
+            chaves_comuns = None
+            for proto in protos_completos:
+                if proto in dados_chave_nota:
+                    chaves_proto = set(dados_chave_nota[proto].keys())
+                    chaves_comuns = chaves_proto if chaves_comuns is None else chaves_comuns & chaves_proto
+
+            if chaves_comuns and len(chaves_comuns) > 0:
+                chaves_ordenadas = sorted(chaves_comuns)
+                dados_pareados = {}
+                for proto in protos_completos:
+                    dados_pareados[proto] = [dados_chave_nota[proto][c] for c in chaves_ordenadas]
+
+                df_pareado = pd.DataFrame(dados_pareados)
+                n_pareados = len(chaves_ordenadas)
+
+                md.append(f'> Instâncias pareadas: {n_pareados}  \n')
+
+                # Calcular matriz de pares
+                matriz = matriz_pares(df_pareado, rope=rope, nomes=protos_completos)
+
+                # --- 3.1 Tabela de síntese ---
+                tabela_sint = sintese(matriz)
+                ciclos = tabela_sint.attrs.get('ciclos', [])
+
+                md.append('### 3.1 Síntese por Protocolo\n')
+                md.append('| Protocolo | Média | Superior a | Equivalente a | Inferior a | Incerto |')
+                md.append('|-----------|------:|-----------:|--------------:|-----------:|--------:|')
+                for proto_nome in tabela_sint.index:
+                    row = tabela_sint.loc[proto_nome]
+                    md.append(
+                        f"| {proto_nome} | {row['média']:.4f} | "
+                        f"{int(row.get('superior a', 0))} | "
+                        f"{int(row.get('equivalente a', 0))} | "
+                        f"{int(row.get('inferior a', 0))} | "
+                        f"{int(row.get('incerto', 0))} |"
+                    )
+
+                ciclos_txt = 'nenhum' if not ciclos else str(ciclos)
+                md.append(f'\n> Ciclos de transitividade: {ciclos_txt}  ')
+
+                # Salvar CSV de síntese
+                csv_sint_path = os.path.join(pasta, 'resumo_bayesiana_sintese.csv')
+                tabela_sint.to_csv(csv_sint_path, encoding='utf-8')
+                md.append(f'> Dados exportados: `resumo_bayesiana_sintese.csv`\n')
+
+                # --- 3.2 Tabela de pares (simplificada) ---
+                # Apenas pares não duplicados (i < j)
+                pares_vistos = set()
+                pares_unic = []
+                for _, row in matriz.iterrows():
+                    par = tuple(sorted([row['linha'], row['coluna']]))
+                    if par not in pares_vistos:
+                        pares_vistos.add(par)
+                        pares_unic.append(row)
+
+                md.append('### 3.2 Comparação entre Pares\n')
+                md.append('| Par | P(sup) | P(equiv) | P(inf) | Δ média | IC 95% | Classif. |')
+                md.append('|-----|-------:|---------:|-------:|--------:|--------|----------|')
+                for row in pares_unic:
+                    par_nome = f"{row['linha']} − {row['coluna']}"
+                    ic = f"[{row['ic_inf']:+.4f}; {row['ic_sup']:+.4f}]"
+                    md.append(
+                        f"| {par_nome} | {row['p_esquerda']:.3f} | {row['p_rope']:.3f} | "
+                        f"{row['p_direita']:.3f} | {row['diferenca_media']:+.4f} | {ic} | "
+                        f"{row['classificacao']} |"
+                    )
+
+                # Salvar CSV de pares completo
+                csv_pares_path = os.path.join(pasta, 'resumo_bayesiana_pares.csv')
+                colunas_csv = ['linha', 'coluna', 'n', 'rope',
+                               'p_esquerda', 'p_rope', 'p_direita',
+                               'x_melhor', 'empate', 'y_melhor',
+                               'diferenca_media', 'variancia', 'gl',
+                               'ic_inf', 'ic_sup',
+                               'media_linha', 'media_coluna',
+                               'rope_minima', 'classificacao', 'probabilidade']
+                colunas_presentes = [c for c in colunas_csv if c in matriz.columns]
+                matriz[colunas_presentes].to_csv(csv_pares_path, index=False, encoding='utf-8')
+                md.append(f'\n> Dados exportados: `resumo_bayesiana_pares.csv`\n')
+
+                # --- 3.3 Heatmap ---
+                try:
+                    import matplotlib
+                    matplotlib.use('Agg')  # backend não-interativo
+                    heatmap_path = os.path.join(pasta, 'avaliacao_llm_heatmap.png')
+                    heatmap(matriz, arquivo_saida=heatmap_path,
+                            titulo='Avaliação LLM — Heatmap Bayesiano')
+                    md.append('### 3.3 Heatmap\n')
+                    md.append(f'![Heatmap bayesiano](avaliacao_llm_heatmap.png)\n')
+                    print(f"  ✓ Heatmap salvo: avaliacao_llm_heatmap.png")
+                except Exception as e:
+                    logging.warning(f"  ⚠️  Erro ao gerar heatmap: {e}")
+
+                # --- 3.4 Forest Plot ---
+                try:
+                    forest_path = os.path.join(pasta, 'avaliacao_llm_diferencas.png')
+                    grafico_diferencas(matriz, arquivo_saida=forest_path,
+                                       titulo='Avaliação LLM — Medindo as Diferenças')
+                    md.append('### 3.4 Medindo as Diferenças (Forest Plot)\n')
+                    md.append(f'![Forest plot bayesiano](avaliacao_llm_diferencas.png)\n')
+                    print(f"  ✓ Forest plot salvo: avaliacao_llm_diferencas.png")
+                except Exception as e:
+                    logging.warning(f"  ⚠️  Erro ao gerar forest plot: {e}")
+
+                import matplotlib.pyplot as plt
+                plt.close('all')
+
+            else:
+                md.append('> ⚠️ Não foi possível parear os protocolos (chaves incompatíveis).\n')
+
+        except ImportError as e:
+            logging.warning(f"  ⚠️  util_est_bayesiana não disponível: {e}")
+            md.append(f'> ⚠️ Análise bayesiana indisponível: {e}\n')
+        except Exception as e:
+            logging.warning(f"  ⚠️  Erro na análise bayesiana: {e}")
+            md.append(f'> ⚠️ Erro na análise bayesiana: {e}\n')
+    else:
+        if len(protos_completos) == 1:
+            md.append('## 3. Análise Bayesiana\n')
+            md.append(f'> Apenas 1 protocolo completo ({protos_completos[0]}). '
+                      f'São necessários ao menos 2 para a comparação bayesiana.\n')
+        else:
+            md.append('## 3. Análise Bayesiana\n')
+            md.append('> Nenhum protocolo com 100% das avaliações concluídas. '
+                      'A análise bayesiana será gerada quando houver ao menos 2 protocolos completos.\n')
+
+    # =====================================================================
+    # Salvar markdown
+    # =====================================================================
+    md_path = os.path.join(pasta, 'RESUMO_AVALIACAO_LLM.md')
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(md) + '\n')
+
+    print(f"\n{'='*70}")
+    print(f"  ✓ Resumo salvo: {md_path}")
+    print(f"  ✓ CSV avaliações: {csv_path}")
+    if len(protos_completos) >= 2:
+        print(f"  ✓ CSV síntese bayesiana: {os.path.join(pasta, 'resumo_bayesiana_sintese.csv')}")
+        print(f"  ✓ CSV pares bayesianos: {os.path.join(pasta, 'resumo_bayesiana_pares.csv')}")
+    print(f"{'='*70}")
+
+
+# ---------------------------------------------------------------------------
 # Ponto de entrada
 # ---------------------------------------------------------------------------
 
@@ -825,11 +1196,24 @@ def main():
         '--tokens', action='store_true',
         help='Estima tokens de entrada e saída por protocolo (sem chamar a API)'
     )
+    parser.add_argument(
+        '--resumo', action='store_true',
+        help='Gera RESUMO_AVALIACAO_LLM.md com estatísticas, tabelas e análise bayesiana'
+    )
+    parser.add_argument(
+        '--rope', type=float, default=ROPE_LIKERT,
+        help=f'ROPE para análise bayesiana Likert (padrão: {ROPE_LIKERT})'
+    )
     args = parser.parse_args()
 
     protocolos_raw = args.protocolos if args.protocolos else PROTOCOLOS
     protocolos = [normalizar_protocolo(p) for p in protocolos_raw]
     protocolos = list(dict.fromkeys(protocolos))
+
+    # ----- Modo --resumo: gerar relatório e sair -----
+    if args.resumo:
+        gerar_resumo_avaliacao(protocolos, args.rope)
+        return
 
     # ----- Validar arquivos essenciais -----
     arquivos_essenciais = [
