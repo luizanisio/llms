@@ -37,6 +37,9 @@ Parâmetros de linha de comando:
 > sem o --refazer = ignora as instâncieas com a coluna já preenchida
 
 --protocolos "d24" "d25" seleciona os protocolos a serem processados
+  Suporta também protocolos especiais:
+  - "a": zero-shot (extrai teste de saida_qwen7b.parquet e salva em saida_qwen7b(a)_teste.parquet)
+  - "prof": professor (extrai teste de saida_or_235b.parquet e salva em saida_or_235b(prof)_teste.parquet)
 '''
 
 import os
@@ -65,11 +68,29 @@ MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 
 
 # Caminhos derivados
 ARQUIVO_INTEGRAS = os.path.join(SCRIPT_DIR, 'dados', 'integras_experimento_summa_novos.parquet')
+ARQUIVO_DIVISAO = os.path.join(SCRIPT_DIR, 'dados', 'divisao_Qwen235b_Qwen7b.csv')
 PROMPT_TEMPLATE_PATH = os.path.join(SCRIPT_DIR, 'avaliacao_llm_humana', 'prompt_juiz_llm.txt')
 UTIL_VLLM_BATCH = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', 'src', 'util_vllm_batch.py'))
 
 # Padrão de nome dos parquets de saída
 PADRAO_PARQUET = 'saida_qwen7b({protocolo})_teste.parquet'
+
+# Protocolos especiais que partem de extrações completas (22k) e precisam ser
+# filtrados para o conjunto de teste canônico (3.948 instâncias):
+PROTOCOLOS_ESPECIAIS = {
+    'a': {
+        'arquivo_origem': 'saida_qwen7b.parquet',
+        'arquivo_teste': 'saida_qwen7b(a)_teste.parquet',
+        'rotulo': 'Qwen7B (Zero-Shot)',
+        'aliases': ['a', 'zero-shot', 'zeroshot'],
+    },
+    'prof': {
+        'arquivo_origem': 'saida_or_235b.parquet',
+        'arquivo_teste': 'saida_or_235b(prof)_teste.parquet',
+        'rotulo': 'Qwen235B (Professor)',
+        'aliases': ['prof', 'professor', 'or_235b', '235b', 'qwen235b'],
+    },
+}
 
 # Placeholders do template do juiz
 PH_ACORDAO = '<<--TEXTO_ACORDAO-->>'
@@ -150,13 +171,169 @@ def formatar_extracao_texto_plano(dados, chave_debug):
 
 
 # ---------------------------------------------------------------------------
-# Utilitários
+# Utilitários e Tratamento de Protocolos
 # ---------------------------------------------------------------------------
 
-def caminho_parquet_protocolo(protocolo):
-    """Retorna o caminho absoluto do parquet de saída do protocolo."""
+def normalizar_protocolo(protocolo):
+    """Normaliza o identificador do protocolo (ex: 'A' -> 'a', 'professor' -> 'prof')."""
+    p = str(protocolo).strip().lower()
+    for proto_key, cfg in PROTOCOLOS_ESPECIAIS.items():
+        if p == proto_key or p in cfg.get('aliases', []):
+            return proto_key
+    return p
+
+
+def eh_protocolo_especial(protocolo):
+    """Retorna a configuração se o protocolo for especial ('a', 'prof'), ou None."""
+    p = normalizar_protocolo(protocolo)
+    return PROTOCOLOS_ESPECIAIS.get(p)
+
+
+def caminho_parquet_leitura(protocolo):
+    """Retorna o caminho do parquet para leitura do protocolo.
+
+    Para protocolos especiais:
+      1. Se o arquivo _teste já existir, prioriza ele (permite retomada).
+      2. Senão, retorna o arquivo completo de origem (para filtrar).
+    Para protocolos normais:
+      Retorna saida_qwen7b({protocolo})_teste.parquet.
+    """
+    p = normalizar_protocolo(protocolo)
+    cfg = eh_protocolo_especial(p)
+    if cfg:
+        caminho_teste = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_teste']))
+        if os.path.isfile(caminho_teste):
+            return caminho_teste
+        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_origem']))
     nome = PADRAO_PARQUET.format(protocolo=protocolo)
     return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, nome))
+
+
+def caminho_parquet_destino(protocolo):
+    """Retorna o caminho do parquet onde a avaliação deste protocolo deve ser salva.
+
+    Para 'a': saida_qwen7b(a)_teste.parquet
+    Para 'prof': saida_or_235b(prof)_teste.parquet
+    Para demais protocolos: saida_qwen7b({protocolo})_teste.parquet
+    """
+    p = normalizar_protocolo(protocolo)
+    cfg = eh_protocolo_especial(p)
+    if cfg:
+        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_teste']))
+    nome = PADRAO_PARQUET.format(protocolo=protocolo)
+    return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, nome))
+
+
+def caminho_parquet_origem(protocolo):
+    """Retorna o caminho do arquivo completo de origem se for especial, ou None."""
+    p = normalizar_protocolo(protocolo)
+    cfg = eh_protocolo_especial(p)
+    if cfg:
+        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_origem']))
+    return None
+
+
+def caminho_parquet_protocolo(protocolo):
+    """Retorna o caminho do parquet para o protocolo (compatibilidade)."""
+    return caminho_parquet_leitura(protocolo)
+
+
+_CHAVES_TESTE_CACHE = None
+
+def obter_chaves_teste():
+    """Retorna o conjunto de chaves (strings) do split de teste canônico (3.948 instâncias).
+
+    Estratégia:
+      1. Tenta extrair diretamente da coluna 'chave' de qualquer parquet de teste
+         já existente no diretório (ex: 'b', 'c', 'd24', 'd1'). Isso garante
+         alinhamento 1:1 exato com os outros modelos.
+      2. Fallback: lê ARQUIVO_DIVISAO ('alvo' == 'teste') cruzado com
+         ARQUIVO_INTEGRAS ('fold' <= 10).
+    """
+    global _CHAVES_TESTE_CACHE
+    if _CHAVES_TESTE_CACHE is not None:
+        return _CHAVES_TESTE_CACHE
+
+    # 1. Tentar ler de qualquer _teste.parquet existente
+    for proto_ref in ['b', 'c', 'd24', 'd25', 'd1', 'd2', 'd7', 'd8']:
+        nome_ref = PADRAO_PARQUET.format(protocolo=proto_ref)
+        caminho_ref = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, nome_ref))
+        if os.path.isfile(caminho_ref):
+            try:
+                df_ref = pd.read_parquet(caminho_ref, columns=['chave'])
+                chaves = set(df_ref['chave'].astype(str).str.strip())
+                logging.info(f"  → Chaves de teste obtidas de {nome_ref}: {len(chaves)} itens")
+                _CHAVES_TESTE_CACHE = chaves
+                return chaves
+            except Exception as e:
+                logging.warning(f"Falha ao ler chaves de {caminho_ref}: {e}")
+
+    # 2. Fallback via ARQUIVO_DIVISAO + fold <= 10
+    if os.path.isfile(ARQUIVO_DIVISAO) and os.path.isfile(ARQUIVO_INTEGRAS):
+        try:
+            df_div = pd.read_csv(ARQUIVO_DIVISAO, usecols=['id', 'alvo'])
+            ids_teste = set(df_div[df_div['alvo'] == 'teste']['id'].astype(str).str.strip())
+            df_int = pd.read_parquet(ARQUIVO_INTEGRAS, columns=['seq_documento_acordao', 'fold'])
+            ids_fold = set(df_int[df_int['fold'] <= 10]['seq_documento_acordao'].astype(str).str.strip())
+            chaves = ids_teste & ids_fold
+            logging.info(f"  → Chaves de teste obtidas via split CSV + fold<=10: {len(chaves)} itens")
+            _CHAVES_TESTE_CACHE = chaves
+            return chaves
+        except Exception as e:
+            logging.warning(f"Falha no fallback de chaves de teste: {e}")
+
+    raise RuntimeError("Não foi possível determinar as chaves de teste para filtrar o protocolo.")
+
+
+def carregar_dataframe_protocolo(protocolo):
+    """Carrega o DataFrame do protocolo, aplicando o filtro de teste se necessário.
+
+    Retorna (df, caminho_leitura, caminho_destino, foi_filtrado).
+    """
+    p = normalizar_protocolo(protocolo)
+    caminho_leitura = caminho_parquet_leitura(p)
+    caminho_destino = caminho_parquet_destino(p)
+
+    if not os.path.isfile(caminho_leitura):
+        return None, caminho_leitura, caminho_destino, False
+
+    df = pd.read_parquet(caminho_leitura)
+    foi_filtrado = False
+
+    # Se for protocolo especial e estiver lendo o arquivo completo (> 5000 linhas)
+    cfg = eh_protocolo_especial(p)
+    if cfg and len(df) > 5000:
+        chaves_teste = obter_chaves_teste()
+        antes = len(df)
+        df = df[df['chave'].astype(str).str.strip().isin(chaves_teste)].copy()
+        foi_filtrado = True
+        logging.info(f"  [{cfg['rotulo']}] Filtrado de {antes} para {len(df)} instâncias de teste.")
+
+    return df, caminho_leitura, caminho_destino, foi_filtrado
+
+
+def sincronizar_parquet_origem(protocolo, df_avaliado):
+    """Se for protocolo especial, sincroniza a coluna 'avaliacao' de volta no parquet completo original."""
+    caminho_orig = caminho_parquet_origem(protocolo)
+    caminho_dest = caminho_parquet_destino(protocolo)
+    if not caminho_orig or not os.path.isfile(caminho_orig) or caminho_orig == caminho_dest:
+        return
+
+    try:
+        logging.info(f"  → Sincronizando avaliações com o arquivo completo: {os.path.basename(caminho_orig)}...")
+        df_orig = pd.read_parquet(caminho_orig)
+        if 'avaliacao' not in df_orig.columns:
+            df_orig['avaliacao'] = ''
+
+        mapa_aval = dict(zip(df_avaliado['chave'].astype(str).str.strip(), df_avaliado['avaliacao']))
+        mask = df_orig['chave'].astype(str).str.strip().isin(mapa_aval)
+        df_orig.loc[mask, 'avaliacao'] = df_orig.loc[mask, 'chave'].astype(str).str.strip().map(mapa_aval)
+
+        backup_parquet(caminho_orig)
+        df_orig.to_parquet(caminho_orig, index=False)
+        logging.info(f"  ✓ Parquet completo sincronizado: {os.path.basename(caminho_orig)} ({mask.sum()} linhas atualizadas)")
+    except Exception as e:
+        logging.warning(f"  ⚠️  Não foi possível sincronizar avaliações com {os.path.basename(caminho_orig)}: {e}")
 
 
 def resposta_para_dict(resposta):
@@ -320,12 +497,11 @@ def estimar_tokens_protocolos(protocolos, integras_idx, template, refazer):
     resultados = []
 
     for proto in protocolos:
-        caminho = caminho_parquet_protocolo(proto)
-        if not os.path.isfile(caminho):
-            print(f"  ✗ {proto:>5}:  ARQUIVO NÃO ENCONTRADO")
+        df, caminho_leitura, _, _ = carregar_dataframe_protocolo(proto)
+        if df is None:
+            print(f"  ✗ {proto:>5}:  ARQUIVO NÃO ENCONTRADO — {os.path.basename(caminho_leitura)}")
             continue
 
-        df = pd.read_parquet(caminho)
         tem_col = 'avaliacao' in df.columns
 
         tokens_entrada = []
@@ -460,16 +636,21 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
     Returns:
         True se processado com sucesso, False em caso de erro.
     """
-    caminho_parquet = caminho_parquet_protocolo(protocolo)
-    if not os.path.isfile(caminho_parquet):
-        logging.error(f"[{protocolo}] Parquet não encontrado: {caminho_parquet}")
+    df, caminho_leitura, caminho_destino, foi_filtrado = carregar_dataframe_protocolo(protocolo)
+    if df is None:
+        logging.error(f"[{protocolo}] Parquet não encontrado: {caminho_leitura}")
         return False
 
     logging.info(f"\n{'='*60}")
-    logging.info(f"  Protocolo: {protocolo}")
+    rotulo_extra = ""
+    cfg = eh_protocolo_especial(protocolo)
+    if cfg:
+        rotulo_extra = f" ({cfg['rotulo']})"
+    logging.info(f"  Protocolo: {protocolo}{rotulo_extra}")
+    logging.info(f"  Origem : {os.path.basename(caminho_leitura)}")
+    logging.info(f"  Destino: {os.path.basename(caminho_destino)}")
     logging.info(f"{'='*60}")
 
-    df = pd.read_parquet(caminho_parquet)
     if 'avaliacao' not in df.columns:
         df['avaliacao'] = ''
 
@@ -529,10 +710,11 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 
     if not entradas_juiz:
         logging.info("  → Nenhuma instância para enviar ao juiz.")
-        if avaliacoes_diretas:
-            backup_parquet(caminho_parquet)
-            df.to_parquet(caminho_parquet, index=False)
-            logging.info(f"  ✓ Parquet atualizado: {os.path.basename(caminho_parquet)}")
+        if avaliacoes_diretas or foi_filtrado:
+            backup_parquet(caminho_destino)
+            df.to_parquet(caminho_destino, index=False)
+            logging.info(f"  ✓ Parquet atualizado: {os.path.basename(caminho_destino)}")
+            sincronizar_parquet_origem(protocolo, df)
         return True
 
     logging.info(f"  → {len(entradas_juiz)} instâncias para enviar ao juiz LLM")
@@ -612,10 +794,13 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 
     logging.info(f"  → Avaliações: {avaliacoes_ok} OK, {avaliacoes_erro_juiz} com erro do juiz")
 
-    # ----- Salvar parquet atualizado -----
-    backup_parquet(caminho_parquet)
-    df.to_parquet(caminho_parquet, index=False)
-    logging.info(f"  ✓ Parquet atualizado: {os.path.basename(caminho_parquet)}")
+    # ----- Salvar parquet atualizado no destino de teste -----
+    backup_parquet(caminho_destino)
+    df.to_parquet(caminho_destino, index=False)
+    logging.info(f"  ✓ Parquet de teste salvo: {os.path.basename(caminho_destino)} ({len(df)} linhas)")
+
+    # ----- Sincronizar com arquivo original se for protocolo especial -----
+    sincronizar_parquet_origem(protocolo, df)
 
     return True
 
@@ -642,7 +827,9 @@ def main():
     )
     args = parser.parse_args()
 
-    protocolos = args.protocolos if args.protocolos else PROTOCOLOS
+    protocolos_raw = args.protocolos if args.protocolos else PROTOCOLOS
+    protocolos = [normalizar_protocolo(p) for p in protocolos_raw]
+    protocolos = list(dict.fromkeys(protocolos))
 
     # ----- Validar arquivos essenciais -----
     arquivos_essenciais = [
@@ -695,24 +882,24 @@ def main():
     protocolos_validos = []
 
     for proto in protocolos:
-        caminho = caminho_parquet_protocolo(proto)
-        if not os.path.isfile(caminho):
-            print(f"  ✗ {proto:>5}:  ARQUIVO NÃO ENCONTRADO — {os.path.basename(caminho)}")
+        df, caminho_leitura, caminho_destino, foi_filtrado = carregar_dataframe_protocolo(proto)
+        if df is None:
+            print(f"  ✗ {proto:>5}:  ARQUIVO NÃO ENCONTRADO — {os.path.basename(caminho_leitura)}")
             continue
 
-        df = pd.read_parquet(caminho)
         info = analisar_protocolo(proto, df, args.refazer)
         resumos.append(info)
         protocolos_validos.append(proto)
 
         marcador = "→" if info['a_enviar'] > 0 else "✓"
+        extra_desc = f" [{os.path.basename(caminho_destino)}]" if foi_filtrado else ""
         print(
             f"  {marcador} {proto:>5}:  "
             f"{info['total']:>5} total  |  "
             f"{info['ja_avaliados']:>5} avaliados  |  "
             f"{info['pendentes']:>5} pendentes  "
             f"({info['json_invalidos']} inválidos → nota 1,  "
-            f"{info['a_enviar']} para o juiz)"
+            f"{info['a_enviar']} para o juiz){extra_desc}"
         )
 
     if not protocolos_validos:
