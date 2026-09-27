@@ -58,7 +58,7 @@ python ../../src/util_vllm_batch.py --config arquivo_config_batch.yaml
 ## 3. Referência: GPT-5
 - **API:** Azure
 - **Versão do modelo:** `gpt-5-2025-08-07`
-- **Configurações:** Reasoning=Médio / Verbose=Low (extração de referência); como **juiz LLM** usa Reasoning=High / Verbose=Low (ver `avaliacao_llm_humana/02_extracao_70.yaml`)
+- **Configurações:** Reasoning=Médio / Verbose=Low (extração de referência); como **juiz LLM** usa Reasoning=Médio / Verbose=Low (ver `avaliacao_llm_humana/02_extracao_70.yaml`)
 
 **Variáveis de Ambiente:**
 - `OA_KEY`
