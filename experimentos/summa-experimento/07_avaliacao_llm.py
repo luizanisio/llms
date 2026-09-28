@@ -62,7 +62,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PASTA_SAIDA_EXTRACAO = './saida'
 PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
-PROTOCOLOS = ['prof', 'a','b', 'd1', 'd24', 'd7', 'd8', 'c']
+PROTOCOLOS = ['prof', 'a','b', 'c', 'd1', 'd7', 'd8', 'd9', 'd24']
 QTD_TENTATIVAS = 20
 WORKERS_YAML = 20
 #MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
