@@ -410,6 +410,99 @@ hierarquia antes de olhar os resultados; divergências entre strict e relaxed s�
 **achados** sobre onde o erro se concentra (fronteira de span vs. escolha de
 rótulo), não inconsistências.
 
+### 6.1. Como a avaliação NER é executada (`07_avaliar_ner.py`)
+
+O script [`07_avaliar_ner.py`](file:///mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento/07_avaliar_ner.py) é a implementação da **Trilha 2** — produz F1 de reconhecimento de entidades por documento, comparável aos sistemas publicados sobre o SemClinBr. Roda **em paralelo** ao passo 06 (que mede similaridade textual via ROUGE/BERTScore), consumindo os **mesmos parquets de saída** dos passos 02 e 05.
+
+```
+python 07_avaliar_ner.py --config 07_avaliar_ner.yaml
+```
+
+#### 6.1.1. Entradas
+
+| Entrada | Origem | Papel |
+|---|---|---|
+| Parquets de saída (`saidas/*.parquet`) | Passos 02 (modelo base) e 05 (modelos treinados) | Predições brutas — cada linha tem `chave` (id do documento) e `resposta` (JSON gerado pela LLM) |
+| XMLs do corpus (`dados/SemClinBr-xml-public-v1/`) | Corpus original | Gabarito **com offsets de caractere** — é a autoridade posicional |
+| Divisão (`dados/divisao_Gold_Qwen7B.csv`) | Passo 03 | Define quais ids são `teste`; traz a coluna `dificuldade` para o recorte por faixa (§7.3) |
+| SemGroups (opcional) | UMLS `SemGroups.txt` | Mapa STY→SGR oficial; sem ele, vale o mapa embutido em `util_semclinbr.py` |
+
+O YAML [`07_avaliar_ner.yaml`](file:///mnt/d/wsl_dev/llms/experimentos/semclinbr-experimento/07_avaliar_ner.yaml) declara todos os caminhos, as colunas dos parquets (`campos_parquet: {id: chave, resposta: resposta}`), a métrica primária (`f1_strict`), as métricas complementares, o piso de viabilidade (`0.70`) e a lista de protocolos avaliados (A, B, B16, B16R8, C, D1–D25) — cada um apontando para o parquet correspondente.
+
+#### 6.1.2. Pipeline por documento
+
+Para cada documento de teste e cada protocolo, o pipeline segue a cadeia:
+
+```
+resposta bruta (string JSON)
+        │
+  carregar_predicao()          ← faz parse do JSON; se falhar → falha_parsing=True, F1=0
+        │
+  alinhar_entidades()          ← busca os spans no texto: exata → tolerante → fuzzy → global
+        │
+  avaliar(gold, pred, modo)    ← computa P/R/F1 para cada um dos 4 modos
+        │
+  avaliar_spans(gold, pred)    ← F1 de detecção de span (ignorando rótulo)
+        │
+  avaliar_relacoes(doc, pred)  ← F1 de relações (ancoradas em span, não em id)
+        │
+  avaliar_documento()          ← consolida TUDO numa única linha de métricas
+```
+
+**`carregar_predicao()`** tenta fazer parse do JSON bruto gerado pela LLM. Se o JSON é inválido ou está ausente, o documento é marcado com `falha_parsing=True` e **todos os F1 são zerados** — mas a falha é contabilizada separadamente na `taxa_falha_parsing`, sem virar F1 zero silencioso.
+
+**`alinhar_entidades()`** recebe o texto do documento e a lista de entidades previstas (que têm `text` e `tag` mas **não** offsets de caractere). Busca cada span no texto original em cascata: **(1)** match exato → **(2)** match tolerante a espaços → **(3)** busca fuzzy (ratio ≥ 0,90) → **(4)** busca global (do início do texto) → **(5)** falha. A busca parte do `start` da entidade anterior (cursor), não do `end`, permitindo spans aninhados (ex.: `"CURATIVO"` dentro de `"CURATIVO COM CARVÃO ATIVADO"`). Ao alinhar, o campo `text` é **reescrito** a partir do offset encontrado — o span do texto original é a autoridade, não a cópia do modelo.
+
+#### 6.1.3. Os quatro modos de matching (F1 por entidade)
+
+Cada modo define duas dimensões: **(a)** exigência de span e **(b)** granularidade de rótulo.
+
+| Modo | Span | Rótulo | Interpretação |
+|---|---|---|---|
+| **strict** | Exato (`start == start` e `end == end`) | STY exato (conjunto idêntico de tags) | A mais exigente — **variável primária** |
+| **lenient** | Parcial (sobreposição → meio-acerto) | STY exato | Isola o erro de **fronteira de span** |
+| **flexible** | Exato | SGR (Semantic Group — agrupamento mais amplo) | Isola o erro de **granularidade de rótulo** dentro do mesmo grupo |
+| **relaxed** | Parcial | SGR | A mais tolerante — mede o reconhecimento "semântico" geral |
+
+Adicionalmente:
+- **`f1_strict_overlap`**: como o strict, mas aceita **interseção não-vazia** de conjuntos de rótulos em vez de igualdade exata — diagnóstico de erro de multi-rótulo.
+- **`f1_span_exato` / `f1_span_parcial`**: F1 de detecção de span **ignorando** o rótulo — quanto da capacidade de detecção é puramente posicional.
+- **`f1_relacoes`**: F1 de relações, ancoradas nos spans das entidades (não nos ids numéricos). `associated_with` é tratada como simétrica (não-direcionada); `negation_of` é direcionada.
+
+**Matching guloso com prioridade:** para cada entidade do gabarito, o algoritmo procura primeiro um match exato de span entre as predições não usadas; só se não houver match exato (e o modo permitir parcial) é que tenta sobreposição parcial (valendo 0,5 acerto). A precisão usa como denominador as entidades preditas **alinhadas + não-alinhadas** — spans alucinados que não casam com nenhuma posição no texto contam contra a precisão.
+
+#### 6.1.4. Detalhamento por rótulo (STY e SGR)
+
+Além das métricas agregadas por documento, o script computa:
+
+- **`avaliar_por_sty()`** — F1 por *Semantic Type* (modo `strict`): filtra gabarito e predição pelas entidades que contêm cada rótulo e computa P/R/F1, comparável à Fig. 4 de Souza et al.
+- **`avaliar_por_sgr()`** — F1 por *Semantic Group* (modo `flexible`): mesma lógica, mas agrupando STYs em SGRs do UMLS, comparável aos resultados de Souza et al. para "Disorder" e "Procedure".
+
+Apenas rótulos **presentes no gabarito** do documento entram na contagem — F1 de um rótulo que o documento não tem mediria alucinação, não reconhecimento.
+
+#### 6.1.5. Saídas produzidas
+
+| Arquivo | Conteúdo | Seção do README |
+|---|---|---|
+| `compara/ner/metricas_ner.parquet` | Uma linha por (documento × protocolo), com todas as métricas e indicadores de robustez | — |
+| `compara/ner/tabela_ancora.csv` | Mediana [IQR] por protocolo, Micro F1, viabilidade com IC 95% Wilson | §7.1 e §7.5 |
+| `compara/ner/por_rotulo.csv` | Mediana de F1 por STY e por SGR, por protocolo | §7.2 |
+| `compara/ner/por_dificuldade.csv` | Tabela-âncora recortada por faixa de dificuldade (fácil / médio / difícil) | §7.3 |
+| `compara/ner/decomposicao_erro.csv` | Diferenças medianas entre pares de modos (lenient−strict, flexible−strict, etc.) | §7.4 |
+| `compara/ner/estatisticas/estatistica_*.md` | Friedman + Wilcoxon (Holm) + tamanho de efeito $r$, uma análise por métrica | §6 |
+| `compara/ner/estatisticas/cd_*.png` | Diagramas de diferença crítica (Critical Difference) | §6 |
+
+#### 6.1.6. Análise estatística
+
+O script reutiliza `AnaliseEstatistica` (o mesmo módulo do passo 06) para cada métrica:
+
+1. **Pivot**: transforma o dataframe longo em tabela larga (`id_arquivo` × `protocolo`), com os valores da métrica nas células.
+2. **Friedman**: teste não-paramétrico para $K \geq 2$ protocolos pareados — testa se pelo menos um protocolo difere.
+3. **Wilcoxon pareado** com correção de **Holm**: contraste post-hoc entre cada par de protocolos.
+4. **Tamanho de efeito**: $r = |z| / \sqrt{n}$, para interpretar a magnitude da diferença.
+
+Esta estatística é declarada como **exploratória** — o veredito formal do experimento vem da análise bayesiana da Trilha 1 (passo 06).
+
 **ROPE (análise bayesiana).** A ROPE é ancorada na divergência entre os três
 treinos do protocolo D1 (`d1`, `d1a`, `d1b`), por campo e por métrica — a menor
 margem sob a qual todos os pares de réplicas saem equivalentes ao limiar de 0,95

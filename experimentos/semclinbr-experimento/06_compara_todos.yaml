@@ -19,6 +19,9 @@
 #   os pares estão controlados.
 # Executar com: python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
 # ==========================================================================
+# Para revisar as saídas antes da comparação:
+# python ../../src/treinar_revisar_saidas.py ./saida
+# ==========================================================================
 
 # --- Miscelânea ---
 misc:
