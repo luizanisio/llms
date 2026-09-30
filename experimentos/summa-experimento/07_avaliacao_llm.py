@@ -36,6 +36,9 @@ Parâmetros de linha de comando:
 --refazer = ignora as colunas de avaliação e envia o prompt novamente, substituindo os valores existentes
 > sem o --refazer = ignora as instâncieas com a coluna já preenchida
 
+--reconstruir = reconstrói a coluna 'avaliacao' nos parquets da pasta saida a partir
+  dos arquivos saida_juiz_{protocolo}.parquet já existentes em avaliacao_llm (sem chamar a API do juiz)
+
 --protocolos "d24" "d25" seleciona os protocolos a serem processados
   Suporta também protocolos especiais:
   - "a": zero-shot (extrai teste de saida_qwen7b.parquet e salva em saida_qwen7b(a)_teste.parquet)
@@ -812,6 +815,118 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 
 
 # ---------------------------------------------------------------------------
+# Reconstrução da coluna de avaliação (--reconstruir)
+# ---------------------------------------------------------------------------
+
+def reconstruir_protocolo(protocolo):
+    """Reconstrói a coluna 'avaliacao' para um protocolo a partir do parquet do juiz já gerado.
+
+    Lê o parquet de extração (filtrando para teste se for protocolo especial 'a' ou 'prof')
+    e preenche a coluna 'avaliacao':
+      - Linhas presentes em saida_juiz_{protocolo}.parquet recebem a resposta do juiz (ou AVALIACAO_INVALIDA se erro).
+      - Linhas ausentes em saida_juiz_{protocolo}.parquet recebem AVALIACAO_INVALIDA (eram extrações inválidas que não foram enviadas ao juiz).
+    Salva o parquet de teste com backup e sincroniza com o arquivo original se for protocolo especial.
+
+    Returns:
+        True se reconstruído com sucesso, False em caso de erro.
+    """
+    p = normalizar_protocolo(protocolo)
+    df, caminho_leitura, caminho_destino, foi_filtrado = carregar_dataframe_protocolo(p)
+    if df is None:
+        logging.error(f"[{p}] Parquet de extração não encontrado: {caminho_leitura}")
+        return False
+
+    arquivo_saida_juiz = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO, f'saida_juiz_{p}.parquet'))
+    if not os.path.isfile(arquivo_saida_juiz):
+        logging.error(f"[{p}] Parquet do juiz não encontrado: {arquivo_saida_juiz}")
+        return False
+
+    logging.info(f"\n{'='*60}")
+    rotulo_extra = ""
+    cfg = eh_protocolo_especial(p)
+    if cfg:
+        rotulo_extra = f" ({cfg['rotulo']})"
+    logging.info(f"  Reconstruindo protocolo: {p}{rotulo_extra}")
+    logging.info(f"  Origem : {os.path.basename(caminho_leitura)}")
+    logging.info(f"  Destino: {os.path.basename(caminho_destino)}")
+    logging.info(f"  Juiz   : {os.path.basename(arquivo_saida_juiz)}")
+    logging.info(f"{'='*60}")
+
+    df_juiz = pd.read_parquet(arquivo_saida_juiz)
+    logging.info(f"  → Saída do juiz carregada: {len(df_juiz)} linhas")
+
+    # Mapear avaliações do juiz por chave
+    mapa_juiz = {}
+    avaliacoes_ok = 0
+    avaliacoes_erro_juiz = 0
+
+    for _, row_juiz in df_juiz.iterrows():
+        chave_juiz = str(row_juiz['chave']).strip()
+        erro_juiz = row_juiz.get('erro', '')
+        if pd.notna(erro_juiz) and str(erro_juiz).strip():
+            mapa_juiz[chave_juiz] = AVALIACAO_INVALIDA
+            avaliacoes_erro_juiz += 1
+            continue
+
+        resp_juiz = row_juiz.get('resposta', '')
+        juiz_dict = resposta_para_dict(resp_juiz)
+        if juiz_dict and 'nota' in juiz_dict:
+            if isinstance(resp_juiz, dict):
+                aval_str = json.dumps(resp_juiz, ensure_ascii=False)
+            else:
+                aval_str = str(resp_juiz).strip()
+            mapa_juiz[chave_juiz] = aval_str
+            avaliacoes_ok += 1
+        else:
+            mapa_juiz[chave_juiz] = AVALIACAO_INVALIDA
+            avaliacoes_erro_juiz += 1
+
+    # Preencher coluna avaliacao
+    chaves_df = df['chave'].astype(str).str.strip()
+    em_juiz = chaves_df.isin(mapa_juiz)
+    avaliacoes_diretas = int((~em_juiz).sum())
+    df['avaliacao'] = chaves_df.map(lambda c: mapa_juiz.get(c, AVALIACAO_INVALIDA))
+
+    logging.info(f"  → Avaliações do juiz aplicadas: {avaliacoes_ok} OK, {avaliacoes_erro_juiz} com erro")
+    logging.info(f"  → Avaliações diretas (inválidas / não enviadas ao juiz): {avaliacoes_diretas}")
+    logging.info(f"  → Total de instâncias no parquet: {len(df)}")
+
+    # Salvar com backup
+    backup_parquet(caminho_destino)
+    df.to_parquet(caminho_destino, index=False)
+    logging.info(f"  ✓ Parquet salvo: {os.path.basename(caminho_destino)} ({len(df)} linhas)")
+
+    # Sincronizar com arquivo original se for protocolo especial
+    sincronizar_parquet_origem(p, df)
+
+    return True
+
+
+def reconstruir_avaliacoes(protocolos):
+    """Reconstrói a coluna avaliacao para uma lista de protocolos."""
+    print(f"\n{'='*70}")
+    print(f"  Reconstrução da coluna 'avaliacao' a partir de avaliacao_llm")
+    print(f"{'='*70}")
+    print(f"  Protocolos: {protocolos}\n")
+
+    sucessos = []
+    falhas = []
+    for proto in protocolos:
+        ok = reconstruir_protocolo(proto)
+        if ok:
+            sucessos.append(proto)
+        else:
+            falhas.append(proto)
+
+    print(f"\n{'='*70}")
+    print(f"  Reconstrução concluída: {len(sucessos)} sucesso(s), {len(falhas)} falha(s)")
+    if falhas:
+        print(f"  Falhas nos protocolos: {falhas}")
+    print(f"{'='*70}\n")
+    return len(falhas) == 0
+
+
+# ---------------------------------------------------------------------------
 # Geração do resumo (--resumo)
 # ---------------------------------------------------------------------------
 
@@ -1201,6 +1316,10 @@ def main():
         help='Gera RESUMO_AVALIACAO_LLM.md com estatísticas, tabelas e análise bayesiana'
     )
     parser.add_argument(
+        '--reconstruir', action='store_true',
+        help='Reconstrói a coluna avaliacao na pasta saida a partir de avaliacao_llm (sem chamar API do juiz)'
+    )
+    parser.add_argument(
         '--rope', type=float, default=ROPE_LIKERT,
         help=f'ROPE para análise bayesiana Likert (padrão: {ROPE_LIKERT})'
     )
@@ -1209,6 +1328,13 @@ def main():
     protocolos_raw = args.protocolos if args.protocolos else PROTOCOLOS
     protocolos = [normalizar_protocolo(p) for p in protocolos_raw]
     protocolos = list(dict.fromkeys(protocolos))
+
+    # ----- Modo --reconstruir: reconstruir colunas a partir de avaliacao_llm e sair -----
+    if args.reconstruir:
+        sucesso = reconstruir_avaliacoes(protocolos)
+        if sucesso:
+            gerar_resumo_avaliacao(protocolos, args.rope)
+        return
 
     # ----- Modo --resumo: gerar relatório e sair -----
     if args.resumo:
