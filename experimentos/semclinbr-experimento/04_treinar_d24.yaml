@@ -105,7 +105,7 @@ curriculum:
     ativo: true
     tipo: "lora"              # gating sobre adapters LoRA (base congelada, 4 bits)
     learning_rate: 2e-05      # pico único do cosine global (paridade com D12)
-    warmup_grupo_steps: 100   # rampa de cada grupo ao acordar (0 → cosine atual)
+    warmup_grupo_steps: 5     # rampa de cada grupo ao acordar (0 → cosine atual)
     seed_shuffle: 3407
 
   #| CL acumulado granular com gating de capacidade em passos de 10%.
@@ -209,7 +209,9 @@ treinamento:
   resume_from_checkpoint: true
   #| Warmup GLOBAL do run (rampa do G1, sempre ativo). O otimizador
   #| nunca reinicia — não há warmup por etapa.
-  warmup_steps: 100
+  #| Warmup 5 (escala proporcional): 5/478 = 1,05% do run, a mesma fração que warmup 100
+  #| ocupa no pubmed/summa. Com 100 ocupava 21% (ver README §2.4).
+  warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
 

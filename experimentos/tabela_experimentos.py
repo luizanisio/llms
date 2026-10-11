@@ -64,6 +64,22 @@ IDS_PROTOCOLOS = [
 # treinos antigos feitos com o fallback da 1ª etapa.
 FALLBACK_DA_1A_ETAPA = True
 
+# Warmup escalado de propósito pelo tamanho do corpus: ocupa a mesma fração dos
+# steps que o valor de referência ocupa nos demais experimentos (protocolo
+# idêntico = mesma forma da curva de LR ao longo do treino).
+# {experimento: ({protocolos}, {warmup no experimento: warmup de referência})}.
+# Essas divergências saem como nota, não como aviso.
+# Ver semclinbr-experimento/README_SEMCLIMBR_EXPERIMENTO.md §2.4.
+WARMUP_ESCALADO = {
+    'SemClinBR': ({f'd{i}' for i in range(16, 26)}, {'5': '100', '5+5g': '100+100g'}),
+}
+
+
+def _warmup_referencia(exp_nome: str, proto_id: str, warmup: str) -> str:
+    """Warmup na escala de referência (desfaz WARMUP_ESCALADO)."""
+    protos, mapa = WARMUP_ESCALADO.get(exp_nome, (set(), {}))
+    return mapa.get(warmup, warmup) if proto_id in protos else warmup
+
 # ===========================================================================
 # MAPA ESTÁTICO SEMÂNTICO
 # ===========================================================================
@@ -475,10 +491,22 @@ def formatar_lr(lr) -> str:
 # VARREDURA DE EXPERIMENTOS
 # ===========================================================================
 
+def _yaml_treinado(exp_dir: Path, saida: str):
+    """Cópia do YAML salva pelo treinador na pasta de saída (última versão)."""
+    if not saida:
+        return None
+    pasta = exp_dir / saida / 'treinamento' / 'treinamento_config'
+    copias = sorted(pasta.glob('*.yaml')) if pasta.is_dir() else []
+    return copias[-1] if copias else None
+
+
 def varrer_experimentos() -> dict:
     """
     Varre todos os experimentos e retorna um dict:
       {protocolo_id: {exp_nome: parametros_extraidos, ...}, ...}
+
+    Quando existe treino, `params['treinado']` traz os parâmetros da cópia do
+    YAML que o treinador de fato usou (pode diferir do YAML atual).
     """
     resultados = {}
     for proto_id in IDS_PROTOCOLOS:
@@ -489,6 +517,9 @@ def varrer_experimentos() -> dict:
                 try:
                     cfg = carregar_yaml(yaml_path)
                     params = extrair_parametros(cfg, exp_dir)
+                    copia = _yaml_treinado(exp_dir, params.get('saida'))
+                    params['treinado'] = extrair_parametros(carregar_yaml(copia)) if copia else None
+                    params['yaml_treinado'] = copia
                     resultados[proto_id][exp_nome] = params
                 except Exception as e:
                     print(f'⚠️  Erro ao processar {yaml_path}: {e}', file=sys.stderr)
@@ -540,12 +571,13 @@ def _formatar_constante(valor) -> str:
     return str(valor)
 
 
-def verificar_consistencia(resultados: dict) -> list:
+def verificar_consistencia(resultados: dict):
     """
     Verifica consistência entre experimentos para cada protocolo.
-    Retorna lista de strings de warning.
+    Retorna (warnings, notas): divergências de warmup previstas em
+    WARMUP_ESCALADO viram notas.
     """
-    warnings = []
+    warnings, notas = [], []
 
     for proto_id in IDS_PROTOCOLOS:
         exps = resultados.get(proto_id, {})
@@ -563,13 +595,39 @@ def verificar_consistencia(resultados: dict) -> list:
             for campo in PARAMS_CONSISTENCIA:
                 val_ref = ref_params.get(campo)
                 val_exp = params.get(campo)
-                if val_ref != val_exp:
-                    warnings.append(
-                        f'⚠️  **{proto_id}**: `{campo}` diverge entre '
-                        f'{ref_nome} ({val_ref}) e {exp_nome} ({val_exp})'
-                    )
+                if val_ref == val_exp:
+                    continue
+                if campo == 'warmup' and (_warmup_referencia(ref_nome, proto_id, val_ref)
+                                          == _warmup_referencia(exp_nome, proto_id, val_exp)):
+                    notas.append(f'ℹ️  **{proto_id}**: `warmup` {ref_nome} ({val_ref}) × '
+                                 f'{exp_nome} ({val_exp}) — escala proporcional')
+                    continue
+                warnings.append(
+                    f'⚠️  **{proto_id}**: `{campo}` diverge entre '
+                    f'{ref_nome} ({val_ref}) e {exp_nome} ({val_exp})'
+                )
 
-    return warnings
+    return warnings, notas
+
+
+# Campos comparados entre o YAML atual e a cópia usada no treino
+PARAMS_TREINO = ['n_etapas', 'sequencia', 'precisao', 'lr', 'lora_r', 'grad_norm', 'warmup']
+
+
+def verificar_treino_desatualizado(resultados: dict) -> list:
+    """Treinos cuja cópia do YAML difere do YAML atual (retreino pendente)."""
+    avisos = []
+    for proto_id in IDS_PROTOCOLOS:
+        for exp_nome in EXPERIMENTOS:
+            p = resultados.get(proto_id, {}).get(exp_nome)
+            if not p or not p.get('treinado'):
+                continue
+            t = p['treinado']
+            difs = [f'`{c}` {t.get(c)} → {p.get(c)}' for c in PARAMS_TREINO if t.get(c) != p.get(c)]
+            if difs:
+                avisos.append(f'**{exp_nome}/{proto_id}** (treinado com '
+                              f'`{p["yaml_treinado"].name}`): ' + ' · '.join(difs))
+    return avisos
 
 
 # Parâmetros LoRA que só se aplicam quando o protocolo usa LoRA
@@ -642,9 +700,14 @@ def _primeiro_lr_por_etapa(caminho: Path) -> dict:
 def verificar_lr_real(resultados: dict, tolerancia: float = 0.05, limite_warmup: float = 0.25):
     """Compara o pico de LR inferido do jsonl com o LR efetivo esperado.
 
+    O esperado vem da cópia do YAML usada no treino (`params['treinado']`),
+    não do YAML atual — divergências entre os dois ficam com
+    verificar_treino_desatualizado().
+
     Pico observado = LR logado / fator do scheduler. O LR logado no step `s`
     é o do scheduler em `s-1` (o log sai antes do `scheduler.step()`).
-    Protocolos fundidos ficam de fora (LR multiplicado pelo gate de cada grupo).
+    Protocolos fundidos ficam fora da conferência de LR (LR multiplicado pelo
+    gate de cada grupo), mas entram na de warmup (warmup global × run inteiro).
 
     Também acusa etapas em que o warmup ocupa mais que `limite_warmup` dos
     steps reais (com warmup ≥ etapa, o pico nunca é atingido).
@@ -653,10 +716,11 @@ def verificar_lr_real(resultados: dict, tolerancia: float = 0.05, limite_warmup:
     avisos, avisos_warmup, n_verif = [], [], 0
     for proto_id in IDS_PROTOCOLOS:
         for exp_nome, exp_dir in EXPERIMENTOS.items():
-            p = resultados.get(proto_id, {}).get(exp_nome)
-            if not p or p['eh_fusao'] or not p.get('saida'):
+            p_atual = resultados.get(proto_id, {}).get(exp_nome)
+            if not p_atual or not p_atual.get('saida'):
                 continue
-            caminho = exp_dir / p['saida'] / 'treinamento' / 'training_metrics.jsonl'
+            p = p_atual.get('treinado') or p_atual
+            caminho = exp_dir / p_atual['saida'] / 'treinamento' / 'training_metrics.jsonl'
             if not caminho.exists():
                 continue
             try:
@@ -665,6 +729,13 @@ def verificar_lr_real(resultados: dict, tolerancia: float = 0.05, limite_warmup:
                 print(f'⚠️  Erro lendo {caminho}: {e}', file=sys.stderr)
                 continue
             if not obs:
+                continue
+            if p['eh_fusao']:
+                # Um único train(): warmup global sobre o run inteiro
+                total, w = obs[min(obs)][2], p['warmup_etapas'][0] if p['warmup_etapas'] else 0
+                if w > limite_warmup * total:
+                    avisos_warmup.append(f'**{exp_nome}/{proto_id}** fusão: warmup global '
+                                         f'{w} de {total} steps ({100 * w / total:.0f}%)')
                 continue
             n_verif += 1
             for idx, (step, lr, total) in sorted(obs.items()):
@@ -770,15 +841,31 @@ def obter_parametros_por_experimento(resultados: dict) -> dict:
     return info
 
 
+def _nota_warmup_escalado() -> str:
+    """Linha explicando WARMUP_ESCALADO nas seções 4 e 5 (vazia se não houver)."""
+    partes = [f'{exp}: {", ".join(sorted(protos, key=chave_ordem))} usam '
+              + ', '.join(f'{v} (≡ {ref})' for v, ref in mapa.items())
+              for exp, (protos, mapa) in WARMUP_ESCALADO.items()]
+    if not partes:
+        return ''
+    return ('> Warmup na escala de referência (Pubmed/Summa). Escala proporcional ao nº de '
+            'steps — ' + ' · '.join(partes) + '. Dentro desses experimentos, o confundimento '
+            'de warmup entre famílias não se aplica.')
+
+
 def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_constantes: list,
                    recortes: dict = None, avisos_lr: list = None,
                    avisos_real: list = None, n_verif: int = 0,
-                   avisos_warmup: list = None) -> str:
+                   avisos_warmup: list = None, notas_consistencia: list = None,
+                   avisos_desatualizados: list = None) -> str:
     """Gera o conteúdo do RESUMO_EXPERIMENTOS.md."""
     recortes = recortes or {}
     avisos_lr = avisos_lr or []
     avisos_real = avisos_real or []
     avisos_warmup = avisos_warmup or []
+    notas_consistencia = notas_consistencia or []
+    avisos_desatualizados = avisos_desatualizados or []
+    nota_warmup = _nota_warmup_escalado()
     linhas = []
     linhas.append('# Resumo dos Experimentos — Configurações dos Protocolos')
     linhas.append('')
@@ -900,6 +987,8 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
     for (w, g, prec), ids in agrupar_familias(resultados).items():
         linhas.append(f'| {w} | {g} | {prec} | {", ".join(ids)} |')
     linhas.append('')
+    if nota_warmup:
+        linhas.extend([nota_warmup, ''])
 
     # --- Seção 5: Contrastes com confusão ---
     linhas.append('## 5. Contrastes com Confusão')
@@ -912,12 +1001,26 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
                       'além do eixo estudado (se o fator listado **é** o eixo do recorte, ignore):')
         linhas.append('')
         linhas.extend(confusos)
+        if nota_warmup:
+            linhas.extend(['', nota_warmup])
     else:
         linhas.append('✅ Nenhum recorte mistura warmup, clipping, precisão ou orçamento.')
     linhas.append('')
 
     # --- Seção 6: Notas de consistência ---
     linhas.append('## 6. Notas de Consistência')
+    linhas.append('')
+
+    linhas.append('### Treino × YAML atual (retreino pendente)')
+    linhas.append('')
+    if avisos_desatualizados:
+        linhas.append(f'{len(avisos_desatualizados)} treino(s) feitos com uma versão do YAML '
+                      'diferente da atual (cópia em `treinamento/treinamento_config/`). '
+                      'As conferências abaixo usam o YAML do treino:')
+        linhas.append('')
+        linhas.extend(f'- {a}' for a in avisos_desatualizados)
+    else:
+        linhas.append('✅ Todos os treinos usaram a versão atual do YAML.')
     linhas.append('')
 
     linhas.append('### LR herdado da 1ª etapa')
@@ -948,8 +1051,8 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
     if avisos_warmup:
         linhas.append('### Warmup × tamanho real da etapa')
         linhas.append('')
-        linhas.append(f'{len(avisos_warmup)} etapa(s) em que o warmup ocupa mais de 25% dos steps '
-                      'reais (segundo o `train_begin` do jsonl):')
+        linhas.append(f'{len(avisos_warmup)} etapa(s) em que o warmup do treino ocupa mais de 25% '
+                      'dos steps reais (segundo o `train_begin` do jsonl):')
         linhas.append('')
         linhas.extend(f'- {a}' for a in avisos_warmup)
         linhas.append('')
@@ -964,6 +1067,11 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
         linhas.append('')
     else:
         linhas.append('✅ Todos os parâmetros diferenciadores são **consistentes** entre experimentos.')
+        linhas.append('')
+    if notas_consistencia:
+        linhas.append('Divergências previstas (`WARMUP_ESCALADO`):')
+        linhas.append('')
+        linhas.extend(f'- {n}' for n in notas_consistencia)
         linhas.append('')
 
     if warnings_constantes:
@@ -1049,8 +1157,9 @@ def main():
             print(f'   ℹ️  Fora de qualquer recorte de contraste: {", ".join(sem_recorte)}')
 
     print('🔎 Verificando consistência entre experimentos...')
-    warnings_consistencia = verificar_consistencia(resultados)
+    warnings_consistencia, notas_consistencia = verificar_consistencia(resultados)
     warnings_constantes = verificar_constantes(resultados)
+    avisos_desatualizados = verificar_treino_desatualizado(resultados)
 
     if warnings_consistencia:
         print(f'\n⚠️  {len(warnings_consistencia)} divergência(s) entre experimentos:')
@@ -1058,6 +1167,13 @@ def main():
             print(f'   {w}')
     else:
         print('   ✅ Consistente entre experimentos.')
+    if notas_consistencia:
+        print(f'   ℹ️  {len(notas_consistencia)} divergência(s) de warmup prevista(s) (WARMUP_ESCALADO).')
+
+    if avisos_desatualizados:
+        print(f'\n⚠️  {len(avisos_desatualizados)} treino(s) com YAML diferente do atual (retreino pendente):')
+        for a in avisos_desatualizados:
+            print(f'   {a}')
 
     if warnings_constantes:
         print(f'\n⚠️  {len(warnings_constantes)} constante(s) inesperada(s):')
@@ -1092,7 +1208,8 @@ def main():
 
     # 4. Gerar Markdown
     md_content = gerar_markdown(resultados, warnings_consistencia, warnings_constantes,
-                                recortes, avisos_lr, avisos_real, n_verif, avisos_warmup)
+                                recortes, avisos_lr, avisos_real, n_verif, avisos_warmup,
+                                notas_consistencia, avisos_desatualizados)
     md_path = BASE_DIR / 'RESUMO_EXPERIMENTOS.md'
     with open(md_path, 'w', encoding='utf-8') as f:
         f.write(md_content)

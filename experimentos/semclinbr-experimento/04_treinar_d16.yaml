@@ -62,7 +62,7 @@ curriculum:
 
   #| 4 etapas idênticas: mesmo arquivo, sem filtro, 1 época cada.
   #| A única variável introduzida em relação a B são as 3 fronteiras
-  #| (trainer novo → otimizador zerado → scheduler reiniciado → warmup 100).
+  #| (trainer novo → otimizador zerado → scheduler reiniciado → warmup 5).
   divisao:
   - arquivo: dados/divisao_Gold_Qwen7B.csv
     alias: "completo-1"
@@ -123,10 +123,12 @@ treinamento:
   max_grad_norm: 1
   save_checkpoints: true
   resume_from_checkpoint: true
-  #| Warmup generoso e IDÊNTICO em todas as etapas: o custo de fronteira medido
-  #| é o custo bem mitigado (recomendação ReLoRA: rampa de ~50-100 steps após
-  #| reset de otimizador), não o custo de um warmup insuficiente.
-  warmup_steps: 100
+  #| Warmup IDÊNTICO em todas as etapas: o custo de fronteira medido é o custo
+  #| bem mitigado (rampa após reset de otimizador), não o de um warmup insuficiente.
+  #| Warmup 5 (escala proporcional ao nº de steps): ocupa 6–18% de cada etapa, a
+  #| mesma fração que warmup 100 ocupa no pubmed/summa (5–19%). Com 100 as etapas
+  #| de 28–88 steps nunca atingiam o pico de LR (ver README §2.4).
+  warmup_steps: 5
   weight_decay: 0.01
   optim: adamw_8bit
 

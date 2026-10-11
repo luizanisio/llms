@@ -192,6 +192,52 @@ Na tabela mestra de comparação, o protocolo **Gold** atinge **0.998** de Micro
 4. **Consequência Teórica (*Upper Bound*):**
    O valor de **0.998 representa o teto empírico máximo** de qualquer arquitetura generativa baseada em extração textual pura sobre o SemClinBr: 0,2% das discrepâncias posicionais são intrínsecas à colisão de strings idênticas no mesmo documento quando desvinculadas de coordenadas no JSON.
 
+### 2.4. Warmup proporcional ao tamanho do corpus (D16–D25)
+
+**Problema.** Os protocolos D16–D25 foram desenhados com `warmup_steps: 100`
+(rampa após reset de otimizador, padrão ReLoRA), valor calibrado para o PubMed e
+o SUMMA. O SemClinBr tem ~21× menos steps por protocolo (697 documentos de treino
+contra 13.788 no SUMMA), e o mesmo valor absoluto ficou maior que as etapas: em D16–D20
+o warmup ocupava 114–357% de cada etapa e o LR **nunca atingiu o pico** (máx.
+27–87% de 2e-5); na fusão (D21–D25) ocupava 57% (D21–D23) e 21% (D24–D25) do run.
+Os treinos originais desses protocolos **não são comparáveis** aos mesmos
+protocolos no PubMed e no SUMMA.
+
+**Correção.** `warmup_steps: 5` e `fusao.warmup_grupo_steps: 5` em D16–D25. O
+critério é preservar a **forma da curva de LR em função do progresso do treino**
+(fração dos steps em warmup), não o número absoluto de steps. O princípio da tese
+é aplicar protocolos idênticos em cada experimento, e não comparar experimentos
+diretamente; protocolo idêntico, aqui, significa a mesma oportunidade de
+aprendizado relativa:
+
+| Etapa / run | PubMed (warmup 100) | SUMMA (warmup 100) | SemClinBr original (100) | SemClinBr corrigido (5) |
+|---|---|---|---|---|
+| D16 `completo-n` | 100/938 = 10,7% | 100/861 = 11,6% | 227% | 5/44 = 11,4% |
+| D17/D19 `fácil` | 100/560 = 17,9% | 100/516 = 19,4% | 357% | 5/28 = 17,9% |
+| D17/D19 `médio` | 100/752 = 13,3% | 100/692 = 14,5% | 278% | 5/36 = 13,9% |
+| D18 `bloco-n` | ~16% | ~17% | 333% | 5/30 = 16,7% |
+| D17–D19 `completo` | 100/1876 = 5,3% | 100/1722 = 5,8% | 114% | 5/88 = 5,7% |
+| D21–D23 (fusão) | 100/3749 = 2,7% | 100/3442 = 2,9% | 57% | 5/175 = 2,9% |
+| D24–D25 (fusão) | 100/10291 = 0,97% | 100/9467 = 1,06% | 21% | 5/478 = 1,05% |
+
+Steps reais extraídos do evento `train_begin` de `training_metrics.jsonl`.
+`warmup_grupo_steps` (rampa de cada grupo ao acordar no gating) segue a mesma
+razão (100/21 ≈ 5).
+
+**Efeito nas análises.**
+
+- Dentro do SemClinBr, os protocolos A (b, c, D1–D15, warmup 5) e B (D16–D25)
+  passam a ter o mesmo warmup absoluto: o confundimento de warmup nos recortes
+  Q2a, Q4b, Q6a e Q6b desaparece aqui, mas permanece no PubMed e no SUMMA (5 ×
+  100). O confundimento de clipping (0.3 em D19, D20, D25) não muda.
+- Ressalva inversa, não corrigida: na família A, warmup 5 ocupa ~0,1% do run no
+  PubMed/SUMMA e ~3% no SemClinBr (até 50% da etapa de 10 steps em D11/D12). O
+  efeito é pequeno, pois o pico é atingido em 5 steps em todos os casos; os
+  protocolos foram mantidos como estão e a diferença é declarada aqui.
+- Os treinos originais com warmup 100 devem ser preservados renomeados (ex.:
+  `(d16)_warmup100`) como registro; os resultados reportados no artigo e na
+  dissertação usam a versão corrigida.
+
 
 ---
 
