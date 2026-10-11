@@ -87,22 +87,22 @@ curriculum:
   #| Spans com progressão conjunta: dados (dificuldade) + capacidade (gating)
   #| avançam nas MESMAS fronteiras virtuais — a materialização da hipótese CL+PT.
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil-uf75"
     pace_epochs: 2
     unfreeze_layers_from: 75%   # G1 ativo do step 0: adapters dos blocos 21-27 + cabeça
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio-uf50"
     pace_epochs: 2
     unfreeze_layers_from: 50%   # G2 acorda aqui: adapters dos blocos 14-20
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil-uf25"
     pace_epochs: 2
     unfreeze_layers_from: 25%   # G3 acorda aqui: adapters dos blocos 7-13
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-uf0"
     pace_epochs: 2
     unfreeze_layers_from: 0%    # G4 acorda aqui: adapters dos blocos 0-6

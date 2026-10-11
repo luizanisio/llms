@@ -81,19 +81,19 @@ curriculum:
 
   #| Etapas = spans do dataset concatenado (SEM tipo/learning_rate/batch_size)
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "facil"}
     alias: "fácil"
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "medio"}
     alias: "médio"
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     dataset_filtro: {"dificuldade": "dificil"}
     alias: "difícil"
     pace_epochs: 2
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo"
     pace_epochs: 2
 

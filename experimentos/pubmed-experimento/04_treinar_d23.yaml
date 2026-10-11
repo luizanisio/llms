@@ -77,19 +77,19 @@ curriculum:
   #| Progressão de capacidade SEM progressão de dados: todos os spans usam o
   #| conjunto completo; apenas o gating avança nas fronteiras virtuais.
   divisao:
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-uf75"
     pace_epochs: 1
     unfreeze_layers_from: 75%   # G1 ativo do step 0: adapters dos blocos 21-27 + cabeça
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-uf50"
     pace_epochs: 1
     unfreeze_layers_from: 50%   # G2 acorda aos ~25% do stream
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-uf25"
     pace_epochs: 1
     unfreeze_layers_from: 25%   # G3 acorda aos ~50% do stream
-  - arquivo: compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv
+  - arquivo: dados/divisao_Professor_Qwen1_5B.csv
     alias: "completo-uf0"
     pace_epochs: 1
     unfreeze_layers_from: 0%    # G4 acorda aos ~75% do stream
