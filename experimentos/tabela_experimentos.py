@@ -12,6 +12,8 @@ Fonte de dados híbrida:
   - Automática: leitura dos 04_treinar_*.yaml para extrair parâmetros numéricos reais
   - Estática:   mapa semântico (PROTOCOLOS) com metadados que não estão nos YAMLs
                 (grupo de pesquisa, direção CL, modo CL, tipo de PT, etc.)
+  - Conferência: quando existe training_metrics.jsonl, compara o LR logado com o
+                 LR efetivo esperado de cada etapa.
 
 Saída:
   - RESUMO_EXPERIMENTOS.md na raiz de /experimentos/
@@ -20,6 +22,8 @@ Saída:
 
 import os
 import sys
+import json
+import math
 import yaml
 from pathlib import Path
 from collections import OrderedDict
@@ -52,6 +56,13 @@ IDS_PROTOCOLOS = [
     'd24', 'd25',
     'd1a', 'd1b',
 ]
+
+# Espelha o comportamento ATUAL de treinar_unsloth_util.py: fora da FUSÃO, o
+# learning_rate/pace_epochs da 1ª etapa treinável sobrescreve o global e vira o
+# fallback das etapas que não definem o seu. Quando o bug for corrigido no
+# treinador, mude para False — a conferência com o jsonl passará a acusar os
+# treinos antigos feitos com o fallback da 1ª etapa.
+FALLBACK_DA_1A_ETAPA = True
 
 # ===========================================================================
 # MAPA ESTÁTICO SEMÂNTICO
@@ -125,13 +136,11 @@ PROTOCOLOS = {
 # RECORTES E ORÇAMENTO (derivados, nunca mantidos à mão)
 # ===========================================================================
 
-def derivar_grupos() -> dict:
-    """Inverte os recortes de `06_compara_todos.yaml`: protocolo -> recortes.
+def carregar_recortes() -> dict:
+    """Recortes de `06_compara_todos.yaml`: {recorte: [protocolos em minúsculas]}.
 
-    Os recortes são a definição normativa dos contrastes; a coluna 'Grupo' da
-    tabela precisa sair deles, senão passa a contradizer a própria análise.
     Os três experimentos declaram os mesmos recortes — divergência é erro e
-    vira warning.
+    vira warning. Retorna os recortes do primeiro experimento encontrado.
     """
     mapas = {}
     for exp_nome, exp_dir in EXPERIMENTOS.items():
@@ -150,9 +159,17 @@ def derivar_grupos() -> dict:
         if m != ref:
             print(f'⚠️  Recortes de {exp_nome} divergem de {ref_nome} '
                   f'(06_compara_todos.yaml).', file=sys.stderr)
+    return {k: [str(p).lower() for p in v] for k, v in ref.items()}
 
+
+def derivar_grupos(recortes: dict) -> dict:
+    """Inverte os recortes de `06_compara_todos.yaml`: protocolo -> recortes.
+
+    Os recortes são a definição normativa dos contrastes; a coluna 'Grupo' da
+    tabela precisa sair deles, senão passa a contradizer a própria análise.
+    """
     grupos = {}
-    for recorte, protos in ref.items():
+    for recorte, protos in recortes.items():
         curto = recorte.split('_')[0]          # Q2a_cl_controlado -> Q2a
         for proto in protos:
             grupos.setdefault(proto.lower(), []).append(curto)
@@ -186,6 +203,39 @@ def _fracao_divisao(exp_dir, arquivo, filtro):
     return len(sel) / len(linhas)
 
 
+def _fallback_efetivo(cfg: dict):
+    """Valores que o treinador usa quando a etapa não define o seu.
+
+    Ver FALLBACK_DA_1A_ETAPA. Retorna (eh_fusao, etapas_treinaveis,
+    lr_fallback, epochs_fallback).
+    """
+    curriculum = cfg.get('curriculum', {}) or {}
+    treinamento = cfg.get('treinamento', {}) or {}
+    fusao = curriculum.get('fusao') or {}
+    divisao = curriculum.get('divisao') or []
+    eh_fusao = bool(fusao.get('ativo', False))
+    etapas = [e for e in divisao if isinstance(e, dict) and (eh_fusao or e.get('tipo'))]
+    lr = treinamento.get('learning_rate')
+    lr = float(lr) if lr is not None else None
+    ep = treinamento.get('epochs') or treinamento.get('num_train_epochs', 1)
+    if FALLBACK_DA_1A_ETAPA and not eh_fusao and etapas:
+        primeira = etapas[0]
+        if float(primeira.get('learning_rate') or 0) > 0:
+            lr = float(primeira['learning_rate'])
+        if float(primeira.get('pace_epochs') or 0) > 0:
+            ep = primeira['pace_epochs']
+    return eh_fusao, etapas, lr, ep
+
+
+def _compactar(valores: list) -> str:
+    """'2e-5' se todas as etapas iguais; senão '5e-6→2e-5→…' por etapa."""
+    if not valores:
+        return ''
+    if len(set(valores)) == 1:
+        return valores[0]
+    return '→'.join(valores)
+
+
 def calcular_orcamento(cfg: dict, exp_dir) -> float:
     """Orçamento de dados em dataset-equivalentes (N-eq): Σ (fração × épocas).
 
@@ -199,12 +249,13 @@ def calcular_orcamento(cfg: dict, exp_dir) -> float:
     epochs_global = treinamento.get('num_train_epochs', 1)
     if not divisao:
         return float(epochs_global)
+    _, _, _, epochs_fallback = _fallback_efetivo(cfg)
     total = 0.0
     for etapa in divisao:
         frac = _fracao_divisao(exp_dir, etapa.get('arquivo', ''), etapa.get('dataset_filtro'))
         if frac is None:
             return None
-        total += frac * etapa.get('pace_epochs', epochs_global)
+        total += frac * float(etapa.get('pace_epochs') or epochs_fallback)
     return total
 
 
@@ -271,50 +322,49 @@ def extrair_parametros(cfg: dict, exp_dir=None) -> dict:
         else:
             precisao = 'misto'
 
-    # --- Learning Rate ---
-    # Coletar LRs distintos: global + por etapa + fusao
-    lrs = set()
+    # --- Learning Rate efetivo por etapa ---
+    # Usa o fallback REAL do treinador (ver FALLBACK_DA_1A_ETAPA), não o
+    # global do YAML — assim a tabela mostra o que de fato foi treinado.
+    _, etapas_treino, lr_fallback, _ = _fallback_efetivo(cfg)
     lr_global = treinamento.get('learning_rate', None)
-    if lr_global is not None:
-        lrs.add(float(lr_global))
-
-    lr_fusao = fusao.get('learning_rate', None)
-    if lr_fusao is not None:
-        lrs.add(float(lr_fusao))
-
-    for etapa in divisao:
-        lr_etapa = etapa.get('learning_rate', None)
-        if lr_etapa is not None:
-            lrs.add(float(lr_etapa))
-
-    # Se há fusão, o LR efetivo é o da fusão (sobrescreve o global)
-    if eh_fusao and lr_fusao is not None:
-        lrs_efetivos = {float(lr_fusao)}
+    lr_global = float(lr_global) if lr_global is not None else None
+    avisos_lr = []
+    if eh_fusao and fusao.get('learning_rate') is not None:
         # Etapas fundidas não têm LR próprio (proibido pelo validador)
+        lr_etapas = [float(fusao['learning_rate'])] * len(etapas_treino)
     else:
-        # Para protocolos segmentados, o que importa são os LRs de etapa
-        # (quando existem) e o global como fallback
-        lrs_efetivos = set()
-        for etapa in divisao:
-            lr_etapa = etapa.get('learning_rate', None)
-            if lr_etapa is not None:
-                lrs_efetivos.add(float(lr_etapa))
-            elif lr_global is not None:
-                lrs_efetivos.add(float(lr_global))
-
-    lr_str = '/'.join(formatar_lr(lr) for lr in sorted(lrs_efetivos))
-    if not lr_str:
-        lr_str = formatar_lr(lr_global) if lr_global else '?'
+        lr_etapas = []
+        for i, etapa in enumerate(etapas_treino):
+            proprio = etapa.get('learning_rate')
+            if proprio is not None and float(proprio) > 0:
+                lr_etapas.append(float(proprio))
+            else:
+                lr_etapas.append(lr_fallback)
+                if lr_fallback != lr_global:
+                    avisos_lr.append(
+                        f"etapa {i} `{etapa.get('alias', i)}` sem `learning_rate`: "
+                        f"herda {formatar_lr(lr_fallback)} da 1ª etapa "
+                        f"(global = {formatar_lr(lr_global)})")
+    lr_str = _compactar([formatar_lr(x) for x in lr_etapas]) or formatar_lr(lr_global)
 
     # --- LoRA r ---
     lora_r = lora_cfg.get('r', 0)
     lora_r_str = str(lora_r) if lora_r > 0 else 'N/A'
 
     # --- max_grad_norm ---
-    grad_norm = treinamento.get('max_grad_norm', 1)
+    grad_norm = f"{float(treinamento.get('max_grad_norm', 1.0)):.1f}"
 
-    # --- warmup_steps ---
-    warmup = treinamento.get('warmup_steps', 5)
+    # --- warmup_steps efetivo por etapa ---
+    # Fora da fusão, cada etapa reinicia o scheduler (override por etapa: -1 = global).
+    # Na fusão: warmup global único + rampa por grupo ('g').
+    w_global = int(treinamento.get('warmup_steps', 5))
+    if eh_fusao:
+        warmup_etapas = [w_global] * len(etapas_treino)
+        warmup = f"{w_global}+{int(fusao.get('warmup_grupo_steps', 100))}g"
+    else:
+        warmup_etapas = [int(e['warmup_steps']) if int(e.get('warmup_steps', -1)) >= 0 else w_global
+                         for e in etapas_treino]
+        warmup = _compactar([str(w) for w in warmup_etapas]) or str(w_global)
 
     # --- Modelo base ---
     modelo_base = modelo.get('base_model_name', '?')
@@ -359,6 +409,13 @@ def extrair_parametros(cfg: dict, exp_dir=None) -> dict:
         'max_seq_length': max_seq,
         'batch_gpu': batch_gpu,
         'batch_efetivo': batch_efetivo,
+        # Detalhe por etapa treinável (conferência com jsonl e avisos)
+        'eh_fusao': eh_fusao,
+        'aliases': [str(e.get('alias', i)) for i, e in enumerate(etapas_treino)],
+        'lr_etapas': lr_etapas,
+        'warmup_etapas': warmup_etapas,
+        'avisos_lr': avisos_lr,
+        'saida': modelo.get('saida'),
         # Constantes para validação cruzada
         '_seed': seed,
         '_optim': optim,
@@ -462,6 +519,26 @@ PARAMS_CONSTANTES_ESPERADOS = {
     '_target_modules': sorted(['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']),
 }
 
+# Rótulos da seção 1 (gerada a partir de PARAMS_CONSTANTES_ESPERADOS)
+ROTULOS_CONSTANTES = {
+    'batch_efetivo': 'Batch efetivo',
+    '_seed': 'Seed',
+    '_optim': 'Otimizador',
+    '_weight_decay': 'Weight decay',
+    '_lr_scheduler': 'LR scheduler',
+    '_lora_dropout': 'LoRA dropout',
+    '_target_modules': 'LoRA target_modules',
+    '_train_resp_only': 'train_on_responses_only',
+}
+
+
+def _formatar_constante(valor) -> str:
+    if isinstance(valor, bool):
+        return str(valor).lower()
+    if isinstance(valor, list):
+        return f"{', '.join(v.replace('_proj', '') for v in valor)} ({len(valor)} projeções)"
+    return str(valor)
+
 
 def verificar_consistencia(resultados: dict) -> list:
     """
@@ -532,6 +609,138 @@ def verificar_constantes(resultados: dict) -> list:
 
 
 # ===========================================================================
+# CONFERÊNCIA COM O TREINO REAL (training_metrics.jsonl)
+# ===========================================================================
+
+def _fator_cosine(step: int, total: int, warmup: int) -> float:
+    """Fator do LR no step (warmup linear + cosine até 0, como no HF)."""
+    if warmup > 0 and step < warmup:
+        return step / max(1, warmup)
+    progresso = (step - warmup) / max(1, total - warmup)
+    return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progresso)))
+
+
+def _primeiro_lr_por_etapa(caminho: Path) -> dict:
+    """{etapa_index: (step_local, lr, total_steps)} do 1º log de LR de cada etapa."""
+    total_por_idx, obs = {}, {}
+    with open(caminho, encoding='utf-8') as f:
+        for linha in f:
+            if '"train_begin"' in linha:
+                r = json.loads(linha)
+                total_por_idx[r.get('etapa_index', 0)] = r.get('total_steps')
+            elif '"learning_rate"' in linha:
+                r = json.loads(linha)
+                idx = r.get('etapa_index', 0)
+                if idx in obs or r.get('learning_rate') is None or (r.get('step') or 0) < 2:
+                    continue
+                total = total_por_idx.get(idx)
+                if total:
+                    obs[idx] = (int(r['step']), float(r['learning_rate']), int(total))
+    return obs
+
+
+def verificar_lr_real(resultados: dict, tolerancia: float = 0.05, limite_warmup: float = 0.25):
+    """Compara o pico de LR inferido do jsonl com o LR efetivo esperado.
+
+    Pico observado = LR logado / fator do scheduler. O LR logado no step `s`
+    é o do scheduler em `s-1` (o log sai antes do `scheduler.step()`).
+    Protocolos fundidos ficam de fora (LR multiplicado pelo gate de cada grupo).
+
+    Também acusa etapas em que o warmup ocupa mais que `limite_warmup` dos
+    steps reais (com warmup ≥ etapa, o pico nunca é atingido).
+    Retorna (avisos_lr, avisos_warmup, n_treinos_verificados).
+    """
+    avisos, avisos_warmup, n_verif = [], [], 0
+    for proto_id in IDS_PROTOCOLOS:
+        for exp_nome, exp_dir in EXPERIMENTOS.items():
+            p = resultados.get(proto_id, {}).get(exp_nome)
+            if not p or p['eh_fusao'] or not p.get('saida'):
+                continue
+            caminho = exp_dir / p['saida'] / 'treinamento' / 'training_metrics.jsonl'
+            if not caminho.exists():
+                continue
+            try:
+                obs = _primeiro_lr_por_etapa(caminho)
+            except Exception as e:
+                print(f'⚠️  Erro lendo {caminho}: {e}', file=sys.stderr)
+                continue
+            if not obs:
+                continue
+            n_verif += 1
+            for idx, (step, lr, total) in sorted(obs.items()):
+                if idx >= len(p['lr_etapas']) or not p['lr_etapas'][idx]:
+                    continue
+                pico = p['lr_etapas'][idx]
+                w = p['warmup_etapas'][idx]
+                if w > limite_warmup * total:
+                    alcancado = min(1.0, (total - 1) / w) if w else 1.0
+                    avisos_warmup.append(
+                        f'**{exp_nome}/{proto_id}** etapa {idx} `{p["aliases"][idx]}`: '
+                        f'warmup {w} de {total} steps ({100 * w / total:.0f}%)'
+                        + (f' — pico nunca atingido (máx ≈ {100 * alcancado:.0f}% do LR)'
+                           if alcancado < 1 else ''))
+                fator = _fator_cosine(step - 1, total, w)
+                if fator <= 0:
+                    continue
+                pico_obs = lr / fator
+                if abs(pico_obs / pico - 1) > tolerancia:
+                    avisos.append(
+                        f'⚠️  **{exp_nome}/{proto_id}** etapa {idx} `{p["aliases"][idx]}`: '
+                        f'LR esperado {formatar_lr(pico)}, treinado ≈ {pico_obs:.1e} '
+                        f'(step {step}/{total})')
+    return avisos, avisos_warmup, n_verif
+
+
+# ===========================================================================
+# FAMÍLIAS E CONTRASTES
+# ===========================================================================
+
+def _params_ref(resultados: dict, proto_id: str):
+    """Parâmetros do primeiro experimento disponível para o protocolo."""
+    for exp_nome in EXPERIMENTOS:
+        p = resultados.get(proto_id, {}).get(exp_nome)
+        if p is not None:
+            return p
+    return None
+
+
+def agrupar_familias(resultados: dict) -> OrderedDict:
+    """{(warmup, max_grad_norm, precisão): [protocolos]} na ordem da tabela."""
+    familias = OrderedDict()
+    for proto_id in IDS_PROTOCOLOS:
+        p = _params_ref(resultados, proto_id)
+        if p is None:
+            continue
+        familias.setdefault((p['warmup'], p['grad_norm'], p['precisao']), []).append(proto_id)
+    return familias
+
+
+# Fatores que não deveriam variar dentro de um contraste (a menos que sejam o eixo estudado)
+FATORES_CONFUSAO = [('warmup', 'warmup'), ('grad_norm', 'max_grad_norm'),
+                    ('precisao', 'precisão'), ('n_eq', 'N-eq')]
+
+
+def contrastes_confundidos(resultados: dict, recortes: dict) -> list:
+    """Uma linha por recorte cujos protocolos diferem em algum FATORES_CONFUSAO."""
+    saida = []
+    for recorte, protos in recortes.items():
+        presentes = [pid for pid in protos if _params_ref(resultados, pid)]
+        partes = []
+        for campo, rotulo in FATORES_CONFUSAO:
+            grupos = OrderedDict()
+            for pid in presentes:
+                v = _params_ref(resultados, pid).get(campo)
+                v = formatar_n_eq(v) if campo == 'n_eq' else str(v)
+                grupos.setdefault(v, []).append(pid)
+            if len(grupos) > 1:
+                partes.append(f'{rotulo}: ' + ' × '.join(
+                    f'{v} ({", ".join(ids)})' for v, ids in grupos.items()))
+        if partes:
+            saida.append(f'- **{recorte}** — ' + ' · '.join(partes))
+    return saida
+
+
+# ===========================================================================
 # GERAÇÃO DO MARKDOWN
 # ===========================================================================
 
@@ -561,8 +770,15 @@ def obter_parametros_por_experimento(resultados: dict) -> dict:
     return info
 
 
-def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_constantes: list) -> str:
+def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_constantes: list,
+                   recortes: dict = None, avisos_lr: list = None,
+                   avisos_real: list = None, n_verif: int = 0,
+                   avisos_warmup: list = None) -> str:
     """Gera o conteúdo do RESUMO_EXPERIMENTOS.md."""
+    recortes = recortes or {}
+    avisos_lr = avisos_lr or []
+    avisos_real = avisos_real or []
+    avisos_warmup = avisos_warmup or []
     linhas = []
     linhas.append('# Resumo dos Experimentos — Configurações dos Protocolos')
     linhas.append('')
@@ -570,20 +786,14 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
                   'Não editar manualmente.')
     linhas.append('')
 
-    # --- Seção 1: Parâmetros constantes ---
+    # --- Seção 1: Parâmetros constantes (validados em verificar_constantes) ---
     linhas.append('## 1. Parâmetros Constantes (todos os protocolos)')
     linhas.append('')
     linhas.append('| Parâmetro | Valor |')
     linhas.append('|:--|:--|')
-    linhas.append('| Batch efetivo | 16 |')
-    linhas.append('| Seed | 3407 |')
-    linhas.append('| Otimizador | adamw_8bit |')
-    linhas.append('| Weight decay | 0.01 |')
-    linhas.append('| LR scheduler | cosine |')
-    linhas.append('| LoRA dropout | 0.05 |')
+    for campo, valor in PARAMS_CONSTANTES_ESPERADOS.items():
+        linhas.append(f'| {ROTULOS_CONSTANTES.get(campo, campo)} | {_formatar_constante(valor)} |')
     linhas.append('| LoRA α | 2×r |')
-    linhas.append('| LoRA target_modules | q, k, v, o, gate, up, down (7 projeções) |')
-    linhas.append('| train_on_responses_only | true |')
     linhas.append('')
 
     # --- Seção 2: Parâmetros por experimento ---
@@ -610,6 +820,10 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
     linhas.append('- **Fronteira**: real=reset otimizador · virtual=um único train() · N/A=etapa única')
     linhas.append('- **Precisão**: 4b=NF4 QLoRA · 16b=bf16 · misto=etapas FF 16b + LoRA 4b')
     linhas.append('- **N-eq**: orçamento de dados em dataset-equivalentes (Σ fração × épocas)')
+    linhas.append('- **LR / warmup**: valor efetivo de cada etapa treinável (com o fallback real do '
+                  'treinador); um valor só quando todas as etapas são iguais, senão sequência por etapa · '
+                  '`Ng` = rampa de N steps por grupo (fusão)')
+    linhas.append('- **grad_norm**: `max_grad_norm` (clipping)')
     linhas.append('- **Grupo**: recortes de contraste de `06_compara_todos.yaml` · '
                   '— = fora de todo recorte (só `Panorama_Geral`)')
     linhas.append('- **P/S/Su**: disponibilidade em Pubmed/SemClinBR/Summa')
@@ -675,9 +889,70 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
 
     linhas.append('')
 
-    # --- Seção 4: Notas de consistência ---
-    linhas.append('## 4. Notas de Consistência')
+    # --- Seção 4: Famílias de configuração ---
+    linhas.append('## 4. Famílias de Configuração')
     linhas.append('')
+    linhas.append('Protocolos agrupados por warmup, clipping e precisão. Dentro de uma família '
+                  'esses fatores são iguais; entre famílias, a diferença vem junto com o efeito estudado.')
+    linhas.append('')
+    linhas.append('| warmup | max_grad_norm | Precisão | Protocolos |')
+    linhas.append('|:--|:--|:--|:--|')
+    for (w, g, prec), ids in agrupar_familias(resultados).items():
+        linhas.append(f'| {w} | {g} | {prec} | {", ".join(ids)} |')
+    linhas.append('')
+
+    # --- Seção 5: Contrastes com confusão ---
+    linhas.append('## 5. Contrastes com Confusão')
+    linhas.append('')
+    confusos = contrastes_confundidos(resultados, recortes)
+    if not recortes:
+        linhas.append('_Recortes de `06_compara_todos.yaml` não encontrados._')
+    elif confusos:
+        linhas.append('Recortes de `06_compara_todos.yaml` cujos protocolos diferem em fatores '
+                      'além do eixo estudado (se o fator listado **é** o eixo do recorte, ignore):')
+        linhas.append('')
+        linhas.extend(confusos)
+    else:
+        linhas.append('✅ Nenhum recorte mistura warmup, clipping, precisão ou orçamento.')
+    linhas.append('')
+
+    # --- Seção 6: Notas de consistência ---
+    linhas.append('## 6. Notas de Consistência')
+    linhas.append('')
+
+    linhas.append('### LR herdado da 1ª etapa')
+    linhas.append('')
+    if avisos_lr:
+        linhas.append('Etapas sem `learning_rate` próprio recebem o LR da 1ª etapa treinável '
+                      '(comportamento atual do treinador), **não** o global:')
+        linhas.append('')
+        linhas.extend(f'- {a}' for a in avisos_lr)
+    else:
+        linhas.append('✅ Nenhuma etapa depende do fallback de LR da 1ª etapa.')
+    linhas.append('')
+
+    linhas.append('### LR do YAML × treino real (`training_metrics.jsonl`)')
+    linhas.append('')
+    if n_verif == 0:
+        linhas.append('_Nenhum `training_metrics.jsonl` encontrado para conferência._')
+    elif avisos_real:
+        linhas.append(f'{len(avisos_real)} etapa(s) com LR treinado diferente do esperado '
+                      f'({n_verif} treinos conferidos; fusão fora da conferência):')
+        linhas.append('')
+        linhas.extend(f'- {a}' for a in avisos_real)
+    else:
+        linhas.append(f'✅ LR treinado confere com o esperado em {n_verif} treinos '
+                      '(fusão fora da conferência).')
+    linhas.append('')
+
+    if avisos_warmup:
+        linhas.append('### Warmup × tamanho real da etapa')
+        linhas.append('')
+        linhas.append(f'{len(avisos_warmup)} etapa(s) em que o warmup ocupa mais de 25% dos steps '
+                      'reais (segundo o `train_begin` do jsonl):')
+        linhas.append('')
+        linhas.extend(f'- {a}' for a in avisos_warmup)
+        linhas.append('')
 
     if warnings_consistencia:
         linhas.append('### Divergências entre Experimentos')
@@ -703,8 +978,8 @@ def gerar_markdown(resultados: dict, warnings_consistencia: list, warnings_const
         linhas.append('✅ Todos os parâmetros constantes estão nos valores esperados.')
         linhas.append('')
 
-    # --- Seção 5: Notas de comparabilidade ---
-    linhas.append('## 5. Notas de Comparabilidade')
+    # --- Seção 7: Notas de comparabilidade ---
+    linhas.append('## 7. Notas de Comparabilidade')
     linhas.append('')
     linhas.append('- **Precisão:** Protocolos com precisão "misto" têm etapas FF (sempre 16b) '
                   'e etapas LoRA (4b NF4). Cruzamentos entre grupos de precisão carregam '
@@ -758,7 +1033,8 @@ def main():
     print()
 
     # 3. Verificar consistência
-    grupos = derivar_grupos()
+    recortes = carregar_recortes()
+    grupos = derivar_grupos(recortes)
     if grupos:
         for pid, meta in PROTOCOLOS.items():
             if pid in grupos:
@@ -791,10 +1067,32 @@ def main():
             print(f'   ... e mais {len(warnings_constantes) - 10}')
     else:
         print('   ✅ Constantes OK.')
+
+    avisos_lr = [f'**{exp_nome}/{pid}**: {a}'
+                 for pid in IDS_PROTOCOLOS for exp_nome in EXPERIMENTOS
+                 for a in ((resultados.get(pid, {}).get(exp_nome) or {}).get('avisos_lr') or [])]
+    if avisos_lr:
+        print(f'\n⚠️  {len(avisos_lr)} etapa(s) herdando LR da 1ª etapa:')
+        for a in avisos_lr:
+            print(f'   {a}')
+
+    print('\n🔎 Conferindo LR com training_metrics.jsonl...')
+    avisos_real, avisos_warmup, n_verif = verificar_lr_real(resultados)
+    if avisos_real:
+        print(f'⚠️  {len(avisos_real)} etapa(s) com LR treinado ≠ esperado ({n_verif} treinos):')
+        for a in avisos_real:
+            print(f'   {a}')
+    else:
+        print(f'   ✅ {n_verif} treinos conferidos.')
+    if avisos_warmup:
+        print(f'⚠️  {len(avisos_warmup)} etapa(s) com warmup > 25% da etapa:')
+        for a in avisos_warmup:
+            print(f'   {a}')
     print()
 
     # 4. Gerar Markdown
-    md_content = gerar_markdown(resultados, warnings_consistencia, warnings_constantes)
+    md_content = gerar_markdown(resultados, warnings_consistencia, warnings_constantes,
+                                recortes, avisos_lr, avisos_real, n_verif, avisos_warmup)
     md_path = BASE_DIR / 'RESUMO_EXPERIMENTOS.md'
     with open(md_path, 'w', encoding='utf-8') as f:
         f.write(md_content)
