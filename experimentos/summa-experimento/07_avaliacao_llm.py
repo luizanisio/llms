@@ -2,6 +2,8 @@
 '''
 Autor: Luiz Anísio
 
+Consultar detalhes na documentação: 07_avaliacao_llm.md
+
 Roda o prompt de avaliação LLM-as-a-judge nas respostas das saídas dos modelos.
 Roda na lista de protocolos selecionados, buscando a pasta de saída informada.
 Monta a saída plana do que se espera para a escala likert, igual ao que é feito para a avaliação humana.
@@ -36,6 +38,12 @@ Parâmetros de linha de comando:
 --refazer = ignora as colunas de avaliação e envia o prompt novamente, substituindo os valores existentes
 > sem o --refazer = ignora as instâncieas com a coluna já preenchida
 
+--continuar = retoma uma execução do juiz interrompida (ex: um --refazer parado no meio):
+  reaproveita entrada_juiz_{protocolo}.parquet, processa só o que falta na saida_juiz_{protocolo}.parquet
+  e aplica o resultado na coluna 'avaliacao'. Antes, valida que a execução anterior é compatível
+  (mesmo modelo juiz e prompts idênticos aos montados agora). Sem o --continuar, o modo padrão
+  avisa quando encontra uma execução anterior incompleta.
+
 --reconstruir = reconstrói a coluna 'avaliacao' nos parquets da pasta saida a partir
   dos arquivos saida_juiz_{protocolo}.parquet já existentes em avaliacao_llm (sem chamar a API do juiz)
 
@@ -46,6 +54,7 @@ Parâmetros de linha de comando:
 '''
 
 import os
+import re
 import sys
 import json
 import shutil
@@ -65,9 +74,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PASTA_SAIDA_EXTRACAO = './saida'
 PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
-PROTOCOLOS = ['prof', 'a','b', 'c', 'd1', 'd7', 'd8', 'd9', 'd10', 'd24']
+PROTOCOLOS = ['prof', 'a','b', 'c', 'd1', 'd1b', 'd7', 'd8', 'd9', 'd10', 'd24']
 QTD_TENTATIVAS = 20
-WORKERS_YAML = 20
+WORKERS_YAML = 10
+# gpt5 e gpt5-chat são o mesmo modelo, só que estão em implementações diferentes.
 MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
 #MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
 
@@ -114,8 +124,10 @@ MAX_TOKENS_SAIDA = 8192
 
 # ROPE padrão para a análise bayesiana Likert (margem de equivalência prática)
 # Calibrada a partir do controle negativo — corresponde ao rope_likert dos YAMLs de comparação.
-ROPE_LIKERT = 0.1579  # calibrada pela divergência média entre os 3 avaliadores do grupo
-
+#ROPE_LIKERT = 0.1579  # calibrada pela divergência média entre os 3 avaliadores do grupo
+ROPE_LIKERT = None
+# TODO: se ROPE_PROTOCOLOS for uma lista, o ROPE_LIKERT será calculado a partir deles e o valor do ROPE será informado no resumo
+ROPE_PROTOCOLOS = ['D1','D1a','D1b']
 
 # ---------------------------------------------------------------------------
 # Formatação: JSON da extração → texto plano estruturado
@@ -395,6 +407,124 @@ def backup_parquet(caminho):
         logging.info(f"  Backup: {os.path.basename(bak)}")
 
 
+def arquivos_juiz(protocolo):
+    """Caminhos dos artefatos do juiz (pasta de avaliação) para o protocolo."""
+    pasta = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO))
+    return {
+        'pasta': pasta,
+        'entrada': os.path.join(pasta, f'entrada_juiz_{protocolo}.parquet'),
+        'saida': os.path.join(pasta, f'saida_juiz_{protocolo}.parquet'),
+        'yaml': os.path.join(pasta, f'config_juiz_{protocolo}.yaml'),
+    }
+
+
+def montar_prompt_juiz(row, integras_idx, template):
+    """Monta o prompt do juiz para uma linha do parquet de extração.
+
+    Returns:
+        (prompt, None) se a extração deve ir ao juiz, ou (None, motivo) se recebe
+        nota 1 direta. motivo: 'erro_extracao', 'json_invalido', 'sem_integra'
+        ou a mensagem do ValueError da formatação.
+    """
+    chave = str(row['chave'])
+
+    # Erro de extração → nota 1
+    if _tem_erro_extracao(row):
+        return None, 'erro_extracao'
+
+    # Validar JSON da extração
+    dados = resposta_para_dict(row.get('resposta'))
+    if dados is None or not extracao_valida(dados):
+        return None, 'json_invalido'
+
+    # Formatar extração em texto plano
+    try:
+        texto_extracao = formatar_extracao_texto_plano(dados, chave)
+    except ValueError as e:
+        return None, str(e)
+
+    # Buscar íntegra do acórdão
+    integra = integras_idx.get(chave)
+    if not integra or not str(integra).strip():
+        return None, 'sem_integra'
+
+    prompt = template.replace(PH_ACORDAO, str(integra))
+    return prompt.replace(PH_EXTRACAO, texto_extracao), None
+
+
+def mapear_avaliacoes_juiz(df_juiz):
+    """Converte a saída do juiz em {chave: json_avaliacao}.
+
+    Linhas com erro ou sem 'nota' na resposta viram AVALIACAO_INVALIDA.
+
+    Returns:
+        (mapa, qtd_ok, qtd_erro)
+    """
+    mapa = {}
+    avaliacoes_ok = 0
+    avaliacoes_erro_juiz = 0
+
+    for _, row_juiz in df_juiz.iterrows():
+        chave_juiz = str(row_juiz['chave']).strip()
+        erro_juiz = row_juiz.get('erro', '')
+        if pd.notna(erro_juiz) and str(erro_juiz).strip():
+            mapa[chave_juiz] = AVALIACAO_INVALIDA
+            avaliacoes_erro_juiz += 1
+            continue
+
+        resp_juiz = row_juiz.get('resposta', '')
+        juiz_dict = resposta_para_dict(resp_juiz)
+        if juiz_dict and 'nota' in juiz_dict:
+            if isinstance(resp_juiz, dict):
+                aval_str = json.dumps(resp_juiz, ensure_ascii=False)
+            else:
+                aval_str = str(resp_juiz).strip()
+            mapa[chave_juiz] = aval_str
+            avaliacoes_ok += 1
+        else:
+            mapa[chave_juiz] = AVALIACAO_INVALIDA
+            avaliacoes_erro_juiz += 1
+
+    return mapa, avaliacoes_ok, avaliacoes_erro_juiz
+
+
+def chaves_concluidas_juiz(arquivo_saida):
+    """Chaves com resposta e sem erro na saída do juiz.
+
+    Mesmo critério de retomada do util_vllm_batch.py: essas chaves não são reenviadas.
+    """
+    if not os.path.isfile(arquivo_saida):
+        return set()
+    df = pd.read_parquet(arquivo_saida)
+    mask = pd.Series(True, index=df.index)
+    if 'erro' in df.columns:
+        mask &= df['erro'].isna() | (df['erro'].astype(str).str.strip() == '')
+    if 'resposta' in df.columns:
+        mask &= df['resposta'].notna() & (df['resposta'].astype(str).str.strip() != '')
+    return set(df.loc[mask, 'chave'].astype(str).str.strip())
+
+
+def situacao_juiz(protocolo):
+    """Situação da última execução do juiz para o protocolo.
+
+    Returns:
+        None se não há entrada_juiz_{protocolo}.parquet; senão
+        {'entrada', 'concluidas', 'pendentes'}.
+    """
+    arqs = arquivos_juiz(protocolo)
+    if not os.path.isfile(arqs['entrada']):
+        return None
+    chaves_entrada = set(
+        pd.read_parquet(arqs['entrada'], columns=['chave'])['chave'].astype(str).str.strip()
+    )
+    concluidas = len(chaves_entrada & chaves_concluidas_juiz(arqs['saida']))
+    return {
+        'entrada': len(chaves_entrada),
+        'concluidas': concluidas,
+        'pendentes': len(chaves_entrada) - concluidas,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Geração do YAML para util_vllm_batch.py
 # ---------------------------------------------------------------------------
@@ -660,8 +790,8 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
     logging.info(f"  Destino: {os.path.basename(caminho_destino)}")
     logging.info(f"{'='*60}")
 
-    if 'avaliacao' not in df.columns:
-        df['avaliacao'] = ''
+    if 'avaliacao' not in df.columns or refazer:
+         df['avaliacao'] = ''
 
     # ----- Separar instâncias -----
     entradas_juiz = []          # [{chave, texto}] → enviar ao juiz
@@ -675,35 +805,14 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
         if not refazer and _tem_avaliacao(row.get('avaliacao')):
             continue
 
-        # Erro de extração → nota 1
-        if _tem_erro_extracao(row):
+        prompt, motivo = montar_prompt_juiz(row, integras_idx, template)
+        if prompt is None:
+            if motivo == 'sem_integra':
+                contagem_sem_integra += 1
+            elif motivo not in ('erro_extracao', 'json_invalido'):
+                logging.warning(motivo)
             avaliacoes_diretas[chave] = AVALIACAO_INVALIDA
             continue
-
-        # Validar JSON da extração
-        dados = resposta_para_dict(row.get('resposta'))
-        if dados is None or not extracao_valida(dados):
-            avaliacoes_diretas[chave] = AVALIACAO_INVALIDA
-            continue
-
-        # Formatar extração em texto plano
-        try:
-            texto_extracao = formatar_extracao_texto_plano(dados, chave)
-        except ValueError as e:
-            logging.warning(str(e))
-            avaliacoes_diretas[chave] = AVALIACAO_INVALIDA
-            continue
-
-        # Buscar íntegra do acórdão
-        integra = integras_idx.get(chave)
-        if not integra or not str(integra).strip():
-            contagem_sem_integra += 1
-            avaliacoes_diretas[chave] = AVALIACAO_INVALIDA
-            continue
-
-        # Montar prompt do juiz
-        prompt = template.replace(PH_ACORDAO, str(integra))
-        prompt = prompt.replace(PH_EXTRACAO, texto_extracao)
 
         entradas_juiz.append({'chave': chave, 'texto': prompt})
 
@@ -729,23 +838,44 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
     logging.info(f"  → {len(entradas_juiz)} instâncias para enviar ao juiz LLM")
 
     # ----- Gerar artefatos para util_vllm_batch.py -----
-    pasta_trabalho = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO))
+    arqs = arquivos_juiz(protocolo)
+    pasta_trabalho = arqs['pasta']
     os.makedirs(pasta_trabalho, exist_ok=True)
 
     # Parquet de entrada do juiz
-    arquivo_entrada = os.path.join(pasta_trabalho, f'entrada_juiz_{protocolo}.parquet')
+    arquivo_entrada = arqs['entrada']
     df_entrada = pd.DataFrame(entradas_juiz)
     df_entrada.to_parquet(arquivo_entrada, index=False)
     logging.info(f"  → Entrada: {os.path.basename(arquivo_entrada)} ({len(df_entrada)} linhas)")
 
     # Saída do juiz
-    arquivo_saida_juiz = os.path.join(pasta_trabalho, f'saida_juiz_{protocolo}.parquet')
-    if os.path.exists(arquivo_saida_juiz):
+    arquivo_saida_juiz = arqs['saida']
+    if refazer:
+        arquivo_bak = arquivo_saida_juiz + '.bak'
+        arquivo_bkp = arquivo_saida_juiz + '.bkp_refazer'
+        if os.path.exists(arquivo_saida_juiz):
+            logging.info(f"  → [--refazer] Removendo saída anterior do juiz (backup em {os.path.basename(arquivo_bkp)})")
+            shutil.copy2(arquivo_saida_juiz, arquivo_bkp)
+            os.remove(arquivo_saida_juiz)
+        if os.path.exists(arquivo_bak):
+            logging.info(f"  → [--refazer] Removendo backup antigo {os.path.basename(arquivo_bak)} para evitar restauração automática pelo util_vllm_batch")
+            os.remove(arquivo_bak)
+        # Limpar artefatos de execuções anteriores para não misturar estatísticas
+        for ext in ['_predicoes.csv', '_resumo.json', '_processamento.log', '_prompts.log',
+                    '_predicoes_tempo.png', '_predicoes_tempo.md',
+                    '_predicoes_tokens.png', '_predicoes_tokens.md']:
+            arq_antigo = os.path.join(pasta_trabalho, f'saida_juiz_{protocolo}{ext}')
+            if os.path.exists(arq_antigo):
+                try:
+                    os.remove(arq_antigo)
+                except OSError:
+                    pass
+    elif os.path.exists(arquivo_saida_juiz):
         logging.info(f"  → Saída anterior encontrada — itens já processados serão reaproveitados")
 
     # YAML de configuração
     yaml_content = gerar_yaml(protocolo, arquivo_entrada, arquivo_saida_juiz)
-    yaml_path = os.path.join(pasta_trabalho, f'config_juiz_{protocolo}.yaml')
+    yaml_path = arqs['yaml']
     with open(yaml_path, 'w', encoding='utf-8') as f:
         f.write(yaml_content)
     logging.info(f"  → YAML: {os.path.basename(yaml_path)}")
@@ -836,7 +966,7 @@ def reconstruir_protocolo(protocolo):
         logging.error(f"[{p}] Parquet de extração não encontrado: {caminho_leitura}")
         return False
 
-    arquivo_saida_juiz = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO, f'saida_juiz_{p}.parquet'))
+    arquivo_saida_juiz = arquivos_juiz(p)['saida']
     if not os.path.isfile(arquivo_saida_juiz):
         logging.error(f"[{p}] Parquet do juiz não encontrado: {arquivo_saida_juiz}")
         return False
@@ -856,30 +986,7 @@ def reconstruir_protocolo(protocolo):
     logging.info(f"  → Saída do juiz carregada: {len(df_juiz)} linhas")
 
     # Mapear avaliações do juiz por chave
-    mapa_juiz = {}
-    avaliacoes_ok = 0
-    avaliacoes_erro_juiz = 0
-
-    for _, row_juiz in df_juiz.iterrows():
-        chave_juiz = str(row_juiz['chave']).strip()
-        erro_juiz = row_juiz.get('erro', '')
-        if pd.notna(erro_juiz) and str(erro_juiz).strip():
-            mapa_juiz[chave_juiz] = AVALIACAO_INVALIDA
-            avaliacoes_erro_juiz += 1
-            continue
-
-        resp_juiz = row_juiz.get('resposta', '')
-        juiz_dict = resposta_para_dict(resp_juiz)
-        if juiz_dict and 'nota' in juiz_dict:
-            if isinstance(resp_juiz, dict):
-                aval_str = json.dumps(resp_juiz, ensure_ascii=False)
-            else:
-                aval_str = str(resp_juiz).strip()
-            mapa_juiz[chave_juiz] = aval_str
-            avaliacoes_ok += 1
-        else:
-            mapa_juiz[chave_juiz] = AVALIACAO_INVALIDA
-            avaliacoes_erro_juiz += 1
+    mapa_juiz, avaliacoes_ok, avaliacoes_erro_juiz = mapear_avaliacoes_juiz(df_juiz)
 
     # Preencher coluna avaliacao
     chaves_df = df['chave'].astype(str).str.strip()
@@ -924,6 +1031,219 @@ def reconstruir_avaliacoes(protocolos):
         print(f"  Falhas nos protocolos: {falhas}")
     print(f"{'='*70}\n")
     return len(falhas) == 0
+
+
+# ---------------------------------------------------------------------------
+# Continuação de execução interrompida (--continuar)
+# ---------------------------------------------------------------------------
+
+def _modelo_yaml(caminho_yaml):
+    """Lê o modelo juiz (modelo.caminho) de um YAML gerado por gerar_yaml()."""
+    with open(caminho_yaml, 'r', encoding='utf-8') as f:
+        m = re.search(r'^\s*caminho:\s*"([^"]*)"', f.read(), re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def validar_continuacao(protocolo, df, integras_idx, template):
+    """Confere se a execução anterior do juiz pode ser retomada sem misturar dados.
+
+    Validações (qualquer falha impede a continuação):
+      - existe config_juiz_{p}.yaml da execução anterior;
+      - o modelo juiz do YAML é o MODELO_JUIZ atual;
+      - todas as chaves da entrada existem no parquet de extração;
+      - os prompts da entrada são idênticos aos montados agora (mesma extração,
+        íntegra e template do juiz).
+
+    Returns:
+        dict com contagens, 'sem_execucao' (não há entrada_juiz_{p}.parquet)
+        e a lista 'erros' (vazia se pode continuar).
+    """
+    arqs = arquivos_juiz(protocolo)
+    info = {'protocolo': protocolo, 'sem_execucao': False, 'erros': [],
+            'entrada': 0, 'concluidas': 0, 'pendentes': 0, 'fora_da_entrada': 0}
+
+    if not os.path.isfile(arqs['entrada']):
+        info['sem_execucao'] = True
+        return info
+
+    if not os.path.isfile(arqs['yaml']):
+        info['erros'].append(f"{os.path.basename(arqs['yaml'])} não encontrado")
+    else:
+        modelo = _modelo_yaml(arqs['yaml'])
+        if modelo != MODELO_JUIZ:
+            info['erros'].append(f"modelo juiz da execução anterior ({modelo}) difere do atual ({MODELO_JUIZ})")
+
+    df_entrada = pd.read_parquet(arqs['entrada'])
+    prompts_entrada = dict(zip(df_entrada['chave'].astype(str).str.strip(), df_entrada['texto']))
+    del df_entrada
+    info['entrada'] = len(prompts_entrada)
+
+    # Remonta os prompts das chaves da entrada e conta as válidas que ficaram de fora
+    prompts_atuais = {}
+    for _, row in df.iterrows():
+        chave = str(row['chave']).strip()
+        prompt, _ = montar_prompt_juiz(row, integras_idx, template)
+        if chave in prompts_entrada:
+            prompts_atuais[chave] = prompt
+        elif prompt is not None and not _tem_avaliacao(row.get('avaliacao')):
+            info['fora_da_entrada'] += 1
+
+    ausentes = len(prompts_entrada.keys() - prompts_atuais.keys())
+    if ausentes:
+        info['erros'].append(f"{ausentes} chaves da entrada não existem no parquet de extração")
+    divergentes = sum(1 for c, p in prompts_atuais.items() if p != prompts_entrada[c])
+    if divergentes:
+        info['erros'].append(f"{divergentes} prompts da entrada diferem dos atuais "
+                             f"(extração, íntegra ou template mudaram)")
+
+    info['concluidas'] = len(prompts_entrada.keys() & chaves_concluidas_juiz(arqs['saida']))
+    info['pendentes'] = info['entrada'] - info['concluidas']
+    return info
+
+
+def continuar_protocolo(protocolo, integras_idx, template):
+    """Retoma a execução do juiz a partir de entrada_juiz_{p}.parquet e aplica o resultado.
+
+    Diferente do --reconstruir (que dá nota 1 a tudo que não está na saída do juiz),
+    preserva avaliações de chaves fora da entrada, pois execuções sem --refazer
+    enviam ao juiz apenas as pendentes:
+      - chaves da entrada: resposta do juiz (nota 1 se erro; vazia se ainda sem resposta);
+      - extrações inválidas: nota 1 direta;
+      - demais chaves: mantêm a avaliação existente.
+
+    Returns:
+        True se processado com sucesso, False em caso de erro.
+    """
+    df, caminho_leitura, caminho_destino, _ = carregar_dataframe_protocolo(protocolo)
+    if df is None:
+        logging.error(f"[{protocolo}] Parquet não encontrado: {caminho_leitura}")
+        return False
+
+    arqs = arquivos_juiz(protocolo)
+    logging.info(f"\n{'='*60}")
+    logging.info(f"  Continuando protocolo: {protocolo}")
+    logging.info(f"  Entrada: {os.path.basename(arqs['entrada'])}")
+    logging.info(f"  Destino: {os.path.basename(caminho_destino)}")
+    logging.info(f"{'='*60}")
+
+    # YAML regenerado com a configuração atual (modelo já validado como o mesmo)
+    with open(arqs['yaml'], 'w', encoding='utf-8') as f:
+        f.write(gerar_yaml(protocolo, arqs['entrada'], arqs['saida']))
+
+    logging.info(f"  → Executando util_vllm_batch.py ({MODELO_JUIZ}, {WORKERS_YAML} workers)...")
+    cmd = [sys.executable, UTIL_VLLM_BATCH, '--config', arqs['yaml']]
+    resultado = subprocess.run(cmd, cwd=arqs['pasta'])
+    if resultado.returncode != 0:
+        logging.error(f"  ✗ util_vllm_batch.py retornou código {resultado.returncode}")
+        return False
+    if not os.path.isfile(arqs['saida']):
+        logging.error(f"  ✗ Saída do juiz não encontrada: {arqs['saida']}")
+        return False
+
+    mapa_juiz, _, _ = mapear_avaliacoes_juiz(pd.read_parquet(arqs['saida']))
+    chaves_entrada = set(
+        pd.read_parquet(arqs['entrada'], columns=['chave'])['chave'].astype(str).str.strip()
+    )
+
+    if 'avaliacao' not in df.columns:
+        df['avaliacao'] = ''
+
+    contagem = {'juiz': 0, 'erro_juiz': 0, 'sem_resposta': 0, 'invalidas': 0, 'mantidas': 0}
+    avaliacoes = []
+    for _, row in df.iterrows():
+        chave = str(row['chave']).strip()
+        if chave in chaves_entrada:
+            aval = mapa_juiz.get(chave, '')
+            if not aval:
+                contagem['sem_resposta'] += 1
+            elif aval == AVALIACAO_INVALIDA:
+                contagem['erro_juiz'] += 1
+            else:
+                contagem['juiz'] += 1
+        else:
+            prompt, _ = montar_prompt_juiz(row, integras_idx, template)
+            if prompt is None:
+                aval = AVALIACAO_INVALIDA
+                contagem['invalidas'] += 1
+            else:
+                aval = row.get('avaliacao') if _tem_avaliacao(row.get('avaliacao')) else ''
+                contagem['mantidas'] += 1
+        avaliacoes.append(aval)
+    df['avaliacao'] = avaliacoes
+
+    logging.info(f"  → Juiz: {contagem['juiz']} OK, {contagem['erro_juiz']} com erro (nota 1)")
+    logging.info(f"  → Inválidas (nota 1 direta): {contagem['invalidas']}  |  "
+                 f"mantidas de avaliações anteriores: {contagem['mantidas']}")
+    if contagem['sem_resposta']:
+        logging.warning(f"  ⚠️  {contagem['sem_resposta']} chaves da entrada sem resposta do juiz "
+                        f"ficaram pendentes — rode --continuar novamente")
+
+    backup_parquet(caminho_destino)
+    df.to_parquet(caminho_destino, index=False)
+    logging.info(f"  ✓ Parquet salvo: {os.path.basename(caminho_destino)} ({len(df)} linhas)")
+    sincronizar_parquet_origem(protocolo, df)
+    return True
+
+
+def continuar_avaliacoes(protocolos, integras_idx, template):
+    """Valida e retoma as execuções interrompidas do juiz para os protocolos."""
+    print(f"\n{'='*70}")
+    print(f"  Continuação da avaliação LLM-as-a-judge")
+    print(f"{'='*70}")
+    print(f"  Modelo juiz:    {MODELO_JUIZ}")
+    print(f"  Protocolos:     {protocolos}")
+    print(f"{'='*70}\n")
+
+    a_continuar = []
+    falhou = False
+    for proto in protocolos:
+        df, caminho_leitura, _, _ = carregar_dataframe_protocolo(proto)
+        if df is None:
+            print(f"  ✗ {proto:>5}:  ARQUIVO NÃO ENCONTRADO — {os.path.basename(caminho_leitura)}")
+            falhou = True
+            continue
+
+        info = validar_continuacao(proto, df, integras_idx, template)
+        if info['sem_execucao']:
+            print(f"  - {proto:>5}:  sem execução anterior do juiz — ignorado")
+            continue
+        if info['erros']:
+            print(f"  ✗ {proto:>5}:  " + '; '.join(info['erros']))
+            falhou = True
+            continue
+
+        marcador = "→" if info['pendentes'] > 0 else "✓"
+        print(f"  {marcador} {proto:>5}:  "
+              f"{info['entrada']:>5} na entrada  |  "
+              f"{info['concluidas']:>5} concluídas  |  "
+              f"{info['pendentes']:>5} pendentes para o juiz")
+        if info['fora_da_entrada']:
+            print(f"           ⚠️  {info['fora_da_entrada']} instâncias válidas sem avaliação não estão "
+                  f"nesta execução — rode sem --continuar depois")
+        a_continuar.append(proto)
+
+    if falhou:
+        logging.error("Validação falhou — nada foi processado. "
+                      "Para descartar a execução anterior, use --refazer.")
+        sys.exit(1)
+    if not a_continuar:
+        print("\n  ✓ Nada a continuar.")
+        return
+
+    resposta = input("\n  Continuar? [S/n]: ").strip().lower()
+    if resposta and resposta not in ('s', 'sim', 'y', 'yes'):
+        print("  Abortado pelo usuário.")
+        return
+
+    for proto in a_continuar:
+        if not continuar_protocolo(proto, integras_idx, template):
+            logging.error(f"Falha no protocolo '{proto}'. Abortando os próximos.")
+            sys.exit(1)
+
+    print(f"\n{'='*70}")
+    print(f"  ✓ Continuação concluída para {len(a_continuar)} protocolo(s).")
+    print(f"  Para atualizar o resumo: python 07_avaliacao_llm.py --resumo")
+    print(f"{'='*70}")
 
 
 # ---------------------------------------------------------------------------
@@ -1299,9 +1619,14 @@ def main():
     parser = argparse.ArgumentParser(
         description='Avaliação LLM-as-a-judge para os protocolos de treinamento SUMMA'
     )
-    parser.add_argument(
+    modo = parser.add_mutually_exclusive_group()
+    modo.add_argument(
         '--refazer', action='store_true',
         help='Ignora avaliações existentes e reenvia tudo ao juiz'
+    )
+    modo.add_argument(
+        '--continuar', action='store_true',
+        help='Retoma a execução interrompida do juiz (entrada_juiz já gerada) e aplica o resultado'
     )
     parser.add_argument(
         '--protocolos', nargs='+', default=None,
@@ -1315,7 +1640,7 @@ def main():
         '--resumo', action='store_true',
         help='Gera RESUMO_AVALIACAO_LLM.md com estatísticas, tabelas e análise bayesiana'
     )
-    parser.add_argument(
+    modo.add_argument(
         '--reconstruir', action='store_true',
         help='Reconstrói a coluna avaliacao na pasta saida a partir de avaliacao_llm (sem chamar API do juiz)'
     )
@@ -1377,6 +1702,11 @@ def main():
         estimar_tokens_protocolos(protocolos, integras_idx, template, args.refazer)
         return
 
+    # ----- Modo --continuar: retomar execução interrompida e sair -----
+    if args.continuar:
+        continuar_avaliacoes(protocolos, integras_idx, template)
+        return
+
     # ----- Analisar protocolos e mostrar resumo -----
     print(f"\n{'='*70}")
     print(f"  Avaliação LLM-as-a-judge")
@@ -1390,6 +1720,7 @@ def main():
 
     resumos = []
     protocolos_validos = []
+    protocolos_incompletos = []
 
     for proto in protocolos:
         df, caminho_leitura, caminho_destino, foi_filtrado = carregar_dataframe_protocolo(proto)
@@ -1412,6 +1743,13 @@ def main():
             f"{info['a_enviar']} para o juiz){extra_desc}"
         )
 
+        # Execução anterior interrompida: o parquet de destino não reflete o juiz
+        sit = situacao_juiz(proto)
+        if sit and sit['pendentes'] > 0:
+            print(f"           ⚠️  execução anterior do juiz incompleta "
+                  f"({sit['concluidas']}/{sit['entrada']} concluídas) — para retomá-la use --continuar")
+            protocolos_incompletos.append(proto)
+
     if not protocolos_validos:
         logging.error("Nenhum protocolo válido encontrado.")
         sys.exit(1)
@@ -1420,6 +1758,13 @@ def main():
     total_invalidos = sum(r['json_invalidos'] for r in resumos)
 
     print(f"\n  Resumo: {total_enviar} chamadas ao juiz  +  {total_invalidos} notas diretas (inválidos)")
+
+    if protocolos_incompletos:
+        print(f"\n  ⚠️  Execução anterior incompleta em {protocolos_incompletos}: "
+              f"prosseguir sem --continuar {'descarta' if args.refazer else 'substitui'} "
+              f"a entrada do juiz desses protocolos.")
+        print(f"      Para retomar: python 07_avaliacao_llm.py --continuar "
+              f"--protocolos {' '.join(protocolos_incompletos)}")
 
     if total_enviar == 0 and total_invalidos == 0:
         print("\n  ✓ Nada a fazer — todos os protocolos já estão avaliados.")
