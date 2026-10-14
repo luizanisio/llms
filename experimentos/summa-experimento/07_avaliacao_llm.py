@@ -2,55 +2,20 @@
 '''
 Autor: Luiz Anísio
 
-Consultar detalhes na documentação: 07_avaliacao_llm.md
+Avaliação LLM-as-a-judge das extrações de teste: grava a nota Likert (1-4) do juiz
+na coluna 'avaliacao' do parquet de saída de cada protocolo.
 
-Roda o prompt de avaliação LLM-as-a-judge nas respostas das saídas dos modelos.
-Roda na lista de protocolos selecionados, buscando a pasta de saída informada.
-Monta a saída plana do que se espera para a escala likert, igual ao que é feito para a avaliação humana.
+Documentação (parâmetros, o que usar em cada situação, arquivos e cuidados): 07_avaliacao_llm.md
 
-Guarda a saída no formato esperado pelo pacote de comparação na coluna de avaliação.
-
-Fluxo de execução:
-1. Para cada protocolo listado em PROTOCOLOS, localiza em PASTA_SAIDAS o parquet
-   de saída correspondente (ex: saida_qwen7b(b)_teste.parquet).
-2. Para cada documento no parquet, monta o prompt do juiz LLM substituindo os
-   placeholders <<--TEXTO_ACORDAO-->> e <<--TEXTO_EXTRACAO-->> no template
-   (avaliacao_llm_humana/prompt_juiz_llm.txt) com a íntegra do acórdão e a
-   extração formatada em texto plano.
-3. Envia os prompts ao modelo juiz (via util_vllm_batch.py) em 1 rodada, obtendo um JSON
-   {"nota": 1..4, "problemas": [...]}.
-3.1. Se ocorrer erro, tenta novamente por QTD_TENTATIVAS vezes   
-4. Gera, para cada protocolo, a coluna 'avaliacao' no parquet de saída no
-   formato esperado pelo pipeline de comparação: JSON com o campo "nota" 
-   (onde nota é o Likert 1-4). Isso produz os arquivos
-   {id}.avaliacao.json que o comparar_extracoes.py (06_compara_todos.yaml)
-   consome para a análise bayesiana Likert do juiz LLM.
-4.1. incluir no yaml de comparação:
-   llm_as_a_judge: true
-      campos_parquet:   
-         avaliacao: "avaliacao" # nome da coluna do parquet
-5. A saída plana replica o formato da avaliação humana (converter_label_studio_
-   para_parquet.py), permitindo rodar realizar_avaliacoes.py sobre ambas as
-   fontes com a mesma interface.
-
-Parâmetros de linha de comando:
-
---refazer = ignora as colunas de avaliação e envia o prompt novamente, substituindo os valores existentes
-> sem o --refazer = ignora as instâncieas com a coluna já preenchida
-
---continuar = retoma uma execução do juiz interrompida (ex: um --refazer parado no meio):
-  reaproveita entrada_juiz_{protocolo}.parquet, processa só o que falta na saida_juiz_{protocolo}.parquet
-  e aplica o resultado na coluna 'avaliacao'. Antes, valida que a execução anterior é compatível
-  (mesmo modelo juiz e prompts idênticos aos montados agora). Sem o --continuar, o modo padrão
-  avisa quando encontra uma execução anterior incompleta.
-
---reconstruir = reconstrói a coluna 'avaliacao' nos parquets da pasta saida a partir
-  dos arquivos saida_juiz_{protocolo}.parquet já existentes em avaliacao_llm (sem chamar a API do juiz)
-
---protocolos "d24" "d25" seleciona os protocolos a serem processados
-  Suporta também protocolos especiais:
-  - "a": zero-shot (extrai teste de saida_qwen7b.parquet e salva em saida_qwen7b(a)_teste.parquet)
-  - "prof": professor (extrai teste de saida_or_235b.parquet e salva em saida_or_235b(prof)_teste.parquet)
+Exemplos:
+  python 07_avaliacao_llm.py --protocolos d1 d7              # avalia o que estiver pendente
+  python 07_avaliacao_llm.py --protocolos d1 --tokens        # estima os tokens antes de rodar
+  python 07_avaliacao_llm.py --protocolos d1 --refazer       # descarta as notas e reavalia tudo
+  python 07_avaliacao_llm.py --protocolos d1 --continuar     # retoma uma execução interrompida
+  python 07_avaliacao_llm.py --protocolos d1 --reconstruir   # refaz a coluna a partir da saída do juiz
+  python 07_avaliacao_llm.py --resumo                        # relatório, ROPE calibrada por ROPE_PROTOCOLOS
+  python 07_avaliacao_llm.py --resumo --rope-protocolos d1 d1a d1b   # calibra com outras réplicas
+  python 07_avaliacao_llm.py --resumo --rope 0.15            # ROPE fixa, sem calibração
 '''
 
 import os
@@ -74,7 +39,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PASTA_SAIDA_EXTRACAO = './saida'
 PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
-PROTOCOLOS = ['prof', 'a','b', 'c', 'd1', 'd1b', 'd7', 'd8', 'd9', 'd10', 'd24']
+PROTOCOLOS = ['prof', 'a','b', 'c', 'd1', 'd7', 'd8', 'd9', 'd10', 'd24']
 QTD_TENTATIVAS = 20
 WORKERS_YAML = 10
 # gpt5 e gpt5-chat são o mesmo modelo, só que estão em implementações diferentes.
@@ -85,7 +50,8 @@ MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R
 ARQUIVO_INTEGRAS = os.path.join(SCRIPT_DIR, 'dados', 'integras_experimento_summa_novos.parquet')
 ARQUIVO_DIVISAO = os.path.join(SCRIPT_DIR, 'dados', 'divisao_Qwen235b_Qwen7b.csv')
 PROMPT_TEMPLATE_PATH = os.path.join(SCRIPT_DIR, 'avaliacao_llm_humana', 'prompt_juiz_llm.txt')
-UTIL_VLLM_BATCH = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', 'src', 'util_vllm_batch.py'))
+PASTA_SRC = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', 'src'))
+UTIL_VLLM_BATCH = os.path.join(PASTA_SRC, 'util_vllm_batch.py')
 
 # Padrão de nome dos parquets de saída
 PADRAO_PARQUET = 'saida_qwen7b({protocolo})_teste.parquet'
@@ -122,12 +88,15 @@ AVALIACAO_INVALIDA = json.dumps(
 TOKENS_SAIDA_ESTIMADO_POR_INSTANCIA = 800
 MAX_TOKENS_SAIDA = 8192
 
-# ROPE padrão para a análise bayesiana Likert (margem de equivalência prática)
-# Calibrada a partir do controle negativo — corresponde ao rope_likert dos YAMLs de comparação.
+# ROPE da análise bayesiana Likert (margem de equivalência prática sobre as notas 1-4).
+# Prioridade: --rope > calibração pelas réplicas (--rope-protocolos ou ROPE_PROTOCOLOS) > ROPE_LIKERT.
+# Sem nenhuma das três, o resumo é gerado sem a análise bayesiana.
 #ROPE_LIKERT = 0.1579  # calibrada pela divergência média entre os 3 avaliadores do grupo
 ROPE_LIKERT = None
-# TODO: se ROPE_PROTOCOLOS for uma lista, o ROPE_LIKERT será calculado a partir deles e o valor do ROPE será informado no resumo
-ROPE_PROTOCOLOS = ['D1','D1a','D1b']
+# Réplicas do mesmo protocolo (controle negativo): a ROPE é calibrada pela divergência
+# entre as notas do juiz nelas, com o calibrar_rope() do realizar_avaliacoes.py.
+# None ou [] desliga a calibração.
+ROPE_PROTOCOLOS = ['d1', 'd1a', 'd1b']
 
 # ---------------------------------------------------------------------------
 # Formatação: JSON da extração → texto plano estruturado
@@ -1049,17 +1018,18 @@ def validar_continuacao(protocolo, df, integras_idx, template):
 
     Validações (qualquer falha impede a continuação):
       - existe config_juiz_{p}.yaml da execução anterior;
-      - o modelo juiz do YAML é o MODELO_JUIZ atual;
       - todas as chaves da entrada existem no parquet de extração;
       - os prompts da entrada são idênticos aos montados agora (mesma extração,
         íntegra e template do juiz).
+    Modelo juiz do YAML diferente do MODELO_JUIZ atual não impede: fica em
+    'modelo_anterior' para o pesquisador decidir.
 
     Returns:
-        dict com contagens, 'sem_execucao' (não há entrada_juiz_{p}.parquet)
-        e a lista 'erros' (vazia se pode continuar).
+        dict com contagens, 'sem_execucao' (não há entrada_juiz_{p}.parquet),
+        'modelo_anterior' (None se igual ao atual) e a lista 'erros' (vazia se pode continuar).
     """
     arqs = arquivos_juiz(protocolo)
-    info = {'protocolo': protocolo, 'sem_execucao': False, 'erros': [],
+    info = {'protocolo': protocolo, 'sem_execucao': False, 'erros': [], 'modelo_anterior': None,
             'entrada': 0, 'concluidas': 0, 'pendentes': 0, 'fora_da_entrada': 0}
 
     if not os.path.isfile(arqs['entrada']):
@@ -1071,7 +1041,7 @@ def validar_continuacao(protocolo, df, integras_idx, template):
     else:
         modelo = _modelo_yaml(arqs['yaml'])
         if modelo != MODELO_JUIZ:
-            info['erros'].append(f"modelo juiz da execução anterior ({modelo}) difere do atual ({MODELO_JUIZ})")
+            info['modelo_anterior'] = modelo
 
     df_entrada = pd.read_parquet(arqs['entrada'])
     prompts_entrada = dict(zip(df_entrada['chave'].astype(str).str.strip(), df_entrada['texto']))
@@ -1126,16 +1096,21 @@ def continuar_protocolo(protocolo, integras_idx, template):
     logging.info(f"  Destino: {os.path.basename(caminho_destino)}")
     logging.info(f"{'='*60}")
 
-    # YAML regenerado com a configuração atual (modelo já validado como o mesmo)
-    with open(arqs['yaml'], 'w', encoding='utf-8') as f:
-        f.write(gerar_yaml(protocolo, arqs['entrada'], arqs['saida']))
+    sit = situacao_juiz(protocolo)
+    if sit['pendentes'] == 0:
+        # Nada a enviar: mantém o YAML, que registra o modelo que gerou as notas
+        logging.info("  → Saída do juiz já completa — apenas aplicando o resultado")
+    else:
+        # YAML regenerado com a configuração atual (o modelo passa a ser o MODELO_JUIZ)
+        with open(arqs['yaml'], 'w', encoding='utf-8') as f:
+            f.write(gerar_yaml(protocolo, arqs['entrada'], arqs['saida']))
 
-    logging.info(f"  → Executando util_vllm_batch.py ({MODELO_JUIZ}, {WORKERS_YAML} workers)...")
-    cmd = [sys.executable, UTIL_VLLM_BATCH, '--config', arqs['yaml']]
-    resultado = subprocess.run(cmd, cwd=arqs['pasta'])
-    if resultado.returncode != 0:
-        logging.error(f"  ✗ util_vllm_batch.py retornou código {resultado.returncode}")
-        return False
+        logging.info(f"  → Executando util_vllm_batch.py ({MODELO_JUIZ}, {WORKERS_YAML} workers)...")
+        cmd = [sys.executable, UTIL_VLLM_BATCH, '--config', arqs['yaml']]
+        resultado = subprocess.run(cmd, cwd=arqs['pasta'])
+        if resultado.returncode != 0:
+            logging.error(f"  ✗ util_vllm_batch.py retornou código {resultado.returncode}")
+            return False
     if not os.path.isfile(arqs['saida']):
         logging.error(f"  ✗ Saída do juiz não encontrada: {arqs['saida']}")
         return False
@@ -1220,12 +1195,30 @@ def continuar_avaliacoes(protocolos, integras_idx, template):
         if info['fora_da_entrada']:
             print(f"           ⚠️  {info['fora_da_entrada']} instâncias válidas sem avaliação não estão "
                   f"nesta execução — rode sem --continuar depois")
-        a_continuar.append(proto)
+
+        if info['modelo_anterior'] is not None:
+            print(f"           ⚠️  modelo juiz diferente da execução anterior ({info['modelo_anterior']})")
+        a_continuar.append((proto, info))
 
     if falhou:
         logging.error("Validação falhou — nada foi processado. "
                       "Para descartar a execução anterior, use --refazer.")
         sys.exit(1)
+
+    # Modelo diferente: o pesquisador decide se as notas podem ser misturadas
+    for proto, info in list(a_continuar):
+        if info['modelo_anterior'] is None or info['pendentes'] == 0:
+            continue  # sem pendentes nada vai ao juiz: as notas não se misturam
+        print(f"\n  ⚠️  {proto}: modelo juiz diferente da execução anterior")
+        print(f"      anterior: {info['modelo_anterior']}  ({info['concluidas']} chaves já avaliadas)")
+        print(f"      atual:    {MODELO_JUIZ}  (avaliará as {info['pendentes']} pendentes)")
+        print(f"      Se continuar, o protocolo ficará com notas dos dois modelos.")
+        resposta = input(f"      Continuar {proto} com modelos diferentes? [s/N]: ").strip().lower()
+        if resposta not in ('s', 'sim', 'y', 'yes'):
+            print(f"      {proto} ignorado.")
+            a_continuar.remove((proto, info))
+    a_continuar = [proto for proto, _ in a_continuar]
+
     if not a_continuar:
         print("\n  ✓ Nada a continuar.")
         return
@@ -1349,10 +1342,213 @@ def _fmt_num(n):
     return f"{n:,.0f}".replace(',', '.')
 
 
-def gerar_resumo_avaliacao(protocolos, rope):
-    """Gera o RESUMO_AVALIACAO_LLM.md com tabelas, CSVs e análise bayesiana."""
+def _mapa_chave_nota(df):
+    """{chave: nota} das linhas com nota válida na coluna avaliacao."""
+    mapa = {}
+    for chave, aval in zip(df['chave'], df['avaliacao']):
+        nota, _ = _extrair_nota(aval)
+        if nota is not None:
+            mapa[str(chave).strip()] = nota
+    return mapa
+
+
+# ---------------------------------------------------------------------------
+# ROPE Likert: calibração pelas réplicas (controle negativo)
+# ---------------------------------------------------------------------------
+
+def validar_replicas_rope(replicas):
+    """Confere se as réplicas da calibração estão completamente avaliadas.
+
+    Returns:
+        (notas, problemas, avisos)
+        notas: {replica: {chave: nota}} das réplicas sem problema;
+        problemas: impedem a calibração;
+        avisos: não impedem (ex: modelos juiz diferentes entre as réplicas).
+    """
+    notas, problemas, avisos = {}, [], []
+    if len(replicas) < 2:
+        problemas.append(f"são necessárias ao menos 2 réplicas (informadas: {replicas})")
+
+    modelos = {}
+    for p in replicas:
+        df, caminho_leitura, _, _ = carregar_dataframe_protocolo(p)
+        if df is None:
+            problemas.append(f"{p}: parquet não encontrado ({os.path.basename(caminho_leitura)})")
+            continue
+        info = _analisar_notas_protocolo(p, df)
+        if info is None:
+            problemas.append(f"{p}: não avaliado (sem coluna 'avaliacao')")
+            continue
+        if info['pendentes'] > 0:
+            problemas.append(f"{p}: {info['pendentes']} de {info['total']} instâncias sem avaliação")
+            continue
+        sit = situacao_juiz(p)
+        if sit and sit['pendentes'] > 0:
+            problemas.append(f"{p}: última execução do juiz com {sit['pendentes']} de {sit['entrada']} "
+                             f"chaves sem resposta válida (interrompida ou com erro) — as notas do "
+                             f"parquet podem ser de uma execução anterior; use --continuar")
+            continue
+        arq_yaml = arquivos_juiz(p)['yaml']
+        modelos[p] = _modelo_yaml(arq_yaml) if os.path.isfile(arq_yaml) else 'desconhecido'
+        notas[p] = _mapa_chave_nota(df)
+
+    if len(set(modelos.values())) > 1:
+        avisos.append("réplicas avaliadas por modelos juiz diferentes ("
+                      + ", ".join(f"{p}: {m}" for p, m in modelos.items())
+                      + ") — a ROPE inclui a diferença entre os juízes")
+    if not problemas and not set.intersection(*(set(m) for m in notas.values())):
+        problemas.append("as réplicas não têm chaves em comum")
+    return notas, problemas, avisos
+
+
+def resolver_rope(rope_cli, replicas_cli):
+    """Define a ROPE Likert do resumo.
+
+    Prioridade: --rope > calibração pelas réplicas (--rope-protocolos ou
+    ROPE_PROTOCOLOS) > ROPE_LIKERT. A calibração usa o calibrar_rope() do
+    realizar_avaliacoes.py: a menor margem sob a qual TODOS os pares de réplicas
+    seriam 'equivalentes' ao limiar (máximo da rope_minima_equivalencia entre os pares).
+
+    Se a validação das réplicas falhar, mostra os problemas e pergunta se continua
+    com o fallback (ROPE_LIKERT ou resumo sem análise bayesiana).
+
+    Returns:
+        dict {'rope', 'origem', 'calibracao', 'avisos'}, ou None se o usuário não continuar.
+    """
+    if rope_cli is not None:
+        return {'rope': rope_cli, 'origem': 'parâmetro --rope', 'calibracao': None, 'avisos': []}
+
+    fallback = {'rope': ROPE_LIKERT,
+                'origem': 'ROPE_LIKERT do script' if ROPE_LIKERT is not None else None,
+                'calibracao': None, 'avisos': []}
+    replicas = replicas_cli if replicas_cli is not None else (ROPE_PROTOCOLOS or [])
+    replicas = list(dict.fromkeys(normalizar_protocolo(p) for p in replicas))
+    if not replicas:
+        return fallback
+
+    print(f"\n  Calibrando a ROPE Likert pelas réplicas {replicas}...")
+    notas, problemas, avisos = validar_replicas_rope(replicas)
+    for aviso in avisos:
+        print(f"  ⚠️  {aviso}")
+    if problemas:
+        return _perguntar_fallback_rope(replicas, problemas, avisos, fallback)
+
+    # Matriz itens × réplicas sobre as chaves comuns
+    comuns = sorted(set.intersection(*(set(m) for m in notas.values())))
+    matriz = pd.DataFrame({p: [notas[p][c] for c in comuns] for p in replicas})
+
+    if PASTA_SRC not in sys.path:
+        sys.path.insert(0, PASTA_SRC)
+    from realizar_avaliacoes import calibrar_rope
+    calibracao = calibrar_rope(matriz, replicas)
+    rope = float(calibracao['rope_notas'])
+
+    # Sem piso: margem zero (réplicas idênticas em todos os itens) não é usável pelo baycomp
+    if not rope > 0:
+        problemas = [f"calibração degenerada: as réplicas têm notas idênticas em todos os "
+                     f"itens (ROPE = {rope:g}) e não definem margem"]
+        return _perguntar_fallback_rope(replicas, problemas, avisos, fallback)
+
+    origem = (f"calibrada pela divergência entre as réplicas {', '.join(replicas)} "
+              f"({calibracao['n_itens']} itens, {calibracao['n_pares']} "
+              f"{'par' if calibracao['n_pares'] == 1 else 'pares'})")
+    print(f"  ✓ ROPE Likert = {rope:g} ({origem})")
+    return {'rope': rope, 'origem': origem, 'calibracao': calibracao, 'avisos': avisos}
+
+
+def _perguntar_fallback_rope(replicas, problemas, avisos, fallback):
+    """Mostra por que a calibração não foi possível e pergunta se segue com o fallback.
+
+    Returns:
+        o fallback (com os problemas registrados nos avisos), ou None se o usuário não continuar.
+    """
+    print(f"\n  ✗ Não é possível calibrar a ROPE:")
+    for problema in problemas:
+        print(f"     - {problema}")
+    if ROPE_LIKERT is not None:
+        acao = f"usar a ROPE fixa ROPE_LIKERT = {ROPE_LIKERT}"
+    else:
+        acao = "ser gerado SEM a análise bayesiana (ROPE_LIKERT não está definido)"
+    print(f"\n  Se continuar, o resumo vai {acao}.")
+    print(f"  Alternativas: concluir a avaliação das réplicas, informar --rope <valor> "
+          f"ou outras réplicas em --rope-protocolos.")
+    resposta = input("  Continuar mesmo assim? [s/N]: ").strip().lower()
+    if resposta not in ('s', 'sim', 'y', 'yes'):
+        return None
+    fallback['avisos'] = avisos + [f"calibração pelas réplicas {', '.join(replicas)} não realizada: "
+                                   + '; '.join(problemas)]
+    return fallback
+
+
+def _pares_unicos(matriz):
+    """Uma linha por par NÃO ordenado da matriz de pares, na ordem original."""
+    vistos = set()
+    for _, linha in matriz.iterrows():
+        par = frozenset((linha['linha'], linha['coluna']))
+        if par not in vistos:
+            vistos.add(par)
+            yield linha
+
+
+def _sensibilidade_rope(df_pareado, nomes, rope, matriz_pares):
+    """Quantos pares mudam de categoria com ROPE/2, ROPE e 2·ROPE.
+
+    Mesma varredura das métricas automáticas (_sensibilidade_rope do
+    comparar_extracoes_baycomp.py): a ROPE muda as probabilidades, então cada
+    valor exige uma nova matriz de pares.
+    """
+    referencia = round(rope, 6)
+    classes = {}
+    for valor in sorted({round(rope / 2, 6), referencia, round(rope * 2, 6)}):
+        m = matriz_pares(df_pareado, rope=valor, nomes=nomes)
+        classes[valor] = [linha['classificacao'] for linha in _pares_unicos(m)]
+
+    linhas = []
+    for valor, cls in classes.items():
+        linhas.append({'ROPE': valor,
+                       **{c: cls.count(c) for c in ('superior', 'equivalente', 'inferior', 'incerto')},
+                       'Muda vs. referência': sum(a != b for a, b in zip(cls, classes[referencia])),
+                       'Referência': 'sim' if valor == referencia else 'não'})
+    return pd.DataFrame(linhas)
+
+
+def _md_rope(rope_info, pasta):
+    """Seção do resumo com a origem da ROPE, avisos e a tabela de calibração."""
+    md = ['## 3. ROPE Likert\n']
+    if rope_info['rope'] is None:
+        md.append('> ROPE não definida — análise bayesiana não gerada.  ')
+    else:
+        md.append(f"> ROPE = **{rope_info['rope']:g}** — {rope_info['origem']}  ")
+    for aviso in rope_info['avisos']:
+        md.append(f'> ⚠️ {aviso}  ')
+    md.append('')
+
+    calibracao = rope_info['calibracao']
+    if calibracao is not None:
+        # Mesma calibração do realizar_avaliacoes.py: menor margem sob a qual todos
+        # os pares de réplicas seriam 'equivalentes' ao limiar
+        colunas = ['Par', 'n', 'Divergência abs. (notas)', 'Viés médio (notas)', 'IC 95% notas']
+        tabela = calibracao['tabela'][colunas]
+        md.append('| Par de réplicas | n | Divergência abs. | Viés médio | IC 95% da diferença |')
+        md.append('|-----------------|--:|-----------------:|-----------:|---------------------|')
+        for _, linha in tabela.iterrows():
+            md.append(f"| {linha['Par']} | {linha['n']} | {linha['Divergência abs. (notas)']:.4f} | "
+                      f"{linha['Viés médio (notas)']:+.4f} | {linha['IC 95% notas']} |")
+        md.append('\n> A ROPE é a menor margem sob a qual TODOS os pares de réplicas seriam '
+                  'classificados como `equivalente` ao limiar (calibrar_rope do realizar_avaliacoes.py).  ')
+        tabela.to_csv(os.path.join(pasta, 'resumo_rope_calibracao.csv'), index=False, encoding='utf-8')
+        md.append('> Dados exportados: `resumo_rope_calibracao.csv`\n')
+    return md
+
+
+def gerar_resumo_avaliacao(protocolos, rope_info):
+    """Gera o RESUMO_AVALIACAO_LLM.md com tabelas, CSVs e análise bayesiana.
+
+    rope_info: retorno de resolver_rope() ({'rope', 'origem', 'calibracao', 'avisos'}).
+    """
     from datetime import datetime
 
+    rope = rope_info['rope']
     pasta = os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO)
     os.makedirs(pasta, exist_ok=True)
 
@@ -1379,13 +1575,8 @@ def gerar_resumo_avaliacao(protocolos, rope):
         dados_notas[proto] = info['notas']
 
         # Guardar mapeamento chave→nota para pareamento bayesiano
-        if 'chave' in df.columns and 'avaliacao' in df.columns:
-            mapa = {}
-            for _, row in df[['chave', 'avaliacao']].iterrows():
-                nota, _ = _extrair_nota(row['avaliacao'])
-                if nota is not None:
-                    mapa[str(row['chave']).strip()] = nota
-            dados_chave_nota[proto] = mapa
+        if 'chave' in df.columns:
+            dados_chave_nota[proto] = _mapa_chave_nota(df)
 
         status = '✓' if info['pendentes'] == 0 else '→'
         print(f"  {status} {proto:>5}: {info['avaliados']}/{info['total']} avaliados "
@@ -1401,7 +1592,10 @@ def gerar_resumo_avaliacao(protocolos, rope):
     md = []
     md.append('# Avaliação LLM-as-a-Judge — Resumo\n')
     md.append(f'> Gerado em: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  ')
-    md.append(f'> ROPE Likert: {rope}  \n')
+    if rope is None:
+        md.append('> ROPE Likert: não definida (sem análise bayesiana)  \n')
+    else:
+        md.append(f"> ROPE Likert: {rope:g} — {rope_info['origem']}  \n")
 
     md.append('## 1. Tabela de Avaliações por Protocolo\n')
     md.append('| Proto | Total | Avaliados | Pend. | N1 (inv.) | N1 (juiz) | N2 | N3 | N4 | %≥3 | Média | Mediana |')
@@ -1450,14 +1644,20 @@ def gerar_resumo_avaliacao(protocolos, rope):
         md.append('')
 
     # =====================================================================
-    # 3. Análise Bayesiana
+    # 3. ROPE Likert
+    # =====================================================================
+    md.extend(_md_rope(rope_info, pasta))
+
+    # =====================================================================
+    # 4. Análise Bayesiana
     # =====================================================================
     # Filtrar protocolos completos (sem pendentes) para análise bayesiana
     protos_completos = [d['protocolo'] for d in dados_protocolos if d['pendentes'] == 0 and d['avaliados'] > 0]
     protos_incompletos = [d['protocolo'] for d in dados_protocolos if d['pendentes'] > 0]
+    gerou_bayesiana = rope is not None and len(protos_completos) >= 2
 
-    if len(protos_completos) >= 2:
-        md.append('## 3. Análise Bayesiana (Likert)\n')
+    if gerou_bayesiana:
+        md.append('## 4. Análise Bayesiana (Likert)\n')
         md.append(f'> Protocolos incluídos: {", ".join(protos_completos)} (100% avaliados)  ')
         if protos_incompletos:
             md.append(f'> Protocolos excluídos: {", ".join(protos_incompletos)} (em andamento)  ')
@@ -1465,7 +1665,8 @@ def gerar_resumo_avaliacao(protocolos, rope):
 
         try:
             # Importar o módulo de análise bayesiana
-            sys.path.insert(0, os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', 'src')))
+            if PASTA_SRC not in sys.path:
+                sys.path.insert(0, PASTA_SRC)
             from util_est_bayesiana import matriz_pares, sintese, heatmap, grafico_diferencas
 
             # Montar DataFrame pareado: alinhar por chave
@@ -1489,11 +1690,11 @@ def gerar_resumo_avaliacao(protocolos, rope):
                 # Calcular matriz de pares
                 matriz = matriz_pares(df_pareado, rope=rope, nomes=protos_completos)
 
-                # --- 3.1 Tabela de síntese ---
+                # --- 4.1 Tabela de síntese ---
                 tabela_sint = sintese(matriz)
                 ciclos = tabela_sint.attrs.get('ciclos', [])
 
-                md.append('### 3.1 Síntese por Protocolo\n')
+                md.append('### 4.1 Síntese por Protocolo\n')
                 md.append('| Protocolo | Média | Superior a | Equivalente a | Inferior a | Incerto |')
                 md.append('|-----------|------:|-----------:|--------------:|-----------:|--------:|')
                 for proto_nome in tabela_sint.index:
@@ -1514,17 +1715,10 @@ def gerar_resumo_avaliacao(protocolos, rope):
                 tabela_sint.to_csv(csv_sint_path, encoding='utf-8')
                 md.append(f'> Dados exportados: `resumo_bayesiana_sintese.csv`\n')
 
-                # --- 3.2 Tabela de pares (simplificada) ---
-                # Apenas pares não duplicados (i < j)
-                pares_vistos = set()
-                pares_unic = []
-                for _, row in matriz.iterrows():
-                    par = tuple(sorted([row['linha'], row['coluna']]))
-                    if par not in pares_vistos:
-                        pares_vistos.add(par)
-                        pares_unic.append(row)
+                # --- 4.2 Tabela de pares (simplificada) ---
+                pares_unic = list(_pares_unicos(matriz))
 
-                md.append('### 3.2 Comparação entre Pares\n')
+                md.append('### 4.2 Comparação entre Pares\n')
                 md.append('| Par | P(sup) | P(equiv) | P(inf) | Δ média | IC 95% | Classif. |')
                 md.append('|-----|-------:|---------:|-------:|--------:|--------|----------|')
                 for row in pares_unic:
@@ -1549,25 +1743,40 @@ def gerar_resumo_avaliacao(protocolos, rope):
                 matriz[colunas_presentes].to_csv(csv_pares_path, index=False, encoding='utf-8')
                 md.append(f'\n> Dados exportados: `resumo_bayesiana_pares.csv`\n')
 
-                # --- 3.3 Heatmap ---
+                # --- 4.3 Sensibilidade à ROPE ---
+                sensibilidade = _sensibilidade_rope(df_pareado, protos_completos, rope, matriz_pares)
+                md.append('### 4.3 Sensibilidade à ROPE\n')
+                md.append('Quantos pares mudam de categoria com ROPE/2, ROPE e 2·ROPE '
+                          '(mesma varredura das métricas automáticas).\n')
+                md.append('| ROPE | Superior | Equivalente | Inferior | Incerto | Muda vs. referência | Referência |')
+                md.append('|-----:|---------:|------------:|---------:|--------:|--------------------:|:----------:|')
+                for _, linha in sensibilidade.iterrows():
+                    md.append(f"| {linha['ROPE']:g} | {linha['superior']} | {linha['equivalente']} | "
+                              f"{linha['inferior']} | {linha['incerto']} | "
+                              f"{linha['Muda vs. referência']} | {linha['Referência']} |")
+                sensibilidade.to_csv(os.path.join(pasta, 'resumo_bayesiana_sensibilidade_rope.csv'),
+                                     index=False, encoding='utf-8')
+                md.append(f'\n> Dados exportados: `resumo_bayesiana_sensibilidade_rope.csv`\n')
+
+                # --- 4.4 Heatmap ---
                 try:
                     import matplotlib
                     matplotlib.use('Agg')  # backend não-interativo
                     heatmap_path = os.path.join(pasta, 'avaliacao_llm_heatmap.png')
                     heatmap(matriz, arquivo_saida=heatmap_path,
                             titulo='Avaliação LLM — Heatmap Bayesiano')
-                    md.append('### 3.3 Heatmap\n')
+                    md.append('### 4.4 Heatmap\n')
                     md.append(f'![Heatmap bayesiano](avaliacao_llm_heatmap.png)\n')
                     print(f"  ✓ Heatmap salvo: avaliacao_llm_heatmap.png")
                 except Exception as e:
                     logging.warning(f"  ⚠️  Erro ao gerar heatmap: {e}")
 
-                # --- 3.4 Forest Plot ---
+                # --- 4.5 Forest Plot ---
                 try:
                     forest_path = os.path.join(pasta, 'avaliacao_llm_diferencas.png')
                     grafico_diferencas(matriz, arquivo_saida=forest_path,
                                        titulo='Avaliação LLM — Medindo as Diferenças')
-                    md.append('### 3.4 Medindo as Diferenças (Forest Plot)\n')
+                    md.append('### 4.5 Medindo as Diferenças (Forest Plot)\n')
                     md.append(f'![Forest plot bayesiano](avaliacao_llm_diferencas.png)\n')
                     print(f"  ✓ Forest plot salvo: avaliacao_llm_diferencas.png")
                 except Exception as e:
@@ -1586,12 +1795,14 @@ def gerar_resumo_avaliacao(protocolos, rope):
             logging.warning(f"  ⚠️  Erro na análise bayesiana: {e}")
             md.append(f'> ⚠️ Erro na análise bayesiana: {e}\n')
     else:
-        if len(protos_completos) == 1:
-            md.append('## 3. Análise Bayesiana\n')
+        md.append('## 4. Análise Bayesiana\n')
+        if rope is None:
+            md.append('> ROPE Likert não definida (ver seção 3). Informe --rope, conclua as réplicas '
+                      'de ROPE_PROTOCOLOS ou defina ROPE_LIKERT.\n')
+        elif len(protos_completos) == 1:
             md.append(f'> Apenas 1 protocolo completo ({protos_completos[0]}). '
                       f'São necessários ao menos 2 para a comparação bayesiana.\n')
         else:
-            md.append('## 3. Análise Bayesiana\n')
             md.append('> Nenhum protocolo com 100% das avaliações concluídas. '
                       'A análise bayesiana será gerada quando houver ao menos 2 protocolos completos.\n')
 
@@ -1605,7 +1816,9 @@ def gerar_resumo_avaliacao(protocolos, rope):
     print(f"\n{'='*70}")
     print(f"  ✓ Resumo salvo: {md_path}")
     print(f"  ✓ CSV avaliações: {csv_path}")
-    if len(protos_completos) >= 2:
+    if rope is None:
+        print(f"  ⚠️  Sem análise bayesiana: ROPE Likert não definida")
+    elif gerou_bayesiana:
         print(f"  ✓ CSV síntese bayesiana: {os.path.join(pasta, 'resumo_bayesiana_sintese.csv')}")
         print(f"  ✓ CSV pares bayesianos: {os.path.join(pasta, 'resumo_bayesiana_pares.csv')}")
     print(f"{'='*70}")
@@ -1645,25 +1858,30 @@ def main():
         help='Reconstrói a coluna avaliacao na pasta saida a partir de avaliacao_llm (sem chamar API do juiz)'
     )
     parser.add_argument(
-        '--rope', type=float, default=ROPE_LIKERT,
-        help=f'ROPE para análise bayesiana Likert (padrão: {ROPE_LIKERT})'
+        '--rope', type=float, default=None,
+        help='ROPE fixa para a análise bayesiana Likert (tem prioridade sobre a calibração)'
+    )
+    parser.add_argument(
+        '--rope-protocolos', nargs='+', default=None,
+        help=f'Réplicas para calibrar a ROPE Likert (padrão: ROPE_PROTOCOLOS = {ROPE_PROTOCOLOS})'
     )
     args = parser.parse_args()
+    if args.rope is not None and args.rope <= 0:
+        parser.error('--rope deve ser > 0')
 
     protocolos_raw = args.protocolos if args.protocolos else PROTOCOLOS
     protocolos = [normalizar_protocolo(p) for p in protocolos_raw]
     protocolos = list(dict.fromkeys(protocolos))
 
-    # ----- Modo --reconstruir: reconstruir colunas a partir de avaliacao_llm e sair -----
-    if args.reconstruir:
-        sucesso = reconstruir_avaliacoes(protocolos)
-        if sucesso:
-            gerar_resumo_avaliacao(protocolos, args.rope)
-        return
-
-    # ----- Modo --resumo: gerar relatório e sair -----
-    if args.resumo:
-        gerar_resumo_avaliacao(protocolos, args.rope)
+    # ----- Modos --reconstruir / --resumo: (reconstruir e) gerar relatório e sair -----
+    if args.reconstruir or args.resumo:
+        if args.reconstruir and not reconstruir_avaliacoes(protocolos):
+            return
+        rope_info = resolver_rope(args.rope, args.rope_protocolos)
+        if rope_info is None:
+            print("  Resumo não gerado.")
+            return
+        gerar_resumo_avaliacao(protocolos, rope_info)
         return
 
     # ----- Validar arquivos essenciais -----

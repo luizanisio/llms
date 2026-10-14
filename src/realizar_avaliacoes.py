@@ -49,10 +49,14 @@ relevante — a diferença quase certamente excede a ROPE).
 
 ROPE calibrada e controle negativo
 ----------------------------------
-A ROPE das notas é **calibrada pelo IC 95% da diferença média entre os pares
-de especialistas humanos** — medida entre eles, nunca a partir do par julgado,
-na mesma escala que o ``CorrelatedTTest`` avalia (diferença média populacional).
+A ROPE das notas é **a menor margem sob a qual TODOS os pares de especialistas
+humanos seriam equivalentes ao limiar** (``Comparacao.rope_minima_equivalencia``,
+máximo entre os pares) — medida entre eles, nunca a partir do par julgado, na
+mesma escala que o ``CorrelatedTTest`` avalia (diferença média populacional).
 A da taxa de adequação segue o mesmo procedimento sobre a binarização.
+É o mesmo critério da calibração das métricas automáticas, sem piso: se a
+calibração degenera a zero (especialistas idênticos em todos os itens), a
+margem deve ser informada pela flag.
 A calibração garante por construção que todos os pares de especialistas saiam
 equivalentes; o **controle negativo** confirma esse resultado e fecha a
 pergunta sobre a margem ter sido escolhida convenientemente.
@@ -133,8 +137,8 @@ from scipy import stats
 
 import realizar_avaliacoes_graficos as viz
 
-# Análise bayesiana: opcional. Só é exigida quando `--bayes` é informado; sem a
-# flag, o pipeline roda exatamente como antes e não importa nada deste módulo.
+# Análise bayesiana: exigida pela validação (critérios 2 e 3 do gate) e pelo
+# panorama de `--bayes`; a análise interna de um grupo roda sem ela.
 try:
     import util_est_bayesiana as bayes
     BAYES_DISPONIVEL = True
@@ -271,16 +275,15 @@ class Grupo:
 #: padrões da camada bayesiana — um único teste (`baycomp.CorrelatedTTest`,
 #: analítico) e um único limiar de decisão em todo o trabalho.
 #:
-#: A ROPE das notas é CALIBRADA pelo IC 95% da diferença média entre os pares
-#: de especialistas humanos — na mesma escala do teste (diferença média
-#: populacional). Os valores abaixo são o fallback quando a calibração não é
-#: possível (sem grupo humano com 2+ avaliadores) e não foi dada a flag.
-BAYES_ROPE_PADRAO = 0.5           # fallback das notas: escala inteira, "notas iguais"
-BAYES_ROPE_DECISAO_PADRAO = 0.10  # fallback da taxa de adequação (10 p.p.)
-#: pisos numéricos da calibração: o baycomp exige ROPE > 0, e especialistas em
-#: acordo quase perfeito degenerariam a margem a zero
-BAYES_ROPE_MINIMO = 0.05
-BAYES_ROPE_DECISAO_MINIMO = 0.01
+#: A ROPE das notas e a da taxa de adequação são CALIBRADAS pela divergência
+#: entre os avaliadores (menor margem de equivalência de todos os pares; ver
+#: `calibrar_rope`), na mesma escala do teste (diferença média populacional).
+#: Não há valor padrão: sem calibração possível (menos de 2 avaliadores), a
+#: margem vem da flag (--bayes-rope / --bayes-rope-decisao), como o
+#: `rope_likert` das métricas automáticas.
+#: ROPE provisória das comparações da calibração: a `Comparacao` exige ROPE > 0,
+#: mas a `rope_minima_equivalencia` não depende dela (sem efeito no resultado)
+BAYES_ROPE_AUXILIAR = 1.0
 #: limiar ÚNICO de decisão — gate, heatmap e "Medindo as diferenças"
 #: (Benavoli et al., 2017, §3.2)
 BAYES_LIMIAR = 0.95
@@ -298,9 +301,11 @@ class ConfigBayes:
     incide sobre a **diferença média**.
 
     * ``rope`` / ``rope_decisao`` — ``None`` significa **calibrar** pela
-      divergência média entre os pares de especialistas do grupo humano de
-      referência; um valor explícito (flag) sobrescreve a calibração e fica
-      registrado no relatório como pré-registro manual.
+      divergência entre os pares de avaliadores (no gate, os especialistas do
+      grupo humano de referência); um valor explícito (flag) sobrescreve a
+      calibração e fica registrado no relatório como pré-registro manual.
+      Sem calibração possível e sem flag não há valor padrão: o gate é
+      interrompido e o panorama entre fontes é omitido.
     * ``limiar`` — limiar único de decisão (padrão 0,95).
     * ``ativo`` — liga a camada **complementar** (heatmaps e forest plots
       entre fontes e entre avaliadores). Os critérios 2 e 3 do gate são
@@ -1278,9 +1283,10 @@ def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
     A **divergência absoluta média** e o **viés médio** continuam na tabela,
     para leitura descritiva — mas NÃO são a base da ROPE.
 
-    Pisos numéricos (``BAYES_ROPE_MINIMO`` e ``BAYES_ROPE_DECISAO_MINIMO``)
-    evitam a degeneração a zero quando os especialistas quase não divergem —
-    o baycomp exige ROPE > 0. Quando o piso é aplicado, isso fica registrado.
+    Mesmo critério da calibração das métricas automáticas, sem piso. A margem
+    só degenera a zero se os especialistas forem idênticos em todos os itens;
+    nesse caso a ROPE não pode ser usada (o baycomp exige ROPE > 0) e quem a
+    consome deve exigir o valor pela flag (ver ``exigir_rope_calibrada``).
 
     Args:
         matriz_avaliadores: itens × avaliadores (saída de
@@ -1290,7 +1296,7 @@ def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
 
     Returns:
         dict com ``rope_notas``, ``rope_decisao``, ``tabela`` (uma linha por
-        par de especialistas), ``n_itens``, ``piso_aplicado`` (bool por margem).
+        par de especialistas), ``n_itens`` e ``n_pares``.
     """
     pares = []
     ic_extremos_notas = []
@@ -1300,8 +1306,8 @@ def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
         y = matriz_avaliadores[a2].astype(float).to_numpy()
         bx, by = (x >= piso).astype(float), (y >= piso).astype(float)
 
-        comp_notas = bayes.Comparacao(x, y, rope=BAYES_ROPE_MINIMO, limiar=BAYES_LIMIAR)
-        comp_decisao = bayes.Comparacao(bx, by, rope=BAYES_ROPE_DECISAO_MINIMO,
+        comp_notas = bayes.Comparacao(x, y, rope=BAYES_ROPE_AUXILIAR, limiar=BAYES_LIMIAR)
+        comp_decisao = bayes.Comparacao(bx, by, rope=BAYES_ROPE_AUXILIAR,
                                         limiar=BAYES_LIMIAR)
         ic_notas = comp_notas.ic95
         ic_decisao = comp_decisao.ic95
@@ -1320,18 +1326,25 @@ def calibrar_rope(matriz_avaliadores: pd.DataFrame, avaliadores: list,
             "IC 95% decisão": f"[{ic_decisao[0]:+.4f}; {ic_decisao[1]:+.4f}]",
         })
     tabela = pd.DataFrame(pares)
-    bruto_notas = (float(max(ic_extremos_notas)) if ic_extremos_notas else np.nan)
-    bruto_taxa = (float(max(ic_extremos_decisao)) if ic_extremos_decisao else np.nan)
-    rope_notas = max(bruto_notas, BAYES_ROPE_MINIMO)
-    rope_decisao = max(bruto_taxa, BAYES_ROPE_DECISAO_MINIMO)
     return {
-        "rope_notas": rope_notas, "rope_decisao": rope_decisao,
-        "bruto_notas": bruto_notas, "bruto_taxa": bruto_taxa,
-        "piso_aplicado": {"notas": bruto_notas < BAYES_ROPE_MINIMO,
-                          "decisao": bruto_taxa < BAYES_ROPE_DECISAO_MINIMO},
+        "rope_notas": float(max(ic_extremos_notas)) if ic_extremos_notas else np.nan,
+        "rope_decisao": float(max(ic_extremos_decisao)) if ic_extremos_decisao else np.nan,
         "tabela": tabela, "n_itens": int(len(matriz_avaliadores)),
         "n_pares": len(pares),
     }
+
+
+def exigir_rope_calibrada(valor: float, rotulo: str, flag: str) -> float:
+    """Devolve a ROPE calibrada, ou interrompe se ela degenerou a zero.
+
+    Sem piso arbitrário: margem zero (avaliadores idênticos em todos os itens)
+    não é usável pelo baycomp, e o valor passa a ter de vir da flag.
+    """
+    if not valor > 0:
+        raise SystemExit(
+            f"✗ ROPE calibrada da {rotulo} = {valor}: os avaliadores concordam em todos os "
+            f"itens e a calibração não define margem. Informe a ROPE com {flag}.")
+    return valor
 
 
 def controle_negativo(matriz_avaliadores: pd.DataFrame, avaliadores: list,
@@ -1415,7 +1428,7 @@ def analise_bayesiana_grupo(r: dict, cfg: ConfigBayes) -> dict:
 
     A ROPE segue a mesma regra do gate: valor explícito da flag; senão,
     calibrada pela divergência entre os avaliadores do PRÓPRIO grupo (2+);
-    senão, o padrão de escala.
+    senão, a comparação é omitida com aviso (sem valor padrão).
 
     Quando o grupo tem 2+ avaliadores, gera **também** a comparação bayesiana
     entre os avaliadores/rodadas (heatmap + forest plot), usando a ROPE
@@ -1434,12 +1447,17 @@ def analise_bayesiana_grupo(r: dict, cfg: ConfigBayes) -> dict:
             calibracao_avaliadores = calibrar_rope(
                 matriz_itens_avaliadores(r["df"], r["avaliadores"]),
                 r["avaliadores"])
-            rope = calibracao_avaliadores["rope_notas"]
-            origem_rope = (f"calibrada pela divergência média entre os "
-                           f"{len(r['avaliadores'])} {rot['avaliadores']} do grupo")
+            rope = exigir_rope_calibrada(calibracao_avaliadores["rope_notas"],
+                                         "notas", "--bayes-rope")
+            origem_rope = (f"calibrada pela divergência entre os "
+                           f"{len(r['avaliadores'])} {rot['avaliadores']} do grupo "
+                           f"(menor margem de equivalência de todos os pares)")
         else:
-            rope = BAYES_ROPE_PADRAO
-            origem_rope = "padrão de escala (grupo com um só avaliador)"
+            # sem calibração possível e sem flag: não há margem declarada
+            print(f"  ⚠ comparação bayesiana entre as fontes omitida: o grupo tem um só "
+                  f"{rot['avaliador'].lower()}, a ROPE não pode ser calibrada e "
+                  f"--bayes-rope não foi informada")
+            return {}
     matriz = matriz_bayesiana(r["pivo"], r["fontes"], rope, cfg.limiar)
     figuras = viz.grafico_bayes(
         matriz, os.path.join(r["saida"], "10_bayes_fontes.png"),
@@ -1463,8 +1481,14 @@ def analise_bayesiana_grupo(r: dict, cfg: ConfigBayes) -> dict:
         if calibracao_avaliadores is None:
             calibracao_avaliadores = calibrar_rope(mat_aval, r["avaliadores"])
         rope_aval = calibracao_avaliadores["rope_notas"]
-        origem_rope_aval = (f"calibrada pela divergência média entre os "
-                            f"{len(r['avaliadores'])} {rot['avaliadores']}")
+        if not rope_aval > 0:
+            # idênticos em todos os itens: não há margem a calibrar nem diferença a comparar
+            print(f"  ℹ {rot['avaliadores']} idênticos em todos os itens — "
+                  f"comparação bayesiana entre eles não gerada")
+            return resultado
+        origem_rope_aval = (f"calibrada pela divergência entre os "
+                            f"{len(r['avaliadores'])} {rot['avaliadores']} "
+                            f"(menor margem de equivalência de todos os pares)")
 
         # rótulos legíveis: "R1", "R2" ... para LLM; "A1", "A2" ... para humano
         colunas_aval = [f"{rot['sigla']}{a}" for a in r["avaliadores"]]
@@ -1588,8 +1612,7 @@ def montar_longo(pivos: dict, fontes: list) -> pd.DataFrame:
 
 
 def avaliar_par(longo: pd.DataFrame, juiz: str, referencia: str,
-                categorias: list, rope: float = BAYES_ROPE_PADRAO,
-                rope_decisao: float = BAYES_ROPE_DECISAO_PADRAO,
+                categorias: list, rope: float, rope_decisao: float,
                 limiar: float = BAYES_LIMIAR) -> dict:
     """Aplica os três critérios do gate a um par (juiz, referência).
 
@@ -1750,6 +1773,34 @@ def tabela_ranks(pivos: dict, fontes: list) -> pd.DataFrame:
     return tabela
 
 
+def resolver_ropes_gate(cfg: ConfigBayes, calibracao: dict | None) -> tuple:
+    """Margens do gate: flag, senão a calibração pelos especialistas.
+
+    Sem valor padrão: se não há calibração (menos de 2 especialistas na
+    referência), as duas margens têm de vir das flags.
+
+    Returns:
+        (rope, rope_decisao, origem_rope)
+    """
+    if calibracao is None:
+        faltando = [flag for flag, valor in (("--bayes-rope", cfg.rope),
+                                             ("--bayes-rope-decisao", cfg.rope_decisao))
+                    if valor is None]
+        if faltando:
+            raise SystemExit(
+                "✗ Sem grupo humano de referência com 2 ou mais especialistas, a ROPE "
+                "não pode ser calibrada e não há valor padrão. Informe "
+                f"{' e '.join(faltando)} (pré-registro manual).")
+    rope = cfg.rope if cfg.rope is not None else (
+        exigir_rope_calibrada(calibracao["rope_notas"], "notas", "--bayes-rope"))
+    rope_decisao = cfg.rope_decisao if cfg.rope_decisao is not None else (
+        exigir_rope_calibrada(calibracao["rope_decisao"], "taxa de adequação",
+                              "--bayes-rope-decisao"))
+    origem_rope = ("flag (pré-registro manual)" if cfg.rope is not None else
+                   "calibrada pelos especialistas")
+    return rope, rope_decisao, origem_rope
+
+
 def validar_juizes(resultados: dict, saida: str, escala: tuple,
                    referencia: str = None, config_bayes: ConfigBayes = None) -> dict:
     """Orquestra a validação dos juízes LLM contra o grupo humano de referência."""
@@ -1798,13 +1849,7 @@ def validar_juizes(resultados: dict, saida: str, escala: tuple,
                                               ref_result["avaliadores"])
         calibracao = calibrar_rope(matriz_ref, ref_result["avaliadores"])
 
-    rope = cfg.rope if cfg.rope is not None else (
-        calibracao["rope_notas"] if calibracao else BAYES_ROPE_PADRAO)
-    rope_decisao = cfg.rope_decisao if cfg.rope_decisao is not None else (
-        calibracao["rope_decisao"] if calibracao else BAYES_ROPE_DECISAO_PADRAO)
-    origem_rope = ("flag (pré-registro manual)" if cfg.rope is not None else
-                   ("calibrada pelos especialistas" if calibracao else
-                    "padrão de escala (sem 2+ especialistas na referência)"))
+    rope, rope_decisao, origem_rope = resolver_ropes_gate(cfg, calibracao)
     print(f"  ROPE (notas) = {rope:.4f} · ROPE (taxa) = {rope_decisao:.4f} "
           f"[{origem_rope}] · limiar único = {cfg.limiar:.2f}")
 
@@ -2399,35 +2444,28 @@ def _bloco_calibracao_rope(v: dict) -> list:
              f"{_num(v['rope_decisao'], 4)}** — origem: {v['origem_rope']}.\n")
     calibracao = v.get("calibracao")
     if calibracao is not None:
-        L.append("A margem não é arbitrada: é o **máximo limite absoluto do IC 95% da "
-                 "diferença média** entre os pares de especialistas humanos da referência "
-                 "— medida entre eles, nunca a partir do par julgado, e na **mesma "
-                 "escala** que o `CorrelatedTTest` avalia (diferença média populacional). "
-                 "A ROPE calibrada assim garante por construção que todos os pares de "
-                 "especialistas saiam equivalentes. A divergência absoluta média e o "
+        L.append("A margem não é arbitrada: é a **menor margem sob a qual todos os pares "
+                 "de especialistas humanos da referência seriam classificados como "
+                 "`equivalente`** ao limiar de decisão (busca numérica sobre a posterior "
+                 "da diferença média; máximo entre os pares) — medida entre eles, nunca a "
+                 "partir do par julgado, e na **mesma escala** que o `CorrelatedTTest` "
+                 "avalia (diferença média populacional). É o mesmo critério da calibração "
+                 "das métricas automáticas, sem piso. A divergência absoluta média e o "
                  "viés médio de cada par são reportados ao lado, para leitura "
                  "descritiva.\n")
         L.append(_md(calibracao["tabela"], indice=False))
         L.append("")
         L.append(f"ROPE calibrada: notas = "
-                 f"{_num(calibracao['bruto_notas'], 4)} ponto (max |IC 95%|); "
-                 f"taxa de adequação = {_num(calibracao['bruto_taxa'], 4)} "
+                 f"{_num(calibracao['rope_notas'], 4)} ponto; "
+                 f"taxa de adequação = {_num(calibracao['rope_decisao'], 4)} "
                  f"({calibracao['n_pares']} par(es), {_num(calibracao['n_itens'], 0)} itens).\n")
-        for chave, minimo, rotulo in (("notas", BAYES_ROPE_MINIMO, "notas"),
-                                      ("decisao", BAYES_ROPE_DECISAO_MINIMO,
-                                       "taxa de adequação")):
-            if calibracao["piso_aplicado"][chave]:
-                L.append(f"⚠️ A ROPE calibrada da {rotulo} ficou abaixo do piso "
-                         f"numérico de {_num(minimo, 2)} e o piso foi aplicado — o "
-                         "baycomp exige ROPE > 0, e especialistas em acordo quase "
-                         "perfeito degenerariam a margem a zero.\n")
         L.append("**Transcreva o valor calibrado à mão para o YAML da Etapa 2** "
                  "(`estatistica.rope_likert`). O fluxo é manual de "
                  "propósito: transcrever força o pré-registro consciente.\n")
     else:
         L.append("Sem grupo humano de referência com 2 ou mais especialistas, a "
-                 "calibração não é possível; o valor usado vem da flag ou do padrão "
-                 "de escala, e deve ser lido como margem **não calibrada**.\n")
+                 "calibração não é possível; o valor usado vem da flag (pré-registro "
+                 "manual), e deve ser lido como margem **não calibrada**.\n")
 
     controle = v.get("controle")
     if controle is not None:
@@ -3007,14 +3045,15 @@ def main(argv=None):
                                 "avaliadores (heatmap + 'Medindo as diferenças')")
     bayesiano.add_argument("--bayes-rope", type=float, default=None, metavar="R",
                            help="sobrescreve a ROPE das notas (padrão: calibrada pela "
-                                "divergência média entre os especialistas da referência; "
-                                f"fallback {BAYES_ROPE_PADRAO}). Deve ser > 0; fica "
-                                "registrada como pré-registro manual")
+                                "divergência entre os especialistas da referência). "
+                                "Obrigatória quando não há 2+ especialistas para "
+                                "calibrar. Deve ser > 0; fica registrada como "
+                                "pré-registro manual")
     bayesiano.add_argument("--bayes-rope-decisao", type=float, default=None,
                            metavar="R",
                            help="sobrescreve a ROPE da taxa de adequação (padrão: "
-                                "calibrada pelos especialistas; fallback "
-                                f"{BAYES_ROPE_DECISAO_PADRAO}). Deve ser > 0")
+                                "calibrada pelos especialistas). Obrigatória quando "
+                                "não há 2+ especialistas para calibrar. Deve ser > 0")
     bayesiano.add_argument("--bayes-limiar", type=float, default=BAYES_LIMIAR,
                            metavar="P",
                            help="limiar ÚNICO de decisão — gate, heatmap e forest plot "

@@ -74,7 +74,7 @@ python realizar_avaliacoes.py --grupos gpt5:llm
 python realizar_avaliacoes.py --grupos gpt5:llm sabia4:llm humanos:humano \
     --alias qwen7b=a --saida analise
 
-# com a camada bayesiana (baycomp; ROPE = 0,5 = notas iguais)
+# com o panorama bayesiano complementar (ROPE calibrada entre os especialistas)
 python realizar_avaliacoes.py --grupos gpt5:llm humanos:humano --bayes
 
 # modo direto retrocompatível: cada pasta é uma rodada de um único grupo LLM
@@ -91,17 +91,18 @@ python realizar_avaliacoes.py --pastas saida_01 saida_02 saida_03
 | `--alias ORIGEM=DESTINO ...` | normaliza nomes de fonte entre grupos |
 | `--referencia GRUPO` | padrão de referência (padrão: primeiro grupo `humano`) |
 
-Flags da camada bayesiana — **sem `--bayes` nenhuma delas é lida** e o pipeline
-roda exatamente como antes:
+Flags da camada bayesiana. `--bayes` liga só o panorama **complementar** (heatmaps e
+forest plots); a ROPE e o limiar valem para os critérios 2 e 3 do gate com ou sem ele:
 
 | Parâmetro | Padrão | Efeito |
 |---|---|---|
-| `--bayes` | desligado | ativa a etapa; é a única chave que decide se ela existe |
-| `--bayes-rope R` | calibrada | largura mínima exigida; por padrão é calibrada dinamicamente entre os humanos |
-| `--bayes-rope-decisao R` | calibrada | idem para a decisão prática |
+| `--bayes` | desligado | ativa o panorama complementar entre fontes e entre avaliadores |
+| `--bayes-rope R` | calibrada | ROPE das notas. Por padrão, calibrada entre os especialistas; **obrigatória** quando não há 2+ especialistas para calibrar |
+| `--bayes-rope-decisao R` | calibrada | idem para a taxa de adequação (decisão prática) |
 | `--bayes-limiar P` | `0.95` | probabilidade mínima exigida para veredito e relatórios |
 
-O teste é unificado no `baycomp.CorrelatedTTest` (analítico, determinístico, sem amostras nem sementes). Informar um `--bayes-*` sem `--bayes` é **erro**, não silêncio.
+O teste é unificado no `baycomp.CorrelatedTTest` (analítico, determinístico, sem amostras nem sementes).
+Uma ROPE informada pela flag sobrescreve a calibração e fica registrada como pré-registro manual.
 
 Um grupo → análise interna. Dois ou mais → análise interna de cada um **mais** a
 validação dos juízes contra a referência.
@@ -137,7 +138,20 @@ O algoritmo busca numericamente (Brent) a menor margem sob a qual **todos os
 pares de especialistas (o controle negativo)** alcançam o limiar de 0,95 de
 probabilidade de equivalência. É a fronteira matemática exata do ruído humano;
 se o juiz LLM divergir da referência por menos do que isso, ele é indistinguível
-do ruído inerente aos especialistas.
+do ruído inerente aos especialistas. A taxa de adequação (`nota ≥ piso`) é calibrada
+da mesma forma, sobre as notas binarizadas.
+
+É o mesmo critério da calibração das métricas automáticas, **sem piso e sem valor
+padrão**:
+
+- o valor calibrado é usado como sai;
+- sem grupo humano de referência com 2+ especialistas, a calibração não é possível e
+  as margens têm de vir de `--bayes-rope` e `--bayes-rope-decisao` (pré-registro
+  manual) — sem elas, a validação é interrompida;
+- se os especialistas forem idênticos em todos os itens, a calibração degenera a zero
+  (o baycomp exige ROPE > 0) e a flag passa a ser obrigatória;
+- no panorama complementar entre fontes de um grupo com um só avaliador, sem
+  `--bayes-rope` a comparação é omitida com aviso.
 
 ### Os três status possíveis
 
@@ -238,33 +252,41 @@ das notas por avaliador.
 
 ## 7. Camada bayesiana (opcional)
 
-Complementa o gate, **não o substitui**: κw, Wilcoxon e McNemar continuam
-decidindo. O que a camada acrescenta é a quantidade que o teste de hipótese nula
-não produz — a probabilidade posterior de **equivalência prática**. "Não rejeitar
-H₀" significa apenas que não se detectou diferença naquele *n*; uma posterior
+Os critérios 2 e 3 do gate já são bayesianos e rodam sempre; o que `--bayes`
+acrescenta é o **panorama complementar** — heatmaps e forest plots entre as fontes
+e entre os avaliadores. A quantidade central é a que o teste de hipótese nula não
+produz: a probabilidade posterior de **equivalência prática**. "Não rejeitar H₀"
+significa apenas que não se detectou diferença naquele *n*; uma posterior
 concentrada dentro da ROPE é evidência positiva a favor da equivalência.
 
 Toda a estatística vem do pacote **`baycomp`** (Benavoli et al., 2017), através
 de `util_est_bayesiana.py`, que é uma camada fina: organiza as chamadas, monta a
 matriz de todos os pares e desenha o heatmap. Nada é reimplementado.
 
-### Os três testes do baycomp
+### Um único teste: `CorrelatedTTest`
 
-| Método | Classe | Quando |
-|---|---|---|
-| `sinais` *(padrão)* | `SignTest` | escala **ordinal**: conta direções, descarta magnitude |
-| `postos` | `SignedRankTest` | usa a ordenação das magnitudes |
-| `t` | `CorrelatedTTest` | escala **contínua**; analítico, sem Monte Carlo |
+Todo o pipeline usa o `baycomp.CorrelatedTTest`, nas notas e nas métricas contínuas:
 
-Esta etapa é integralmente ordinal (Likert 1–4), então o padrão é `sinais`. Os
-outros ficam disponíveis por flag, mas não são o uso previsto aqui.
+1. **Escopo.** Benavoli et al. (2017) o propõem para comparar dois algoritmos em **um
+   único conjunto de dados com observações pareadas** — o desenho deste trabalho.
+   O `SignTest` e o `SignedRankTest` foram propostos para coleções de conjuntos.
+2. **O `SignTest` satura.** Numa escala de 4 pontos os empates passam de 50% com
+   frequência; nenhuma zona lateral consegue superar a central e P(equivalência) → 1
+   independentemente do desequilíbrio.
+3. **Determinismo.** O cálculo é analítico (Student acumulada): sem Monte Carlo, sem
+   amostras, sem semente.
 
-### A ROPE não é parâmetro livre
+A ROPE incide sobre a **diferença média** das notas pareadas.
 
-Na escala Likert inteira, `ROPE = 0,5` significa exatamente **notas iguais** — é
-a tradução direta da escala, não uma margem arbitrada nem calibrada. Por isso não
-há análise de sensibilidade a ela nesta etapa: alterá-la deixaria de representar
-a escala.
+### A ROPE é calibrada, não arbitrada
+
+A margem vem do controle negativo (ver "Calibração da ROPE" na seção 4): a menor
+margem sob a qual todos os pares de especialistas saem equivalentes ao limiar.
+Sem piso e sem valor padrão — sem calibração possível, ela é declarada pela flag.
+
+Como a ROPE pode decidir a classificação, as comparações entre protocolos
+(`comparar_extracoes_baycomp.py` e `07_avaliacao_llm.py`) reportam a sensibilidade
+com ROPE/2, ROPE e 2·ROPE.
 
 ⚠️ **A ROPE precisa ser > 0.** Com `rope = 0` o baycomp devolve apenas
 `(p_esquerda, p_direita)`, sem a probabilidade de equivalência. O pipeline
@@ -299,19 +321,13 @@ aproximadas.
 | **VIÉS RELEVANTE** | é quase certo que a divergência **excede** a ROPE |
 | **INCONCLUSIVO** | nenhuma das duas leituras se sustenta |
 
-### Limitação importante do teste de sinais
+### Limitação assumida: média de notas ordinais
 
-O `SignTest` responde **qual das três zonas concentra mais massa posterior**, e
-não "quem é melhor, e por quanto". Com muitos empates — comum na Likert de 4
-pontos —, a zona central vence quase sempre, e a camada tende a reportar
-equivalência mesmo havendo desequilíbrio claro entre as laterais.
-
-Na prática isso significa que **a leitura bayesiana pode divergir do gate
-frequentista**: o Wilcoxon detecta viés sistemático a partir do desequilíbrio,
-enquanto o teste de sinais vê a maioria de empates e conclui equivalência. Não é
-contradição — são perguntas diferentes —, mas o texto precisa reportar as
-contagens (`Acima`, `Empate`, `Abaixo`) ao lado das probabilidades, e o gate
-continua sendo o que decide.
+A diferença média de notas Likert é a diferença das médias — o pareamento não
+contorna a objeção ordinal. A defesa: (i) a literatura de robustez (Norman, 2010;
+Carifio & Perla, 2008); (ii) a ROPE ancorada na divergência entre especialistas, na
+mesma unidade; (iii) as **contagens ordinais puras** (`Acima`, `Empate`, `Abaixo`)
+reportadas ao lado de toda probabilidade — um número que não assume intervalos.
 
 ---
 
@@ -324,18 +340,16 @@ continua sendo o que decide.
 | IC do κw | bootstrap percentílico de **documentos** (2.000 réplicas, semente 42) |
 | Critério 1 | valor **pontual** do κw; o IC é precisão, não critério |
 | Correção múltipla | Holm-Bonferroni (contrastes entre fontes e entre grupos) |
-| Critério 2 do gate | `p` **não corrigido** do Wilcoxon juiz × referência |
+| Critérios 2 e 3 do gate | P(equivalência) bayesiana ≥ 0,95 nas notas e na taxa de adequação |
 | Grupo de referência | primeiro grupo `humano` |
 | Empates no Wilcoxon | descartados (convenção `wilcox`) |
-| Margem de relevância prática | 0,5 DP das notas da referência (meia-DP) |
 | Shapiro-Wilk | confirmatório; a opção não paramétrica é primariamente ordinal |
 | McNemar | binomial exato com < 25 discordantes, qui-quadrado com correção acima |
 | Binarização | `{1,2}` inadequado, `{3,4}` adequado |
-| Posterior bayesiana | teste de sinais de Benavoli et al. (2017); 200.000 amostras, semente 42 |
-| Modo na escala Likert | `proporcao` (ROPE = 0; as diferenças são inteiras) |
-| Modo nos escores contínuos (F1) | `baycomp` (cálculo padrão do pacote; exige ROPE > 0) |
-| ROPE na Likert | 0,5 — decorre de a escala ser inteira ("notas iguais") |
-| Limiar de classificação / de veredito | 0,80 / 0,95 |
+| Posterior bayesiana | `baycomp.CorrelatedTTest` (Benavoli et al., 2017), o mesmo nas notas e nas métricas contínuas; analítico, sem amostras nem semente |
+| ROPE na Likert | calibrada entre os especialistas (menor margem de equivalência de todos os pares), sem piso nem valor padrão; sem calibração, declarada pela flag |
+| ROPE da taxa de adequação | idem, sobre as notas binarizadas |
+| Limiar de classificação e de veredito | 0,95 (único) |
 
 ---
 
@@ -343,25 +357,25 @@ continua sendo o que decide.
 
 Pontos que precisam constar no texto ou aparecer na defesa.
 
-**A camada bayesiana é complemento declarado, não substituição.** O gate
-continua sendo κw + Wilcoxon + McNemar, e é isso que o texto deve dizer. A
-leitura bayesiana entra para afirmar o que o frequentista não afirma: que a
-divergência entre juiz e humano **cabe** dentro de uma margem de irrelevância
-prática. Onde o relatório frequentista escreve "não se detectou viés
-sistemático", o bayesiano pode escrever "P(equivalência | ε) = 0,97" — que é uma
-afirmação positiva, e mais forte. Se as duas divergirem, reporte as duas e
-explique a divergência; não escolha a que favorece o resultado.
+**O gate combina concordância e equivalência.** O critério 1 é frequentista
+(κw); os critérios 2 e 3 são bayesianos e afirmam o que o frequentista não
+afirma: que a divergência entre juiz e humano **cabe** dentro de uma margem de
+irrelevância prática. Onde um teste de hipótese escreveria "não se detectou viés
+sistemático", o gate escreve "P(equivalência | ε) = 0,97" — uma afirmação
+positiva, e mais forte. Wilcoxon e McNemar continuam nos relatórios como
+evidência descritiva; se divergirem da leitura bayesiana, reporte as duas e
+explique a divergência — não escolha a que favorece o resultado.
 
-**Registre método, ROPE, limiar, amostras e semente antes de rodar.** Todos
-entram no rodapé de reprodutibilidade dos relatórios. Na Likert a ROPE não é
-escolha — decorre da escala —, o que elimina de saída a suspeita de margem
-ajustada ao resultado.
+**Registre teste, ROPE e limiar antes de rodar.** Todos entram no rodapé de
+reprodutibilidade dos relatórios. A ROPE da Likert é calibrada pelo controle
+negativo (a divergência entre os especialistas), não escolhida — o que afasta a
+suspeita de margem ajustada ao resultado. Quando vier da flag, declare-a como
+pré-registro manual e justifique o valor.
 
-**Reporte as contagens junto das probabilidades.** O teste de sinais responde
-qual zona concentra mais massa posterior; com muitos empates, a zona central
-vence mesmo havendo desequilíbrio claro entre as laterais. As contagens
-`Acima`/`Empate`/`Abaixo` são o que permite ao leitor enxergar esse
-desequilíbrio, e por isso vão em toda tabela bayesiana.
+**Reporte as contagens junto das probabilidades.** A diferença média de notas
+ordinais é uma limitação assumida (seção 7); as contagens `Acima`/`Empate`/`Abaixo`
+não assumem intervalos e permitem ao leitor ver o desequilíbrio entre as
+laterais, por isso vão em toda tabela bayesiana.
 
 **A análise é independente por conjunto de dados.** Não modela a variabilidade
 compartilhada entre datasets nem faz atualização sequencial do conhecimento —
@@ -385,18 +399,21 @@ propriedades distintas. Mas a hierarquia tem de ser declarada antes dos
 resultados: se o F1 favorecer uma conclusão e a Likert outra, é a Likert que
 decide, e o texto deve ter dito isso antes de saber qual favorecia o quê.
 
-**As duas "equivalências" não são a mesma afirmação.** Na Likert, equivalência é
-P(|δ| ≤ ε) — magnitude do efeito medida em proporção de documentos. No F1, é
-P(a zona ROPE ser a maioritária) — qual região concentra mais casos. O texto
-precisa definir cada uma onde a reporta; usar a mesma palavra sem distinguir é o
-erro mais fácil de cometer aqui, e o mais difícil de defender se apontado.
+**As "equivalências" da Likert e do F1 são a mesma afirmação, em unidades
+diferentes.** Nas duas, equivalência é P(diferença média ∈ ROPE) pelo
+`CorrelatedTTest`; mas a ROPE da Likert está em pontos da escala e é calibrada
+pela divergência entre avaliadores, e a do F1 está na unidade da métrica e é
+calibrada pela variação entre execuções do mesmo protocolo. O texto precisa dizer
+em que unidade e com que controle negativo cada margem foi obtida.
 
-**A ROPE do F1 determina o resultado, e a sensibilidade é resultado principal.**
+**A ROPE pode determinar o resultado, e a sensibilidade é resultado principal.**
 Com BERTScore entre protocolos destilados do mesmo professor, os escores são
-comprimidos e a classificação vira função da ROPE. Reporte a matriz em pelo
-menos três valores e mostre onde as categorias trocam. E registre o controle
-negativo — o protocolo comparado consigo mesmo saindo equivalente é o que
-demonstra que a margem não foi escolhida para produzir o resultado.
+comprimidos e a classificação vira função da ROPE; nas notas do juiz LLM, com
+milhares de itens, a ROPE calibrada fica estreita e o mesmo pode ocorrer. Reporte
+a matriz em pelo menos três valores (ROPE/2, ROPE, 2·ROPE) e mostre onde as
+categorias trocam. E registre o controle negativo — réplicas do mesmo protocolo
+saindo equivalentes é o que demonstra que a margem não foi escolhida para
+produzir o resultado.
 
 **A rodada única nos 4.000 se apoia na etapa de validação.** Não há evidência de
 estabilidade teste-reteste dentro da etapa dos protocolos; ela vem inteiramente
@@ -550,10 +567,8 @@ python -m unittest realizar_avaliacoes_teste  # saída padrão
 — inclusive as figuras da validação, feitas em matplotlib puro — segue
 normalmente.
 
-**Opcional, só com `--bayes`:** `util_est_bayesiana.py` na mesma pasta (ou no
-`PYTHONPATH`). O `baycomp` é dispensável — o módulo cai no gerador próprio, que
-é numericamente equivalente (divergência máxima verificada de 10⁻⁵, compatível
-com ruído Monte Carlo) e, ao contrário do pacote, honra `prior`, `prior_place` e
-semente. Sem o módulo, `--bayes` aborta com mensagem explícita; sem a flag, nada
-disso é importado.
+**Obrigatório para a validação:** `util_est_bayesiana.py` na mesma pasta (ou no
+`PYTHONPATH`) e o pacote `baycomp` — os critérios 2 e 3 do gate são bayesianos.
+Sem eles, a validação e `--bayes` abortam com mensagem explícita; a análise interna
+de um grupo (sem validação nem `--bayes`) roda sem eles.
 

@@ -18,7 +18,8 @@ recebem nota 1 direta (`{"nota": 1, "problemas": ["json_invalido"]}`).
 | `--reconstruir` | Refaz a coluna `avaliacao` a partir de `avaliacao_llm/saida_juiz_{p}.parquet`, sem chamar o juiz. Gera também o resumo. | não |
 | `--resumo` | Gera `avaliacao_llm/RESUMO_AVALIACAO_LLM.md`, os CSVs e os gráficos bayesianos. | não |
 | `--tokens` | Estima os tokens de entrada e saída do que seria enviado. | não |
-| `--rope 0.15` | ROPE da análise bayesiana Likert (usado por `--resumo` e `--reconstruir`). | — |
+| `--rope 0.15` | ROPE fixa da análise bayesiana Likert. Tem prioridade sobre a calibração. | — |
+| `--rope-protocolos d1 d1a d1b` | Réplicas usadas para calibrar a ROPE. Sem ele, usa `ROPE_PROTOCOLOS` do script. | — |
 
 `--refazer`, `--continuar` e `--reconstruir` são mutuamente exclusivos.
 Os modos que chamam a API mostram um resumo e pedem confirmação (`Continuar? [S/n]`) antes de começar.
@@ -33,7 +34,9 @@ Os modos que chamam a API mostram um resumo e pedem confirmação (`Continuar? [
 | Parei uma execução **com** `--refazer` | `python 07_avaliacao_llm.py --protocolos d1 --continuar` |
 | Quero substituir avaliações antigas (mudou o modelo juiz, o prompt ou a extração) | `python 07_avaliacao_llm.py --protocolos d1 --refazer` |
 | A coluna `avaliacao` foi perdida ou o parquet de saída foi regenerado, mas a saída do juiz está completa | `python 07_avaliacao_llm.py --protocolos d1 --reconstruir` |
-| Atualizar o relatório comparativo | `python 07_avaliacao_llm.py --resumo` |
+| Atualizar o relatório comparativo (ROPE calibrada por `ROPE_PROTOCOLOS`) | `python 07_avaliacao_llm.py --resumo` |
+| Calibrar a ROPE com outras réplicas | `python 07_avaliacao_llm.py --resumo --rope-protocolos d1 d1b` |
+| Usar uma ROPE fixa, sem calibrar | `python 07_avaliacao_llm.py --resumo --rope 0.15` |
 | Saber quanto vai custar antes de rodar | `python 07_avaliacao_llm.py --protocolos d1 --tokens` (com `--refazer`, estima o reprocessamento completo) |
 
 ### Por que a interrupção com `--refazer` precisa do `--continuar`
@@ -56,12 +59,16 @@ O modo padrão avisa quando encontra uma execução incompleta:
 Antes de chamar a API, confere para cada protocolo:
 
 1. existem `entrada_juiz_{p}.parquet` e `config_juiz_{p}.yaml` da execução anterior (se não existem, o protocolo é ignorado);
-2. o modelo juiz da execução anterior é o mesmo `MODELO_JUIZ` atual;
-3. todas as chaves da entrada existem no parquet de extração;
-4. os prompts da entrada são idênticos aos montados agora (mesma extração, íntegra e template).
+2. todas as chaves da entrada existem no parquet de extração;
+3. os prompts da entrada são idênticos aos montados agora (mesma extração, íntegra e template).
 
-Se alguma falhar, nada é processado. Corrija a causa (por exemplo, volte `MODELO_JUIZ` ao modelo usado)
-ou descarte a execução anterior com `--refazer`.
+Se alguma falhar, nada é processado. Corrija a causa ou descarte a execução anterior com `--refazer`.
+
+**Modelo juiz diferente.** Se o modelo da execução anterior (registrado no `config_juiz_{p}.yaml`) não for o
+`MODELO_JUIZ` atual e houver chaves pendentes, o script mostra os dois nomes e pergunta
+`Continuar {p} com modelos diferentes? [s/N]`. Respondendo sim, as pendentes são avaliadas pelo modelo atual
+e o protocolo fica com notas dos dois modelos; respondendo não, o protocolo é ignorado.
+Sem chaves pendentes, nada vai ao juiz: o resultado é só aplicado e o YAML não é alterado.
 
 Ao aplicar o resultado:
 
@@ -75,6 +82,54 @@ O `--reconstruir` dá nota 1 a **toda** chave que não está na saída do juiz.
 Isso só é correto quando a saída do juiz cobre todas as extrações válidas, por exemplo depois de um `--refazer` concluído.
 Depois de execuções incrementais ou interrompidas, use `--continuar`, que preserva as avaliações já existentes.
 
+## ROPE Likert (`--resumo` e `--reconstruir`)
+
+A ROPE é a margem de equivalência prática da análise bayesiana sobre as notas 1–4. Ela é definida nesta ordem:
+
+1. `--rope <valor>`, se informado;
+2. calibração pelas réplicas de `--rope-protocolos` (ou, sem ele, de `ROPE_PROTOCOLOS`);
+3. `ROPE_LIKERT` do script;
+4. nenhuma: o resumo é gerado sem a análise bayesiana.
+
+**Calibração.** As réplicas (ex.: `d1`, `d1a`, `d1b`) são execuções idênticas do mesmo protocolo,
+um controle negativo: a diferença entre as notas do juiz nelas é ruído, não efeito.
+A calibração usa o `calibrar_rope()` do `src/realizar_avaliacoes.py`, o mesmo usado na avaliação humana:
+para cada par de réplicas, calcula a menor margem em que o par seria `equivalente` ao limiar (0,95), e a ROPE é a maior delas.
+É o mesmo critério da calibração das métricas automáticas, **sem piso**: o valor calibrado é usado como sai.
+A única exceção é a calibração degenerar a zero (réplicas com notas idênticas em todos os itens), caso em que
+o script trata como problema de validação (ver abaixo) e pede `--rope` ou outras réplicas.
+
+**Sensibilidade.** O resumo repete a comparação com ROPE/2, ROPE e 2·ROPE e conta quantos pares mudam de
+categoria (seção 4.3 e `resumo_bayesiana_sensibilidade_rope.csv`), como as métricas automáticas.
+Reporte essa tabela junto das conclusões: ela mostra quais delas dependem da margem.
+
+**Validação das réplicas.** Antes de calibrar, cada réplica precisa:
+
+- ter o parquet de saída com a coluna `avaliacao`;
+- ter todas as instâncias avaliadas;
+- ter a última execução do juiz concluída (sem chaves pendentes em `saida_juiz_{p}.parquet`).
+
+Se alguma falhar, ou se a calibração degenerar a zero, o script mostra os problemas e o que fará se continuar
+(usar `ROPE_LIKERT` ou gerar o resumo sem a análise bayesiana) e pergunta `Continuar mesmo assim? [s/N]`.
+Réplicas avaliadas por modelos juiz diferentes geram só um aviso.
+
+As réplicas servem apenas à calibração: o resumo compara só os protocolos de `--protocolos` (ou `PROTOCOLOS`).
+
+No `RESUMO_AVALIACAO_LLM.md`, a seção **3. ROPE Likert** mostra o valor, a origem, os avisos e a tabela da calibração
+por par de réplicas (também em `resumo_rope_calibracao.csv`).
+
+## Integração com a comparação
+
+A coluna `avaliacao` guarda o JSON do juiz (`{"nota": 1..4, "problemas": [...]}`), no mesmo formato da avaliação humana
+(`converter_label_studio_para_parquet.py`); o `realizar_avaliacoes.py` lê as duas fontes da mesma forma.
+Para o `comparar_extracoes.py` usar as notas, inclua no YAML de comparação:
+
+```yaml
+llm_as_a_judge: true
+campos_parquet:
+  avaliacao: "avaliacao"   # nome da coluna do parquet
+```
+
 ## Arquivos
 
 Em `avaliacao_llm/`, por protocolo:
@@ -87,13 +142,19 @@ Em `avaliacao_llm/`, por protocolo:
 | `saida_juiz_{p}.parquet.bkp_refazer` | Cópia da saída do juiz feita pelo `--refazer` antes de apagá-la |
 | `saida_juiz_{p}_*.log/.csv/.json/.png/.md` | Logs, tempos, tokens e resumo da execução |
 
+Gerados pelo `--resumo`: `RESUMO_AVALIACAO_LLM.md`, `resumo_avaliacoes.csv`, `resumo_rope_calibracao.csv`,
+`resumo_bayesiana_sintese.csv`, `resumo_bayesiana_pares.csv`, `resumo_bayesiana_sensibilidade_rope.csv` e os gráficos `avaliacao_llm_heatmap.png` e `avaliacao_llm_diferencas.png`.
+
 Em `saida/`, o parquet de cada protocolo ganha a coluna `avaliacao`; antes de cada gravação é criado um `.bak`.
 Para `a` e `prof`, o resultado é gravado no parquet `_teste` e sincronizado no parquet completo de origem.
 
 ## Cuidados
 
-- **Modelo juiz consistente.** Compare na análise bayesiana apenas protocolos avaliados pelo mesmo `MODELO_JUIZ`;
+- **Modelo juiz consistente.** Compare na análise bayesiana apenas protocolos avaliados pelo mesmo modelo juiz;
   o modelo usado em cada protocolo está em `avaliacao_llm/config_juiz_{p}.yaml` (campo `caminho`).
+  `oa:gpt5:m:l` e `oa:gpt5-chat:m:l` são hoje o mesmo modelo em implantações diferentes; mesmo assim, o
+  `--continuar` pergunta e a calibração da ROPE avisa quando os nomes diferem, para o pesquisador decidir.
+  Depois de continuar com modelos diferentes, o YAML registra só o modelo atual.
 - **`--refazer` sobrescreve o backup.** O `.bkp_refazer` guarda só a saída imediatamente anterior;
   um segundo `--refazer` substitui o backup do primeiro.
 - **`--reconstruir` regenera o resumo só com os protocolos informados.** Depois de reconstruir um subconjunto,

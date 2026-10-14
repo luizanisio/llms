@@ -808,23 +808,32 @@ class TesteBayesiana(unittest.TestCase):
             colunas[nome] = notas
         return pd.DataFrame(colunas)
 
-    def test_calibrar_rope_usa_divergencia_absoluta(self):
+    def test_calibrar_rope_e_menor_margem_de_equivalencia(self):
+        """ROPE = máximo, entre os pares, da menor margem de equivalência ao limiar."""
         m = self._matriz_especialistas()
         cal = ra.calibrar_rope(m, [1, 2, 3])
-        esperado = np.mean([np.mean(np.abs(m[a].to_numpy() - m[b].to_numpy()))
-                            for a, b in combinations([1, 2, 3], 2)])
-        self.assertAlmostEqual(cal["rope_notas"],
-                               max(esperado, ra.BAYES_ROPE_MINIMO), places=9)
+        esperado = max(
+            ra.bayes.Comparacao(m[a].to_numpy(), m[b].to_numpy(), rope=1.0,
+                                limiar=ra.BAYES_LIMIAR).rope_minima_equivalencia()
+            for a, b in combinations([1, 2, 3], 2))
+        self.assertAlmostEqual(cal["rope_notas"], esperado, places=9)
         self.assertEqual(cal["n_pares"], 3)
+        # com a ROPE calibrada, todos os pares saem equivalentes
+        for a, b in combinations([1, 2, 3], 2):
+            c = ra.bayes.Comparacao(m[a].to_numpy(), m[b].to_numpy(),
+                                    rope=cal["rope_notas"], limiar=ra.BAYES_LIMIAR)
+            self.assertEqual(c.classificacao, "equivalente")
 
-    def test_calibrar_rope_aplica_piso(self):
-        """Especialistas idênticos não podem degenerar a ROPE a zero."""
+    def test_calibrar_rope_sem_piso(self):
+        """Especialistas idênticos degeneram a ROPE a zero, e o uso dela é recusado."""
         notas = np.array([1, 2, 3, 4, 3, 2, 1, 4], float)
         m = pd.DataFrame({1: notas, 2: notas})
         cal = ra.calibrar_rope(m, [1, 2])
-        self.assertEqual(cal["rope_notas"], ra.BAYES_ROPE_MINIMO)
-        self.assertEqual(cal["rope_decisao"], ra.BAYES_ROPE_DECISAO_MINIMO)
-        self.assertTrue(cal["piso_aplicado"]["notas"])
+        self.assertEqual(cal["rope_notas"], 0.0)
+        self.assertEqual(cal["rope_decisao"], 0.0)
+        with self.assertRaises(SystemExit):
+            ra.exigir_rope_calibrada(cal["rope_notas"], "notas", "--bayes-rope")
+        self.assertEqual(ra.exigir_rope_calibrada(0.03, "notas", "--bayes-rope"), 0.03)
 
     def test_controle_negativo_passa_com_rope_calibrada(self):
         m = self._matriz_especialistas()
@@ -839,6 +848,37 @@ class TesteBayesiana(unittest.TestCase):
         m = self._matriz_especialistas()
         controle = ra.controle_negativo(m, [1, 2, 3], 0.001, 0.001)
         self.assertTrue((controle["Passa"] == "NÃO").any())
+
+    # ---------------------------------- margens do gate (sem valor padrão)
+    def test_gate_usa_a_calibracao(self):
+        cal = ra.calibrar_rope(self._matriz_especialistas(), [1, 2, 3])
+        rope, rope_decisao, origem = ra.resolver_ropes_gate(ra.ConfigBayes(), cal)
+        self.assertEqual((rope, rope_decisao), (cal["rope_notas"], cal["rope_decisao"]))
+        self.assertIn("calibrada", origem)
+
+    def test_gate_flag_sobrescreve_a_calibracao(self):
+        cal = ra.calibrar_rope(self._matriz_especialistas(), [1, 2, 3])
+        rope, rope_decisao, origem = ra.resolver_ropes_gate(
+            ra.ConfigBayes(rope=0.3, rope_decisao=0.2), cal)
+        self.assertEqual((rope, rope_decisao), (0.3, 0.2))
+        self.assertIn("flag", origem)
+
+    def test_gate_sem_calibracao_exige_as_flags(self):
+        """Sem 2+ especialistas não há valor padrão: as duas margens vêm das flags."""
+        with self.assertRaises(SystemExit) as ctx:
+            ra.resolver_ropes_gate(ra.ConfigBayes(), None)
+        self.assertIn("--bayes-rope e --bayes-rope-decisao", str(ctx.exception))
+        with self.assertRaises(SystemExit) as ctx:
+            ra.resolver_ropes_gate(ra.ConfigBayes(rope=0.3), None)
+        self.assertIn("--bayes-rope-decisao", str(ctx.exception))
+        self.assertEqual(ra.resolver_ropes_gate(ra.ConfigBayes(rope=0.3, rope_decisao=0.2),
+                                                None)[:2], (0.3, 0.2))
+
+    def test_panorama_sem_calibracao_nem_flag_e_omitido(self):
+        """Grupo com um só avaliador e sem --bayes-rope: a comparação entre fontes é omitida."""
+        grupo = type("Grupo", (), {"rotulos": ra.ROTULOS["humano"]})()
+        r = {"fontes": ["a", "b"], "grupo": grupo, "avaliadores": [1]}
+        self.assertEqual(ra.analise_bayesiana_grupo(r, ra.ConfigBayes()), {})
 
 
 class TesteFlagsBayes(unittest.TestCase):
