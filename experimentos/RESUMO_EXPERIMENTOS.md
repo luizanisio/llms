@@ -110,23 +110,7 @@ Recortes de `06_compara_todos.yaml` cujos protocolos diferem em fatores além do
 
 ### Treino × YAML atual (retreino pendente)
 
-15 treino(s) feitos com uma versão do YAML diferente da atual (cópia em `treinamento/treinamento_config/`). As conferências abaixo usam o YAML do treino:
-
-- **Summa/d1** (treinado com `04_treinar_d1 (v001).yaml`): `lr` 5e-6→2e-5→5e-6→5e-6 → 5e-6→2e-5→2e-5→2e-5
-- **Summa/d3** (treinado com `04_treinar_d3 (v001).yaml`): `lr` 5e-6→2e-5→5e-6 → 5e-6→2e-5→2e-5
-- **Summa/d5** (treinado com `04_treinar_d5 (v001).yaml`): `lr` 5e-6 → 5e-6→2e-5
-- **SemClinBR/d16** (treinado com `04_treinar_d16 (v001).yaml`): `warmup` 100 → 5
-- **SemClinBR/d17** (treinado com `04_treinar_d17 (v001).yaml`): `warmup` 100 → 5
-- **SemClinBR/d18** (treinado com `04_treinar_d18 (v001).yaml`): `warmup` 100 → 5
-- **SemClinBR/d19** (treinado com `04_treinar_d19 (v001).yaml`): `warmup` 100 → 5
-- **SemClinBR/d20** (treinado com `04_treinar_d20 (v001).yaml`): `warmup` 100 → 5
-- **SemClinBR/d21** (treinado com `04_treinar_d21 (v001).yaml`): `warmup` 100+100g → 5+5g
-- **SemClinBR/d22** (treinado com `04_treinar_d22 (v001).yaml`): `warmup` 100+100g → 5+5g
-- **SemClinBR/d23** (treinado com `04_treinar_d23 (v001).yaml`): `warmup` 100+100g → 5+5g
-- **SemClinBR/d24** (treinado com `04_treinar_d24 (v001).yaml`): `warmup` 100+100g → 5+5g
-- **SemClinBR/d25** (treinado com `04_treinar_d25 (v001).yaml`): `warmup` 100+100g → 5+5g
-- **Summa/d1a** (treinado com `04_treinar_d1a (v001).yaml`): `lr` 5e-6→2e-5→5e-6→5e-6 → 5e-6→2e-5→2e-5→2e-5
-- **Summa/d1b** (treinado com `04_treinar_d1b (v001).yaml`): `lr` 5e-6→2e-5→5e-6→5e-6 → 5e-6→2e-5→2e-5→2e-5
+✅ Todos os treinos usaram a versão atual do YAML.
 
 ### LR herdado da 1ª etapa
 
@@ -138,35 +122,12 @@ Recortes de `06_compara_todos.yaml` cujos protocolos diferem em fatores além do
 
 ### Warmup × tamanho real da etapa
 
-27 etapa(s) em que o warmup do treino ocupa mais de 25% dos steps reais (segundo o `train_begin` do jsonl):
+4 etapa(s) em que o warmup do treino ocupa mais de 25% dos steps reais (segundo o `train_begin` do jsonl):
 
 - **SemClinBR/d11** etapa 0 `f1-FF`: warmup 5 de 10 steps (50%)
 - **SemClinBR/d11** etapa 1 `f2`: warmup 5 de 18 steps (28%)
 - **SemClinBR/d12** etapa 0 `f1`: warmup 5 de 10 steps (50%)
 - **SemClinBR/d12** etapa 1 `f2`: warmup 5 de 18 steps (28%)
-- **SemClinBR/d16** etapa 0 `completo-1`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d16** etapa 1 `completo-2`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d16** etapa 2 `completo-3`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d16** etapa 3 `completo-4`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d17** etapa 0 `fácil`: warmup 100 de 28 steps (357%) — pico nunca atingido (máx ≈ 27% do LR)
-- **SemClinBR/d17** etapa 1 `médio`: warmup 100 de 36 steps (278%) — pico nunca atingido (máx ≈ 35% do LR)
-- **SemClinBR/d17** etapa 2 `difícil`: warmup 100 de 28 steps (357%) — pico nunca atingido (máx ≈ 27% do LR)
-- **SemClinBR/d17** etapa 3 `completo`: warmup 100 de 88 steps (114%) — pico nunca atingido (máx ≈ 87% do LR)
-- **SemClinBR/d18** etapa 0 `bloco-1`: warmup 100 de 30 steps (333%) — pico nunca atingido (máx ≈ 29% do LR)
-- **SemClinBR/d18** etapa 1 `bloco-2`: warmup 100 de 30 steps (333%) — pico nunca atingido (máx ≈ 29% do LR)
-- **SemClinBR/d18** etapa 2 `bloco-3`: warmup 100 de 30 steps (333%) — pico nunca atingido (máx ≈ 29% do LR)
-- **SemClinBR/d18** etapa 3 `completo`: warmup 100 de 88 steps (114%) — pico nunca atingido (máx ≈ 87% do LR)
-- **SemClinBR/d19** etapa 0 `fácil-uf75pct`: warmup 100 de 28 steps (357%) — pico nunca atingido (máx ≈ 27% do LR)
-- **SemClinBR/d19** etapa 1 `médio-uf50pct`: warmup 100 de 36 steps (278%) — pico nunca atingido (máx ≈ 35% do LR)
-- **SemClinBR/d19** etapa 2 `difícil-uf25pct`: warmup 100 de 28 steps (357%) — pico nunca atingido (máx ≈ 27% do LR)
-- **SemClinBR/d19** etapa 3 `completo-uf0pct`: warmup 100 de 88 steps (114%) — pico nunca atingido (máx ≈ 87% do LR)
-- **SemClinBR/d20** etapa 0 `completo-uf75pct`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d20** etapa 1 `completo-uf50pct`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d20** etapa 2 `completo-uf25pct`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d20** etapa 3 `completo-uf0pct`: warmup 100 de 44 steps (227%) — pico nunca atingido (máx ≈ 43% do LR)
-- **SemClinBR/d21** fusão: warmup global 100 de 175 steps (57%)
-- **SemClinBR/d22** fusão: warmup global 100 de 175 steps (57%)
-- **SemClinBR/d23** fusão: warmup global 100 de 175 steps (57%)
 
 ✅ Todos os parâmetros diferenciadores são **consistentes** entre experimentos.
 
