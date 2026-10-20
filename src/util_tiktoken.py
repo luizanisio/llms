@@ -255,6 +255,7 @@ if __name__ == "__main__":
         "gpt-4",
         "gpt-3.5-turbo",
         "Qwen/Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-235B-Instruct",
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
         "google/gemma-3-4b-it",
         "meta-llama/Llama-3.2-1B-Instruct",
