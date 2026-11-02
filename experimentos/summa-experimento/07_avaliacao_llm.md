@@ -12,7 +12,7 @@ recebem nota 1 direta (`{"nota": 1, "problemas": ["json_invalido"]}`).
 | Parâmetro | O que faz | Chama a API? |
 |---|---|:---:|
 | *(nenhum)* | Avalia só as instâncias com a coluna `avaliacao` vazia. Retoma de onde parou. | sim |
-| `--protocolos d1 d7 ...` | Escolhe os protocolos. Sem ele, usa a lista `PROTOCOLOS` do script. Aceita os especiais `a` (zero-shot) e `prof` (professor). | — |
+| `--protocolos d1 d7 ...` | Escolhe os protocolos. Sem ele, usa a lista `PROTOCOLOS` do script. Aceita os especiais `a` (zero-shot), `prof` (professor) e `base` (GPT5). | — |
 | `--refazer` | Descarta as avaliações existentes e reenvia **tudo** ao juiz. | sim |
 | `--continuar` | Retoma uma execução do juiz que foi interrompida, usando a entrada que ela já tinha gerado. | sim |
 | `--reconstruir` | Refaz a coluna `avaliacao` a partir de `avaliacao_llm/saida_juiz_{p}.parquet`, sem chamar o juiz. Gera também o resumo. | não |
@@ -146,7 +146,8 @@ Gerados pelo `--resumo`: `RESUMO_AVALIACAO_LLM.md`, `resumo_avaliacoes.csv`, `re
 `resumo_bayesiana_sintese.csv`, `resumo_bayesiana_pares.csv`, `resumo_bayesiana_sensibilidade_rope.csv` e os gráficos `avaliacao_llm_heatmap.png` e `avaliacao_llm_diferencas.png`.
 
 Em `saida/`, o parquet de cada protocolo ganha a coluna `avaliacao`; antes de cada gravação é criado um `.bak`.
-Para `a` e `prof`, o resultado é gravado no parquet `_teste` e sincronizado no parquet completo de origem.
+Para `a`, `prof` e `base`, o resultado é gravado no parquet `_teste` e sincronizado no parquet completo de origem
+(`base`: `saida_oa_gpt5.parquet` → `saida_oa_gpt5(base)_teste.parquet`).
 
 ## Cuidados
 

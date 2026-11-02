@@ -39,9 +39,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PASTA_SAIDA_EXTRACAO = './saida'
 PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
-PROTOCOLOS = ['prof', 'a','b', 'c', 'd1', 'd7', 'd8', 'd9', 'd10','d16','d17','d18', 'd21', 'd24']
+PROTOCOLOS = ['prof', 'base', 'a','b', 'c', 'd1', 'd2','d3','d4','d5','d6','d7', 'd8', 'd9', 'd10','d16','d17','d18', 'd21', 'd24']
 QTD_TENTATIVAS = 20
-WORKERS_YAML = 15
+WORKERS_YAML = 5
 # gpt5 e gpt5-chat são o mesmo modelo, só que estão em implementações diferentes.
 MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
 #MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
@@ -70,6 +70,12 @@ PROTOCOLOS_ESPECIAIS = {
         'arquivo_teste': 'saida_or_235b(prof)_teste.parquet',
         'rotulo': 'Qwen235B (Professor)',
         'aliases': ['prof', 'professor', 'or_235b', '235b', 'qwen235b'],
+    },
+    'base': {
+        'arquivo_origem': 'saida_oa_gpt5.parquet',
+        'arquivo_teste': 'saida_oa_gpt5(base)_teste.parquet',
+        'rotulo': 'GPT5 (Base)',
+        'aliases': ['base', 'gpt5', 'oa_gpt5'],
     },
 }
 
@@ -174,7 +180,7 @@ def normalizar_protocolo(protocolo):
 
 
 def eh_protocolo_especial(protocolo):
-    """Retorna a configuração se o protocolo for especial ('a', 'prof'), ou None."""
+    """Retorna a configuração se o protocolo for especial ('a', 'prof', 'base'), ou None."""
     p = normalizar_protocolo(protocolo)
     return PROTOCOLOS_ESPECIAIS.get(p)
 
@@ -204,6 +210,7 @@ def caminho_parquet_destino(protocolo):
 
     Para 'a': saida_qwen7b(a)_teste.parquet
     Para 'prof': saida_or_235b(prof)_teste.parquet
+    Para 'base': saida_oa_gpt5(base)_teste.parquet
     Para demais protocolos: saida_qwen7b({protocolo})_teste.parquet
     """
     p = normalizar_protocolo(protocolo)
@@ -920,7 +927,7 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 def reconstruir_protocolo(protocolo):
     """Reconstrói a coluna 'avaliacao' para um protocolo a partir do parquet do juiz já gerado.
 
-    Lê o parquet de extração (filtrando para teste se for protocolo especial 'a' ou 'prof')
+    Lê o parquet de extração (filtrando para teste se for protocolo especial 'a', 'prof' ou 'base')
     e preenche a coluna 'avaliacao':
       - Linhas presentes em saida_juiz_{protocolo}.parquet recebem a resposta do juiz (ou AVALIACAO_INVALIDA se erro).
       - Linhas ausentes em saida_juiz_{protocolo}.parquet recebem AVALIACAO_INVALIDA (eram extrações inválidas que não foram enviadas ao juiz).
