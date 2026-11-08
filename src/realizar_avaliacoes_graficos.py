@@ -64,6 +64,18 @@ COR_SECUNDARIA = "#c26a3d"
 COR_NEUTRA = "#8a8a8a"
 MAPA_CALOR = LinearSegmentedColormap.from_list("azuis", ["#f5f8fa", "#2c6e91", "#153b4f"])
 
+#: cores por avaliador (identidade), em ORDEM FIXA — atribuídas pela posição do
+#: avaliador, nunca recicladas. Validada sobre fundo branco para barras lado a lado
+#: (pares adjacentes): daltonismo ΔE ≥ 9,1 e visão normal ΔE ≥ 19,6 (OKLab ×100).
+#: Verde-água, amarelo e rosa ficam abaixo de 3:1 de contraste com o fundo; por
+#: isso os gráficos que usam esta paleta mantêm os valores escritos nas barras.
+#: Para trocar as cores, revalide a nova ordem (CVD ≥ 8 e visão normal ≥ 15).
+PALETA_AVALIADORES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+                      "#e87ba4", "#008300", "#6250d6", "#e34948"]
+#: cor da referência (ex.: avaliação humana): cinza-tinta fora da paleta, para a
+#: referência se destacar dos juízes (ΔE ≥ 20 de todas as cores da paleta)
+COR_REFERENCIA = "#52514e"
+
 FIG_DPI = 150
 
 
@@ -344,6 +356,25 @@ def graficos_validacao(v: dict, saida: str) -> list:
     return sorted(set(gerados))
 
 
+def _estilos_avaliadores(nomes: list, referencia=None) -> dict:
+    """{nome: (cor, hachura, rótulo da legenda)} de cada avaliador.
+
+    A referência recebe COR_REFERENCIA e o rótulo "(referência)"; os demais recebem
+    PALETA_AVALIADORES na ordem em que aparecem, sem reciclar cores. Acima de 8
+    avaliadores (além da referência), os excedentes repetem a cor com hachura,
+    para continuarem distinguíveis.
+    """
+    estilos, slot = {}, 0
+    for nome in nomes:
+        if nome == referencia:
+            estilos[nome] = (COR_REFERENCIA, None, f"{nome} (referência)")
+            continue
+        volta, posicao = divmod(slot, len(PALETA_AVALIADORES))
+        estilos[nome] = (PALETA_AVALIADORES[posicao], "//" if volta else None, nome)
+        slot += 1
+    return estilos
+
+
 def _distribuicao_grupos(v: dict, saida: str, gerados: list) -> None:
     """03: distribuição das notas atribuídas por cada grupo, nos itens pareados.
 
@@ -354,17 +385,19 @@ def _distribuicao_grupos(v: dict, saida: str, gerados: list) -> None:
     nomes = [n for n in longo.columns if n not in ("documento", "fonte")]
     if not nomes:
         return
-    cores = [COR_PRIMARIA, COR_SECUNDARIA, "#3f7d54", COR_NEUTRA]
+    estilos = _estilos_avaliadores(nomes, v.get("referencia"))
     largura = 0.8 / len(nomes)
 
-    fig, ax = plt.subplots(figsize=(1.7 * len(categorias) + 3.4, 4.4))
+    fig, ax = plt.subplots(figsize=(1.7 * len(categorias) + 3.4, 4.8))
     base = np.arange(len(categorias))
     for i, nome in enumerate(nomes):
         serie = longo[nome].astype(int)
         percentuais = [100 * float((serie == c).mean()) for c in categorias]
         posicoes = base + i * largura - 0.4 + largura / 2
-        ax.bar(posicoes, percentuais, width=largura * 0.9,
-               color=cores[i % len(cores)], label=nome)
+        cor, hachura, rotulo = estilos[nome]
+        # Borda branca: separa barras vizinhas e dá cor à hachura (quando houver)
+        ax.bar(posicoes, percentuais, width=largura * 0.9, color=cor,
+               hatch=hachura, edgecolor="white", linewidth=0.6, label=rotulo)
         for x, pct in zip(posicoes, percentuais):
             if pct > 0.5:
                 ax.text(x, pct + 1.0, f"{pct:.1f}".replace(".", ","),
@@ -376,7 +409,10 @@ def _distribuicao_grupos(v: dict, saida: str, gerados: list) -> None:
                 label=f"piso de adequação (≥ {PISO_ADEQUACAO})")
     ax.set_xticks(base)
     ax.set_xticklabels([f"Nota {c}" for c in categorias], fontsize=9.5)
-    ax.legend(frameon=False, fontsize=9, ncol=min(len(nomes) + 1, 4))
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.06)  # folga para os valores acima das barras
+    # Legenda abaixo do eixo: dentro dele, colide com as barras mais altas
+    ax.legend(frameon=False, fontsize=9, ncol=min(len(nomes) + 1, 4),
+              loc="upper center", bbox_to_anchor=(0.5, -0.09))
     _estilo(ax, f"Distribuição das notas por avaliador "
                 f"({len(longo)} itens pareados)", "", "% de itens")
     _salvar(fig, os.path.join(saida, "03_distribuicao_por_grupo.png"), gerados)

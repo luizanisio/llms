@@ -28,8 +28,12 @@ misc:
 # --- Modelo ---
 modelo:
   #caminho: "oa:gpt5:h:l"
-  caminho: "oa:gpt5-chat:m:l"
+  #caminho: "oa:gpt5-chat:m:l"
   #caminho: "mt:sabia-4"
+  # S5: ":m:l" = reasoning_effort medium (verbosity "l" é ignorada pela Maritaca),
+  # mesmo nível dos juízes GPT-5 (oa:gpt5:m:l). Sem o sufixo a API usa xhigh.
+  # temperature é ignorada (S5 só aceita 1) — ver aviso no log.
+  caminho: "mt:S5-free:m:l"
   #caminho: "or:nvidia/nemotron-3-ultra-550b-a55b"
   #caminho: "or:z-ai/glm-5.2"
   #caminho: "tg:zai-org/GLM-5.2"
@@ -40,7 +44,9 @@ modelo:
 # Resposta esperada: JSON compacto {"nota": int, "problemas": [...]}
 # temperature baixa para avaliação determinística/consistente
 geracao:
-  max_tokens: 8192 # tokens de raciocínio contam
+  # tokens de raciocínio contam; teto alto para não cortar o JSON (S5 gera até 64K).
+  # GPT-5 medium usou ~2.5–3.5K por item. Reduza para modelos com contexto pequeno.
+  max_tokens: 32768
   temperature: 0.01
   top_k: 2
   top_p: 0.9
@@ -62,5 +68,5 @@ entrada:
 # --- Saída ---
 # tipo_saida: json — parseia automaticamente a resposta como JSON
 saida:
-  arquivo: "./saida_gpt_03/saida_juiz_llm.parquet"
+  arquivo: "./saida_sabia5_03/saida_juiz_llm.parquet"
   tipo_saida: "json"

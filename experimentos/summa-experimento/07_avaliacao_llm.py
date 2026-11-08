@@ -5,7 +5,11 @@ Autor: Luiz Anísio
 Avaliação LLM-as-a-judge das extrações de teste: grava a nota Likert (1-4) do juiz
 na coluna 'avaliacao' do parquet de saída de cada protocolo.
 
-Documentação (parâmetros, o que usar em cada situação, arquivos e cuidados): 07_avaliacao_llm.md
+O juiz é escolhido por perfil (--juiz, ver JUIZES). O perfil padrão (gpt5) grava nos
+parquets de ./saida; perfis isolados (sabia4) gravam em cópias na própria pasta e
+nunca escrevem em ./saida nem nos artefatos de outro juiz.
+
+Documentação (parâmetros, juízes, o que usar em cada situação, arquivos e cuidados): 07_avaliacao_llm.md
 
 Exemplos:
   python 07_avaliacao_llm.py --protocolos d1 d7              # avalia o que estiver pendente
@@ -16,6 +20,9 @@ Exemplos:
   python 07_avaliacao_llm.py --resumo                        # relatório, ROPE calibrada por ROPE_PROTOCOLOS
   python 07_avaliacao_llm.py --resumo --rope-protocolos d1 d1a d1b   # calibra com outras réplicas
   python 07_avaliacao_llm.py --resumo --rope 0.15            # ROPE fixa, sem calibração
+  python 07_avaliacao_llm.py --juiz sabia4 --protocolos d1   # mesmo fluxo com o juiz sabia4 (isolado)
+  python 07_avaliacao_llm.py --juiz sabia5 --protocolos d1 d1a d1b   # mesmo fluxo com o juiz sabia4 (isolado)
+  python 07_avaliacao_llm.py --juiz sabia4 --resumo          # resumo das notas do sabia4
 '''
 
 import os
@@ -38,13 +45,115 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PASTA_SAIDA_EXTRACAO = './saida'
-PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
 PROTOCOLOS = ['base', 'prof', 'a','b', 'c', 'd1', 'd2','d3','d4','d5','d6','d7', 'd8', 'd9', 'd10','d11','d12','d13','d14','d15','d16','d17','d18','d19','d20', 'd21','d22', 'd23','d24','d25']
-QTD_TENTATIVAS = 20
-WORKERS_YAML = 5
-# gpt5 e gpt5-chat são o mesmo modelo, só que estão em implementações diferentes.
-#MODELO_JUIZ = 'oa:gpt5-chat:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
-MODELO_JUIZ = 'oa:gpt5:m:l' # h> 20000 | m>800 | l> 400 || sabia-4 aprox. R$ 85 por protocolo
+
+# ---------------------------------------------------------------------------
+# Perfis de juiz (--juiz)
+# ---------------------------------------------------------------------------
+# Cada perfil amarra o modelo juiz à pasta dos artefatos dele, para que notas de
+# juízes diferentes nunca se misturem. Para incluir um juiz, acrescente um perfil
+# aqui: o restante do script lê apenas as variáveis definidas por aplicar_juiz().
+#
+#   modelo                 modelo.caminho passado ao util_vllm_batch.py
+#   pasta                  artefatos do juiz: entrada/saida/config_juiz_{p}, logs e RESUMO
+#   isolado                False → grava a coluna 'avaliacao' nos parquets de PASTA_SAIDA_EXTRACAO
+#                                  e sincroniza o parquet completo dos protocolos especiais;
+#                          True  → grava em cópias desses parquets em <pasta>/saida/ (mesmo nome
+#                                  de arquivo, mesma coluna 'avaliacao'); PASTA_SAIDA_EXTRACAO e
+#                                  os parquets completos são apenas lidos
+#   workers                batch_size do YAML (requisições simultâneas ao provedor)
+#   tentativas             tentativas por instância no util_vllm_batch.py
+#   tokens_saida_estimado  tokens de saída por instância; usado só pelo --tokens
+#   protocolos             lista usada sem --protocolos (None → PROTOCOLOS)
+#
+# A coluna se chama 'avaliacao' em todos os perfis: o juiz é identificado pela pasta,
+# não pelo nome da coluna. Assim comparar_extracoes.py e realizar_avaliacoes.py leem
+# qualquer juiz com o mesmo campos_parquet.avaliacao: "avaliacao".
+JUIZES = {
+    # Juiz principal. gpt5 e gpt5-chat são o mesmo modelo, em implementações diferentes
+    # (alternativa: 'oa:gpt5-chat:m:l').
+    'gpt5': {
+        'modelo': 'oa:gpt5:m:l',
+        'pasta': './avaliacao_llm',
+        'isolado': False,
+        'workers': 5,
+        'tentativas': 20,
+        'tokens_saida_estimado': 800,   # reasoning: high ~2000 | medium ~800 | low ~400
+        'protocolos': None,
+    },
+    # Segundo juiz, já comparado aos avaliadores humanos em avaliacao_llm_humana/saida_sabia_0*
+    # com 'mt:sabia-4'. O sufixo ':flex' ('mt:sabia-4:flex') muda só o service tier
+    # (mais barato e mais lento), não o modelo. Custo aproximado: R$ 85 por protocolo.
+    'sabia4': {
+        'modelo': 'mt:sabia-4',
+        'pasta': './avaliacao_llm/sabia4',
+        'isolado': True,
+        'workers': 5,
+        'tentativas': 20,
+        'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
+        'protocolos': None,
+    },
+    # Terceiro juiz, já comparado aos avaliadores humanos em avaliacao_llm_humana/saida_sabia5_0*
+    # com 'mt:sabia-5'.
+    'sabia5': {
+        'modelo': 'mt:S5-free:m:l',
+        'pasta': './avaliacao_llm/sabia5',
+        'isolado': True,
+        'workers': 5,
+        'tentativas': 20,
+        'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
+        'protocolos': None,
+    },
+    'sabia5p': {
+        'modelo': 'mt:S5:m:l',
+        'pasta': './avaliacao_llm/sabia5',
+        'isolado': True,
+        'workers': 5,
+        'tentativas': 20,
+        'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
+        'protocolos': None,
+    },
+}
+JUIZ_PADRAO = 'gpt5'
+
+# Variáveis do juiz ativo: definidas SOMENTE por aplicar_juiz() (no import, com o
+# JUIZ_PADRAO, e no main(), com o --juiz). As funções leem estas variáveis.
+JUIZ = None                                 # nome do perfil ativo
+MODELO_JUIZ = None                          # modelo.caminho do YAML
+PASTA_SAIDA_AVALIACAO = None                # pasta dos artefatos do juiz
+PASTA_DESTINO_AVALIACAO = None              # juiz isolado: <pasta>/saida; None = PASTA_SAIDA_EXTRACAO
+WORKERS_YAML = None
+QTD_TENTATIVAS = None
+TOKENS_SAIDA_ESTIMADO_POR_INSTANCIA = None
+
+
+def aplicar_juiz(nome):
+    """Ativa o perfil de juiz `nome` de JUIZES, redefinindo as variáveis do juiz ativo."""
+    global JUIZ, MODELO_JUIZ, PASTA_SAIDA_AVALIACAO, PASTA_DESTINO_AVALIACAO
+    global WORKERS_YAML, QTD_TENTATIVAS, TOKENS_SAIDA_ESTIMADO_POR_INSTANCIA
+    perfil = JUIZES[nome]
+    JUIZ = nome
+    MODELO_JUIZ = perfil['modelo']
+    PASTA_SAIDA_AVALIACAO = perfil['pasta']
+    PASTA_DESTINO_AVALIACAO = os.path.join(perfil['pasta'], 'saida') if perfil['isolado'] else None
+    WORKERS_YAML = perfil['workers']
+    QTD_TENTATIVAS = perfil['tentativas']
+    TOKENS_SAIDA_ESTIMADO_POR_INSTANCIA = perfil['tokens_saida_estimado']
+
+
+def _cli_juiz():
+    """Trecho ' --juiz <nome>' para os comandos sugeridos nas mensagens ('' no juiz padrão)."""
+    return '' if JUIZ == JUIZ_PADRAO else f' --juiz {JUIZ}'
+
+
+def _imprimir_juiz():
+    """Linhas do cabeçalho dos modos interativos: perfil, modelo e onde as notas são gravadas."""
+    destino = PASTA_DESTINO_AVALIACAO or PASTA_SAIDA_EXTRACAO
+    print(f"  Juiz:           {JUIZ} ({MODELO_JUIZ})")
+    print(f"  Artefatos:      {PASTA_SAIDA_AVALIACAO}  |  notas gravadas em {destino}")
+
+
+aplicar_juiz(JUIZ_PADRAO)
 
 # Caminhos derivados
 ARQUIVO_INTEGRAS = os.path.join(SCRIPT_DIR, 'dados', 'integras_experimento_summa_novos.parquet')
@@ -88,10 +197,7 @@ AVALIACAO_INVALIDA = json.dumps(
     {"nota": 1, "problemas": ["json_invalido"]}, ensure_ascii=False
 )
 
-# Estimativa de tokens de saída por instância (reasoning medium + resposta JSON)
-# A resposta JSON é ~50 tokens, mas reasoning_tokens pode ser significativo.
-# high ~2000, medium ~800, low ~400 tokens/instância.
-TOKENS_SAIDA_ESTIMADO_POR_INSTANCIA = 800
+# Teto de tokens de saída por instância (o estimado vem do perfil do juiz: tokens_saida_estimado)
 MAX_TOKENS_SAIDA = 8192
 
 # ROPE da análise bayesiana Likert (margem de equivalência prática sobre as notas 1-4).
@@ -185,48 +291,67 @@ def eh_protocolo_especial(protocolo):
     return PROTOCOLOS_ESPECIAIS.get(p)
 
 
+def _caminho_extracao(nome_arquivo):
+    """Caminho absoluto de um arquivo em PASTA_SAIDA_EXTRACAO."""
+    return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, nome_arquivo))
+
+
+def _nome_parquet_teste(protocolo):
+    """Nome do parquet de teste do protocolo (o mesmo em ./saida e na cópia do juiz isolado)."""
+    cfg = eh_protocolo_especial(protocolo)
+    return cfg['arquivo_teste'] if cfg else PADRAO_PARQUET.format(protocolo=protocolo)
+
+
 def caminho_parquet_leitura(protocolo):
     """Retorna o caminho do parquet para leitura do protocolo.
 
-    Para protocolos especiais:
-      1. Se o arquivo _teste já existir, prioriza ele (permite retomada).
-      2. Senão, retorna o arquivo completo de origem (para filtrar).
-    Para protocolos normais:
-      Retorna saida_qwen7b({protocolo})_teste.parquet.
+    1. Se o parquet de destino do juiz ativo já existir, prioriza ele (permite retomada).
+       No juiz padrão é o próprio _teste de PASTA_SAIDA_EXTRACAO; no juiz isolado é a cópia
+       em PASTA_DESTINO_AVALIACAO.
+    2. Senão, lê de PASTA_SAIDA_EXTRACAO:
+       - protocolos especiais: o _teste, se existir; senão o completo de origem (para filtrar);
+       - protocolos normais: saida_qwen7b({protocolo})_teste.parquet.
+    Quando a leitura não é o destino de um juiz isolado, carregar_dataframe_protocolo()
+    descarta a coluna 'avaliacao' herdada (pertence a outro juiz).
     """
     p = normalizar_protocolo(protocolo)
+    destino = caminho_parquet_destino(p)
+    if os.path.isfile(destino):
+        return destino
     cfg = eh_protocolo_especial(p)
     if cfg:
-        caminho_teste = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_teste']))
+        caminho_teste = _caminho_extracao(cfg['arquivo_teste'])
         if os.path.isfile(caminho_teste):
             return caminho_teste
-        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_origem']))
-    nome = PADRAO_PARQUET.format(protocolo=protocolo)
-    return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, nome))
+        return _caminho_extracao(cfg['arquivo_origem'])
+    return _caminho_extracao(_nome_parquet_teste(p))
 
 
 def caminho_parquet_destino(protocolo):
     """Retorna o caminho do parquet onde a avaliação deste protocolo deve ser salva.
 
-    Para 'a': saida_qwen7b(a)_teste.parquet
-    Para 'prof': saida_or_235b(prof)_teste.parquet
-    Para 'base': saida_oa_gpt5(base)_teste.parquet
-    Para demais protocolos: saida_qwen7b({protocolo})_teste.parquet
+    Nome do arquivo (o mesmo para todos os juízes):
+      'a': saida_qwen7b(a)_teste.parquet | 'prof': saida_or_235b(prof)_teste.parquet
+      'base': saida_oa_gpt5(base)_teste.parquet | demais: saida_qwen7b({protocolo})_teste.parquet
+    Pasta: PASTA_SAIDA_EXTRACAO no juiz padrão; PASTA_DESTINO_AVALIACAO no juiz isolado.
     """
-    p = normalizar_protocolo(protocolo)
-    cfg = eh_protocolo_especial(p)
-    if cfg:
-        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_teste']))
-    nome = PADRAO_PARQUET.format(protocolo=protocolo)
-    return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, nome))
+    nome = _nome_parquet_teste(normalizar_protocolo(protocolo))
+    if PASTA_DESTINO_AVALIACAO:
+        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_DESTINO_AVALIACAO, nome))
+    return _caminho_extracao(nome)
 
 
 def caminho_parquet_origem(protocolo):
-    """Retorna o caminho do arquivo completo de origem se for especial, ou None."""
-    p = normalizar_protocolo(protocolo)
-    cfg = eh_protocolo_especial(p)
+    """Retorna o arquivo completo de origem a sincronizar (protocolo especial), ou None.
+
+    Juiz isolado retorna None: não escreve fora da própria pasta, então o parquet
+    completo (22k) não recebe as notas dele.
+    """
+    if PASTA_DESTINO_AVALIACAO:
+        return None
+    cfg = eh_protocolo_especial(normalizar_protocolo(protocolo))
     if cfg:
-        return os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_EXTRACAO, cfg['arquivo_origem']))
+        return _caminho_extracao(cfg['arquivo_origem'])
     return None
 
 
@@ -285,6 +410,10 @@ def obter_chaves_teste():
 def carregar_dataframe_protocolo(protocolo):
     """Carrega o DataFrame do protocolo, aplicando o filtro de teste se necessário.
 
+    Todos os modos (avaliar, --tokens, --continuar, --reconstruir, --resumo e a
+    validação das réplicas da ROPE) leem por aqui, então a coluna 'avaliacao'
+    devolvida é sempre a do juiz ativo.
+
     Retorna (df, caminho_leitura, caminho_destino, foi_filtrado).
     """
     p = normalizar_protocolo(protocolo)
@@ -296,6 +425,12 @@ def carregar_dataframe_protocolo(protocolo):
 
     df = pd.read_parquet(caminho_leitura)
     foi_filtrado = False
+
+    # Juiz isolado ainda sem cópia própria: a leitura veio de PASTA_SAIDA_EXTRACAO e a
+    # coluna 'avaliacao' herdada é de outro juiz. Sem descartá-la, essas notas contariam
+    # como "já avaliadas" e seriam gravadas na cópia como se fossem deste juiz.
+    if PASTA_DESTINO_AVALIACAO and caminho_leitura != caminho_destino and 'avaliacao' in df.columns:
+        df = df.drop(columns=['avaliacao'])
 
     # Se for protocolo especial e estiver lendo o arquivo completo (> 5000 linhas)
     cfg = eh_protocolo_especial(p)
@@ -310,7 +445,10 @@ def carregar_dataframe_protocolo(protocolo):
 
 
 def sincronizar_parquet_origem(protocolo, df_avaliado):
-    """Se for protocolo especial, sincroniza a coluna 'avaliacao' de volta no parquet completo original."""
+    """Se for protocolo especial, sincroniza a coluna 'avaliacao' de volta no parquet completo original.
+
+    Não faz nada no juiz isolado (caminho_parquet_origem() retorna None).
+    """
     caminho_orig = caminho_parquet_origem(protocolo)
     caminho_dest = caminho_parquet_destino(protocolo)
     if not caminho_orig or not os.path.isfile(caminho_orig) or caminho_orig == caminho_dest:
@@ -383,8 +521,18 @@ def backup_parquet(caminho):
         logging.info(f"  Backup: {os.path.basename(bak)}")
 
 
+def gravar_parquet_destino(df, caminho_destino):
+    """Grava o parquet de destino do juiz ativo, com backup .bak do anterior.
+
+    Cria a pasta quando necessário (a cópia do juiz isolado é criada na primeira gravação).
+    """
+    os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+    backup_parquet(caminho_destino)
+    df.to_parquet(caminho_destino, index=False)
+
+
 def arquivos_juiz(protocolo):
-    """Caminhos dos artefatos do juiz (pasta de avaliação) para o protocolo."""
+    """Caminhos dos artefatos do juiz ativo (PASTA_SAIDA_AVALIACAO do perfil) para o protocolo."""
     pasta = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO))
     return {
         'pasta': pasta,
@@ -509,7 +657,7 @@ def gerar_yaml(protocolo, arquivo_entrada, arquivo_saida):
     """Gera o conteúdo YAML para chamar o util_vllm_batch.py como juiz."""
     pasta_base = os.path.abspath(os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO))
     return f"""\
-# Gerado automaticamente por 07_avaliacao_llm.py — protocolo {protocolo}
+# Gerado automaticamente por 07_avaliacao_llm.py — juiz {JUIZ}, protocolo {protocolo}
 
 misc:
   pastas_base:
@@ -686,7 +834,7 @@ def estimar_tokens_protocolos(protocolos, integras_idx, template, refazer):
         return f"{n:,.0f}".replace(',', '.')
 
     print(f"\n{'='*90}")
-    print(f"  Estimativa de tokens (heurística: ~4 chars/token)")
+    print(f"  Estimativa de tokens — juiz {JUIZ} ({MODELO_JUIZ}) (heurística: ~4 chars/token)")
     print(f"{'='*90}")
     print(f"  {'Proto':>6}  {'Inst':>6}  {'Inv':>5}  "
           f"{'Entrada Total':>15}  {'Média':>8}  {'Min':>8}  {'Max':>8}  "
@@ -804,9 +952,10 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 
     if not entradas_juiz:
         logging.info("  → Nenhuma instância para enviar ao juiz.")
-        if avaliacoes_diretas or foi_filtrado:
-            backup_parquet(caminho_destino)
-            df.to_parquet(caminho_destino, index=False)
+        # Grava também quando o destino ainda não existe (leitura ≠ destino): primeiro
+        # _teste filtrado de um protocolo especial ou primeira cópia do juiz isolado.
+        if avaliacoes_diretas or foi_filtrado or caminho_leitura != caminho_destino:
+            gravar_parquet_destino(df, caminho_destino)
             logging.info(f"  ✓ Parquet atualizado: {os.path.basename(caminho_destino)}")
             sincronizar_parquet_origem(protocolo, df)
         return True
@@ -909,9 +1058,8 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
 
     logging.info(f"  → Avaliações: {avaliacoes_ok} OK, {avaliacoes_erro_juiz} com erro do juiz")
 
-    # ----- Salvar parquet atualizado no destino de teste -----
-    backup_parquet(caminho_destino)
-    df.to_parquet(caminho_destino, index=False)
+    # ----- Salvar parquet atualizado no destino do juiz ativo -----
+    gravar_parquet_destino(df, caminho_destino)
     logging.info(f"  ✓ Parquet de teste salvo: {os.path.basename(caminho_destino)} ({len(df)} linhas)")
 
     # ----- Sincronizar com arquivo original se for protocolo especial -----
@@ -975,8 +1123,7 @@ def reconstruir_protocolo(protocolo):
     logging.info(f"  → Total de instâncias no parquet: {len(df)}")
 
     # Salvar com backup
-    backup_parquet(caminho_destino)
-    df.to_parquet(caminho_destino, index=False)
+    gravar_parquet_destino(df, caminho_destino)
     logging.info(f"  ✓ Parquet salvo: {os.path.basename(caminho_destino)} ({len(df)} linhas)")
 
     # Sincronizar com arquivo original se for protocolo especial
@@ -988,7 +1135,7 @@ def reconstruir_protocolo(protocolo):
 def reconstruir_avaliacoes(protocolos):
     """Reconstrói a coluna avaliacao para uma lista de protocolos."""
     print(f"\n{'='*70}")
-    print(f"  Reconstrução da coluna 'avaliacao' a partir de avaliacao_llm")
+    print(f"  Reconstrução da coluna 'avaliacao' a partir de {PASTA_SAIDA_AVALIACAO} (juiz {JUIZ})")
     print(f"{'='*70}")
     print(f"  Protocolos: {protocolos}\n")
 
@@ -1029,7 +1176,8 @@ def validar_continuacao(protocolo, df, integras_idx, template):
       - os prompts da entrada são idênticos aos montados agora (mesma extração,
         íntegra e template do juiz).
     Modelo juiz do YAML diferente do MODELO_JUIZ atual não impede: fica em
-    'modelo_anterior' para o pesquisador decidir.
+    'modelo_anterior' para o pesquisador decidir. Como cada perfil tem a própria
+    pasta, isso só ocorre se o 'modelo' do perfil for alterado entre execuções.
 
     Returns:
         dict com contagens, 'sem_execucao' (não há entrada_juiz_{p}.parquet),
@@ -1160,8 +1308,7 @@ def continuar_protocolo(protocolo, integras_idx, template):
         logging.warning(f"  ⚠️  {contagem['sem_resposta']} chaves da entrada sem resposta do juiz "
                         f"ficaram pendentes — rode --continuar novamente")
 
-    backup_parquet(caminho_destino)
-    df.to_parquet(caminho_destino, index=False)
+    gravar_parquet_destino(df, caminho_destino)
     logging.info(f"  ✓ Parquet salvo: {os.path.basename(caminho_destino)} ({len(df)} linhas)")
     sincronizar_parquet_origem(protocolo, df)
     return True
@@ -1172,7 +1319,7 @@ def continuar_avaliacoes(protocolos, integras_idx, template):
     print(f"\n{'='*70}")
     print(f"  Continuação da avaliação LLM-as-a-judge")
     print(f"{'='*70}")
-    print(f"  Modelo juiz:    {MODELO_JUIZ}")
+    _imprimir_juiz()
     print(f"  Protocolos:     {protocolos}")
     print(f"{'='*70}\n")
 
@@ -1242,7 +1389,7 @@ def continuar_avaliacoes(protocolos, integras_idx, template):
 
     print(f"\n{'='*70}")
     print(f"  ✓ Continuação concluída para {len(a_continuar)} protocolo(s).")
-    print(f"  Para atualizar o resumo: python 07_avaliacao_llm.py --resumo")
+    print(f"  Para atualizar o resumo: python 07_avaliacao_llm.py{_cli_juiz()} --resumo")
     print(f"{'='*70}")
 
 
@@ -1384,7 +1531,7 @@ def validar_replicas_rope(replicas):
             continue
         info = _analisar_notas_protocolo(p, df)
         if info is None:
-            problemas.append(f"{p}: não avaliado (sem coluna 'avaliacao')")
+            problemas.append(f"{p}: não avaliado pelo juiz {JUIZ} (sem coluna 'avaliacao')")
             continue
         if info['pendentes'] > 0:
             problemas.append(f"{p}: {info['pendentes']} de {info['total']} instâncias sem avaliação")
@@ -1564,7 +1711,7 @@ def gerar_resumo_avaliacao(protocolos, rope_info):
     dados_chave_nota = {}  # {proto: {chave: nota}} para pareamento
 
     print(f"\n{'='*70}")
-    print(f"  Gerando resumo de avaliações")
+    print(f"  Gerando resumo de avaliações — juiz {JUIZ} ({MODELO_JUIZ})")
     print(f"{'='*70}\n")
 
     for proto in protocolos:
@@ -1575,7 +1722,7 @@ def gerar_resumo_avaliacao(protocolos, rope_info):
 
         info = _analisar_notas_protocolo(proto, df)
         if info is None:
-            print(f"  ✗ {proto:>5}: sem coluna 'avaliacao'")
+            print(f"  ✗ {proto:>5}: sem avaliação do juiz {JUIZ} (sem coluna 'avaliacao')")
             continue
 
         dados_protocolos.append(info)
@@ -1599,6 +1746,8 @@ def gerar_resumo_avaliacao(protocolos, rope_info):
     md = []
     md.append('# Avaliação LLM-as-a-Judge — Resumo\n')
     md.append(f'> Gerado em: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  ')
+    md.append(f'> Juiz: {JUIZ} ({MODELO_JUIZ}) — notas lidas de '
+              f'`{PASTA_DESTINO_AVALIACAO or PASTA_SAIDA_EXTRACAO}`  ')
     if rope is None:
         md.append('> ROPE Likert: não definida (sem análise bayesiana)  \n')
     else:
@@ -1771,7 +1920,7 @@ def gerar_resumo_avaliacao(protocolos, rope_info):
                     matplotlib.use('Agg')  # backend não-interativo
                     heatmap_path = os.path.join(pasta, 'avaliacao_llm_heatmap.png')
                     heatmap(matriz, arquivo_saida=heatmap_path,
-                            titulo='Avaliação LLM — Heatmap Bayesiano')
+                            titulo=f'Avaliação LLM ({JUIZ}) — Heatmap Bayesiano')
                     md.append('### 4.4 Heatmap\n')
                     md.append(f'![Heatmap bayesiano](avaliacao_llm_heatmap.png)\n')
                     print(f"  ✓ Heatmap salvo: avaliacao_llm_heatmap.png")
@@ -1782,7 +1931,7 @@ def gerar_resumo_avaliacao(protocolos, rope_info):
                 try:
                     forest_path = os.path.join(pasta, 'avaliacao_llm_diferencas.png')
                     grafico_diferencas(matriz, arquivo_saida=forest_path,
-                                       titulo='Avaliação LLM — Medindo as Diferenças')
+                                       titulo=f'Avaliação LLM ({JUIZ}) — Medindo as Diferenças')
                     md.append('### 4.5 Medindo as Diferenças (Forest Plot)\n')
                     md.append(f'![Forest plot bayesiano](avaliacao_llm_diferencas.png)\n')
                     print(f"  ✓ Forest plot salvo: avaliacao_llm_diferencas.png")
@@ -1849,8 +1998,13 @@ def main():
         help='Retoma a execução interrompida do juiz (entrada_juiz já gerada) e aplica o resultado'
     )
     parser.add_argument(
+        '--juiz', choices=list(JUIZES), default=JUIZ_PADRAO,
+        help=f'Perfil do juiz (JUIZES). Padrão: {JUIZ_PADRAO}. Perfis isolados gravam só na '
+             f'própria pasta (ex: sabia4 → {JUIZES["sabia4"]["pasta"]})'
+    )
+    parser.add_argument(
         '--protocolos', nargs='+', default=None,
-        help=f'Protocolos a processar (padrão: {PROTOCOLOS})'
+        help=f'Protocolos a processar (padrão: "protocolos" do perfil do juiz ou PROTOCOLOS = {PROTOCOLOS})'
     )
     parser.add_argument(
         '--tokens', action='store_true',
@@ -1862,7 +2016,8 @@ def main():
     )
     modo.add_argument(
         '--reconstruir', action='store_true',
-        help='Reconstrói a coluna avaliacao na pasta saida a partir de avaliacao_llm (sem chamar API do juiz)'
+        help='Reconstrói a coluna avaliacao do parquet de destino a partir da saída do juiz '
+             'na pasta do perfil (sem chamar a API do juiz)'
     )
     parser.add_argument(
         '--rope', type=float, default=None,
@@ -1876,7 +2031,10 @@ def main():
     if args.rope is not None and args.rope <= 0:
         parser.error('--rope deve ser > 0')
 
-    protocolos_raw = args.protocolos if args.protocolos else PROTOCOLOS
+    # Ativa o perfil antes de qualquer leitura: caminhos, modelo e workers vêm dele
+    aplicar_juiz(args.juiz)
+
+    protocolos_raw = args.protocolos or JUIZES[JUIZ]['protocolos'] or PROTOCOLOS
     protocolos = [normalizar_protocolo(p) for p in protocolos_raw]
     protocolos = list(dict.fromkeys(protocolos))
 
@@ -1936,7 +2094,7 @@ def main():
     print(f"\n{'='*70}")
     print(f"  Avaliação LLM-as-a-judge")
     print(f"{'='*70}")
-    print(f"  Modelo juiz:    {MODELO_JUIZ}")
+    _imprimir_juiz()
     print(f"  Workers:        {WORKERS_YAML}")
     print(f"  Tentativas:     {QTD_TENTATIVAS}")
     print(f"  Refazer:        {'Sim' if args.refazer else 'Não'}")
@@ -1988,7 +2146,7 @@ def main():
         print(f"\n  ⚠️  Execução anterior incompleta em {protocolos_incompletos}: "
               f"prosseguir sem --continuar {'descarta' if args.refazer else 'substitui'} "
               f"a entrada do juiz desses protocolos.")
-        print(f"      Para retomar: python 07_avaliacao_llm.py --continuar "
+        print(f"      Para retomar: python 07_avaliacao_llm.py{_cli_juiz()} --continuar "
               f"--protocolos {' '.join(protocolos_incompletos)}")
 
     if total_enviar == 0 and total_invalidos == 0:
