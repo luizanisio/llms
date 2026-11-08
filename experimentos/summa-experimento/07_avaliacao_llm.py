@@ -39,7 +39,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 PASTA_SAIDA_EXTRACAO = './saida'
 PASTA_SAIDA_AVALIACAO = './avaliacao_llm'
-PROTOCOLOS = ['prof', 'base', 'a','b', 'c', 'd1', 'd2','d3','d4','d5','d6','d7', 'd8', 'd9', 'd10','d11','d12','d13','d14','d15','d16','d17','d18','d19','d20', 'd21','d22', 'd23','d24','d25']
+PROTOCOLOS = ['base', 'prof', 'a','b', 'c', 'd1', 'd2','d3','d4','d5','d6','d7', 'd8', 'd9', 'd10','d11','d12','d13','d14','d15','d16','d17','d18','d19','d20', 'd21','d22', 'd23','d24','d25']
 QTD_TENTATIVAS = 20
 WORKERS_YAML = 5
 # gpt5 e gpt5-chat são o mesmo modelo, só que estão em implementações diferentes.
