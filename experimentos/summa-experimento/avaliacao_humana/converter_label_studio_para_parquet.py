@@ -24,10 +24,14 @@ Uso:
   # Especificar pasta de saída (padrão: ../avaliacao_llm_humana):
   python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana avaliador1.json avaliador2.json avaliador3.json
 
+  python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana tarefas_treino_preenchido.json --prefixo saida_teste
+  python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana tarefas_avaliacao_label_studio_av1_ineditos.json --prefixo saida_humana
+
   # Validar arquivo de teste/treino:
   python converter_label_studio_para_parquet.py tarefas_treino_preenchido.json --prefixo saida_teste --valida-apenas
 
-  python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana tarefas_treino_preenchido.json --prefixo saida_teste
+  
+  
 """
 
 import os
