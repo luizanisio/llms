@@ -30,7 +30,8 @@ LOCK_ARQUIVO_BRUTO = Lock()
   Sempre retorna um json com "resposta" ou com "erro" e "tempo" de processamento
   Prefixo dos modelos para cada API:
   - oa: openai - exemplo oa:openai/gpt-oss-20b
-  - mt: maritaca - exemplo mt:sabia-4
+  - mt: maritaca - exemplo mt:sabia-4 ou mt:S5-free
+        (família S5: temperature é ignorada — a API só aceita o padrão 1; raciocínio via think)
   - or: openrouter - exemplo or:gemma3-12b
   - tg: together.ai - exemplo tg:gemma3-12b
   - vl: vllm - exemplo vl:gemma3-12b
@@ -244,14 +245,32 @@ class UtilOpenAI:
     __URL__ = None
     __ENV_KEY__ = "PESSOAL_OPENAI_API_KEY"
     __HAS_THINK__ = True
+
+    @classmethod
+    def _ajustar_args(cls, args: dict, modelo: str, think: str = None, max_tokens: int = None,
+                      silencioso: bool = False) -> dict:
+        ''' Ajusta os argumentos da chamada às particularidades do modelo/provedor.
+            Subclasses (ex.: UtilMaritaca) sobrescrevem para aplicar regras próprias.
+            Retorna o dict de argumentos (pode ser um novo dict).
+        '''
+        if think and cls.__HAS_THINK__:
+            _reasoning, _verbosity = UtilOpenRouter._mapear_reasoning(think)
+            # gpt-5 com reasoning rejeita parâmetros de amostragem e max_tokens (usa max_completion_tokens)
+            if 'gpt-5' in modelo.lower():
+                args = {k: v for k, v in args.items() if k not in {'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'}}
+            args['reasoning_effort'] = _reasoning
+            if isinstance(max_tokens, int): args['max_completion_tokens'] = max_tokens
+        return args
+
     @classmethod
     def chat_completion_padronizado(cls, messages: list, modelo: str, temperature: float = 0.01,
                                     max_tokens: int = None, as_json: bool = True, raw: bool = False,
                                     timeout: int = 300, think: str = None, api_key: str = None,
                                     silencioso: bool = False, max_retry: int = 5, tempo_inicio: float = None):
+        # tempo precisa existir antes do retorno de erro de chave abaixo
+        tempo = tempo_inicio or time()
         api_key = api_key or os.getenv(cls.__ENV_KEY__)
         if not api_key: return {'erro': f'{cls.__ENV_KEY__} não encontrada no ambiente', 'model': modelo, 'tempo': round(time() - tempo, 3)}
-        tempo = tempo_inicio or time()
 
         if cls.__URL__ is None:
             client_gpt = OpenAI(api_key=api_key, timeout=timeout)
@@ -265,13 +284,9 @@ class UtilOpenAI:
         if _extra_body is not None: args['extra_body'] = _extra_body
 
         if isinstance(max_tokens, int): args['max_tokens'] = max_tokens
-        
-        if think and cls.__HAS_THINK__:
-            _reasoning, _verbosity = UtilOpenRouter._mapear_reasoning(think)
-            if 'gpt-5' in modelo.lower():
-                args = {k: v for k, v in args.items() if k not in {'temperature', 'max_tokens', 'top_p', 'frequency_penalty', 'presence_penalty'}}
-            args['reasoning_effort'] = _reasoning
-            if isinstance(max_tokens, int): args['max_completion_tokens'] = max_tokens
+
+        # Regras específicas por modelo (reasoning, parâmetros não suportados etc.)
+        args = cls._ajustar_args(args, modelo=_modelo, think=think, max_tokens=max_tokens, silencioso=silencioso)
         if as_json: args['response_format'] = {"type": "json_object"}
 
         try:
@@ -308,15 +323,78 @@ class UtilOpenAI:
             'cached_tokens': prompt_det.get('cached_tokens', 0),
             'reasoning_tokens': comp_det.get('reasoning_tokens', 0),
             'finished_reason': choices[0].get('finish_reason', 'unknown'),
-            'temperature': temperature
+            # valor efetivamente enviado (None = parâmetro omitido, provedor usou o padrão dele)
+            'temperature': args.get('temperature')
         }
         return UtilResponse.montar_resultado(conteudo, usage, res_dict.get('model', modelo), time() - tempo, as_json, res_dict)
 
 class UtilMaritaca(UtilOpenAI):
     __URL__ = 'https://chat.maritaca.ai/api'
     __ENV_KEY__ = 'PESSOAL_MARITACA_API_KEY'
+    # Sabiá 4 não aceita reasoning_effort; a família S5 é tratada à parte em _ajustar_args
     __HAS_THINK__ = False
-    
+
+    # Avisos já exibidos no processo (chamadas em threads → lock)
+    _AVISOS_EMITIDOS = set()
+    _LOCK_AVISOS = Lock()
+
+    @classmethod
+    def _eh_familia_s5(cls, modelo: str) -> bool:
+        ''' S5, S5-free, S5-br-sp, S5-nano: modelos de raciocínio nativo.
+            Ref: https://docs.maritaca.ai/pt/modelos
+        '''
+        return bool(modelo) and modelo.strip().lower().startswith('s5')
+
+    @classmethod
+    def _mapear_reasoning_s5(cls, think: str) -> str:
+        ''' Converte think para reasoning_effort da família S5.
+            Maritaca aceita none, minimal/low, medium, high/xhigh/max (minimal→low; high/max→xhigh).
+            _mapear_reasoning (padrão OpenAI) não conhece "none" nem "xhigh" e os trocaria por "low",
+            por isso esses valores são tratados antes.
+        '''
+        _nivel = think.split(':', 1)[0].strip().lower()
+        if _nivel in {'none', 'nenhum', 'off'}:
+            return 'none'
+        if _nivel in {'xhigh', 'max'}:
+            return 'xhigh'
+        return UtilOpenRouter._mapear_reasoning(think)[0]
+
+    @classmethod
+    def avisos_parametros(cls, modelo: str, temperature=None, think: str = None) -> list:
+        ''' Lista os parâmetros que serão ignorados/assumidos pela API para o modelo.
+            Usado em _ajustar_args e por chamadores que querem registrar no próprio log
+            (ex.: util_vllm_batch via avisos_parametros_api).
+        '''
+        if not cls._eh_familia_s5(modelo):
+            return []
+        avisos = []
+        if temperature is not None and temperature != 1:
+            avisos.append(f'Maritaca {modelo}: temperature={temperature} ignorada — a família S5 só aceita o padrão (1); o parâmetro não é enviado.')
+        if not think:
+            avisos.append(f'Maritaca {modelo}: think não definido — a API usará reasoning_effort padrão (xhigh); tokens de raciocínio contam em max_tokens.')
+        return avisos
+
+    @classmethod
+    def _ajustar_args(cls, args: dict, modelo: str, think: str = None, max_tokens: int = None,
+                      silencioso: bool = False) -> dict:
+        if not cls._eh_familia_s5(modelo):
+            return super()._ajustar_args(args, modelo=modelo, think=think, max_tokens=max_tokens, silencioso=silencioso)
+
+        # S5: a API retorna 400 para qualquer temperature diferente de 1
+        _temperature = args.pop('temperature', None)
+        if think:
+            args['reasoning_effort'] = cls._mapear_reasoning_s5(think)
+        # mantém apenas max_tokens: a API de chat da Maritaca não documenta max_completion_tokens
+
+        if not silencioso:
+            for aviso in cls.avisos_parametros(modelo, _temperature, think):
+                with cls._LOCK_AVISOS:
+                    if aviso in cls._AVISOS_EMITIDOS:
+                        continue
+                    cls._AVISOS_EMITIDOS.add(aviso)
+                print(f'⚠️  {aviso}')
+        return args
+
     @classmethod
     def _get_model_extra_body(cls, modelo:str):
         ''' identifica o modelo e se tem extra_body com flex tear
@@ -1169,6 +1247,28 @@ def validar_modelo_api(caminho: str) -> tuple:
             return True, f'{descricao} ({nome})'
 
     return False, f'Prefixo não reconhecido em "{caminho}". Prefixos válidos: {", ".join(_PREFIXOS_API_REMOTA.keys())}'
+
+
+def avisos_parametros_api(caminho: str, temperature=None, think: str = None) -> list:
+    '''Lista avisos sobre parâmetros que a API ignorará ou assumirá para o modelo.
+
+    Não faz chamada de rede. Permite ao chamador registrar os avisos no próprio log
+    antes de processar (as chamadas em lote usam silencioso=True e não os exibem).
+
+    Args:
+        caminho: identificador com prefixo (ex: "mt:S5-free")
+        temperature: temperatura configurada
+        think: configuração de reasoning (ex: "medium")
+
+    Returns:
+        Lista de mensagens (vazia se não houver ajustes)
+    '''
+    if not isinstance(caminho, str) or not caminho.strip().lower().startswith('mt:'):
+        return []
+    # Mesma sequência de get_resposta: separa think embutido no caminho, depois remove o prefixo e o sufixo :flex
+    _caminho, think = UtilOA.modelo_think(caminho.strip(), think)
+    _modelo, _ = UtilMaritaca._get_model_extra_body(_caminho[3:])
+    return UtilMaritaca.avisos_parametros(_modelo, temperature, think)
 
 def _teste_modelo_think():
     testes = ['oa:modelo:h:l', 'ol:qwen2.5:7b-instruct:h:l', 'vl:models:', 'tg:modelo',

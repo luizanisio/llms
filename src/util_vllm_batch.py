@@ -53,7 +53,7 @@ except ImportError:
     sys.exit(1)
 
 # Helpers de detecção de API remota (util_openai.py)
-from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_modelo_api
+from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_modelo_api, avisos_parametros_api
 from util import Util
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ misc:
 #     tg:modelo  — Together.ai (ex: "tg:meta-llama/Llama-3-70b-chat-hf")
 #     vl:modelo  — vLLM Server remoto (ex: "vl:meu-modelo")
 #     oa:modelo  — OpenAI (ex: "oa:gpt-5-nano")
+#     mt:modelo  — Maritaca (ex: "mt:sabia-4", "mt:S5-free")
 #   Sem prefixo: usa vLLM local com modelo HuggingFace
 # lora: caminho para adaptador LoRA treinado (opcional, deixe vazio se não usar)
 modelo:
@@ -131,6 +132,8 @@ vllm:
 # think: controle de reasoning para APIs remotas (opcional).
 #   Valores: "low", "medium", "high", "minimal" ou combinação "high:medium" (reasoning:verbosity)
 #   Deixe vazio ou omita para desabilitar reasoning.
+#   Maritaca S5 (mt:S5*): aceita também "none" e "xhigh"; sem think a API usa xhigh.
+#   A família S5 só aceita temperature padrão (1): o valor configurado é ignorado e registrado no log.
 geracao:
   max_tokens: 2048
   temperature: 0.01
@@ -1406,6 +1409,10 @@ class BatchLog:
             f"Itens concluídos: {itens_concluidos}\n"
         )
         self._escrever(bloco)
+
+    def registrar_aviso(self, aviso: str) -> None:
+        """Registra um aviso de configuração (ex.: parâmetro ignorado pela API)."""
+        self._escrever(f"⚠️  Aviso: {aviso}\n")
 
     def registrar_batch(
         self,
@@ -2714,6 +2721,15 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         itens_erro=len(chaves_erro),
         itens_concluidos=len(chaves_ok),
     )
+
+    # Parâmetros que a API ignora/assume (ex.: temperature na Maritaca S5).
+    # As chamadas usam silencioso=True, então o aviso é exibido e gravado aqui, uma vez por execução.
+    if modo_api:
+        for aviso in avisos_parametros_api(
+            caminho_modelo, cfg_geracao.get("temperature"), cfg_geracao.get("think")
+        ):
+            print(f"   ⚠️  {aviso}")
+            batch_log.registrar_aviso(aviso)
 
     # --- Processamento com loop de tentativas ---
     stats_acumulado = None
