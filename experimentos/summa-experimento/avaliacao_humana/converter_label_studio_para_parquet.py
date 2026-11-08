@@ -30,6 +30,10 @@ Uso:
   # Validar arquivo de teste/treino:
   python converter_label_studio_para_parquet.py tarefas_treino_preenchido.json --prefixo saida_teste --valida-apenas
 
+  # Filtro de alvos (campo data.alvo): por padrão usa ALVOS_CONVERSAO; --alvos sobrescreve.
+  python converter_label_studio_para_parquet.py tarefas_treino_preenchido.json --valida-apenas --alvos treino teste
+  python converter_label_studio_para_parquet.py tarefas_treino_preenchido.json --valida-apenas --alvos   # todos os alvos
+
   
   
 """
@@ -47,6 +51,16 @@ DE_PARA_FONTES = {
     "FB": "qwen235b",
     "FC": "gpt5",
 }
+# Alvos (campo `data.alvo` das tarefas) que serão convertidos. Tarefas com alvo fora
+# desta lista são ignoradas. Lista vazia (ou None) = converte todos os alvos.
+# Pode ser sobrescrita na linha de comando com --alvos (ex: --alvos treino teste).
+ALVOS_CONVERSAO = ['ineditos']
+
+def normalizar_alvos(alvos: Optional[List[str]]) -> Optional[set]:
+    """Normaliza a lista de alvos para comparação (minúsculas, sem espaços). None/vazia = sem filtro."""
+    if not alvos:
+        return None
+    return {str(a).strip().lower() for a in alvos if str(a).strip()} or None
 
 def normalizar_fonte(fonte: Any) -> str:
     """Aplica o de-para dos modelos (FA, FB, FC -> qwen7b, qwen235b, gpt5)."""
@@ -69,9 +83,15 @@ def parse_nota(valor: Any) -> Optional[int]:
 def processar_export_label_studio(
     caminho_json: str,
     id_avaliador: int = 1,
-    nome_avaliador: Optional[str] = None
+    nome_avaliador: Optional[str] = None,
+    alvos: Optional[List[str]] = None
 ) -> pd.DataFrame:
-    """Lê exportação do Label Studio e transforma em registros planos para o parquet."""
+    """Lê exportação do Label Studio e transforma em registros planos para o parquet.
+
+    Se `alvos` for informado (não vazio), apenas tarefas cujo `data.alvo` esteja na lista
+    são convertidas; as demais são ignoradas.
+    """
+    alvos_filtro = normalizar_alvos(alvos)
     if not os.path.exists(caminho_json):
         raise FileNotFoundError(f"Arquivo não encontrado: {caminho_json}")
 
@@ -85,9 +105,15 @@ def processar_export_label_studio(
     total_tarefas = len(tarefas)
     tarefas_com_anotacao = 0
     anotacoes_canceladas = 0
+    ignoradas_por_alvo: Dict[str, int] = {}
 
     for idx_t, tarefa in enumerate(tarefas, start=1):
         data = tarefa.get("data", {})
+        if alvos_filtro is not None:
+            alvo = str(data.get("alvo", "")).strip()
+            if alvo.lower() not in alvos_filtro:
+                ignoradas_por_alvo[alvo or "<sem alvo>"] = ignoradas_por_alvo.get(alvo or "<sem alvo>", 0) + 1
+                continue
         doc_id = str(data.get("doc_id", "")).strip()
         task_id = data.get("task_id", f"item_{idx_t:04d}")
 
@@ -192,7 +218,13 @@ def processar_export_label_studio(
                 "rodada": id_avaliador
             })
 
-    df = pd.DataFrame(registros)
+    if alvos_filtro is not None:
+        total_ignoradas = sum(ignoradas_por_alvo.values())
+        print(f"🎯 Filtro de alvos {sorted(alvos_filtro)}: {total_tarefas - total_ignoradas}/{total_tarefas} tarefas convertidas")
+        if ignoradas_por_alvo:
+            print(f"   Ignoradas por alvo: {ignoradas_por_alvo}")
+
+    df = pd.DataFrame(registros, columns=["chave", "resumo", "resposta", "erro", "rodada"])
     return df
 
 def validar_consistencia_dataframe(df: pd.DataFrame, nome: str) -> bool:
@@ -264,7 +296,11 @@ def main():
     parser.add_argument("--saida", default="../avaliacao_llm_humana", help="Diretório base de saída para as pastas saida_av_XX")
     parser.add_argument("--prefixo", default="saida_av", help="Prefixo dos grupos/pastas (padrão: saida_av)")
     parser.add_argument("--valida-apenas", action="store_true", help="Apenas valida os dados sem salvar os arquivos finais")
+    parser.add_argument("--alvos", nargs="*", default=None,
+                        help=f"Alvos (data.alvo) a converter; sobrescreve ALVOS_CONVERSAO={ALVOS_CONVERSAO}. "
+                             "Use '--alvos' sem valores para converter todos.")
     args = parser.parse_args()
+    alvos = ALVOS_CONVERSAO if args.alvos is None else args.alvos
 
     for idx, caminho in enumerate(args.arquivos, start=1):
         nome_base = os.path.splitext(os.path.basename(caminho))[0]
@@ -276,7 +312,10 @@ def main():
         print(f"Processando [{idx}/{len(args.arquivos)}]: {caminho} ({nome_av})")
         print(f"========================================================")
 
-        df = processar_export_label_studio(caminho, id_avaliador=idx, nome_avaliador=nome_av)
+        df = processar_export_label_studio(caminho, id_avaliador=idx, nome_avaliador=nome_av, alvos=alvos)
+        if df.empty:
+            print(f"⚠ Nenhuma tarefa restou após o filtro de alvos {alvos} em {caminho}. Nada será salvo.")
+            continue
         valido = validar_consistencia_dataframe(df, nome_av)
 
         if not args.valida_apenas:
