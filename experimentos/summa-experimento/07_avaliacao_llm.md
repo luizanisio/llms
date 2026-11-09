@@ -22,6 +22,7 @@ recebem nota 1 direta (`{"nota": 1, "problemas": ["json_invalido"]}`).
 | `--continuar` | Retoma uma execução do juiz que foi interrompida, usando a entrada que ela já tinha gerado. | sim |
 | `--reconstruir` | Refaz a coluna `avaliacao` a partir de `saida_juiz_{p}.parquet` da pasta do juiz, sem chamar o juiz. Gera também o resumo. | não |
 | `--resumo` | Gera `RESUMO_AVALIACAO_LLM.md`, os CSVs e os gráficos bayesianos na pasta do juiz. | não |
+| `--recorte Q1_ajuste_fino` | Com `--resumo`/`--reconstruir` (exige `--protocolos`): grava o resumo em `<pasta do juiz>/recortes/<nome>/`, um por questão de pesquisa, sem sobrescrever o resumo geral. Comandos de cada recorte no cabeçalho do script. | não |
 | `--tokens` | Estima os tokens de entrada e saída do que seria enviado. | não |
 | `--rope 0.15` | ROPE fixa da análise bayesiana Likert. Tem prioridade sobre a calibração. | — |
 | `--rope-protocolos d1 d1a d1b` | Réplicas usadas para calibrar a ROPE. Sem ele, usa `ROPE_PROTOCOLOS` do script. | — |
@@ -81,6 +82,7 @@ Mais nada no script precisa mudar: as funções leem as variáveis do juiz ativo
 | Saber quanto vai custar antes de rodar | `python 07_avaliacao_llm.py --protocolos d1 --tokens` (com `--refazer`, estima o reprocessamento completo) |
 | Avaliar protocolos com o sabia4, sem tocar nas notas do gpt5 | `python 07_avaliacao_llm.py --juiz sabia4 --protocolos d1 d7` |
 | Qualquer situação acima com o sabia4 | O mesmo comando com `--juiz sabia4` (ex.: `--juiz sabia4 --protocolos d1 --continuar`) |
+| Resumo de uma questão de pesquisa (mesmos recortes de `estatistica.protocolos` do `06_compara_todos.yaml`) | `python 07_avaliacao_llm.py --resumo --recorte Q4b_unfreeze --protocolos b c d20 d19` (com `--juiz sabia5` vai para `avaliacao_llm/sabia5/recortes/`) |
 | Resumo do sabia4 com ROPE calibrada nas réplicas dele | `python 07_avaliacao_llm.py --juiz sabia4 --protocolos d1 d1a d1b` e depois `--juiz sabia4 --resumo --protocolos d1 d7 ...` |
 
 ### Por que a interrupção com `--refazer` precisa do `--continuar`
@@ -203,6 +205,8 @@ Na pasta do juiz (`avaliacao_llm/` para o `gpt5`, `avaliacao_llm/sabia4/` para o
 
 Gerados pelo `--resumo`: `RESUMO_AVALIACAO_LLM.md`, `resumo_avaliacoes.csv`, `resumo_rope_calibracao.csv`,
 `resumo_bayesiana_sintese.csv`, `resumo_bayesiana_pares.csv`, `resumo_bayesiana_sensibilidade_rope.csv` e os gráficos `avaliacao_llm_heatmap.png` e `avaliacao_llm_diferencas.png`.
+Com `--recorte <nome>`, os mesmos arquivos vão para `<pasta do juiz>/recortes/<nome>/`. A ROPE é a mesma em todos os recortes
+(calibrada pelas réplicas, não pelos protocolos do recorte), e a ordem do `--protocolos` define a ordem do heatmap.
 
 **Juiz `gpt5` (padrão):** em `saida/`, o parquet de cada protocolo ganha a coluna `avaliacao`; antes de cada gravação é criado um `.bak`.
 Para `a`, `prof` e `base`, o resultado é gravado no parquet `_teste` e sincronizado no parquet completo de origem

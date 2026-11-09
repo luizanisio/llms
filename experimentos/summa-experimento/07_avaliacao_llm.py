@@ -23,6 +23,27 @@ Exemplos:
   python 07_avaliacao_llm.py --juiz sabia4 --protocolos d1   # mesmo fluxo com o juiz sabia4 (isolado)
   python 07_avaliacao_llm.py --juiz sabia5 --protocolos d1 d1a d1b   # mesmo fluxo com o juiz sabia4 (isolado)
   python 07_avaliacao_llm.py --juiz sabia4 --resumo          # resumo das notas do sabia4
+
+Exemplos por questão de pesquisa (--recorte):
+  Mesmos recortes de estatistica.protocolos do 06_compara_todos.yaml, na mesma ordem
+  (a ordem do --protocolos é a das linhas/colunas do heatmap). Cada recorte grava o resumo
+  em <pasta do juiz>/recortes/<nome>/; com --juiz sabia5 (etc.) vai para a pasta daquele juiz.
+  O Panorama_Geral é o --resumo sem recorte. Q2a e Q6a usam b16: avalie-o antes (--protocolos b16).
+  python 07_avaliacao_llm.py --resumo --recorte Q1_ajuste_fino        --protocolos a b c
+  python 07_avaliacao_llm.py --resumo --recorte Q2a_cl_controlado     --protocolos b16 d16 d18 d17
+  python 07_avaliacao_llm.py --resumo --recorte Q2b_cl_puro           --protocolos b d7 d8 d13 d14
+  python 07_avaliacao_llm.py --resumo --recorte Q2c_granularidade     --protocolos d3 d4 d11 d12
+  python 07_avaliacao_llm.py --resumo --recorte Q3a_direcao_com_cl    --protocolos d1 d2 d3 d4
+  python 07_avaliacao_llm.py --resumo --recorte Q3b_direcao_sem_cl    --protocolos b c d5 d6
+  python 07_avaliacao_llm.py --resumo --recorte Q4a_decomposicao      --protocolos b c d1 d5 d7
+  python 07_avaliacao_llm.py --resumo --recorte Q4b_unfreeze          --protocolos b c d20 d19
+  python 07_avaliacao_llm.py --resumo --recorte Q5_anti_curriculo     --protocolos b d7 d8 d9 d10
+  python 07_avaliacao_llm.py --resumo --recorte Q6a_fusao             --protocolos b c b16 d17 d21 d22 d23
+  python 07_avaliacao_llm.py --resumo --recorte Q6b_fusao_granular    --protocolos b c d12 d24 d25
+  python 07_avaliacao_llm.py --resumo --recorte Q6c_transicao_regime  --protocolos b c d13 d14 d15
+  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Q1_ajuste_fino --protocolos a b c   # outro juiz
+
+  python 07_avaliacao_llm.py --resumo --recorte prof-equivalentes --protocolos base prof a d9 d22
 '''
 
 import os
@@ -1695,15 +1716,19 @@ def _md_rope(rope_info, pasta):
     return md
 
 
-def gerar_resumo_avaliacao(protocolos, rope_info):
+def gerar_resumo_avaliacao(protocolos, rope_info, recorte=None):
     """Gera o RESUMO_AVALIACAO_LLM.md com tabelas, CSVs e análise bayesiana.
 
     rope_info: retorno de resolver_rope() ({'rope', 'origem', 'calibracao', 'avisos'}).
+    recorte:   nome do recorte (--recorte); grava em <pasta do juiz>/recortes/<recorte>/
+               para que cada questão de pesquisa tenha o próprio resumo. None = pasta do juiz.
     """
     from datetime import datetime
 
     rope = rope_info['rope']
     pasta = os.path.join(SCRIPT_DIR, PASTA_SAIDA_AVALIACAO)
+    if recorte:
+        pasta = os.path.join(pasta, 'recortes', recorte)
     os.makedirs(pasta, exist_ok=True)
 
     dados_protocolos = []  # lista de dicts com métricas por protocolo
@@ -1744,8 +1769,10 @@ def gerar_resumo_avaliacao(protocolos, rope_info):
     # 1. Tabela de avaliações (markdown + CSV)
     # =====================================================================
     md = []
-    md.append('# Avaliação LLM-as-a-Judge — Resumo\n')
+    md.append(f'# Avaliação LLM-as-a-Judge — Resumo{f" — {recorte}" if recorte else ""}\n')
     md.append(f'> Gerado em: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  ')
+    if recorte:
+        md.append(f'> Recorte: {recorte} — protocolos {", ".join(protocolos)}  ')
     md.append(f'> Juiz: {JUIZ} ({MODELO_JUIZ}) — notas lidas de '
               f'`{PASTA_DESTINO_AVALIACAO or PASTA_SAIDA_EXTRACAO}`  ')
     if rope is None:
@@ -2027,9 +2054,21 @@ def main():
         '--rope-protocolos', nargs='+', default=None,
         help=f'Réplicas para calibrar a ROPE Likert (padrão: ROPE_PROTOCOLOS = {ROPE_PROTOCOLOS})'
     )
+    parser.add_argument(
+        '--recorte', default=None,
+        help='Nome do recorte (ex: Q1_ajuste_fino) para --resumo/--reconstruir: grava o resumo em '
+             '<pasta do juiz>/recortes/<nome>/ em vez de sobrescrever o resumo geral'
+    )
     args = parser.parse_args()
     if args.rope is not None and args.rope <= 0:
         parser.error('--rope deve ser > 0')
+    if args.recorte is not None:
+        if not (args.resumo or args.reconstruir):
+            parser.error('--recorte só vale com --resumo ou --reconstruir')
+        if not re.fullmatch(r'[\w.-]+', args.recorte) or args.recorte in ('.', '..'):
+            parser.error('--recorte deve ser um nome simples (letras, números, _ . -), sem barras')
+        if not args.protocolos:
+            parser.error('--recorte exige --protocolos com os protocolos do recorte')
 
     # Ativa o perfil antes de qualquer leitura: caminhos, modelo e workers vêm dele
     aplicar_juiz(args.juiz)
@@ -2046,7 +2085,7 @@ def main():
         if rope_info is None:
             print("  Resumo não gerado.")
             return
-        gerar_resumo_avaliacao(protocolos, rope_info)
+        gerar_resumo_avaliacao(protocolos, rope_info, recorte=args.recorte)
         return
 
     # ----- Validar arquivos essenciais -----
