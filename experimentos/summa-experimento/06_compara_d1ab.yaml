@@ -244,10 +244,13 @@ estatistica:
     #   3) rodar de novo — a calibração está confirmada quando todos os pares de
     #      réplicas saem como "equivalentes".
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.
-    rope: 0.0132
+    # 1ª rodada (13/10/2026): 0.0132 · Likert 0.0121 · MetaDados 0.0132.
+    # Valores abaixo = sugestão de `00_rope_sugerido.md` dessa rodada (passo 2).
+    # PENDENTE: passo 3 (rodar com --estatisticas e confirmar 100% equivalentes).
+    rope: 0.0179
     rope_por_campo:
-      Likert: 0.0121
-      MetaDados: 0.0132
+      Likert: 0.0153
+      MetaDados: 0.0179
 
     # Likert e MetaDados são os alvos de interesse das comparações pareadas.
     campos:
