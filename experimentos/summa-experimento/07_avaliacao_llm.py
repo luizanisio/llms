@@ -21,7 +21,8 @@ Exemplos:
   python 07_avaliacao_llm.py --resumo --rope-protocolos d1 d1a d1b   # calibra com outras réplicas
   python 07_avaliacao_llm.py --resumo --rope 0.15            # ROPE fixa, sem calibração
   python 07_avaliacao_llm.py --juiz sabia4 --protocolos d1   # mesmo fluxo com o juiz sabia4 (isolado)
-  python 07_avaliacao_llm.py --juiz sabia5 --protocolos d1 d1a d1b   # mesmo fluxo com o juiz sabia4 (isolado)
+  python 07_avaliacao_llm.py --juiz sabia5 --protocolos base prof d1 d1a d1b d9 d22 a   # mesmo fluxo com o juiz sabia4 (isolado)
+  python 07_avaliacao_llm.py --juiz glm52 --protocolos base prof d1 d1a d1b d9 d22 a   # mesmo fluxo com o juiz sabia4 (isolado)
   python 07_avaliacao_llm.py --juiz sabia4 --resumo          # resumo das notas do sabia4
 
 Exemplos por questão de pesquisa (--recorte):
@@ -41,6 +42,7 @@ Exemplos por questão de pesquisa (--recorte):
   python 07_avaliacao_llm.py --resumo --recorte Q6a_fusao             --protocolos b c b16 d17 d21 d22 d23
   python 07_avaliacao_llm.py --resumo --recorte Q6b_fusao_granular    --protocolos b c d12 d24 d25
   python 07_avaliacao_llm.py --resumo --recorte Q6c_transicao_regime  --protocolos b c d13 d14 d15
+  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Melhores_D9_D22 --protocolos prof base a d9 d22
   python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Q1_ajuste_fino --protocolos a b c   # outro juiz
 
   python 07_avaliacao_llm.py --resumo --recorte prof-equivalentes --protocolos base prof a d9 d22
@@ -109,7 +111,7 @@ JUIZES = {
         'modelo': 'mt:sabia-4',
         'pasta': './avaliacao_llm/sabia4',
         'isolado': True,
-        'workers': 5,
+        'workers': 10,
         'tentativas': 20,
         'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
         'protocolos': None,
@@ -120,7 +122,7 @@ JUIZES = {
         'modelo': 'mt:S5-free:m:l',
         'pasta': './avaliacao_llm/sabia5',
         'isolado': True,
-        'workers': 5,
+        'workers': 7,
         'tentativas': 20,
         'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
         'protocolos': None,
@@ -132,6 +134,18 @@ JUIZES = {
         'workers': 5,
         'tentativas': 20,
         'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
+        'protocolos': None,
+    },
+    # Reasoning explícito (':m:l' → effort medium): sem ele vale o padrão do provedor, e o
+    # ':floor' (provedor mais barato) trocou no meio do protocolo 'a' (12/11/2026) para um
+    # que não raciocina — respostas de ~29 tokens em vez de ~1700.
+    'glm52': {
+        'modelo': 'or:z-ai/glm-5.2:floor:m:l',
+        'pasta': './avaliacao_llm/glm52',
+        'isolado': True,
+        'workers': 10,
+        'tentativas': 20,
+        'tokens_saida_estimado': 1800,  # com reasoning: mediana ~1300-2000 nos protocolos já avaliados
         'protocolos': None,
     },
 }
