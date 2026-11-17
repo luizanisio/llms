@@ -77,6 +77,48 @@ MAPA_METRICA_DISPLAY = {
     'sbert_grande': 'SBERT-Large',
 }
 
+#: (nome no YAML, sufixo) do sufixo mais longo ao mais curto, para identificar a
+#: métrica de uma coluna por substring sem que "sbert" capture "sbert_medio".
+_SUFIXOS_POR_TAMANHO = sorted(MAPA_METRICA_SUFIXO.items(), key=lambda kv: -len(kv[1]))
+
+
+def avisar_metricas_sem_coluna(df_resultados, campos, metricas, camada=''):
+    """Avisa os pares campo × métrica do YAML sem nenhuma coluna `*_{campo}_{sufixo}_F1`.
+
+    Sem o aviso, as análises pulam esses pares em silêncio (ex.: `sbert` no lugar
+    de `sbert_medio`). A checagem é global, não por recorte: um recorte com menos
+    de 2 protocolos é pulado por desenho e não deve gerar aviso.
+
+    Returns:
+        list[tuple[str, str]]: pares (campo, métrica) sem coluna.
+    """
+    if df_resultados is None or not campos or not metricas:
+        return []
+    colunas = [str(c) for c in df_resultados.columns]
+    ausentes = []
+    for campo in campos:
+        for metrica in metricas:
+            sufixo = MAPA_METRICA_SUFIXO.get(metrica, metrica)
+            if not any(c.endswith(f'_{campo}_{sufixo}_F1') for c in colunas):
+                ausentes.append((campo, metrica))
+    if ausentes:
+        # Métricas que existem para algum dos campos pedidos, nomeadas como no YAML
+        disponiveis = set()
+        for c in colunas:
+            if not c.endswith('_F1'):
+                continue
+            for nome_yaml, sufixo in _SUFIXOS_POR_TAMANHO:
+                if any(c.endswith(f'_{campo}_{sufixo}_F1') for campo in campos):
+                    disponiveis.add(nome_yaml)
+                    break
+        prefixo = f'[{camada}] ' if camada else ''
+        for campo, metrica in ausentes:
+            sufixo = MAPA_METRICA_SUFIXO.get(metrica, metrica)
+            print(f"   ⚠️  {prefixo}{campo} × {metrica}: nenhuma coluna '*_{campo}_{sufixo}_F1' "
+                  f"nos resultados — o par será pulado. Confira o nome em `metricas` "
+                  f"(disponíveis: {', '.join(sorted(disponiveis)) or 'nenhuma'}).")
+    return ausentes
+
 #: Alias especial do protocolo virtual "professor perfeito": escores = 1.0 em
 #: todas as métricas automáticas, simulando concordância total com o Gold.
 #: Mesma semântica de ``comparar_extracoes_baycomp.PROTOCOLO_PROFESSOR``;
@@ -1330,6 +1372,7 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
     n_recortes = len(recortes)
     info_recortes = f" × {n_recortes} recorte(s)" if n_recortes > 1 else ""
     print(f"\n📊 Análise Estatística — {len(alvos_campos)} campo(s) × {len(alvos_metricas)} métrica(s){info_recortes}")
+    avisar_metricas_sem_coluna(df_resultados, alvos_campos, alvos_metricas)
 
     for nome_recorte, aliases_recorte in recortes:
         prefixo = f'{_slug(nome_recorte)}_' if nome_recorte else ''
@@ -1436,9 +1479,10 @@ def executar_analise_estatistica(analisador, dados_analise, config, pasta_saida,
                 detalhe = r.get('rope_detalhe') or {}
                 if detalhe.get('rope', 0.0) > dados_por_campo.get(campo, {}).get('rope', 0.0):
                     dados_por_campo[campo] = detalhe
-                # Extrai nome da métrica do metrica_nome (ex: "(global)_rouge_F1" → "rouge_l")
+                # Extrai nome da métrica do metrica_nome (ex: "(global)_rouge_F1" → "rouge_l").
+                # Sufixo mais longo primeiro: "_sbert_" também casa com "_sbert_medio_".
                 metrica_nome = r.get('metrica', '')
-                for nome_yaml, sufixo in MAPA_METRICA_SUFIXO.items():
+                for nome_yaml, sufixo in _SUFIXOS_POR_TAMANHO:
                     if f'_{sufixo}_' in metrica_nome:
                         metricas_usadas_set.add(nome_yaml)
                         break

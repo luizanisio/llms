@@ -95,7 +95,8 @@ except ImportError:  # pragma: no cover - depende do ambiente
     BAYES_DISPONIVEL = False
 
 from util_analise_estatistica import (MAPA_METRICA_SUFIXO, MAPA_METRICA_DISPLAY,
-                                      montar_mapa_aliases, montar_dataframes_llm)
+                                      montar_mapa_aliases, montar_dataframes_llm,
+                                      avisar_metricas_sem_coluna)
 
 
 # ============================================================================
@@ -1360,6 +1361,19 @@ def executar_analise_bayesiana(analisador, dados_analise, config, pasta_saida) -
             "obrigatória — sem margem, todo par vira `superior` ou `inferior`."
         )
         print(f"   ⚠️  {avisos[-1]}")
+
+    # Métrica sem coluna nos resultados (ex.: `sbert` no lugar de `sbert_medio`)
+    # seria pulada em silêncio em todos os recortes — o aviso sai uma única vez,
+    # antes do laço, e também vai para o relatório.
+    if cfg.campos and cfg.metricas:
+        for campo, metrica in avisar_metricas_sem_coluna(
+                getattr(analisador, '_resultados', None), cfg.campos, cfg.metricas,
+                camada='bayesiana'):
+            avisos.append(
+                f"{campo} × {metrica}: nenhuma coluna correspondente nos resultados — "
+                "par omitido em todos os recortes. Confira o nome em "
+                "`metricas_automaticas.metricas`."
+            )
 
     # ── um bloco de análises por recorte ────────────────────────────────────
     # Recortes nomeados existem para o panorama completo: 16 protocolos geram

@@ -253,9 +253,10 @@ ROUGE-L (Likert 0,0096) e o SBERT médio (Likert 0,0146 · MetaDados 0,0167) exi
 > inferência de 29/09 de um modelo D1b anterior ao retreino; foi substituída nessa data. A
 > planilha da execução completa de 15/11 confere com os parquets locais de D1, D1a e D1b.
 >
-> **Bloco YAML do `00_rope_sugerido.md`.** Ele lista `sbert` em vez de `sbert_medio`. Copiado
-> literalmente, a análise ignora o SBERT médio sem aviso (a coluna procurada é `*_sbert_F1`).
-> Transcreva só `rope` e `rope_por_campo`. Foi o que aconteceu na execução parcial de 15/11 (só
+> **Bloco YAML do `00_rope_sugerido.md`.** Até 16/11/2026 ele listava `sbert` em vez de
+> `sbert_medio`. Copiado literalmente, a análise ignorava o SBERT médio sem aviso (a coluna
+> procurada era `*_sbert_F1`). Os dois problemas foram corrigidos no código: o nome sugerido e o
+> aviso para métrica sem coluna. Foi o que aconteceu na execução parcial de 15/11 (só
 > `--estatisticas`, 4 mapas em vez de 6): a saída é idêntica à de um YAML com `sbert`, reproduzida
 > sobre o mesmo CSV. A execução completa, com
 > `sbert_medio`, analisou as três métricas. Confira se há um mapa por campo × métrica.

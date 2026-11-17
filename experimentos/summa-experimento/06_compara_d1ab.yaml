@@ -248,8 +248,8 @@ estatistica:
     # Valores abaixo = sugestão de `00_rope_sugerido.md` dessa rodada (passo 2).
     # 2ª rodada (15/11/2026, execução completa): 3/3 pares equivalentes nos
     # 2 campos × 3 métricas. Calibração confirmada.
-    # Ao copiar o bloco do relatório, mantenha `sbert_medio` em `metricas`: o
-    # relatório sugere `sbert`, que não corresponde a nenhuma coluna.
+    # Transcreva só `rope` e `rope_por_campo` do relatório; mantenha `sbert_medio`
+    # em `metricas` (relatórios anteriores a 16/11/2026 sugeriam `sbert`).
     rope: 0.0179
     rope_por_campo:
       Likert: 0.0153

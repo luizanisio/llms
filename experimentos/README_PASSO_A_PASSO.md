@@ -184,8 +184,10 @@ metricas_automaticas:
     Relacoes: 0.0401
 ```
 
-Transcreva só `rope` e `rope_por_campo`. O bloco do relatório também lista `metricas`, mas com
-`sbert` no lugar de `sbert_medio`. Se for copiado, o SBERT médio sai da análise sem aviso.
+Transcreva só `rope` e `rope_por_campo`. Relatórios gerados antes de 16/11/2026 listam em
+`metricas` o nome `sbert` no lugar de `sbert_medio`. Hoje, uma métrica do YAML sem coluna nos
+resultados gera um aviso `⚠️ <campo> × <métrica>: nenhuma coluna ...` no terminal e no relatório
+bayesiano.
 
 **2ª rodada — verificação de sanidade.** Refaça só a camada estatística:
 
@@ -196,7 +198,7 @@ python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml --estatisti
 A calibração só está confirmada quando, em `bayesiana/analise_bayesiana.md`, **100% dos pares**
 (`D1 × D1a`, `D1 × D1b`, `D1a × D1b`) saem `equivalente` em todos os campos e métricas. Se algum par
 sair `incerto` ou com diferença, investigue antes de seguir. Confira também se há um mapa para cada
-campo × métrica do YAML: uma métrica cuja coluna não existe é pulada sem aviso.
+campo × métrica do YAML.
 
 > ⚠️ **Dois cuidados no `06_compara_d1ab.yaml`:**
 > 1. **Filtro do teste.** O `configuracao_comparacao.filtro` precisa restringir ao teste (a
