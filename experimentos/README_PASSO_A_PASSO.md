@@ -1,325 +1,342 @@
-# Passo a passo para rodar um experimento
+# Passo a passo para replicar um experimento
 
-O passo a passo é didático e simplificado, cada etapa pode ser melhor entendida, incluindo seus parâmetros, em READMEs específicos.
-É possível fazer o experimento com ou sem LLM-as-a-judge e com ou sem avaliadores humanos.
+Sequência de execução do pipeline, da preparação dos dados às figuras. **O número de cada etapa é o
+prefixo dos YAMLs dela** (`02_*`, `03_*`, … `07_*`), em todos os experimentos.
 
-> 📖 **Para detalhes de ambiente (CUDA, vLLM, Flash-Attn), veja o [README.md](./README.md).**  
-> 📖 **Para o design dos protocolos e perguntas de pesquisa, veja o [README_protocolos.md](./README_protocolos.md).**  
-> 📖 **Para filtros de dados, veja o [README_filtros.md](./README_filtros.md).**
+Os comandos rodam de dentro da pasta do experimento e usam o **Summa** como exemplo. Para PubMed e
+SemClinBr, os arquivos equivalentes estão na tabela abaixo; os detalhes de domínio (dataset, prompt,
+gabarito) ficam no README de cada pasta.
 
-Os exemplos abaixo usam o experimento **Summa** como referência. Para outros experimentos (PubMed, SemClinBr, Puil-Mini), basta entrar na pasta correspondente e usar os YAMLs homônimos.
+> **Antes de começar:** ambiente (CUDA, PyTorch, vLLM, Flash-Attn) em [README.md](./README.md) ·
+> desenho dos protocolos e perguntas de pesquisa em [README_protocolos.md](./README_protocolos.md) ·
+> sintaxe dos filtros em [README_filtros.md](./README_filtros.md) · números e estado de cada
+> experimento em [INFORMACOES_TREINAMENTO.md](./INFORMACOES_TREINAMENTO.md).
+
+## Arquivos por etapa
+
+| Etapa | Summa | PubMed | SemClinBr |
+| :-- | :-- | :-- | :-- |
+| 01 Dados | `util_ckan.py --config 01_extracao.yaml` | `python util_pubmed.py` | `python util_semclinbr.py` (corpus sob solicitação ao HAILab) |
+| 02 Linha de base | `02_summa_235b.yaml` (professor), `02_summa_7b_hpc.yaml` (A), `02_summa_gpt5.yaml` (GPT-5) | `02_pubmed_rct_1_5b.yaml` (A) | `02_semclinbr_7b.yaml` (A) |
+| Referência | `saida/saida_or_235b.parquet` (etapa 02) | `saidas/saida_pubmed_prof.parquet` (etapa 01) | `saidas/saida_semclinbr_gold.parquet` (etapa 01) |
+| 03 Divisão | `03_compara_q235_full.yaml` | `03_compara_prof_full.yaml` | `03_compara_gold_full.yaml` |
+| 04 Treino | `04_treinar_<p>.yaml` (31) | `04_treinar_<p>.yaml` (31) | `04_treinar_<p>.yaml` (31) |
+| 05 Teste | `05_extracao_<p>_teste.yaml` | `05_extracao_<p>_teste.yaml` | `05_extracao_<p>_teste.yaml` |
+| 06 Comparação | `06_compara_d1ab.yaml`, `06_compara_todos.yaml` | idem | idem |
+| 07 Avaliação específica | `07_avaliacao_llm.py` (juiz LLM) | — | `07_avaliar_ner.py`, `08_baseline_clinicalnerpt.py` |
+| Jobs Slurm | `job_treinar_*.sh`, `job_export_7b_testes.sh`, `job_compara_testes.sh` | `job_treinar_*.sh`, `job_export_1_5b_testes.sh`, `job_compara_testes.sh` | `job_treinar_*.sh`, `job_export_7b_testes.sh`, `job_compara_testes.sh` |
+
+`<p>` é o protocolo (`b`, `b16`, `b16r8`, `c`, `d1`–`d25`, `d1a`, `d1b`). Os YAMLs declaram em
+`misc.pastas_base` e `misc.pastas_modelos` os caminhos aceitos para o experimento e para os
+modelos base; acrescente os da sua máquina.
 
 ---
 
-## 01 — Escolha do modelo base
+## 01 — Preparação dos dados
 
-Defina o modelo que será ajustado (aluno) e, opcionalmente, o modelo professor para destilação de conhecimento. Os modelos são referenciados nos YAMLs de configuração.
-
-| Papel      | Exemplo usado no Summa                        |
-| :--------- | :-------------------------------------------- |
-| **Aluno**  | `Qwen2.5-7B-Instruct`                         |
-| **Professor** | `Qwen3-235B-A22B-2507` (via OpenRouter, ZDR) |
-| **Referência** | `GPT-5` (via Azure)                        |
-
-> Nesta etapa não há script a executar — a escolha é feita nos arquivos YAML das etapas seguintes.
-
----
-
-## 02 — Extração dos dados (prompt de entrada)
-
-Extraia os textos-fonte de uma base de dados (CKAN, CSV, Parquet, etc.) com o script `util_ckan.py`. O YAML define filtros, colunas e formato de saída.
+Gera o parquet com os textos de entrada (e, no PubMed e no SemClinBr, o gabarito humano no formato
+do framework).
 
 ```bash
-# Entrar na pasta do experimento
-# Extrair dados do CKAN conforme configuração
+# Summa: extrai os acórdãos do portal de dados abertos do STJ (CKAN)
 python ../../src/util_ckan.py --config 01_extracao.yaml
-
-# Apenas visualizar o que seria extraído (dry-run)
+# Só exibe o parquet final já gerado, sem reextrair
 python ../../src/util_ckan.py --config 01_extracao.yaml --view
 ```
 
+No PubMed (`util_pubmed.py`) e no SemClinBr (`util_semclinbr.py`) o script da pasta lê o dataset
+original e grava `dados/*.parquet`, o prompt e `saidas/saida_*_{prof,gold}.parquet`.
+
 ---
 
-## 03 — Geração da linha de base (modelo base sem treinamento)
+## 02 — Linha de base e referência (sem filtro)
 
-Gere as respostas do modelo base (zero-shot) e/ou do professor sobre os dados extraídos. Isso permite medir a performance antes de qualquer ajuste fino.
+Extrai o corpus **inteiro** com o modelo base zero-shot (protocolo A) e, no Summa, com o professor
+(que gera a referência) e com o GPT-5. Sem filtro: a etapa 03 precisa de todos os documentos para
+estratificar a dificuldade.
 
 ```bash
-# Gerar saída do modelo professor (Qwen3-235B via OpenRouter)
-python ../../src/util_vllm_batch.py --config 02_summa_235b.yaml
-
-# Gerar saída do modelo base local (Qwen2.5-7B via vLLM)
-python ../../src/util_vllm_batch.py --config 02_summa_7b_hpc.yaml
-
-# Gerar saída do GPT-5 como referência (via Azure)
-python ../../src/util_vllm_batch.py --config 02_summa_gpt5.yaml
+python ../../src/util_vllm_batch.py --config 02_summa_235b.yaml   # professor (OpenRouter, ZDR)
+python ../../src/util_vllm_batch.py --config 02_summa_7b_hpc.yaml # modelo base local (vLLM)
+python ../../src/util_vllm_batch.py --config 02_summa_gpt5.yaml   # GPT-5 (Azure)
 ```
 
+As chaves de API são lidas de variáveis de ambiente (lista no README do experimento). A extração é
+retomável: rodar de novo refaz só os itens ausentes ou com erro.
+
 ---
 
-## 04 — Comparar linha de base com dados de referência
+## 03 — Comparação inicial: divisão e dificuldade
 
-Compare as saídas do modelo base com o gabarito do professor (ou dados raw). Essa comparação **gera o arquivo de divisão** (treino/teste/validação) e **classifica a dificuldade** de cada instância — informações que serão usadas no treinamento.
+Compara o modelo base contra a referência e **gera o arquivo de divisão**: `alvo`
+(treino/validação/teste) e `dificuldade` / `dificuldade_int` (1–10) de cada documento.
 
 ```bash
-# Comparar modelo base (Qwen 7B) vs professor (Qwen3-235B)
 python ../../src/comparar_extracoes.py --config 03_compara_q235_full.yaml
-
-# Comparar modelo base vs GPT-5 (curadoria)
-python ../../src/comparar_extracoes.py --config 03_compara_gpt5_curadoria.yaml
 ```
 
-> **Saída importante:** o arquivo de divisão (`divisao_*.csv` ou `.parquet`) com as colunas `alvo` (treino/teste/validação) e `dificuldade_int` (1–9), que alimentará as etapas seguintes.
->
-> ⚠️ **Atenção Crítica — Copiar para `dados/`:**  
-> O script salva as divisões dentro da pasta de saída da comparação:  
-> `compara/<pasta_saida_analises>/divisoes/divisao_<modelo>.csv` (ou `.parquet`).  
-> **Você DEVE copiar esse arquivo para a pasta `dados/` do experimento antes de prosseguir:**
+Se já existe uma divisão a preservar (splits oficiais, ou uma divisão anterior), informe-a em
+`execucao.divisao.arquivo_referencia`; sem ela, o script sorteia um split novo
+([README_filtros.md §6](./README_filtros.md#6-o-csv-de-divisão-onde-nascem-dificuldade-e-alvo)).
+
+> ⚠️ **Copiar a divisão para `dados/`.** O script grava em
+> `compara/<saida.pasta>/divisoes/divisao_<base>_<modelo>.csv`, mas as etapas 04–06 leem só de
+> `dados/`. Copie **antes** de apagar ou compactar a pasta de análise, e versione o arquivo: ele é a
+> semente de reprodutibilidade de todo o resto.
 > ```bash
-> # Exemplo no SemClinBr:
-> cp "compara/analises_comparacao_semclinbr (full)/divisoes/divisao_Gold_Qwen7B.csv" dados/
-> 
-> # Exemplo no Summa:
-> cp "compara/analises_comparacao_summa_full/divisoes/divisao_Qwen235b_Qwen7b.csv" dados/
+> cp "compara/analises_comparacao_summa_q235 (full)/divisoes/divisao_Qwen235b_Qwen7b.csv" dados/
+> cp "compara/analises_comparacao_pubmed (full)/divisoes/divisao_Professor_Qwen1_5B.csv" dados/   # PubMed
+> cp "compara/analises_comparacao_semclinbr (full)/divisoes/divisao_Gold_Qwen7B.csv" dados/       # SemClinBr
 > ```
-> Todos os passos seguintes (05_extracao, 06_compara, 07_avaliar) procuram esse arquivo exclusivamente em `dados/`. Se ele não estiver lá, os filtros de partição falharão silenciosamente!
-> 
-> 🛑 **NUNCA apague ou compacte (`zip -r ... && rm -rf ...`) a pasta de análises da etapa 04 antes de garantir que a divisão foi copiada para `dados/`.**
 
----
+**Summa — coluna `fold`.** Os filtros do Summa usam `fold` (folds 11 e 12 ficam fora do
+experimento). Acrescente-a à divisão copiada:
 
-## 05 — Preparar protocolos de treinamento
-
-Crie os YAMLs de treinamento para cada protocolo desejado. Inclua pelo menos um protocolo executado **3 vezes** (réplicas) para calibração da ROPE (Region of Practical Equivalence).
-
-| Tipo de protocolo            | Exemplo de YAML              |
-| :--------------------------- | :--------------------------- |
-| Baseline LoRA 4-bit          | `04_treinar_b.yaml`          |
-| Baseline Full FT 16-bit      | `04_treinar_c.yaml`          |
-| CL + Escalonamento (D1)      | `04_treinar_d1.yaml`         |
-| Réplicas ROPE (D1a, D1b)     | `04_treinar_d1a.yaml`, `04_treinar_d1b.yaml` |
-
-```bash
-# Verificar o dataset de um YAML antes de treinar (relatório de divisão)
-python ../../src/treinar_unsloth.py --datasets 04_treinar_b.yaml
+```python
+import pandas as pd
+arq = "dados/divisao_Qwen235b_Qwen7b.csv"
+div = pd.read_csv(arq)
+folds = pd.read_parquet("dados/integras_experimento_summa_novos.parquet",
+                        columns=["seq_documento_acordao", "fold"])
+div = div.merge(folds.rename(columns={"seq_documento_acordao": "id"}), on="id", how="left")
+div.to_csv(arq, index=False)
 ```
 
-> Nesta etapa o foco é **revisar e ajustar** os YAMLs. O treinamento em si ocorre no passo seguinte.
+**D18 — blocos aleatórios.** Gere a cópia da divisão com a coluna `bloco`:
+
+```bash
+python gerar_divisao_blocos_d18.py   # grava dados/divisao_*_blocos.csv
+```
 
 ---
 
-## 06 — Treinar os modelos
+## 04 — Treinamento
 
-Execute o treinamento para cada protocolo. É recomendável usar `tmux` ou `nohup` para sessões longas.
+Cada protocolo tem um YAML pronto. Antes de treinar, confira o recorte de dados de cada etapa:
 
 ```bash
-# Treinar baseline LoRA (protocolo b)
-python ../../src/treinar_unsloth.py --treinar 04_treinar_b.yaml
+# Relatório de instâncias e filtros de cada etapa (dry-run, não treina)
+python ../../src/treinar_unsloth.py --datasets 04_treinar_d1.yaml
+```
 
-# Treinar baseline Full FT (protocolo c)
-python ../../src/treinar_unsloth.py --treinar 04_treinar_c.yaml
-
-# Treinar protocolo CL+PT D1 (e réplicas para ROPE)
+```bash
 python ../../src/treinar_unsloth.py --treinar 04_treinar_d1.yaml
-python ../../src/treinar_unsloth.py --treinar 04_treinar_d1a.yaml
-python ../../src/treinar_unsloth.py --treinar 04_treinar_d1b.yaml
 ```
 
-> **Dica:** para rodar em background com `tmux`:
-> ```bash
-> source setup_tmux.sh
-> tm new -s treino
-> python ../../src/treinar_unsloth.py --treinar 04_treinar_d1.yaml
-> # Ctrl+B, depois D para desanexar
-> ```
+Para treinos longos, use `tmux` (ver [README.md](./README.md#execução-em-background-tmux--nohup))
+ou os jobs Slurm da pasta (`sbatch job_treinar_<grupo>.sh`, cada um com a lista de YAMLs em
+`CONFIGS`). Com `resume_from_checkpoint: true`, rodar de novo retoma do último checkpoint. Para
+retreinar do zero, renomeie a pasta de saída (preserva o treino antigo) ou use `--reset`
+(apaga checkpoints e modelo).
+
+Pelo menos um protocolo precisa de **3 réplicas** para calibrar a ROPE na etapa 06: nos
+experimentos, `d1`, `d1a` e `d1b` (mesmos YAMLs, só a pasta de saída muda).
+
+Cada treino grava em `treinos/<modelo>(<protocolo>)/` os pesos (ou o adaptador) e o
+`RESUMO_TREINO.md`; em `treinamento/` ficam o `training_metrics.jsonl`, os relatórios e os
+gráficos.
 
 ---
 
-## 07 — Extrair respostas com os modelos treinados (teste)
-
-Após o treinamento, extraia as respostas do conjunto de teste usando os pesos ajustados.
+## 05 — Extração no conjunto de teste
 
 ```bash
-# Extrair com protocolo b (LoRA)
-python ../../src/util_vllm_batch.py --config 05_extracao_b_teste.yaml
-
-# Extrair com protocolo c (Full FT)
-python ../../src/util_vllm_batch.py --config 05_extracao_c_teste.yaml
-
-# Extrair com protocolo D1
 python ../../src/util_vllm_batch.py --config 05_extracao_d1_teste.yaml
+# ou todos em lote no cluster:
+sbatch job_export_7b_testes.sh
 ```
 
-> Cada YAML `05_extracao_*_teste.yaml` já aponta para os pesos treinados em `treinos/` e aplica o filtro `alvo: teste`.
+Cada `05_extracao_<p>_teste.yaml` aponta para os pesos em `treinos/` e já restringe a entrada ao
+teste (filtros de cada experimento em
+[INFORMACOES_TREINAMENTO.md §4](./INFORMACOES_TREINAMENTO.md#4-conjuntos-de-teste-e-filtros-por-experimento)).
+A saída é `saida/saida_qwen7b(<p>)_teste.parquet` no Summa e
+`saidas/saida_<modelo>(<p>)_teste.parquet` nos demais.
 
 ---
 
-## 08 — Calibrar a ROPE (comparar réplicas D1/D1a/D1b)
+## 06 — Comparação dos protocolos
 
-Compare as 3 execuções do mesmo protocolo para estimar a variabilidade natural não-determinística (hardware/framework) e calibrar a ROPE (*Region of Practical Equivalence*) por campo.
+Métricas automáticas (BERTScore, SBERT, ROUGE-L/2, Levenshtein, conforme o experimento) e análise
+estatística por recorte — bayesiana como principal, frequentista exploratória. Primeiro calibra-se a
+ROPE com as réplicas; depois compara-se tudo.
 
-A calibração segue obrigatoriamente um **ciclo de verificação em duas rodadas**:
+### 06a — Calibrar a ROPE (duas rodadas)
 
-### 8.1 — Primeira rodada: Rodar calibração inicial
-Execute a comparação das réplicas com qualquer valor provisório de ROPE (ex.: `rope: 0.01`):
+**1ª rodada.** Rode a comparação das réplicas com qualquer ROPE provisória > 0:
 
 ```bash
-# Comparar réplicas para estimar o ruído
 python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml
 ```
 
-> **Saída gerada:** o arquivo `compara/analises_comparacao_*_d1ab/estatisticas/00_rope_sugerido.md` contendo a tabela de deltas observados e a sugestão analítica de ROPE global e por campo (`rope_por_campo`).
+Saída: `compara/analises_comparacao_<exp>_d1ab/estatisticas/00_rope_sugerido.md`, com o par mais
+exigente por campo e o bloco YAML sugerido (a menor ROPE sob a qual **todos** os pares de réplicas
+saem `equivalente` ao limiar 0,95).
 
-### 8.2 — Transcrever os valores sugeridos no próprio YAML
-Abra `00_rope_sugerido.md`, copie o bloco YAML sugerido e cole na seção `estatistica.metricas_automaticas` do **próprio** `06_compara_d1ab.yaml`:
+**Transcrição.** Copie `rope` e `rope_por_campo` do bloco sugerido para
+`estatistica.metricas_automaticas` do próprio `06_compara_d1ab.yaml`. Exemplo (SemClinBr):
 
 ```yaml
 metricas_automaticas:
-  rope: 0.0210             # valor global sugerido
+  rope: 0.0401
   rope_por_campo:
-    (global): 0.0145
-    Entidades: 0.0120
-    Relacoes: 0.0210
-  campos:
-    - "(global)"
-    - "Entidades"
-    - "Relacoes"
-  metricas:
-    - rouge_l
-    - rouge_2
+    (global): 0.0188
+    Entidades: 0.0162
+    Relacoes: 0.0401
 ```
 
-### 8.3 — Segunda rodada: Verificação de Sanidade (Teste de Equivalência)
-Rode novamente a análise estatística sobre o mesmo resultado (usando a flag `--estatisticas` para ser rápido e não recalcular as métricas pesadas de extração):
+Transcreva só `rope` e `rope_por_campo`. O bloco do relatório também lista `metricas`, mas com
+`sbert` no lugar de `sbert_medio`. Se for copiado, o SBERT médio sai da análise sem aviso.
+
+**2ª rodada — verificação de sanidade.** Refaça só a camada estatística:
 
 ```bash
-# Reexecutar apenas a camada estatística com a nova ROPE calculada
 python ../../src/comparar_extracoes.py --config 06_compara_d1ab.yaml --estatisticas
 ```
 
-> 🔍 **Verificação de Sanidade Obrigatória:**  
-> Abra o relatório bayesiano (`bayesiana/analise_bayesiana.md`) e os relatórios estatísticos.  
-> **A calibração só está confirmada quando 100% dos pares de réplicas (`D1 × D1a`, `D1 × D1b`, `D1a × D1b`) saírem classificados como `equivalentes` ao limiar de 0.95.**  
-> Se algum par sair como "inconclusivo" ou indicar diferença real, a calibração falhou e deve ser investigada.
+A calibração só está confirmada quando, em `bayesiana/analise_bayesiana.md`, **100% dos pares**
+(`D1 × D1a`, `D1 × D1b`, `D1a × D1b`) saem `equivalente` em todos os campos e métricas. Se algum par
+sair `incerto` ou com diferença, investigue antes de seguir. Confira também se há um mapa para cada
+campo × métrica do YAML: uma métrica cuja coluna não existe é pulada sem aviso.
 
-### 8.4 — Transcrever para a comparação geral
-Após confirmar a equivalência de 100% das réplicas no passo 8.3, copie esse mesmo bloco `rope` e `rope_por_campo` para os YAMLs de comparação geral entre protocolos distintos (`06_compara_todos.yaml` e `06_compara_todos_parcial.yaml`).
+> ⚠️ **Dois cuidados no `06_compara_d1ab.yaml`:**
+> 1. **Filtro do teste.** O `configuracao_comparacao.filtro` precisa restringir ao teste (a
+>    referência tem o corpus inteiro e as réplicas só o teste) — ver
+>    [README_filtros.md §5.1](./README_filtros.md#51-o-bloco-filtro).
+> 2. **Nunca usar `"TODOS"` em `estatistica.protocolos`** com `calibracao_rope: true`. `"TODOS"`
+>    inclui o protocolo virtual `★Prof` (referência = 1,0), e a calibração passaria a medir a
+>    distância aluno–referência em vez do ruído entre réplicas, inflando a ROPE. Liste as réplicas:
+>    ```yaml
+>    estatistica:
+>      calibracao_rope: true
+>      protocolos:
+>        Replicas_D1: [D1, D1a, D1b]
+>    ```
 
-> ⚠️ **Cuidados Críticos na Configuração da Calibração (`06_compara_d1ab.yaml`):**
-> 1. **Filtro obrigatório do conjunto de teste (`alvo: teste`):**
->    - O gabarito humano/base geralmente contém todos os documentos do corpus (ex: 1.000 documentos), mas os modelos foram executados na etapa 07 **apenas sobre a partição de teste** (ex: 197 documentos).
->    - O bloco `configuracao_comparacao.filtro` **DEVE** apontar para `dados/divisao_*.csv` com `dataset_filtro: {"alvo": "teste"}`.
->    - *Se o arquivo de divisão não existir em `dados/` ou o filtro for omitido:* o comparador tentará avaliar todos os 1.000 documentos; para os 800 de treino/validação, o modelo não terá arquivo de saída, ficando marcado como `Inexistente` (com campo `pred` **vazio** e escore `0.0`), o que derruba drasticamente a média do modelo e distorce as estatísticas.
-> 2. **NUNCA usar `"TODOS"` em `estatistica.protocolos`:**
->    - Em arquivos com `calibracao_rope: true`, declare explicitamente apenas as réplicas a comparar:
->      ```yaml
->      estatistica:
->        calibracao_rope: true
->        protocolos:
->          Replicas_D1:
->            - D1
->            - D1a
->            - D1b
->      ```
->    - *Por que não usar `"TODOS"`?* O valor `"TODOS"` instrui o pipeline a incluir o protocolo virtual `★Prof` (gabarito perfeito = 1.0). Como a calibração busca a maior discrepância ($|Δ|$) para garantir equivalência de 100% dos pares, se `★Prof` estiver no recorte, o script medirá a distância do aluno ao teto do professor em vez do ruído não-determinístico entre réplicas idênticas, gerando uma ROPE inflada próxima de `0.95`!
+### 06b — Comparar todos os protocolos
 
----
-
-## 09 — Comparar todos os protocolos
-
-Rode a comparação geral com todos os modelos treinados. Inclui métricas automáticas (BERTScore, SBERT, ROUGE-L/2, Levenshtein) e análise estatística bayesiana + frequentista.
+Copie o mesmo `rope` / `rope_por_campo` para `06_compara_todos.yaml` e rode:
 
 ```bash
-# Comparação completa (todos os protocolos treinados)
 python ../../src/comparar_extracoes.py --config 06_compara_todos.yaml
-
-# Comparação parcial (apenas protocolos já prontos)
-python ../../src/comparar_extracoes.py --config 06_compara_todos_parcial.yaml
+# ou, no cluster:
+sbatch job_compara_testes.sh
 ```
 
-> **Saídas:** pasta `compara/` com planilhas, gráficos, heatmaps bayesianos e relatórios `.md` por recorte (Q1–Q6).
+Saída em `compara/analises_comparacao_<exp>_todos/`: planilhas, `relatorio_analise.md`,
+`estatisticas/`, `bayesiana/` (heatmaps e relatório por recorte Q1–Q6) e `graficos/`. Mudanças só
+nos recortes (`estatistica.protocolos`) ou na ROPE exigem apenas `--estatisticas`; só nos gráficos,
+`--graficos`.
 
 ---
 
-## 10 — LLM-as-a-judge (opcional)
+## 07 — Avaliações específicas de cada experimento
 
-Use um modelo de referência (ex: GPT-5) como juiz para avaliar qualitativamente as extrações em escala Likert (1–4), com 3 rodadas para estabilidade.
+### Summa — juiz LLM sobre o teste
+
+O juiz (GPT-5 por padrão) dá nota Likert 1–4 a cada extração dos 3.948 documentos de teste e grava
+a coluna `avaliacao` no parquet do protocolo.
 
 ```bash
-# 1. Gerar o parquet de entrada do juiz (70 docs × 3 modelos = 210 linhas)
+python 07_avaliacao_llm.py --protocolos d1 --tokens   # estima o custo antes
+python 07_avaliacao_llm.py --protocolos d1 d1a d1b    # avalia (retoma se interrompido)
+python 07_avaliacao_llm.py --resumo                   # RESUMO_AVALIACAO_LLM.md, ROPE calibrada nas réplicas
+python 07_avaliacao_llm.py --resumo --recorte Q4b_unfreeze --protocolos b c d20 d19
+python 07_avaliacao_llm.py --juiz sabia5 --protocolos d1 d1a d1b   # outro juiz, em pasta isolada
+```
+
+Parâmetros, perfis de juiz e retomada: `summa-experimento/07_avaliacao_llm.md`.
+
+### SemClinBr — NER-F1 e baseline externo
+
+```bash
+python 07_avaliar_ner.py --config 07_avaliar_ner.yaml                         # compara/ner/
+python 08_baseline_clinicalnerpt.py --config 08_baseline_clinicalnerpt.yaml   # saidas/avaliacao_ner/
+```
+
+---
+
+## 08 — Validação do juiz e avaliação humana (Summa, opcional)
+
+Mede se o juiz LLM concorda com especialistas, em 70 documentos estratificados × 3 fontes (GPT-5,
+Qwen 235B, Qwen 7B). Fica em `summa-experimento/avaliacao_llm_humana/`. A coleta humana exige
+aprovação do Comitê de Ética em Pesquisa (CEP).
+
+```bash
 cd avaliacao_llm_humana/
+
+# Juízes LLM candidatos: monta a entrada (210 linhas) e roda cada juiz em 3 rodadas
 python 01_gerar_entrada_juiz_llm.py
+python ../../../src/util_vllm_batch.py --config 02_extracao_70.yaml   # ajustar modelo e saida_<juiz>_0N
 
-# 2. Rodar o juiz LLM (GPT-5 via Azure, 3 rodadas)
-python ../../../src/util_vllm_batch.py --config 02_extracao_70.yaml
-
-# 3. Consolidar e analisar as avaliações
-python ../../../src/realizar_avaliacoes.py \
-    --grupos saida_gpt:humano saida_nemo:llm saida_glm:llm saida_mmm3:llm saida_sabia:llm \
-    --bayes
-```
-
----
-
-## 11 — Avaliação humana (opcional)
-
-Configure avaliadores humanos via Label Studio para avaliação cega dos resultados. Requer aprovação do Comitê de Ética de Pesquisa (CEP).
-
-```bash
-# 1. Gerar as tarefas no formato Label Studio
-cd avaliacao_llm_humana/
+# Avaliadores humanos (Label Studio): gera um JSON de tarefas por avaliador
 python gerar_tarefas_label_studio.py
+# após a anotação, converte a exportação do Label Studio para o formato do pipeline
+cd ../avaliacao_humana/
+python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana <exportacao>.json --prefixo saida_humana
+cd ../avaliacao_llm_humana/
 
-# 2. Importar os JSONs gerados no Label Studio
-#    Os arquivos ficam na pasta avaliacao_humana/:
-#    - tarefas_avaliacao_label_studio_<Avaliador>.json
-
-# 3. Após coleta, realizar análise das avaliações humanas
+# Concordância juiz × humano (κw, equivalência bayesiana das notas e da decisão)
 python ../../../src/realizar_avaliacoes.py \
-    --grupos saida_gpt:humano saida_nemo:llm saida_glm:llm \
-    --bayes
+    --grupos saida_gpt:llm saida_sabia5:llm saida_humana:humano --bayes
 ```
 
-> ⚠️ **Atenção:** a utilização de avaliadores humanos requer submissão e aprovação pelo Comitê de Ética de Pesquisa (CEP) da instituição.
+Os comandos usados até aqui estão em `avaliacao_llm_humana/03_realizar_avaliacoes.md`, e a
+configuração do Label Studio em `avaliacao_llm_humana/README_AVALIACAO.md`.
 
 ---
 
-## 12 — Análise dos resultados e criação de figuras
-
-Gere os resumos consolidados e as figuras finais para a dissertação/artigo.
+## 09 — Consolidação e figuras
 
 ```bash
-# Gerar tabela-resumo de todos os experimentos (compara parâmetros entre Summa/PubMed/SemClinBr)
-cd /caminho/para/llms/experimentos/
-python tabela_experimentos.py
+# Na pasta experimentos/: confere os YAMLs e os treinos dos três experimentos
+python tabela_experimentos.py          # gera RESUMO_EXPERIMENTOS.md
 
-# Validar o ambiente de execução
-python ../src2/teste_ambiente.py
+# Na pasta de cada experimento: copia os gráficos de treino para treinos/graficos/
+python ../../src/treinar_consolidar_graficos.py
 ```
 
-> As figuras e gráficos são gerados automaticamente durante o passo 09 (comparação) e ficam nas pastas `compara/analises_comparacao_*/graficos/`.
+As figuras de comparação são geradas na etapa 06 (`compara/analises_comparacao_*/graficos/` e
+`bayesiana/`) e as do juiz na etapa 07 (`avaliacao_llm/`).
+
+---
+
+## Checklist de integridade
+
+1. A divisão em `dados/` é a que gerou os treinos (mesmo arquivo versionado, com as colunas extras
+   do experimento).
+2. `RESUMO_EXPERIMENTOS.md` §6 sem pendências: todo treino com a versão atual do YAML e LR logado
+   igual ao esperado.
+3. Todos os parquets de teste com o mesmo número de linhas (Summa 3.948 · PubMed 2.500 ·
+   SemClinBr 197).
+4. No `execucao.log` de cada comparação: `Filtro carregado: N IDs`, `IDs na origem (a processar): N`
+   e `Total comparado: N` coincidem com o tamanho do teste.
+5. Mesmo filtro e mesmo `ignorar_erro_extracao` (`false`) em todos os YAMLs de comparação
+   confrontados.
+6. Calibração da ROPE confirmada (100% dos pares de réplicas `equivalente`) antes de ler os recortes.
 
 ---
 
 ## Resumo visual do pipeline
 
 ```
-01 Escolha do modelo ──► 02 Extração dos dados ──► 03 Linha de base (zero-shot)
-                                                          │
-04 Comparar base vs referência ◄──────────────────────────┘
-         │
-         ▼ (gera divisão + dificuldade)
-05 Preparar YAMLs de treinamento ──► 06 Treinar modelos
-                                           │
-07 Extrair com modelos treinados ◄─────────┘
-         │
-08 Calibrar ROPE ──► 09 Comparar todos os protocolos
-                            │
-                    ┌───────┴───────┐
-                    ▼               ▼
-          10 LLM-as-a-judge   11 Avaliação humana
-                    │               │
-                    └───────┬───────┘
-                            ▼
-                 12 Análise e figuras
+01 Dados ──► 02 Linha de base + referência (corpus inteiro)
+                       │
+                       ▼
+             03 Comparação inicial ──► divisão (alvo + dificuldade) ──► copiar para dados/
+                       │
+                       ▼
+             04 Treinamento (31 protocolos) ──► 05 Extração no teste
+                                                       │
+                       ┌───────────────────────────────┘
+                       ▼
+             06a Calibrar ROPE (d1 × d1a × d1b) ──► 06b Comparar todos (recortes Q1–Q6)
+                                                       │
+                       ┌───────────────────────────────┤
+                       ▼                               ▼
+             07 Juiz LLM (Summa) /             08 Validação do juiz
+                NER-F1 (SemClinBr)                × humanos (Summa)
+                       │                               │
+                       └───────────────┬───────────────┘
+                                       ▼
+                             09 Consolidação e figuras
 ```

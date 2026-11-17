@@ -428,7 +428,7 @@ estatistica:
     # Obrigatória (> 0) e decisiva — pequena demais pinta o heatmap de
     # vencedores/perdedores, grande demais deixa tudo empatado. A varredura de
     # sensibilidade (rope/2, rope, 2·rope) é calculada automaticamente por campo.
-    # PENDENTE DE CALIBRAÇÃO: rodar antes `06_compara_d1ab.yaml` e transcrever
+    # Calibrado (2ª rodada em 15/11/2026): rodar antes `06_compara_d1ab.yaml` e transcrever
     # os valores de `estatisticas/00_rope_sugerido.md` (a menor margem sob a qual
     # TODOS os pares de réplicas atingem P(equivalência) >= `limiar`).
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.

@@ -42,7 +42,7 @@ Exemplos por questão de pesquisa (--recorte):
   python 07_avaliacao_llm.py --resumo --recorte Q6a_fusao             --protocolos b c b16 d17 d21 d22 d23
   python 07_avaliacao_llm.py --resumo --recorte Q6b_fusao_granular    --protocolos b c d12 d24 d25
   python 07_avaliacao_llm.py --resumo --recorte Q6c_transicao_regime  --protocolos b c d13 d14 d15
-  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Melhores_D9_D22 --protocolos prof base a d9 d22
+  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Melhores_D9_D22 --protocolos base prof a d9 d22
   python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Q1_ajuste_fino --protocolos a b c   # outro juiz
 
   python 07_avaliacao_llm.py --resumo --recorte prof-equivalentes --protocolos base prof a d9 d22
@@ -122,7 +122,7 @@ JUIZES = {
         'modelo': 'mt:S5-free:m:l',
         'pasta': './avaliacao_llm/sabia5',
         'isolado': True,
-        'workers': 7,
+        'workers': 10,
         'tentativas': 20,
         'tokens_saida_estimado': 20,    # sem reasoning: ~18 tokens/instância na avaliação humana
         'protocolos': None,

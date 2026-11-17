@@ -246,7 +246,10 @@ estatistica:
     # `rope` é o fallback dos campos não listados em `rope_por_campo`.
     # 1ª rodada (13/10/2026): 0.0132 · Likert 0.0121 · MetaDados 0.0132.
     # Valores abaixo = sugestão de `00_rope_sugerido.md` dessa rodada (passo 2).
-    # PENDENTE: passo 3 (rodar com --estatisticas e confirmar 100% equivalentes).
+    # 2ª rodada (15/11/2026, execução completa): 3/3 pares equivalentes nos
+    # 2 campos × 3 métricas. Calibração confirmada.
+    # Ao copiar o bloco do relatório, mantenha `sbert_medio` em `metricas`: o
+    # relatório sugere `sbert`, que não corresponde a nenhuma coluna.
     rope: 0.0179
     rope_por_campo:
       Likert: 0.0153
