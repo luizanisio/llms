@@ -730,7 +730,7 @@ def main():
         print(f"\n⚠️  Execução Parcial Solicitada via CLI.")
         print(f"   Pulando re-análise pesada. Usando arquivo existente: {arquivo_excel}")
         
-        if flag_graficos or flag_estatisticas or flag_bayesiana or flag_planilha or flag_llm:
+        if flag_graficos or flag_estatisticas or flag_planilha or flag_llm:
             print("   Instanciando analisador para operações em arquivo existente...")
             pasta_jsons = os.path.join(pasta_saida, 'jsons')
             analisador = JsonAnaliseDataFrame(
@@ -745,8 +745,9 @@ def main():
             )
             analisador_instanciado = True
             
-            # a análise bayesiana também consome analisador._resultados
-            if flag_planilha or flag_estatisticas or flag_bayesiana:
+            # --estatisticas roda a frequentista e a bayesiana; ambas consomem
+            # analisador._resultados
+            if flag_planilha or flag_estatisticas:
                 print("📊 Carregando DataFrame de resultados do arquivo existente...")
                 import pandas as pd
                 nome_arquivo_base = config['saida'].get('arquivo_base', 'comparacao_resultados')
