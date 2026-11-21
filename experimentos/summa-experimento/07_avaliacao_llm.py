@@ -42,8 +42,10 @@ Exemplos por questão de pesquisa (--recorte):
   python 07_avaliacao_llm.py --resumo --recorte Q6a_fusao             --protocolos b c b16 d17 d21 d22 d23
   python 07_avaliacao_llm.py --resumo --recorte Q6b_fusao_granular    --protocolos b c d12 d24 d25
   python 07_avaliacao_llm.py --resumo --recorte Q6c_transicao_regime  --protocolos b c d13 d14 d15
-  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Melhores_D9_D22 --protocolos base prof a d9 d22
-  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Q1_ajuste_fino --protocolos a b c   # outro juiz
+
+  python 07_avaliacao_llm.py --juiz sabia5 --resumo --recorte Melhores_D9_D16_D22 --protocolos base prof a d9 d22 d16
+  python 07_avaliacao_llm.py --juiz glm52 --resumo --recorte Melhores_D9_D16_D22 --protocolos base prof a d9 d22 d16
+  python 07_avaliacao_llm.py --juiz gpt5 --resumo --recorte Melhores_D9_D16_D22 --protocolos base prof a d9 d22 d16
 
   python 07_avaliacao_llm.py --resumo --recorte prof-equivalentes --protocolos base prof a d9 d22
 '''
@@ -196,6 +198,19 @@ ARQUIVO_DIVISAO = os.path.join(SCRIPT_DIR, 'dados', 'divisao_Qwen235b_Qwen7b.csv
 PROMPT_TEMPLATE_PATH = os.path.join(SCRIPT_DIR, 'avaliacao_llm_humana', 'prompt_juiz_llm.txt')
 PASTA_SRC = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..', 'src'))
 UTIL_VLLM_BATCH = os.path.join(PASTA_SRC, 'util_vllm_batch.py')
+# Código de saída do util_vllm_batch.py quando a API recusa por falta de crédito (HTTP 402).
+# Mesmo valor de CODIGO_SAIDA_PAGAMENTO em src/util_vllm_batch.py.
+CODIGO_SAIDA_PAGAMENTO = 3
+
+
+def _relatar_falha_batch(protocolo, returncode):
+    """Registra a falha do util_vllm_batch.py, destacando a falta de crédito."""
+    if returncode == CODIGO_SAIDA_PAGAMENTO:
+        logging.error(f"  ⛔ [{protocolo}] API do juiz sem crédito — juiz interrompido, notas NÃO aplicadas. "
+                      f"Os itens recusados seguem pendentes: reponha o crédito e rode "
+                      f"python 07_avaliacao_llm.py{_cli_juiz()} --protocolos {protocolo} --continuar")
+    else:
+        logging.error(f"  ✗ util_vllm_batch.py retornou código {returncode}")
 
 # Padrão de nome dos parquets de saída
 PADRAO_PARQUET = 'saida_qwen7b({protocolo})_teste.parquet'
@@ -1046,7 +1061,7 @@ def processar_protocolo(protocolo, integras_idx, template, refazer):
     resultado = subprocess.run(cmd, cwd=pasta_trabalho)
 
     if resultado.returncode != 0:
-        logging.error(f"  ✗ util_vllm_batch.py retornou código {resultado.returncode}")
+        _relatar_falha_batch(protocolo, resultado.returncode)
         return False
 
     # ----- Ler saída do juiz e mergear -----
@@ -1299,7 +1314,7 @@ def continuar_protocolo(protocolo, integras_idx, template):
         cmd = [sys.executable, UTIL_VLLM_BATCH, '--config', arqs['yaml']]
         resultado = subprocess.run(cmd, cwd=arqs['pasta'])
         if resultado.returncode != 0:
-            logging.error(f"  ✗ util_vllm_batch.py retornou código {resultado.returncode}")
+            _relatar_falha_batch(protocolo, resultado.returncode)
             return False
     if not os.path.isfile(arqs['saida']):
         logging.error(f"  ✗ Saída do juiz não encontrada: {arqs['saida']}")
