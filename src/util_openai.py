@@ -427,7 +427,7 @@ class UtilTogether:
         try:
             response = client_gpt.chat.completions.create(**args)
         except Exception as e:
-            if max_retry > 0 and ('connection' in str(e).lower() or 'rate' in str(e).lower()):
+            if max_retry > 0 and not eh_erro_pagamento(e) and ('connection' in str(e).lower() or 'rate' in str(e).lower()):
                 import time as time_module
                 time_module.sleep(2)
                 return cls.chat_completion_padronizado(messages=messages, modelo=modelo, temperature=temperature, max_tokens=max_tokens, as_json=as_json, raw=raw, timeout=timeout, think=think, api_key=api_key, silencioso=silencioso, max_retry=max_retry - 1, tempo_inicio=tempo)
@@ -966,8 +966,8 @@ class UtilOpenRouter:
 
         except Exception as e:
             erro_str = str(e).lower()
-            # Retry em rate limit ou erro de conexão
-            if max_retry > 0 and ('rate' in erro_str or 'limit' in erro_str or 'connection' in erro_str or 'timeout' in erro_str):
+            # Retry em rate limit ou erro de conexão (nunca em falta de crédito: "credit limit" contém 'limit')
+            if max_retry > 0 and not eh_erro_pagamento(e) and ('rate' in erro_str or 'limit' in erro_str or 'connection' in erro_str or 'timeout' in erro_str):
                 if not silencioso:
                     print(f'UtilOpenRouter: erro recuperável ({type(e).__name__}), tentando novamente... (restantes: {max_retry})')
                 import time as time_module
@@ -1195,6 +1195,48 @@ def eh_modelo_api_remota(caminho: str) -> bool:
         return False
     caminho_lower = caminho.strip().lower()
     return any(caminho_lower.startswith(p) for p in _PREFIXOS_API_REMOTA)
+
+
+# Falta de crédito/pagamento (HTTP 402) nas APIs remotas. Repetir a chamada não resolve,
+# então quem processa em lote deve interromper em vez de gastar as tentativas.
+# Formatos produzidos pelos SDKs e repassados no 'erro' de get_resposta:
+#   OpenRouter (openrouter): "Erro OpenRouter: PaymentRequiredResponseError: This request requires more credits, ..."
+#   Together (together):     "Erro Together: APIStatusError: Error code: 402 - {'error': {...}}"
+#                            (o SDK não tem classe própria para 402: vem como APIStatusError)
+_PADROES_ERRO_PAGAMENTO = (
+    'paymentrequired',          # classe PaymentRequiredResponseError do SDK openrouter
+    'payment required',         # texto padrão do HTTP 402
+    'error code: 402',          # SDKs no padrão OpenAI (together, openai)
+    'requires more credits',    # mensagem do OpenRouter
+    'insufficient credits',
+    'insufficient balance',
+    'credit limit exceeded',
+)
+
+
+def eh_erro_pagamento(erro) -> bool:
+    '''Indica se o erro de uma chamada de API é falta de crédito/pagamento (HTTP 402).
+
+    Aceita a exceção do SDK ou o texto de 'erro' retornado por get_resposta.
+    Reconhece OpenRouter e Together.ai (ver _PADROES_ERRO_PAGAMENTO).
+
+    Args:
+        erro: exceção ou mensagem de erro
+
+    Returns:
+        True se o erro indica crédito esgotado
+    '''
+    if erro is None:
+        return False
+    if isinstance(erro, BaseException):
+        status = getattr(erro, 'status_code', None)
+        if status is None:
+            status = getattr(getattr(erro, 'raw_response', None), 'status_code', None)
+        if status == 402:
+            return True
+        erro = f'{type(erro).__name__}: {erro}'
+    texto = str(erro).lower()
+    return any(p in texto for p in _PADROES_ERRO_PAGAMENTO)
 
 
 def extrair_nome_modelo_api(caminho: str) -> str:

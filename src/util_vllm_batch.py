@@ -53,7 +53,24 @@ except ImportError:
     sys.exit(1)
 
 # Helpers de detecção de API remota (util_openai.py)
-from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_modelo_api, avisos_parametros_api
+from util_openai import eh_modelo_api_remota, extrair_nome_modelo_api, validar_modelo_api, avisos_parametros_api, eh_erro_pagamento
+
+# Código de saída quando a API remota recusa por falta de crédito (HTTP 402).
+# Quem chama este script (ex.: 07_avaliacao_llm.py) usa o código para não seguir adiante.
+CODIGO_SAIDA_PAGAMENTO = 3
+
+
+class ErroPagamentoAPI(Exception):
+    """API remota sem crédito: o lote é interrompido em vez de gastar as tentativas.
+
+    Os itens recusados não são gravados na saída, então continuam pendentes e sem
+    rodada registrada — a retomada (após repor o crédito) os envia normalmente.
+    """
+
+    def __init__(self, mensagem: str, gravados: int, recusados: int):
+        super().__init__(mensagem)
+        self.gravados = gravados
+        self.recusados = recusados
 from util import Util
 
 # ---------------------------------------------------------------------------
@@ -1873,6 +1890,7 @@ def _chamar_api_item(
             }, ensure_ascii=False),
             "resposta": "",
             "erro": f"{type(e).__name__}: {e}",
+            "erro_pagamento": eh_erro_pagamento(e),
         }
 
     tempo_item = time.time() - inicio_item
@@ -1902,6 +1920,7 @@ def _chamar_api_item(
             "resumo": json.dumps(resumo, ensure_ascii=False),
             "resposta": str(resultado_api.get("resposta", "")),
             "erro": erro_api,
+            "erro_pagamento": eh_erro_pagamento(erro_api),
         }
 
     # Processa resposta
@@ -2030,6 +2049,28 @@ def processar_batch_api(
                         "resposta": "",
                         "erro": f"Erro inesperado: {type(e).__name__}: {e}",
                     }
+
+        # Falta de crédito: grava só o que o batch concluiu e interrompe. Os itens
+        # recusados ficam fora da saída (pendentes, sem rodada gasta) para a retomada.
+        recusados = [r for r in resultados_batch if r.get("erro_pagamento")]
+        if recusados:
+            gravar = [
+                {k: v for k, v in r.items() if k != "erro_pagamento"}
+                for r in resultados_batch if not r.get("erro_pagamento")
+            ]
+            if eh_parquet:
+                if gravar:
+                    salvar_resultados_parquet(arquivo_saida, gravar, rodada=rodada)
+                flush_pendentes_parquet(arquivo_saida)
+            else:
+                for r in gravar:
+                    salvar_resultado_pasta(
+                        arquivo_saida, r["chave"], r["resposta"],
+                        json.loads(r["resumo"]), r["erro"], rodada=rodada
+                    )
+            raise ErroPagamentoAPI(recusados[0]["erro"], gravados=len(gravar), recusados=len(recusados))
+        for r in resultados_batch:
+            r.pop("erro_pagamento", None)
 
         tempo_batch = time.time() - inicio_batch
 
@@ -2735,6 +2776,7 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
     stats_acumulado = None
     tentativa_realizada = 0
     engine = None
+    codigo_saida = 0
 
     try:
         # Inicializa engine vLLM apenas no modo local (antes do loop)
@@ -2818,6 +2860,16 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
 
         print("=" * 70)
 
+    except ErroPagamentoAPI as e:
+        codigo_saida = CODIGO_SAIDA_PAGAMENTO
+        print("\n\n⛔ Processamento interrompido: a API recusou por falta de crédito.")
+        print(f"   {e}")
+        print(f"   Gravados neste batch: {e.gravados} | recusados (seguem pendentes): {e.recusados}")
+        print("   Reponha o crédito e execute novamente para continuar de onde parou.")
+        batch_log.registrar_aviso(
+            f"Interrompido por falta de crédito na rodada {tentativa_realizada} "
+            f"({e.recusados} item(ns) recusado(s), seguem pendentes): {e}"
+        )
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrompido pelo usuário.")
         print("   Os resultados parciais foram salvos.")
@@ -2830,6 +2882,9 @@ Retomada: itens já processados com sucesso são ignorados automaticamente.
         if engine is not None:
             print("\n🛑 Finalizando engine vLLM...")
             finalizar_engine(engine)
+
+    if codigo_saida:
+        sys.exit(codigo_saida)
 
 
 if __name__ == "__main__":
