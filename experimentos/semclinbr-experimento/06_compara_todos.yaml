@@ -374,6 +374,8 @@ estatistica:
     # Q6c — transição de regime: pré-treino LoRA e estabilização pós-merge
     #   (6 contrastes)
     Q6c_transicao_regime: ["B", "C", "D13", "D14", "D15"]
+    # D16 e D17 — foram melhores na comparação com o modelo publicado do SemClinBR
+    CompModeloPublicado: ["*", "D16", "D24"]
     # Panorama geral: todos os modelos ativos, para visão global
     Panorama_Geral: "TODOS"
 
