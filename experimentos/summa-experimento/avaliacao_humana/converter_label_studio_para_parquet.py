@@ -26,9 +26,11 @@ Uso:
 
   python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana tarefas_treino_preenchido.json --prefixo saida_teste
   python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana tarefas_avaliacao_label_studio_av1_ineditos.json --prefixo saida_humana
+  python converter_label_studio_para_parquet.py --saida ../avaliacao_llm_humana tarefas_avaliacao_label_studio_av1_ineditos.json tarefas_avaliacao_label_studio_av2_ineditos.json --prefixo saida_humana
 
   # Validar arquivo de teste/treino:
-  python converter_label_studio_para_parquet.py tarefas_treino_preenchido.json --prefixo saida_teste --valida-apenas
+  python converter_label_studio_para_parquet.py tarefas_avaliacao_label_studio_av1_ineditos.json --prefixo saida_teste --valida-apenas
+  python converter_label_studio_para_parquet.py tarefas_avaliacao_label_studio_av2_ineditos.json --prefixo saida_teste --valida-apenas
 
   # Filtro de alvos (campo data.alvo): por padrão usa ALVOS_CONVERSAO; --alvos sobrescreve.
   python converter_label_studio_para_parquet.py tarefas_treino_preenchido.json --valida-apenas --alvos treino teste

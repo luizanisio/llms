@@ -12,3 +12,8 @@
   --grupos saida_nemo:llm saida_gpt:llm saida_glm:llm saida_mmm3:llm saida_sabia5:llm saida_humana:humano \
   --bayes --bayes-rope 0.1579 --bayes-rope-decisao 0.0832 \
   --saida analise_parcial_1humano
+
+## Teste com dois avaliadores (parcial)
+../../../src/realizar_avaliacoes.py \
+  --grupos saida_nemo:llm saida_gpt:llm saida_glm:llm saida_mmm3:llm saida_sabia5:llm saida_humana:humano \
+  --bayes --saida analise_parcial_2humanos
