@@ -33,11 +33,12 @@ modelo:
   # S5: ":m:l" = reasoning_effort medium (verbosity "l" é ignorada pela Maritaca),
   # mesmo nível dos juízes GPT-5 (oa:gpt5:m:l). Sem o sufixo a API usa xhigh.
   # temperature é ignorada (S5 só aceita 1) — ver aviso no log.
-  caminho: "mt:S5-free:m:l"
+  #caminho: "mt:S5-free:m:l"
   #caminho: "or:nvidia/nemotron-3-ultra-550b-a55b"
-  #caminho: "or:z-ai/glm-5.2"
   #caminho: "tg:zai-org/GLM-5.2"
   #caminho: "tg:MiniMaxAI/MiniMax-M3"
+  caminho: "or:z-ai/glm-5.2:n:l"
+  #caminho: "or:z-ai/glm-5.3-flash:floor:m:l"
   lora: ""
 
 # --- Parâmetros de Geração ---
@@ -50,7 +51,7 @@ geracao:
   temperature: 0.01
   top_k: 2
   top_p: 0.9
-  batch_size: 20
+  batch_size: 5
   tentativas: 20      # tentativas de extração (em caso de erro, tenta novamente apenas para os que tiveram falha)
   pausa_tentativas: 5 # pausa em segundos antes de uma nova tentativa
 
@@ -68,5 +69,5 @@ entrada:
 # --- Saída ---
 # tipo_saida: json — parseia automaticamente a resposta como JSON
 saida:
-  arquivo: "./saida_sabia5_03/saida_juiz_llm.parquet"
+  arquivo: "./saida_glmsr_03/saida_juiz_llm.parquet"
   tipo_saida: "json"

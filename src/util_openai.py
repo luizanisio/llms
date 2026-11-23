@@ -867,10 +867,15 @@ class UtilOpenRouter:
         except json.JSONDecodeError as e:
             raise ValueError(f'OPENROUTER_EXTRA contém JSON inválido: {e}\nConteúdo: {_or_extra_str}')
 
+    # Sufixos de think que desligam o raciocínio (ex.: 'or:z-ai/glm-5.2:floor:n')
+    TOKENS_SEM_RACIOCINIO = {'n', 'none', 'nenhum', 'off'}
+
     @classmethod
     def _mapear_reasoning(cls, think: str) -> tuple:
         ''' Mapeia o parâmetro think para (reasoning_effort, verbosity).
             Retorna (None, None) se think for vazio/None.
+            'n' (none/nenhum/off) desliga o raciocínio: reasoning_effort='none'. É diferente de
+            omitir o think, que deixa valer o padrão do provedor (o GLM 5.2, por ex., raciocina).
         '''
         if not think:
             return None, None
@@ -879,6 +884,10 @@ class UtilOpenRouter:
         _verbosity = 'low'
         if ':' in _reasoning:
             _reasoning, _verbosity = _reasoning.split(':', 1)
+
+        # 'none' só vale para o esforço; verbosity não tem "none" e fica no padrão 'low'
+        if _reasoning.strip().lower() in cls.TOKENS_SEM_RACIOCINIO:
+            return 'none', 'low'
 
         reasoning_map = {
             'high': 'high', 'alto': 'high', 'h': 'high', 'a': 'high', '+': 'high',
@@ -936,7 +945,12 @@ class UtilOpenRouter:
 
         # Configuração de reasoning
         _reasoning, _verbosity = cls._mapear_reasoning(think)
-        if _reasoning:
+        if _reasoning == 'none':
+            # Raciocínio desligado explicitamente: sem summary e mantendo max_tokens
+            args['reasoning'] = {'effort': 'none'}
+            if not silencioso:
+                print(f'UtilOpenRouter: reasoning desligado (effort=none), max_tokens={args.get("max_tokens")}')
+        elif _reasoning:
             args['reasoning'] = {'effort': _reasoning}
             if _verbosity and _verbosity != 'low':
                 args['reasoning']['summary'] = _verbosity
@@ -947,7 +961,7 @@ class UtilOpenRouter:
                 print(f'UtilOpenRouter: reasoning effort={_reasoning}, verbosity={_verbosity}, max_completion_tokens={args.get("max_completion_tokens")}')
         else:
             if not silencioso:
-                print(f'UtilOpenRouter: sem reasoning, max_tokens={args.get("max_tokens")}')
+                print(f'UtilOpenRouter: reasoning não definido (vale o padrão do provedor; use :n para desligar), max_tokens={args.get("max_tokens")}')
 
         # Formato de resposta JSON
         if as_json:
@@ -1045,8 +1059,8 @@ class UtilOA:
             'high', 'alto', 'h', 'a', '+',
             'medium', 'm', 'médio', 'medio',
             'minimal', 'mínimo', 'minimo', 'mi', '0', '-', 'x',
-            'low', 'baixo', 'l', 'b'
-        }
+            'low', 'baixo', 'l', 'b',
+        } | UtilOpenRouter.TOKENS_SEM_RACIOCINIO
         partes = modelo_think.split(':')
         extracted = []
         # O modelo pode ter no máximo 2 tokens de think no final (ex: m:l)

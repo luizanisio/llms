@@ -1552,10 +1552,33 @@ def analise_bayesiana_validacao(v: dict, cfg: ConfigBayes) -> dict:
         matriz.to_csv(os.path.join(v["saida"], "bayes_grupos.csv"),
                       index=False, encoding="utf-8")
 
+    # Mesmo panorama sobre a decisão binária (nota ≥ piso), com a ROPE da taxa:
+    # a diferença média de 0/1 é a diferença na taxa de aprovação.
+    matriz_taxa = None
+    if len(nomes) >= 2:
+        aprovado = (longo[nomes].astype(float) >= PISO_ADEQUACAO).astype(float)
+        matriz_taxa = matriz_bayesiana(aprovado, nomes, v["rope_decisao"], cfg.limiar)
+        rotulos_taxa = {"superior": "aprova mais", "inferior": "aprova menos",
+                        "equivalente": "taxa equivalente"}
+        figuras += viz.grafico_bayes(
+            matriz_taxa, os.path.join(v["saida"], "06_bayes_grupos_taxa.png"),
+            titulo=f"Comparação bayesiana da taxa de aprovação (nota ≥ {PISO_ADEQUACAO})",
+            rotulo_entidade="avaliador", rotulos_categorias=rotulos_taxa)
+        figuras += viz.grafico_diferencas_bayes(
+            matriz_taxa, os.path.join(v["saida"], "07_bayes_grupos_taxa_diferencas.png"),
+            titulo="Taxa de aprovação — Medindo as diferenças (forest plot)",
+            rotulo_escala="diferença na taxa de aprovação",
+            sentido_positivo="primeiro aprova mais", rotulos_categorias=rotulos_taxa)
+        matriz_taxa.to_csv(os.path.join(v["saida"], "bayes_grupos_taxa.csv"),
+                           index=False, encoding="utf-8")
+
     return {"config": cfg, "matriz": matriz,
             "sintese": bayes.sintese(matriz) if matriz is not None else None,
             "tabela_matriz": (tabela_matriz_bayesiana(matriz, "Avaliador")
                               if matriz is not None else None),
+            "matriz_taxa": matriz_taxa,
+            "tabela_matriz_taxa": (tabela_matriz_bayesiana(matriz_taxa, "Avaliador")
+                                   if matriz_taxa is not None else None),
             "figuras": figuras}
 
 
@@ -1702,7 +1725,11 @@ def avaliar_par(longo: pd.DataFrame, juiz: str, referencia: str,
         "p_juiz_menor": notas.probabilidades["p_direita"],    # P(dif < -ROPE)
         "kappa_bin": cohen_kappa(bin_a.astype(int), bin_b.astype(int), [0, 1]),
         "b01": int(np.sum(bin_a & ~bin_b)), "b10": int(np.sum(~bin_a & bin_b)),
+        "aprovam_ambos": int(np.sum(bin_a & bin_b)),
+        "reprovam_ambos": int(np.sum(~bin_a & ~bin_b)),
         "rope_decisao": rope_decisao, "p_equiv_decisao": p_eq_decisao,
+        "p_decisao_maior": decisao.probabilidades["p_esquerda"],  # P(dif. taxa > +ROPE)
+        "p_decisao_menor": decisao.probabilidades["p_direita"],   # P(dif. taxa < -ROPE)
         "dif_taxa": decisao.diferenca_media, "ic_decisao": decisao.ic95,
         "acuracia": met["acuracia"], "sensibilidade": met["sensibilidade"],
         "especificidade": met["especificidade"],
@@ -2618,6 +2645,12 @@ def escrever_relatorio_validacao(v: dict, caminho: str) -> str:
              "passando); **FN**: o sentido oposto. Sensibilidade = proporção dos adequados da "
              "referência que o juiz também aprova; especificidade = proporção dos inadequados "
              "que o juiz também reprova.\n")
+    L.append(f"Figuras: `08_decisao_rope_taxa.png` mostra o critério 3 — a diferença da taxa "
+             f"de aprovação (juiz − `{referencia}`) com o IC 95% e a faixa da ROPE da taxa "
+             f"(± {_num(v['rope_decisao'], 4)}); `09_decisao_aprovacoes.png` decompõe cada par "
+             "nas quatro células da decisão. Leia as duas juntas: FP e FN em quantidades "
+             "parecidas se **anulam na taxa** (ponto perto de zero no 08) e ainda assim são "
+             "discordâncias (barras vermelha e amarela no 09).\n")
 
     # --- diferença entre avaliadores -----------------------------------------
     entre = v["entre_grupos"]
@@ -2758,6 +2791,16 @@ def _bloco_bayes_validacao(v: dict) -> list:
         L.append("A síntese conta relações, **não ordena**. Os pares juiz × juiz "
                  "permanecem **fora do gate**: convergência entre modelos não é "
                  "evidência de validade.\n")
+    if b.get("tabela_matriz_taxa") is not None:
+        L.append(f"### Taxa de aprovação entre todos os avaliadores (nota ≥ {PISO_ADEQUACAO})\n")
+        L.append(f"O mesmo teste sobre a decisão binária (aprovado = 1, reprovado = 0), com a "
+                 f"**ROPE da taxa** ({_num(v['rope_decisao'], 4)}): a diferença média passa a "
+                 "ser a diferença na taxa de aprovação. Aqui `superior` significa **aprova "
+                 "mais** (mais leniente), não melhor; `A melhor`/`B melhor` contam os itens que "
+                 "só A ou só B aprovou. Figuras: `06_bayes_grupos_taxa.png` (heatmap) e "
+                 "`07_bayes_grupos_taxa_diferencas.png` (forest plot).\n")
+        L.append(_md(b["tabela_matriz_taxa"], indice=False))
+        L.append("")
     return L
 
 

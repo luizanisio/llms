@@ -291,7 +291,7 @@ def _complementares(r: dict, saida: str, gerados: list) -> None:
 # =============================================================================
 
 def grafico_bayes(matriz, caminho: str, titulo: str,
-                  rotulo_entidade: str = "protocolo") -> list:
+                  rotulo_entidade: str = "protocolo", **opcoes) -> list:
     """Heatmap das relações posteriores — desenho delegado ao `util_est_bayesiana`.
 
     A figura vive lá porque a mesma é usada pela comparação entre protocolos de
@@ -309,12 +309,12 @@ def grafico_bayes(matriz, caminho: str, titulo: str,
     if matriz is None or len(matriz) == 0:
         return []
     _, gerado = est.heatmap(matriz, arquivo_saida=caminho, titulo=titulo,
-                            rotulo=rotulo_entidade, dpi=FIG_DPI)
+                            rotulo=rotulo_entidade, dpi=FIG_DPI, **opcoes)
     plt.close("all")
     return [os.path.basename(gerado)] if gerado else []
 
 
-def grafico_diferencas_bayes(matriz, caminho: str, titulo: str) -> list:
+def grafico_diferencas_bayes(matriz, caminho: str, titulo: str, **opcoes) -> list:
     """"Medindo as diferenças" (forest plot) — desenho delegado ao `util_est_bayesiana`.
 
     Uma linha por par: ponto na diferença média, barra do IC 95%, faixa da
@@ -332,7 +332,7 @@ def grafico_diferencas_bayes(matriz, caminho: str, titulo: str) -> list:
     if matriz is None or len(matriz) == 0:
         return []
     _, gerado = est.grafico_diferencas(matriz, arquivo_saida=caminho,
-                                       titulo=titulo, dpi=FIG_DPI)
+                                       titulo=titulo, dpi=FIG_DPI, **opcoes)
     plt.close("all")
     return [os.path.basename(gerado)] if gerado else []
 
@@ -353,7 +353,132 @@ def graficos_validacao(v: dict, saida: str) -> list:
             gerados, percentual=True)
     _diferencas(v, saida, gerados)
     _distribuicao_grupos(v, saida, gerados)
+    _decisao_rope_taxa(v, saida, gerados)
+    _decisao_aprovacoes(v, saida, gerados)
     return sorted(set(gerados))
+
+
+#: cores das quatro células da decisão binária (juiz × referência)
+CORES_DECISAO = {
+    "ambos aprovam": "#2e7d4f",
+    "ambos reprovam": "#6b8fa3",
+    "só o juiz aprova (FP)": "#b23a48",
+    "só o juiz reprova (FN)": "#eda100",
+}
+
+
+def _decisao_rope_taxa(v: dict, saida: str, gerados: list) -> None:
+    """08: critério 3 do gate — diferença da taxa de aprovação (juiz − referência).
+
+    Uma linha por juiz: ponto na diferença da taxa de adequação (nota ≥ piso),
+    barra do IC 95% da posterior, faixa da ROPE da taxa ao fundo e
+    P(equiv. decisão) anotada. Cor pelo desfecho do critério: equivalente
+    (P ≥ limiar), viés (P(fora da ROPE num sentido) ≥ limiar) ou inconclusivo.
+    """
+    gates = v["gates"]
+    if not gates:
+        return
+    rope, limiar = float(v["rope_decisao"]), float(v["limiar"])
+    k = len(gates)
+    fig, ax = plt.subplots(figsize=(8.6, max(3.2, 0.55 * k + 2.4)))
+    ax.axvspan(-rope, rope, color="#dfe9f0", zorder=0)
+    ax.axvline(0, color="0.6", linewidth=0.9, zorder=1)
+
+    cores = {"equivalente": "#2c6e91", "viés": "#b23a48", "inconclusivo": "#8a8a8a"}
+    for idx, g in enumerate(gates):
+        y = k - 1 - idx
+        if g["p_equiv_decisao"] >= limiar:
+            desfecho = "equivalente"
+        elif max(g["p_decisao_maior"], g["p_decisao_menor"]) >= limiar:
+            desfecho = "viés"
+        else:
+            desfecho = "inconclusivo"
+        cor = cores[desfecho]
+        ic_inf, ic_sup = g["ic_decisao"]
+        ax.plot([ic_inf, ic_sup], [y, y], color=cor, linewidth=2.4,
+                solid_capstyle="round", zorder=3)
+        ax.plot(g["dif_taxa"], y, "o", color=cor, markersize=6.5, zorder=4)
+        p_eq = f"{g['p_equiv_decisao']:.3f}".replace(".", ",")
+        ax.annotate(f"P(equiv.) = {p_eq}", xy=(1.005, y),
+                    xycoords=("axes fraction", "data"), va="center", ha="left",
+                    fontsize=8.5, color=cor if desfecho != "inconclusivo" else "0.35")
+
+    ax.set_yticks(range(k), [g["juiz"] for g in reversed(gates)], fontsize=9.5)
+    ax.set_ylim(-0.7, k - 0.3)
+    ax.grid(axis="x", color="0.92", linewidth=0.8)
+    ax.set_axisbelow(True)
+    for lado in ("top", "right", "left"):
+        ax.spines[lado].set_visible(False)
+    referencia = gates[0]["referencia"]
+    ax.set_xlabel(f"diferença na taxa de aprovação (juiz − {referencia}; "
+                  f"positivo = juiz aprova mais) · ponto = média · barra = IC 95%",
+                  fontsize=9.5)
+    subtitulo = (f"aprovado = nota ≥ {PISO_ADEQUACAO} · ROPE (taxa) = ± {rope:.4f} · "
+                 f"n = {gates[0]['n']} · limiar = {limiar:.2f}").replace(".", ",")
+    ax.annotate(subtitulo, xy=(0.5, 1.0), xycoords="axes fraction", xytext=(0, 8),
+                textcoords="offset points", ha="center", va="bottom",
+                fontsize=8.5, color="0.35")
+    ax.set_title("Critério 3 — decisão prática: taxa de aprovação × referência",
+                 fontsize=12, pad=30)
+    from matplotlib.patches import Patch
+    legenda = [Patch(facecolor="#dfe9f0", label="ROPE (taxa)")]
+    legenda += [Patch(facecolor=c, label=n) for n, c in cores.items()]
+    ax.legend(handles=legenda, loc="upper center",
+              bbox_to_anchor=(0.5, -0.22 if k <= 2 else -0.16),
+              ncol=4, frameon=False, fontsize=8.5, handlelength=1.2)
+    _salvar(fig, os.path.join(saida, "08_decisao_rope_taxa.png"), gerados)
+
+
+def _decisao_aprovacoes(v: dict, saida: str, gerados: list) -> None:
+    """09: de onde vem a diferença da taxa — as quatro células da decisão binária.
+
+    Barras horizontais empilhadas (% dos itens pareados) por juiz: ambos
+    aprovam, ambos reprovam, só o juiz aprova (falso positivo: aprova o que a
+    referência reprovou) e só o juiz reprova (falso negativo). Mostra o que a
+    diferença da taxa esconde: FP e FN em quantidades parecidas se anulam na
+    taxa, mas continuam sendo discordâncias.
+    """
+    gates = v["gates"]
+    if not gates:
+        return
+    k = len(gates)
+    fig, ax = plt.subplots(figsize=(8.6, max(3.0, 0.55 * k + 2.2)))
+    for idx, g in enumerate(gates):
+        y = k - 1 - idx
+        n = g["n"]
+        partes = [("ambos aprovam", g["aprovam_ambos"]),
+                  ("ambos reprovam", g["reprovam_ambos"]),
+                  ("só o juiz aprova (FP)", g["b01"]),
+                  ("só o juiz reprova (FN)", g["b10"])]
+        esquerda = 0.0
+        for nome, qtd in partes:
+            pct = 100 * qtd / n if n else 0.0
+            ax.barh(y, pct, left=esquerda, color=CORES_DECISAO[nome],
+                    edgecolor="white", linewidth=0.8, height=0.62,
+                    label=nome if idx == 0 else None)
+            if pct >= 4:
+                ax.text(esquerda + pct / 2, y, str(qtd), ha="center", va="center",
+                        fontsize=8.5, color="white", fontweight="bold")
+            esquerda += pct
+        discord = g["b01"] + g["b10"]
+        ax.annotate(f"discordam: {discord} ({100 * discord / n:.1f}%)".replace(".", ","),
+                    xy=(1.005, y), xycoords=("axes fraction", "data"),
+                    va="center", ha="left", fontsize=8.5, color="0.35")
+    ax.set_yticks(range(k), [g["juiz"] for g in reversed(gates)], fontsize=9.5)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(-0.7, k - 0.3)
+    for lado in ("top", "right", "left"):
+        ax.spines[lado].set_visible(False)
+    ax.grid(axis="x", linestyle=":", alpha=0.4)
+    ax.set_axisbelow(True)
+    referencia = gates[0]["referencia"]
+    ax.set_xlabel(f"% dos {gates[0]['n']} itens pareados · número na barra = itens",
+                  fontsize=9.5)
+    ax.set_title(f"Aprovações e reprovações: juiz × {referencia} "
+                 f"(aprovado = nota ≥ {PISO_ADEQUACAO})", fontsize=12, pad=12)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16 if k > 2 else -0.24),
+              ncol=4, frameon=False, fontsize=8.5, handlelength=1.2)
+    _salvar(fig, os.path.join(saida, "09_decisao_aprovacoes.png"), gerados)
 
 
 def _estilos_avaliadores(nomes: list, referencia=None) -> dict:

@@ -403,8 +403,12 @@ def _cor_texto(linha, mistura):
 
 
 def heatmap(matriz, arquivo_saida=None, titulo=None, rotulo="protocolo",
-            casas=1, dpi=150, figsize=None):
+            casas=1, dpi=150, figsize=None, rotulos_categorias=None):
     """Heatmap das relações: cor = categoria, número = probabilidade posterior.
+
+    `rotulos_categorias` troca o texto da legenda de "superior"/"inferior"/
+    "equivalente" quando "maior" não significa "melhor" (ex.: na taxa de
+    aprovação, "superior" = a linha aprova mais). Cores e cálculo não mudam.
 
     Mantido para recortes maiores, onde "Medindo as diferenças" ficaria longo
     demais. A diagonal é neutra — (Pi, Pi) não é comparação. `incerto` é
@@ -465,6 +469,7 @@ def heatmap(matriz, arquivo_saida=None, titulo=None, rotulo="protocolo",
                "inferior": "inferior",
                "incerto": f"incerto (< {limiar:.2f}) — a cor do número indica a "
                           f"categoria dominante".replace(".", ",")}
+    rotulos.update({c: r for c, r in (rotulos_categorias or {}).items() if c in rotulos})
     eixo.legend(handles=[Patch(facecolor=CORES[c], label=r) for c, r in rotulos.items()],
                 loc="upper center", bbox_to_anchor=(0.5, -0.12),
                 ncol=4, frameon=False, fontsize=9, handlelength=1.2)
@@ -489,7 +494,8 @@ def _pares_nao_ordenados(matriz: pd.DataFrame):
 
 def grafico_diferencas(matriz, arquivo_saida=None, titulo=None,
                        rotulo_escala="diferença média", casas=2,
-                       dpi=150, figsize=None):
+                       dpi=150, figsize=None, sentido_positivo="primeiro melhor",
+                       rotulos_categorias=None):
     """"Medindo as diferenças" — gráfico de floresta (*forest plot*) dos pares.
 
     O gráfico principal da análise: mostra magnitude e incerteza juntas, e
@@ -504,6 +510,9 @@ def grafico_diferencas(matriz, arquivo_saida=None, titulo=None,
     * **P(equivalência)** anotada à direita.
 
     Legível até ~6 protocolos (15 linhas); acima disso use o `heatmap`.
+
+    `sentido_positivo` e `rotulos_categorias` ajustam só o texto (eixo e
+    legenda) quando "maior" não significa "melhor" — ex.: taxa de aprovação.
 
     Returns:
         (figura, caminho) — `caminho` é None se nada foi gravado.
@@ -545,7 +554,7 @@ def grafico_diferencas(matriz, arquivo_saida=None, titulo=None,
 
     eixo.set_yticks(posicoes, nomes_pares, fontsize=9.5)
     eixo.set_ylim(-0.7, k - 0.3)
-    eixo.set_xlabel(f"{rotulo_escala} (positivo = primeiro melhor) · "
+    eixo.set_xlabel(f"{rotulo_escala} (positivo = {sentido_positivo}) · "
                     f"ponto = média · barra = IC 95%", fontsize=9.5)
     eixo.grid(axis="x", color="0.92", linewidth=0.8)
     eixo.set_axisbelow(True)
@@ -562,7 +571,8 @@ def grafico_diferencas(matriz, arquivo_saida=None, titulo=None,
                    fontsize=12, pad=30)
 
     legenda = [Patch(facecolor="#dfe9f0", label=f"ROPE (± {rope:g})".replace(".", ","))]
-    legenda += [Patch(facecolor=CORES[c], label=c)
+    _rotulos = rotulos_categorias or {}
+    legenda += [Patch(facecolor=CORES[c], label=_rotulos.get(c, c))
                 for c in ("superior", "equivalente", "inferior", "incerto")]
     # deslocamento maior quando há poucos pares, para não sobrepor o xlabel
     legenda_y = -0.22 if k <= 2 else -0.16
